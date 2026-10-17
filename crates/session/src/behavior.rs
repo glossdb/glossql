@@ -81,9 +81,8 @@ use datafusion::datasource::{MemTable, provider_as_source};
 use datafusion::logical_expr::{Expr, JoinType, LogicalPlanBuilder, col};
 use serde_json::{Value, json};
 
-use crate::reads::Shared;
 use crate::search::rows_batch;
-use crate::session::SessionError;
+use crate::shared::{SessionError, Shared};
 use crate::subject::qi;
 
 /// Wilson score lower bound (Wilson 1927): the parameter-free way to
@@ -255,7 +254,7 @@ fn cols_label(cols: &[String]) -> String {
 )]
 pub(crate) async fn behavior_anchors(
     shared: &Arc<Shared>,
-    resolved: &crate::prepass::Resolved,
+    resolved: &crate::shared::Resolved,
     subject: &str,
 ) -> Result<RecordBatch, SessionError> {
     let ctx = shared.session_ctx();

@@ -9,9 +9,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::prepass::ReadSet;
-use crate::reads::Served;
-use crate::session::SessionError;
+use crate::shared::{ReadSet, Served, SessionError, Shared};
 
 /// The shipped reads served this way. `workspace_next` is not one: it
 /// reads every dataset's landings, and no one dataset's pin keys that.
@@ -51,6 +49,20 @@ pub struct ShippedCache {
 }
 
 const ENTRIES: u64 = 64;
+
+impl Shared {
+    /// The shipped-read cache this session serves from — the Plane's,
+    /// shared by every channel, or the session's own. The slot is
+    /// untyped where it is held; this is the one place that reads it.
+    pub fn shipped(&self) -> ShippedCache {
+        self.shipped
+            .read()
+            .expect("shipped lock")
+            .downcast_ref::<ShippedCache>()
+            .cloned()
+            .expect("the shipped slot holds the shipped-read cache, set at construction")
+    }
+}
 
 impl Default for ShippedCache {
     fn default() -> Self {

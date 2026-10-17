@@ -31,7 +31,8 @@ use glossql_glossary::{Actor, Store};
 use glossql_parser::{GlossqlParser, Statement};
 
 use crate::cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
-use crate::session::{FunctionRuntime, Outcome, Session, SessionError};
+use crate::session::Session;
+use crate::shared::{FunctionRuntime, Outcome, SessionError};
 
 /// The engine's memory ceiling for the whole process, in megabytes
 /// (serverd's `--memory-limit`).
@@ -140,7 +141,7 @@ pub struct Plane {
     row_cap: usize,
     /// The pages the door serves, for `pages()` — what the binary
     /// embeds, handed to every channel.
-    pages: Arc<[crate::reads::DoorPage]>,
+    pages: Arc<[crate::shared::DoorPage]>,
     /// Whether a source may be a path on this machine.
     local_sources: bool,
 }
@@ -170,13 +171,13 @@ impl Plane {
     /// The pages `pages()` serves on every channel — the skills, the
     /// docs, the language, the engine's SQL guide, as the binary
     /// embeds them.
-    pub fn with_pages(mut self, pages: Arc<[crate::reads::DoorPage]>) -> Self {
+    pub fn with_pages(mut self, pages: Arc<[crate::shared::DoorPage]>) -> Self {
         self.pages = pages;
         self
     }
 
     /// The pages the door serves, as set at boot.
-    pub fn pages(&self) -> Arc<[crate::reads::DoorPage]> {
+    pub fn pages(&self) -> Arc<[crate::shared::DoorPage]> {
         Arc::clone(&self.pages)
     }
 
@@ -334,7 +335,7 @@ impl Plane {
             SessionError::Sequence {
                 index,
                 total,
-                context: crate::session::sequence_context(index, total),
+                context: crate::shared::sequence_context(index, total),
                 source,
                 landed: standing,
             }

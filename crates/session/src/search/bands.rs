@@ -12,8 +12,7 @@ use datafusion::functions_aggregate::expr_fn::max;
 use datafusion::logical_expr::{cast, col, try_cast};
 use serde_json::{Value, json};
 
-use crate::reads::Shared;
-use crate::session::{Answered, FORECAST, SessionError};
+use crate::shared::{Answered, FORECAST, SessionError, Shared};
 use crate::subject::qi;
 
 use super::{current_query_slots, rows_batch};
@@ -220,7 +219,7 @@ async fn month_end(period: &str) -> Result<Option<String>, SessionError> {
         &[first],
         &[format!(
             "p + {} - INTERVAL '1 day'",
-            crate::period::interval(crate::cube::Resolution::Month, 1)
+            crate::period::interval(crate::period::Resolution::Month, 1)
         )],
     )
     .await
@@ -267,7 +266,7 @@ pub(crate) async fn metric_band_walk(
     let anchors = crate::cube::Anchors::at(&rctx, dataset).await?;
     let runtime = shared.runtime();
     if !runtime.serves(FORECAST) {
-        return Err(crate::session::no_model("metric_bands()", FORECAST));
+        return Err(crate::shared::no_model("metric_bands()", FORECAST));
     }
 
     // Every metric's series goes to the service together, once the

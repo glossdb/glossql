@@ -8,8 +8,7 @@ use datafusion::arrow::array::{Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field};
 use serde_json::{Value, json};
 
-use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::shared::{SessionError, Shared};
 
 use super::{current_query_slots, rows_batch};
 

@@ -31,7 +31,8 @@
 
 use datafusion::arrow::array::{Array, StringArray};
 
-use crate::session::{Outcome, Session, SessionError};
+use crate::session::Session;
+use crate::shared::{Outcome, SessionError};
 
 /// One judgment, ready to land. `key` is the claim's identity and the
 /// only thing the record joins on; `assumption` is the prose the human

@@ -12,8 +12,7 @@ use datafusion::functions_aggregate::expr_fn::count;
 use datafusion::logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder, ident, lit};
 use serde_json::{Value, json};
 
-use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::shared::{SessionError, Shared};
 
 use super::{dataset_pins, detector_state, int_column, rows_batch, run_plan};
 
@@ -592,7 +591,7 @@ type Pass = (Vec<DataType>, Vec<usize>);
 /// compares values as they are stored, which is the typed identity the
 /// counts claim.
 fn passes(
-    resolved: &crate::prepass::Resolved,
+    resolved: &crate::shared::Resolved,
     door: &str,
     arms: &[Arm],
 ) -> Result<Vec<Pass>, SessionError> {
@@ -633,7 +632,7 @@ fn passes(
 /// with a null leg is dropped, so no join key downstream is ever null
 /// and null equality never enters it.
 fn distinct_values(
-    resolved: &crate::prepass::Resolved,
+    resolved: &crate::shared::Resolved,
     door: &str,
     arms: &[Arm],
     shape: &[DataType],
@@ -750,7 +749,7 @@ fn shared_counts(
 /// can pair with it.
 async fn pair_counts(
     state: &SessionState,
-    resolved: &crate::prepass::Resolved,
+    resolved: &crate::shared::Resolved,
     door: &str,
     arms: &[Arm],
 ) -> Result<Counts, SessionError> {
@@ -794,7 +793,7 @@ async fn pair_counts(
 /// combination's key test costs nothing of the pairing.
 async fn arm_distinct(
     state: &SessionState,
-    resolved: &crate::prepass::Resolved,
+    resolved: &crate::shared::Resolved,
     door: &str,
     arms: &[Arm],
     wanted: &HashSet<usize>,
@@ -839,7 +838,7 @@ async fn arm_distinct(
 /// both.
 async fn cross_counts(
     state: &SessionState,
-    resolved: &crate::prepass::Resolved,
+    resolved: &crate::shared::Resolved,
     door: &str,
     arms: &[Arm],
     from: &HashSet<usize>,
@@ -887,7 +886,7 @@ async fn cross_counts(
 /// fixed memory, in the combinations' order.
 async fn combo_filled(
     state: &SessionState,
-    resolved: &crate::prepass::Resolved,
+    resolved: &crate::shared::Resolved,
     door: &str,
     combos: &[(String, String, String)],
 ) -> Result<Vec<i64>, SessionError> {

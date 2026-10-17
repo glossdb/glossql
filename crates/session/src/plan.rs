@@ -8,8 +8,7 @@ use datafusion::logical_expr::LogicalPlan;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser::ast::Statement as SQLStatement;
 
-use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::shared::{SessionError, Shared};
 
 /// Plan a query through the session's own pipeline, so a nested `read.`
 /// re-enters the relation planner. Every door that plans a grounding —

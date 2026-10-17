@@ -24,8 +24,7 @@ use datafusion::logical_expr::{
 use datafusion::prelude::SessionContext;
 use serde_json::Value;
 
-use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::shared::{SessionError, Shared};
 
 mod bands;
 mod coherence;
@@ -191,8 +190,8 @@ pub(crate) fn rows_batch(
 async fn dataset_pins(
     shared: &Arc<Shared>,
     dataset: &str,
-) -> Result<crate::prepass::Resolved, SessionError> {
-    Ok(crate::prepass::Resolved::over(
+) -> Result<crate::shared::Resolved, SessionError> {
+    Ok(crate::shared::Resolved::over(
         shared
             .pinned(dataset)
             .await?

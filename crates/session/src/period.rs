@@ -22,8 +22,62 @@ use datafusion::logical_expr::{Expr, cast, lit};
 use datafusion::prelude::SessionContext;
 use std::sync::Arc;
 
-use crate::cube::Resolution;
-use crate::session::SessionError;
+use crate::shared::SessionError;
+
+/// A calendar resolution — the rungs of the ladder, finest first, and
+/// the grains a read may ask for. Ordered, so the coarser of two is
+/// `max`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub(crate) enum Resolution {
+    Minute,
+    Hour,
+    Day,
+    Week,
+    Month,
+    Quarter,
+    Year,
+}
+
+impl Resolution {
+    pub(crate) const ALL: [Resolution; 7] = [
+        Resolution::Minute,
+        Resolution::Hour,
+        Resolution::Day,
+        Resolution::Week,
+        Resolution::Month,
+        Resolution::Quarter,
+        Resolution::Year,
+    ];
+
+    pub(crate) fn parse(s: &str) -> Option<Resolution> {
+        Self::ALL.into_iter().find(|r| r.as_str() == s)
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Resolution::Minute => "minute",
+            Resolution::Hour => "hour",
+            Resolution::Day => "day",
+            Resolution::Week => "week",
+            Resolution::Month => "month",
+            Resolution::Quarter => "quarter",
+            Resolution::Year => "year",
+        }
+    }
+
+    /// A judged cadence (`temporal_profile.granularity`) as a
+    /// resolution. `second` is finer than the finest rung, so it reads
+    /// as the finest and the floor decides; `irregular` and `unknown`
+    /// name no cadence — such a column anchors at the floor.
+    pub(crate) fn cadence(granularity: &str) -> Option<Resolution> {
+        match granularity {
+            "second" => Some(Resolution::Minute),
+            other => Self::parse(other),
+        }
+    }
+}
 
 /// The period unit.
 pub(crate) const UNIT: TimeUnit = TimeUnit::Microsecond;

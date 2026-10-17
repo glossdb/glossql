@@ -3,9 +3,13 @@
 //! rules here turn spelled segments into (dataset, relative subject), using
 //! the declared datasets and the `USE`'d one.
 
+use datafusion::sql::planner::IdentNormalizer;
+use datafusion::sql::sqlparser::ast::{
+    Expr, FunctionArg, FunctionArgExpr, TableFactor, Value as SqlValue,
+};
 use glossql_glossary::{Scope, Store};
 
-use crate::session::SessionError;
+use crate::shared::SessionError;
 
 /// A resolved subject: the dataset it belongs to and the store's canonical
 /// relative spelling (`fin` itself, `orders`, `orders.amount`,
@@ -162,6 +166,43 @@ pub fn pair_subject(left: &Resolved, op: &str, right: &Resolved) -> String {
 /// A landed column is whatever its export called it, a quote included.
 pub(crate) fn qi(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Reads a factor as the `subject_column` door: `None` if it is
+/// something else (including a bare `subject_column` table, which stays
+/// a table), `Some(Err)` if it is the door with anything but one quoted
+/// subject. Both sides of the seam call this — the pre-pass to collect,
+/// the planner to serve or refuse — so the two cannot disagree on what
+/// the door accepts.
+pub(crate) fn subject_column_arg(
+    idents: &IdentNormalizer,
+    f: &TableFactor,
+) -> Option<Result<String, SessionError>> {
+    let TableFactor::Table {
+        name,
+        args: Some(a),
+        ..
+    } = f
+    else {
+        return None;
+    };
+    let [part] = name.0.as_slice() else {
+        return None;
+    };
+    if !part
+        .as_ident()
+        .is_some_and(|i| idents.normalize(i.clone()) == "subject_column")
+    {
+        return None;
+    }
+    if let [FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(v)))] = a.args.as_slice()
+        && let SqlValue::SingleQuotedString(subject) = &v.value
+    {
+        return Some(Ok(subject.clone()));
+    }
+    Some(Err(SessionError::BadSubject(
+        "subject_column takes one quoted subject: subject_column('table.column')".into(),
+    )))
 }
 
 #[cfg(test)]

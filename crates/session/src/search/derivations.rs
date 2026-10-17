@@ -12,8 +12,7 @@ use datafusion::functions_aggregate::expr_fn::{avg, count};
 use datafusion::logical_expr::{Expr, ExprFunctionExt, LogicalPlanBuilder, ident, lit};
 use serde_json::{Value, json};
 
-use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::shared::{SessionError, Shared};
 
 use super::rows_batch;
 
@@ -38,7 +37,7 @@ use super::rows_batch;
 /// door replaces was round trips, not algorithm.
 pub(crate) async fn derivation_candidates(
     shared: &Arc<Shared>,
-    resolved: &crate::prepass::Resolved,
+    resolved: &crate::shared::Resolved,
     table: &str,
 ) -> Result<RecordBatch, SessionError> {
     let bad =

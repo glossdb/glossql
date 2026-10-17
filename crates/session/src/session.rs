@@ -18,7 +18,6 @@ use datafusion::sql::planner::IdentNormalizer;
 use datafusion::sql::sqlparser::ast::{
     FromTable, Ident, ObjectType, Statement as SQLStatement, TableFactor, visit_relations,
 };
-use datafusion::sql::sqlparser::parser::ParserError;
 use futures::{StreamExt as _, TryStreamExt as _};
 use serde_json::Value;
 
@@ -29,148 +28,14 @@ use glossql_parser::{
     Declaration, Extract, Gloss, GlossqlParser, Probe, RelOp, SettingValue, Statement, Subject,
 };
 
-use crate::reads::{GlossqlReads, Shared};
+use crate::reads::GlossqlReads;
+use crate::shared::{FunctionRuntime, NoRuntime, Outcome, SessionError, Shared, sequence_context};
 use crate::subject::{Resolved, pair_subject, resolve_endpoint, resolve_path};
-
-#[derive(Debug, thiserror::Error)]
-pub enum SessionError {
-    #[error("parse: {0} — parsing precedes execution: nothing ran")]
-    Parse(#[from] ParserError),
-    #[error(transparent)]
-    Store(#[from] glossql_glossary::Error),
-    /// The engine's text, whole; a pool refusal carries the road out
-    /// ([`memory_road`]).
-    #[error("{}", memory_road(.0))]
-    DataFusion(#[from] DataFusionError),
-    #[error("no dataset in use — USE one first")]
-    NoDataset,
-    #[error("not a subject: {0}")]
-    BadSubject(String),
-    /// The planner's `table '…' not found`, carrying what the name could
-    /// have been. The engine's text is kept whole in front.
-    #[error("{0}")]
-    UnknownTable(String),
-    /// An unquoted column name that folds past two landed spellings
-    /// (SPEC.md §1): the refusal names both.
-    #[error("{0}")]
-    AmbiguousName(String),
-    #[error("unknown function `{0}` — DECLARE it (or check its FOR scope)")]
-    UnknownFunction(String),
-    #[error("output of `{function}` violates the schema of the aspect it RETURNS: {detail}")]
-    OutputRejected { function: String, detail: String },
-    #[error(
-        "function `{0}` has no RETURNS — a detector runs through its witness, never through extraction"
-    )]
-    DetectorNotExtractable(String),
-    #[error("function runtime: {0}")]
-    Runtime(String),
-    /// Arrow refused an array operation inside a door — a cast, a
-    /// concatenation, a cell's rendering.
-    #[error("function runtime: {0}")]
-    Arrow(#[from] datafusion::arrow::error::ArrowError),
-    /// The engine refused a door's own plan. `context` is what the
-    /// refusal reads as in front of the engine's text — the door's
-    /// name, or `not served` — and the engine's error stays the source,
-    /// so a pool refusal carries its road out here too.
-    #[error("not a subject: {context}{}", memory_road(.source))]
-    Engine {
-        context: String,
-        source: DataFusionError,
-    },
-    #[error("not an aspect name: `{0}`")]
-    BadAspectName(String),
-    #[error("the standing ruling slot is not a ruling body")]
-    RulingSlotNotRulings,
-    #[error("a body carrying `$$` cannot ride the dollar-quoted statement")]
-    DollarQuotedBody,
-    #[error(transparent)]
-    Lake(#[from] glossql_catalog::Error),
-    #[error(transparent)]
-    Import(#[from] glossql_import::Error),
-    #[error(
-        "the substrate is not open for {0} — tables come from recipes; removal is DROP TABLE (SPEC.md §3)"
-    )]
-    SubstrateClosed(String),
-    #[error(
-        "DROP TABLE {table} refused: {reason} (replacement is postponed — declare under another name)"
-    )]
-    DropRefused { table: String, reason: String },
-    #[error("streaming takes exactly one query — everything else answers through execute")]
-    NotOneRead,
-    #[error(
-        "source `{name}`: `{location}` is a path on the server's own filesystem — on a deployment \
-         a source is a location in an object store (s3://…, gs://…, abfss://…) or a relational \
-         URI; a path is the laptop's shape, under --workspace"
-    )]
-    LocalSource { name: String, location: String },
-    #[error("statement {index} of {total} refused: {source} — {context}")]
-    Sequence {
-        index: usize,
-        total: usize,
-        /// What landed and what never ran — "statements 1–2 landed;
-        /// 4–7 not run". Without this, a mid-sequence refusal forces a
-        /// read of `imports` just to learn what stood.
-        context: String,
-        source: Box<SessionError>,
-        /// The outcomes of the statements that stood, in order — what
-        /// a refusal must not discard: they landed.
-        landed: Vec<Outcome>,
-    },
-}
 
 /// The landed spelling an unquoted name folded past: a name among
 /// `landed` that is not `missing` but folds to it, so the quoted
 /// spelling reaches it (SPEC.md §1). `None` when nothing landed folds
 /// to the missing name — then it is simply not there.
-/// The engine's `Resources exhausted` with the shape that fits: a
-/// DISTINCT or a wide GROUP BY keeps every value in memory per
-/// partition, and neither the no-GROUP-BY aggregate nor a distinct
-/// count's state can spill — the sketch or the two-step count can.
-/// Every other engine error passes as it came.
-impl SessionError {
-    /// The engine refused a plan a door could not be served without.
-    pub(crate) fn not_served(source: DataFusionError) -> Self {
-        SessionError::Engine {
-            context: "not served: ".into(),
-            source,
-        }
-    }
-
-    /// What a door that abstains per subject says in place of a row:
-    /// the refusal's own text, for the two refusals that are about one
-    /// subject rather than about the statement. Anything else is the
-    /// statement's failure and has none.
-    pub(crate) fn abstention(&self) -> Option<String> {
-        match self {
-            SessionError::BadSubject(reason) => Some(reason.clone()),
-            SessionError::Engine { context, source } => {
-                Some(format!("{context}{}", memory_road(source)))
-            }
-            _ => None,
-        }
-    }
-
-    /// The engine refused `door`'s own plan.
-    pub(crate) fn door(door: &str, source: DataFusionError) -> Self {
-        SessionError::Engine {
-            context: format!("{door}: "),
-            source,
-        }
-    }
-}
-
-fn memory_road(e: &DataFusionError) -> String {
-    match e.find_root() {
-        DataFusionError::ResourcesExhausted(_) => format!(
-            "{e} — the statement outgrew the engine's memory pool: a `count(DISTINCT …)` or a \
-             GROUP BY over a wide column keeps every value in memory per partition; \
-             `approx_distinct(col)` sketches the count in fixed memory, or GROUP BY the keys \
-             in a CTE and count the rows"
-        ),
-        _ => e.to_string(),
-    }
-}
-
 fn folded_past<'a>(
     idents: &IdentNormalizer,
     missing: &str,
@@ -188,157 +53,6 @@ fn fold_road(spelled: &str, qualifier: &str) -> String {
         " — `{spelled}` is reached quoted, `{qualifier}\"{spelled}\"`: an unquoted name folds to lowercase"
     )
 }
-
-/// What landed and what never ran, for a refusal at `index` (1-based)
-/// of `total` — one outcome stands per completed statement, so the
-/// caller's outcome count is the base.
-pub(crate) fn sequence_context(index: usize, total: usize) -> String {
-    let landed = match index {
-        1 => "nothing landed before it".to_string(),
-        2 => "statement 1 landed".to_string(),
-        _ => format!("statements 1–{} landed", index - 1),
-    };
-    let tail = if index == total {
-        String::new()
-    } else if index + 1 == total {
-        format!("; statement {total} not run")
-    } else {
-        format!("; statements {}–{} not run", index + 1, total)
-    };
-    format!("{landed}{tail}")
-}
-
-/// What one statement produced. `Rows` for anything that reads, `Affected`
-/// for forwarded deletes, `Done` for declarations and writes.
-#[derive(Debug)]
-pub enum Outcome {
-    Done(String),
-    /// A read's rows. `truncated` says the read held more than the
-    /// session's row cap and `batches` stops there — said by the session
-    /// that cut, so no door infers it from a count.
-    Rows {
-        batches: Vec<RecordBatch>,
-        truncated: bool,
-    },
-    Affected(u64),
-}
-
-/// The service seam (`glossql-scripts`): the native statistical kernels
-/// and aggregate registrations behind the doors, and the one table call
-/// a service point answers. Function bodies are SQL the engine plans —
-/// a measurement over data (§6), a detector over its witness's `slots`
-/// — so nothing here evaluates a body; the seam carries only what SQL
-/// cannot: the table call and the reconcile discriminator. The table
-/// call is async — a service answers it over HTTP — and a runtime says
-/// which points it fills, so a door refuses at plan time by the point's
-/// name instead of failing in the read. Tests inject fakes.
-///
-/// A table answered by a service: its rows, and the answer object the
-/// service put beside them — its name and version, the items that
-/// failed alone (`errors`), what the answer rests on (`assumptions`).
-#[derive(Clone, Debug)]
-pub struct Answered {
-    pub table: RecordBatch,
-    pub answer: Value,
-}
-
-/// The points a deployment fills with a service, by name. A point's
-/// name is the route the service serves and the stem of its variables:
-/// `GLOSSQL_<POINT>_URL`, `_TOKEN`, `_AUDIENCE`, the name in capitals.
-pub const POINTS: [&str; 3] = [FORECAST, MISFIT, WHATIF];
-
-/// The forecast point: the metric-bands walk sends every metric's
-/// monthly series and reads bands, actual and PIT per walked period.
-pub const FORECAST: &str = "forecast";
-
-/// The misfit point: `misfit.<frame>()` sends the frame and reads a
-/// score per row.
-pub const MISFIT: &str = "misfit";
-
-/// The what-if point: the scenario read sends a metric's series with a
-/// lever's, as planned and under the scenario, and reads the estimate.
-pub const WHATIF: &str = "whatif";
-
-/// The variable that names a point's service.
-pub fn point_variable(point: &str, suffix: &str) -> String {
-    format!("GLOSSQL_{}_{suffix}", point.to_ascii_uppercase())
-}
-
-/// The refusal a door gives when the runtime fills none of its point:
-/// by name, with what to set. The server itself never carries a model;
-/// a service the deployment names answers the point.
-pub fn no_model(door: &str, point: &str) -> SessionError {
-    SessionError::BadSubject(format!(
-        "not served: {door} needs the {point} service and this server names none — \
-         set {} (and {} or {}) to a service that serves /{point}",
-        point_variable(point, "URL"),
-        point_variable(point, "TOKEN"),
-        point_variable(point, "AUDIENCE"),
-    ))
-}
-
-#[async_trait::async_trait]
-pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
-    /// Whether a service stands behind `point` ([`POINTS`]). `false`
-    /// refuses the point's doors at plan time ([`no_model`]); the call's
-    /// own default below refuses too, for a runtime that lies.
-    fn serves(&self, _point: &str) -> bool {
-        false
-    }
-
-    /// The aggregate statistics the runtime ships (`profile` — the
-    /// shape SQL lacks; `mad` and `entropy` ride inside its struct).
-    /// Registered on the session's context when the runtime attaches,
-    /// so a measurement body and an agent's own SQL name the same
-    /// functions.
-    fn udafs(&self) -> Vec<datafusion::logical_expr::AggregateUDF> {
-        Vec::new()
-    }
-
-    /// The table call: `table` and `spec` go to the service behind
-    /// `point`, column names and types with the rows; its rows and its
-    /// answer object come back. What the table and the specification
-    /// hold is the point's contract, read by the door that sends them;
-    /// nothing here knows what the numbers mean. A scalar shape — a
-    /// value per row, called from a recipe — is a second method here
-    /// when its first user lands. The runtime that carries a service
-    /// overrides this; the default refuses, and the door reports why.
-    async fn table(
-        &self,
-        point: &str,
-        _table: RecordBatch,
-        _spec: Value,
-    ) -> Result<Answered, String> {
-        Err(format!("this runtime fills no {point} point"))
-    }
-
-    /// The stock/flow discriminator behind the behavior-evidence door:
-    /// conventions — each term and every ordered pair
-    /// difference — as one matrix product over the stacked entity
-    /// series, residuals and gates per entity. The door aligns the two
-    /// sides in the plan and hands one batch of `(e, b, yv,
-    /// s_<term>…)` ordered by `(e, b)`, so the kernel reads segments
-    /// off it and never pairs rows itself. `n_common` is the entity
-    /// intersection, which the alignment cannot answer: an entity on
-    /// both sides with no bucket in common carries no cell and still
-    /// counts. Returns `{n_common, summaries}` as the script kernel
-    /// did. The runtime that carries the kernel overrides this; the
-    /// default refuses.
-    fn reconcile(
-        &self,
-        _aligned: &[RecordBatch],
-        _n_common: i64,
-        _terms: &[String],
-    ) -> Result<Value, String> {
-        Err("this runtime carries no reconcile kernel".into())
-    }
-}
-
-#[derive(Debug)]
-pub struct NoRuntime;
-
-#[async_trait::async_trait]
-impl FunctionRuntime for NoRuntime {}
 
 /// One substrate statement out of a SQL string — the internal reads
 /// (the drop-table emptiness probe) plan through the same pre-pass as
@@ -460,13 +174,13 @@ impl Session {
             dataset: RwLock::new(None),
             runtime: RwLock::new(Arc::new(NoRuntime)),
             ctx: RwLock::new(None),
-            cube: RwLock::new(crate::cube::CubeCache::new(
+            cube: RwLock::new(Arc::new(crate::cube::CubeCache::new(
                 crate::cube::DEFAULT_CUBE_CACHE_MB,
-            )),
+            ))),
             pins: RwLock::new(Default::default()),
             named: RwLock::new(Default::default()),
             contexts: RwLock::new(Default::default()),
-            shipped: RwLock::new(crate::memo::ShippedCache::new()),
+            shipped: RwLock::new(Arc::new(crate::memo::ShippedCache::new())),
             normalize_idents: config.options().sql_parser.enable_ident_normalization,
             pages: RwLock::new(Arc::from(Vec::new())),
             local_sources: std::sync::atomic::AtomicBool::new(true),
@@ -527,14 +241,14 @@ impl Session {
     /// every channel shares one set of entries. A session built
     /// without a Plane carries its own from construction.
     pub fn with_cube_cache(self, cache: crate::cube::CubeCache) -> Self {
-        *self.shared.cube.write().expect("cube lock") = cache;
+        *self.shared.cube.write().expect("cube lock") = Arc::new(cache);
         self
     }
 
     /// The shipped-read cache this session serves `next` from — the
     /// Plane's, so every channel shares one set of entries.
     pub fn with_shipped_cache(self, cache: crate::memo::ShippedCache) -> Self {
-        *self.shared.shipped.write().expect("shipped lock") = cache;
+        *self.shared.shipped.write().expect("shipped lock") = Arc::new(cache);
         self
     }
 
@@ -545,7 +259,7 @@ impl Session {
 
     /// The pages the door serves, for `pages()` — the Plane's, embedded
     /// in the binary that built it.
-    pub fn with_pages(self, pages: Arc<[crate::reads::DoorPage]>) -> Self {
+    pub fn with_pages(self, pages: Arc<[crate::shared::DoorPage]>) -> Self {
         *self.shared.pages.write().expect("pages lock") = pages;
         self
     }
@@ -1897,7 +1611,7 @@ impl Session {
         mut statement: DFStatement,
         subject: &str,
         dataset: &str,
-    ) -> Result<(Value, crate::prepass::ReadSet), SessionError> {
+    ) -> Result<(Value, crate::shared::ReadSet), SessionError> {
         crate::measure::bind_subject(&mut statement, subject);
         let (plan, _, mut reads) = self.plan_statement_measured(statement).await?;
         // A scanned name is a data table unless it is a store
@@ -1953,7 +1667,7 @@ impl Session {
         (
             datafusion::logical_expr::LogicalPlan,
             bool,
-            crate::prepass::ReadSet,
+            crate::shared::ReadSet,
         ),
         SessionError,
     > {
@@ -1973,7 +1687,7 @@ impl Session {
         (
             datafusion::logical_expr::LogicalPlan,
             bool,
-            crate::prepass::ReadSet,
+            crate::shared::ReadSet,
         ),
         SessionError,
     > {
@@ -2659,7 +2373,7 @@ fn verb_of(statement: &SQLStatement) -> String {
 /// leg that appears or disappears is a change like any other. A
 /// scanned name that is no pin leg (a door batch's factor string)
 /// selects nothing on either side and can never decide.
-fn read_names(reads: &crate::prepass::ReadSet, dataset: &str) -> String {
+fn read_names(reads: &crate::shared::ReadSet, dataset: &str) -> String {
     if reads.everything {
         return "**".into();
     }

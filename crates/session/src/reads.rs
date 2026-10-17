@@ -1,4 +1,5 @@
-//! `GLOSSARY()` / `ATTEST()` and the store's relations, planned
+//! The record planner: `GLOSSARY()` / `ATTEST()`, the store's relations,
+//! a served grounding and `read.<aspect>()`, planned
 //! through DataFusion's `RelationPlanner` seam. The planner sees the raw
 //! `TableFactor` before default planning, so named arguments (`all => true`),
 //! zero-argument sweeps, and pair paths (`a.b <-> c.d`) all decode here —
@@ -6,7 +7,7 @@
 //! operator (datafusion-functions-json) never collides with pair paths:
 //! inside these factors `->` never reaches expression planning.
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, StringArray, StructArray,
@@ -16,7 +17,6 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::TableProvider;
 use datafusion::common::{DataFusionError, Result as DFResult};
 use datafusion::datasource::{MemTable, provider_as_source};
-use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::logical_expr::LogicalPlanBuilder;
 use datafusion::logical_expr::planner::{
     PlannedRelation, RelationPlanner, RelationPlannerContext, RelationPlanning,
@@ -28,386 +28,11 @@ use datafusion::sql::sqlparser::ast::{
     TableAlias, TableFactor, Value as SQLValue,
 };
 
-use glossql_catalog::{Lake, PinnedTable};
 use glossql_glossary::{AttestRow, CollapsedRow, RawRow, ReadContext, Scope, Store, schemas};
 use serde_json::{Value, json};
 
-use crate::session::{FunctionRuntime, SessionError};
+use crate::shared::{Resolved, SessionError, Shared};
 use crate::subject::{pair_subject, resolve_column_endpoint, resolve_path};
-
-/// State the planner shares with the router: the `USE`'d dataset, the data
-/// plane, and the script runtime (reads run detectors).
-pub(crate) struct Shared {
-    pub store: Store,
-    pub dataset: RwLock<Option<String>>,
-    pub runtime: RwLock<Arc<dyn FunctionRuntime>>,
-    /// The session's own context, set right after construction (the planner
-    /// is built before the context exists). The metric bind plans each
-    /// grounding through it as its own statement — `statement_to_plan`
-    /// collects table references per statement, so a grounding's tables
-    /// resolve even when the outer statement never names them.
-    pub ctx: RwLock<Option<SessionContext>>,
-    /// The cube cache — the Plane's, shared by every channel, or the
-    /// session's own when it was built without one. A query result,
-    /// never the record: it lives beside the store, not in it.
-    pub cube: RwLock<crate::cube::CubeCache>,
-    /// The catalog walk, held for the statement that asked for it and
-    /// dropped when the next one begins ([`Session::execute_statements`]).
-    ///
-    /// A statement asks the same question of the catalog many times over:
-    /// every plan built under it re-resolves the dataset's tables, and a
-    /// cube read builds a plan per metric and per admitted dimension. The
-    /// answer cannot change underneath it — no statement lands into the
-    /// dataset and then reads it back, so the walk that served the first
-    /// plan serves the last one.
-    ///
-    /// Keyed by dataset because a read can name one the session is not
-    /// bound to (`GLOSSARY(fin, …)`).
-    pub pins: RwLock<std::collections::HashMap<String, Arc<Vec<PinnedTable>>>>,
-    /// The tables a statement loaded by name, beside the walk. A plan
-    /// that names its tables takes them from the walk when one stands,
-    /// from here otherwise, and loads from the catalog only what
-    /// neither holds — a cube build plans one query per series, and
-    /// each used to load its tables again. Dropped with the walk.
-    pub named: RwLock<std::collections::HashMap<String, Named>>,
-    /// The read context per dataset, held for the statement: built once
-    /// and served to every arm and every cube build under it. Beside it
-    /// the store's write count it was built at — a write of this store
-    /// moves the count, and the entry is rebuilt. Dropped with the walk.
-    pub contexts: RwLock<std::collections::HashMap<String, (u64, ReadContext)>>,
-    /// The shipped reads served from memory — the Plane's, shared by
-    /// every channel, or the session's own when built without one.
-    pub shipped: RwLock<crate::memo::ShippedCache>,
-    /// Whether this session's planner folds unquoted identifiers —
-    /// `datafusion.sql_parser.enable_ident_normalization`, read off the
-    /// config the session was built with. See [`Shared::idents`].
-    pub normalize_idents: bool,
-    /// The pages the door serves — the skills and their references,
-    /// the docs, the language, the engine's SQL guide — as the rows of
-    /// `pages()`. The Plane hands them in (the binary embeds them); a
-    /// session built without one serves none.
-    pub pages: RwLock<Arc<[DoorPage]>>,
-    /// Whether a source may be a path on this machine — the laptop's
-    /// shape. A deployment has no directory and refuses one: its
-    /// filesystem is the process's own, the environment among it.
-    pub local_sources: std::sync::atomic::AtomicBool,
-}
-
-/// One dataset's tables loaded by name, each as its pinned provider.
-pub(crate) type Named =
-    std::collections::HashMap<String, Arc<dyn datafusion::catalog::TableProvider>>;
-
-/// One page the door serves. `pages()` serves the resource URI, the
-/// title and the body verbatim; a resource listing serves the URI
-/// under `name`, with `description` saying when the page is worth
-/// reading, and `mime` with the body.
-#[derive(Debug, Clone)]
-pub struct DoorPage {
-    pub uri: String,
-    pub name: String,
-    pub title: String,
-    pub description: String,
-    pub mime: &'static str,
-    pub body: String,
-}
-
-impl std::fmt::Debug for Shared {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // SessionContext is not Debug; the dataset is the identifying bit.
-        f.debug_struct("Shared")
-            .field("dataset", &self.dataset)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Shared {
-    /// How this session reads an identifier: quoted stays exact,
-    /// unquoted folds with ASCII case, and the session's
-    /// `enable_ident_normalization` decides whether the fold happens at
-    /// all (`datafusion-sql` planner.rs, `IdentNormalizer`).
-    ///
-    /// DataFusion's own normalizer rather than the same rule written out
-    /// here. Every seam in this crate that claims a name by matching it
-    /// has to read that name the way the planner will: a seam that folds
-    /// differently either claims a name the planner would have given to
-    /// something else, or fails to claim one and lets the default path
-    /// serve it — and the second is silent, because the default path
-    /// answers with plausible rows.
-    pub fn idents(&self) -> IdentNormalizer {
-        IdentNormalizer::new(self.normalize_idents)
-    }
-
-    pub fn lake(&self) -> Lake {
-        self.store.lake()
-    }
-
-    /// The dataset's tables from the catalog, walked once for the
-    /// statement and served from [`Shared::pins`] after that.
-    ///
-    /// Two callers racing an empty entry both walk and both store. That
-    /// is the arrangement [`glossql_glossary::Store`] already makes for
-    /// the store's own head: a duplicate round trip is cheaper than an
-    /// async-aware lock, and within one statement the two answers agree.
-    pub(crate) async fn pinned(
-        &self,
-        dataset: &str,
-    ) -> Result<Arc<Vec<PinnedTable>>, SessionError> {
-        if let Some(held) = self.pins.read().expect("pins lock").get(dataset) {
-            return Ok(Arc::clone(held));
-        }
-        let walked = Arc::new(self.lake().pin_dataset(dataset).await?);
-        self.pins
-            .write()
-            .expect("pins lock")
-            .insert(dataset.to_string(), Arc::clone(&walked));
-        Ok(walked)
-    }
-
-    /// Everything held from the catalog, dropped so the next statement
-    /// walks again. A landing one statement commits is visible to the
-    /// next, which is the whole of what this has to guarantee.
-    /// The bound dataset's groundings as the catalog lists them — the
-    /// views under the metrics' names, read off the mount, which a
-    /// grounding write rebuilds. Empty while nothing is bound.
-    /// The bound dataset's groundings as the catalog lists them: each
-    /// view's name to its definition, at the mount's generation.
-    pub(crate) async fn views(
-        &self,
-    ) -> Result<std::collections::HashMap<String, String>, SessionError> {
-        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
-            return Ok(Default::default());
-        };
-        Ok(self.lake().provider().await?.views(&dataset))
-    }
-
-    pub fn forget_pins(&self) {
-        self.pins.write().expect("pins lock").clear();
-        self.named.write().expect("named lock").clear();
-        self.contexts.write().expect("contexts lock").clear();
-    }
-
-    /// The bound dataset's tables, each pinned at its current snapshot —
-    /// resolved once per statement, so two scans can never straddle a
-    /// landing.
-    pub async fn statement_pins(
-        &self,
-    ) -> Result<
-        std::collections::HashMap<String, Arc<dyn datafusion::catalog::TableProvider>>,
-        SessionError,
-    > {
-        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
-            return Ok(Default::default());
-        };
-        Ok(self
-            .pinned(&dataset)
-            .await?
-            .iter()
-            .map(|p| (p.name.clone(), Arc::clone(&p.provider)))
-            .collect())
-    }
-
-    /// The pins of a statement whose every relation is a plain table
-    /// of the bound dataset: those tables, loaded by name, and nothing
-    /// else of the dataset. `None` for any other statement — one that
-    /// names another dataset's table, a read, a door, a store relation,
-    /// or a name the dataset does not hold — and the caller takes
-    /// [`Shared::statement_pins`], the whole walk, which is what those
-    /// read and where a misspelt name finds its hint.
-    pub(crate) async fn named_pins(
-        &self,
-        relations: &[datafusion::common::TableReference],
-    ) -> Result<
-        Option<std::collections::HashMap<String, Arc<dyn datafusion::catalog::TableProvider>>>,
-        SessionError,
-    > {
-        use datafusion::common::TableReference;
-        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
-            return Ok(None);
-        };
-        let mut names = Vec::with_capacity(relations.len());
-        for relation in relations {
-            match relation {
-                TableReference::Bare { table } => names.push(table.to_string()),
-                TableReference::Partial { schema, table } if schema.as_ref() == dataset => {
-                    names.push(table.to_string());
-                }
-                _ => return Ok(None),
-            }
-        }
-        // A name this server claims is never asked of the catalog: it
-        // would answer absent, one round trip later.
-        let claimed = |name: &str| {
-            glossql_glossary::RELATIONS.iter().any(|r| r.name == name)
-                || crate::library::LIBRARY.iter().any(|(n, _)| *n == name)
-                || DOORS.iter().any(|(n, _)| *n == name)
-        };
-        if names.is_empty() || names.iter().any(|n| claimed(n)) {
-            return Ok(None);
-        }
-        names.sort();
-        names.dedup();
-        // The statement's walk, when it stands, holds every table of the
-        // dataset: a name it lacks is no table, and the caller wants the
-        // walk's hint for it.
-        let walk = self.pins.read().expect("pins lock").get(&dataset).cloned();
-        if let Some(walk) = walk {
-            let mut out = std::collections::HashMap::with_capacity(names.len());
-            for name in &names {
-                match walk.iter().find(|p| &p.name == name) {
-                    Some(p) => {
-                        out.insert(name.clone(), Arc::clone(&p.provider));
-                    }
-                    None => return Ok(None),
-                }
-            }
-            return Ok(Some(out));
-        }
-        let held = self
-            .named
-            .read()
-            .expect("named lock")
-            .get(&dataset)
-            .cloned()
-            .unwrap_or_default();
-        let mut out: std::collections::HashMap<_, _> = names
-            .iter()
-            .filter_map(|n| held.get(n).map(|p| (n.clone(), Arc::clone(p))))
-            .collect();
-        let missing: Vec<String> = names
-            .iter()
-            .filter(|n| !held.contains_key(*n))
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            let Some(loaded) = self.lake().pin_tables(&dataset, &missing).await? else {
-                return Ok(None);
-            };
-            let mut named = self.named.write().expect("named lock");
-            let slot = named.entry(dataset).or_default();
-            for p in loaded {
-                slot.insert(p.name.clone(), Arc::clone(&p.provider));
-                out.insert(p.name, p.provider);
-            }
-        }
-        Ok(Some(out))
-    }
-
-    /// The shipped-read cache this session serves from.
-    pub fn shipped(&self) -> crate::memo::ShippedCache {
-        self.shipped.read().expect("shipped lock").clone()
-    }
-
-    pub fn runtime(&self) -> Arc<dyn FunctionRuntime> {
-        Arc::clone(&self.runtime.read().expect("runtime lock"))
-    }
-
-    pub fn cube(&self) -> crate::cube::CubeCache {
-        self.cube.read().expect("cube lock").clone()
-    }
-
-    /// The process's engine runtime — the one the session's own context
-    /// is built on, handed to the scratch context a recipe or a probe
-    /// runs in so its plan answers to the same memory pool and spill
-    /// space.
-    pub fn env(&self) -> Arc<RuntimeEnv> {
-        self.session_ctx().runtime_env()
-    }
-
-    /// A scratch context on the plane's pool and spill space, with the
-    /// session's configuration and none of its catalog: what a plan
-    /// over a batch the session already holds — a cube's cells, a
-    /// service's answer — runs through.
-    pub fn scratch_ctx(&self) -> SessionContext {
-        let session = self.session_ctx();
-        SessionContext::new_with_config_rt(session.copied_config(), session.runtime_env())
-    }
-
-    /// The session's own context — set right after construction, so
-    /// absence is a construction bug, never a runtime state.
-    pub fn session_ctx(&self) -> SessionContext {
-        self.ctx
-            .read()
-            .expect("ctx lock")
-            .clone()
-            .expect("the session context is set at construction")
-    }
-
-    /// What the store cannot know (SPEC.md §5.3): the subjects that exist —
-    /// the recipe tables and their columns — and each table's current
-    /// snapshot. Read from the catalog every time, so a landing is
-    /// visible the moment it committed; the disclosure grid and the
-    /// staleness comparison ride on this. What the *store* knows is
-    /// held for us by [`Store::read_context`], keyed by its version.
-    pub async fn read_context(&self) -> Result<ReadContext, SessionError> {
-        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
-            return Ok(ReadContext::default());
-        };
-        self.read_context_for(&dataset).await
-    }
-
-    /// The same, for a read that resolved its own dataset from an
-    /// argument — `GLOSSARY(fin, …)` names `fin` whether or not a `USE`
-    /// bound it. Taking the binding there would answer an empty context,
-    /// and an empty context is not an error: it reads as "nothing is
-    /// glossed" rather than "you are not where you think you are". The
-    /// binding decides what an *unqualified* name means; a qualified one
-    /// decides for itself.
-    pub async fn read_context_for(&self, dataset: &str) -> Result<ReadContext, SessionError> {
-        // Held for the statement at the store's write count: a write of
-        // this store moves the count and the next ask rebuilds.
-        let writes = self.store.writes();
-        let held = self
-            .contexts
-            .read()
-            .expect("contexts lock")
-            .get(dataset)
-            .filter(|(at, _)| *at == writes)
-            .map(|(_, ctx)| ctx.clone());
-        if let Some(ctx) = held {
-            return Ok(ctx);
-        }
-        let ctx = self.build_context(dataset).await?;
-        self.contexts
-            .write()
-            .expect("contexts lock")
-            .insert(dataset.to_string(), (writes, ctx.clone()));
-        Ok(ctx)
-    }
-
-    /// The context, built: the walk's subjects and snapshots, then the
-    /// store's relations at their version.
-    async fn build_context(&self, dataset: &str) -> Result<ReadContext, SessionError> {
-        // Through the pin walk, which is the one walk over a dataset's
-        // catalog: the snapshot and the columns are two fields of the
-        // metadata it already loads. Asked separately they cost two more
-        // loads of the same file per table. The providers it also builds
-        // are dropped here — they are an Arrow schema conversion over
-        // metadata in hand, no IO, which is why one function serves both
-        // callers rather than two walking the same catalog.
-        let mut universe = Vec::new();
-        let mut snapshots = std::collections::HashMap::new();
-        let mut shapes = std::collections::HashMap::new();
-        for pinned in self.pinned(dataset).await?.iter() {
-            // Only `Some`: a table nothing has landed into is a subject
-            // that can be glossed but contributes no part to the pin
-            // ([`glossql_glossary::Store::pin`]). Letting the `None`
-            // through would rewrite every pin text in the workspace and
-            // miss every measurement stored under the old ones.
-            if let Some(snapshot) = pinned.snapshot_id {
-                snapshots.insert(pinned.name.clone(), snapshot);
-            }
-            shapes.insert(pinned.name.clone(), pinned.shape.clone());
-            for column in &pinned.columns {
-                universe.push(format!("{}.{column}", pinned.name));
-            }
-            universe.push(pinned.name.clone());
-        }
-        Ok(self
-            .store
-            .read_context(dataset, universe, snapshots, shapes)
-            .await?)
-    }
-}
 
 /// Detector verdicts, computed at read (SPEC.md §7.2) and never
 /// stored. Keyed by the witness, not the detector alone: one
@@ -522,46 +147,6 @@ pub(crate) async fn verdicts(
 /// typed value through the plan. Each returned row answers to the §7.2
 /// contract: `(subject, band, score)`; the engine completes the attest
 /// row with witness, aspect, and its own clock.
-/// The reads the planner answers by name — the doors over the record
-/// that no SQL file carries — each with the call that reaches it. The
-/// dispatch below answers every name here. The door's function listing
-/// and the window's vocabulary read this list, so neither can drift
-/// from the dispatch, and the suite plans each call.
-pub const DOORS: &[(&str, &str)] = &[
-    ("glossary", "GLOSSARY(<subject>[, all => true])"),
-    ("attest", "ATTEST(<dataset>)"),
-    ("metric_axes", "metric_axes()"),
-    (
-        "metric_series",
-        "metric_series([grain => '<grain>'][, world => '<world>'][, scenario => '<name>'][, plan => '<name>'])",
-    ),
-    ("fact_values", "fact_values()"),
-    ("band_points", "band_points()"),
-    ("forecast_points", "forecast_points()"),
-    ("forecast_coverage", "forecast_coverage()"),
-    ("scenario_points", "scenario_points(scenario => '<name>')"),
-    ("scenario_levers", "scenario_levers(scenario => '<name>')"),
-    ("plan_points", "plan_points()"),
-    ("metric_sources", "metric_sources()"),
-    ("metric_band_walk", "metric_band_walk('<dataset>')"),
-    (
-        "metric_forecast_ahead",
-        "metric_forecast_ahead('<dataset>')",
-    ),
-    ("grounding_collisions", "grounding_collisions('<dataset>')"),
-    ("behavior_anchors", "behavior_anchors('<subject>')"),
-    ("relationship_checks", "relationship_checks('<dataset>')"),
-    (
-        "relationship_candidates",
-        "relationship_candidates('<dataset>')",
-    ),
-    ("hierarchy_candidates", "hierarchy_candidates('<table>')"),
-    ("derivation_candidates", "derivation_candidates('<table>')"),
-    ("source_files", "source_files('<source>')"),
-    ("pages", "pages()"),
-    ("current_dataset", "current_dataset"),
-];
-
 /// The context a detector's query plans on: the engine's defaults over
 /// the witness's `slots` relation and nothing else. The door's function
 /// listing reads the same builder.
@@ -733,7 +318,7 @@ pub(crate) struct GlossqlReads {
     /// before planning, read by the planner, written by nothing after.
     /// Each statement's state carries its own, so concurrent statements
     /// on one session share no mutable planning state and need no lock.
-    pub resolved: Arc<crate::prepass::Resolved>,
+    pub resolved: Arc<Resolved>,
 }
 
 /// A session state for one statement, carrying that statement's resolved
@@ -745,7 +330,7 @@ pub(crate) struct GlossqlReads {
 pub(crate) fn state_with(
     ctx: &datafusion::prelude::SessionContext,
     shared: &Arc<Shared>,
-    resolved: crate::prepass::Resolved,
+    resolved: Resolved,
 ) -> datafusion::execution::SessionState {
     let mut state = ctx.state();
     state
@@ -855,7 +440,7 @@ impl RelationPlanner for GlossqlReads {
         // `subject_column('table.column')` — the pre-pass built the
         // projection from the pin; a malformed argument is refused here
         // with the same reader the pre-pass used.
-        if let Some(arg) = crate::prepass::subject_column_arg(&self.shared.idents(), &relation) {
+        if let Some(arg) = crate::subject::subject_column_arg(&self.shared.idents(), &relation) {
             let subject = arg.map_err(|e| DataFusionError::Plan(e.to_string()))?;
             return self.planned(&format!("subject_column:{subject}"), alias.clone());
         }
@@ -894,421 +479,15 @@ impl RelationPlanner for GlossqlReads {
     }
 }
 
-/// Whether a factor [`compute_batch`] resolves serves the record —
-/// the glossary directly (`glossary`, `GLOSSARY()`, `ATTEST()`) or
-/// what collapsed slots say (the walk reads groundings, collisions and
-/// anchors read claims, `metric_axes()` says what the cube admitted).
-/// The pre-pass derives the statement's frame class from this
-/// (`record`/`data`): a `record` answer can change under a glossary
-/// write, a `data` answer cannot. The class is about what a door
-/// SERVES, not what its build consumed: `metric_series()` enumerates
-/// groundings to find its cells, but what it serves is the data at a
-/// grain, so it stays out. A new arm in the match below decides its
-/// class here, in the same file.
-pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> bool {
-    let TableFactor::Table { name, .. } = f else {
-        return false;
-    };
-    let [part] = name.0.as_slice() else {
-        return false;
-    };
-    part.as_ident().is_some_and(|i| {
-        matches!(
-            idents.normalize(i.clone()).as_str(),
-            "glossary"
-                | "attest"
-                | "grounding_collisions"
-                | "metric_band_walk"
-                | "band_points"
-                | "metric_forecast_ahead"
-                | "forecast_points"
-                | "forecast_coverage"
-                | "scenario_points"
-                | "scenario_levers"
-                | "plan_points"
-                | "metric_axes"
-                | "metric_sources"
-                | "behavior_anchors"
-        )
-    })
-}
-
-/// What a compute door READS — the legs of the measurement record
-/// ([`crate::prepass::ReadSet`], the currency rule). Beside
-/// [`reads_the_record`] on purpose: a new arm in [`compute_batch`]
-/// decides its class here, in the same file. Only called for factors
-/// that resolved as compute doors; anything unlisted falls to
-/// `everything`, the conservative floor — a record never narrower
-/// than what was read.
-pub(crate) fn door_reads(
-    idents: &IdentNormalizer,
-    f: &TableFactor,
-    reads: &mut crate::prepass::ReadSet,
-) {
-    let TableFactor::Table { name, args, .. } = f else {
-        return;
-    };
-    let [part] = name.0.as_slice() else {
-        // The `misfit.` door: a frame replays a grounding — not
-        // enumerable from here.
-        reads.everything = true;
-        return;
-    };
-    let Some(door) = part.as_ident().map(|i| idents.normalize(i.clone())) else {
-        return;
-    };
-    let arg = args.as_ref().and_then(single_string_arg);
-    match (door.as_str(), args.is_some()) {
-        // One table, the argument's own: candidate enumeration over
-        // its columns.
-        ("derivation_candidates" | "hierarchy_candidates", _) => {
-            reads.tables.extend(arg);
-        }
-        // The whole dataset's tables; the anchor and check doors read
-        // the declared edges beside them.
-        ("relationship_candidates", _) => reads.all_tables = true,
-        ("behavior_anchors" | "relationship_checks", _) => {
-            reads.all_tables = true;
-            reads.relations.insert("relationships".into());
-        }
-        // The slot walkers: the collapsed groundings run over the
-        // landed data. The groundings are one leg of their own —
-        // `glossql.grounding`, the digest of every QUERY writing, the
-        // QUERY aspects and their witnesses — so a definitions entry,
-        // an app page or a declared check moves none of these.
-        (
-            "grounding_collisions"
-            | "metric_band_walk"
-            | "metric_forecast_ahead"
-            | "metric_sources",
-            _,
-        ) => {
-            reads.all_tables = true;
-            reads.relations.insert("grounding".into());
-        }
-        // The binding, not state: no pin leg moves it. The door's
-        // pages are the binary's: nothing in the workspace moves them.
-        ("current_dataset" | "pages", _) => {}
-        // A store relation read as a plain table — bare names only:
-        // `glossary` the relation is one leg, `GLOSSARY(subject)` the
-        // door is a collapse over half the store and falls through.
-        (name, false) if glossql_glossary::relation_columns(name).is_some() => {
-            reads.relations.insert(name.to_string());
-        }
-        // GLOSSARY(), ATTEST(), the cube's reads, and anything a later
-        // arm adds without a row here.
-        _ => reads.everything = true,
-    }
-}
-
-/// The one quoted string argument of a door, if that is what the args
-/// hold.
-fn single_string_arg(a: &datafusion::sql::sqlparser::ast::TableFunctionArgs) -> Option<String> {
-    use datafusion::sql::sqlparser::ast::{Expr, FunctionArg, FunctionArgExpr, Value as SqlValue};
-    if let [FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(v)))] = a.args.as_slice()
-        && let SqlValue::SingleQuotedString(s) = &v.value
-    {
-        return Some(s.clone());
-    }
-    None
-}
-
 /// The scan's display name: the factor without its alias, which rides
 /// `PlannedRelation` instead.
-fn display_name(factor: &TableFactor) -> String {
+pub(crate) fn display_name(factor: &TableFactor) -> String {
     match factor {
         TableFactor::Table {
             name, args: None, ..
         } => name.to_string(),
         TableFactor::Table { name, .. } => format!("{name}()"),
         other => other.to_string(),
-    }
-}
-
-/// Evaluate one compute door ahead of planning — the async half behind
-/// the planner's lookup. `None` for anything that is not a compute door.
-/// `resolved` carries the statement's pins, which is how a search door
-/// reads the same snapshot every other scan in the statement reads.
-pub(crate) async fn compute_batch(
-    shared: &Arc<Shared>,
-    factor: &TableFactor,
-    resolved: &crate::prepass::Resolved,
-) -> Result<Option<Served>, SessionError> {
-    let TableFactor::Table { name, args, .. } = factor else {
-        return Ok(None);
-    };
-    if let [prefix, door] = name.0.as_slice()
-        && let (Some(prefix), Some(door)) = (prefix.as_ident(), door.as_ident())
-    {
-        if shared.idents().normalize(prefix.clone()) == "misfit" {
-            let Some(a) = args else { return Ok(None) };
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(format!(
-                    "misfit.{}() takes no arguments — the frame is the aspect's \
-                     grounding (fixture 20)",
-                    door.value
-                )));
-            }
-            return Ok(Some(
-                (Box::pin(crate::misfit::misfit_batch(shared, &door.value)).await?).into(),
-            ));
-        }
-        return Ok(None);
-    }
-    let [part] = name.0.as_slice() else {
-        return Ok(None);
-    };
-    let Some(fname) = part
-        .as_ident()
-        .map(|i| shared.idents().normalize(i.clone()))
-    else {
-        return Ok(None);
-    };
-    match (fname.as_str(), args) {
-        // The search doors: candidate enumeration over a table's own
-        // columns, computed here because a static SQL body cannot spell
-        // a schema it does not know.
-        ("derivation_candidates", Some(a)) => {
-            let table = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "derivation_candidates takes one quoted table: \
-                     derivation_candidates('table')"
-                        .into(),
-                )
-            })?;
-            Ok(Some(
-                (crate::search::derivation_candidates(shared, resolved, &table).await?).into(),
-            ))
-        }
-        ("behavior_anchors", Some(a)) => {
-            let subject = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "behavior_anchors takes one quoted subject: \
-                     behavior_anchors('table.column')"
-                        .into(),
-                )
-            })?;
-            Ok(Some(
-                (crate::behavior::behavior_anchors(shared, resolved, &subject).await?).into(),
-            ))
-        }
-        ("metric_band_walk", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "metric_band_walk takes one quoted dataset: \
-                     metric_band_walk('dataset')"
-                        .into(),
-                )
-            })?;
-            Ok(Some(
-                (crate::search::metric_band_walk(shared, &dataset).await?).into(),
-            ))
-        }
-        // The files under a source's location, through the engine's
-        // object store — what a recipe can name, so discovering them
-        // needs no door but this one.
-        ("source_files", Some(a)) => {
-            let source = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "source_files takes one quoted source: source_files('erp')".into(),
-                )
-            })?;
-            let settings =
-                shared
-                    .store
-                    .source_settings(&source)
-                    .await?
-                    .ok_or(SessionError::Store(glossql_glossary::Error::Unknown {
-                        what: "source",
-                        name: source.clone(),
-                    }))?;
-            let spec = glossql_import::SourceSpec::from_settings(&source, &settings)?;
-            let span =
-                tracing::info_span!("listing", source = %source, files = tracing::field::Empty);
-            let files =
-                tracing::Instrument::instrument(glossql_import::list_source(&spec), span.clone())
-                    .await?;
-            span.record("files", files.len());
-            Ok(Some(source_files_batch(files).into()))
-        }
-        // The groundings the cube does not chart — facts and relations
-        // — served whole, the value where the frame is one row.
-        ("fact_values", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "fact_values() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
-            Ok(Some((crate::search::fact_values(shared).await?).into()))
-        }
-        // What feeds each grounding: the served fields and the table
-        // columns they descend from — the cube's provenance walk as
-        // rows, for a page that draws lineage.
-        ("metric_sources", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "metric_sources() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
-            Ok(Some((crate::search::metric_sources(shared).await?).into()))
-        }
-        // The recorded walk, flattened: what `metric_bands` landed for
-        // the bound dataset, one row per metric per point.
-        ("band_points", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "band_points() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
-            Ok(Some((crate::search::band_points(shared).await?).into()))
-        }
-        // The forecast at an origin: the door behind `metric_forecast`,
-        // and the two reads over what it landed.
-        ("metric_forecast_ahead", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "metric_forecast_ahead takes one quoted dataset: \
-                     metric_forecast_ahead('dataset')"
-                        .into(),
-                )
-            })?;
-            Ok(Some(
-                (crate::search::metric_forecast_ahead(shared, &dataset).await?).into(),
-            ))
-        }
-        ("forecast_points", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "forecast_points() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
-            Ok(Some((crate::search::forecast_points(shared).await?).into()))
-        }
-        ("forecast_coverage", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "forecast_coverage() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
-            Ok(Some(
-                (crate::search::forecast_coverage(shared).await?).into(),
-            ))
-        }
-        // The scenario world cell by cell (crate::scenario), the
-        // scenario named.
-        ("scenario_points", Some(a)) => {
-            let name = crate::scenario::name_arg("scenario_points", &a.args)?;
-            Ok(Some(
-                (Box::pin(crate::scenario::scenario_points(shared, &name)).await?).into(),
-            ))
-        }
-        // Each lever's part of the estimate, the scenario named.
-        ("scenario_levers", Some(a)) => {
-            let name = crate::scenario::name_arg("scenario_levers", &a.args)?;
-            Ok(Some(
-                (Box::pin(crate::scenario::scenario_levers(shared, &name)).await?).into(),
-            ))
-        }
-        // Every plan against the actual and the forecast
-        // (crate::plan_world, #117).
-        ("plan_points", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "plan_points() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
-            Ok(Some((crate::plan_world::plan_points(shared).await?).into()))
-        }
-        ("relationship_checks", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "relationship_checks takes one quoted dataset: \
-                     relationship_checks('dataset')"
-                        .into(),
-                )
-            })?;
-            Ok(Some(
-                (crate::search::relationship_checks(shared, &dataset).await?).into(),
-            ))
-        }
-        ("grounding_collisions", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "grounding_collisions takes one quoted dataset: \
-                     grounding_collisions('dataset')"
-                        .into(),
-                )
-            })?;
-            Ok(Some(
-                (crate::search::grounding_collisions(shared, &dataset).await?).into(),
-            ))
-        }
-        ("relationship_candidates", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "relationship_candidates takes one quoted dataset: \
-                     relationship_candidates('dataset')"
-                        .into(),
-                )
-            })?;
-            Ok(Some(
-                (crate::search::relationship_candidates(shared, &dataset).await?).into(),
-            ))
-        }
-        ("hierarchy_candidates", Some(a)) => {
-            let table = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "hierarchy_candidates takes one quoted table: \
-                     hierarchy_candidates('table')"
-                        .into(),
-                )
-            })?;
-            Ok(Some(
-                (crate::search::hierarchy_candidates(shared, resolved, &table).await?).into(),
-            ))
-        }
-        ("glossary", Some(a)) => Ok(Some((glossary_read(shared, &a.args).await?).into())),
-        ("attest", Some(a)) => Ok(Some((attest_read(shared, &a.args).await?).into())),
-        // The cube's two reads (crate::cube): the cells at a grain in a
-        // world, and the fact row per metric. Both build what is not
-        // built.
-        ("metric_series", Some(a)) => {
-            let (grain, world, name) = crate::cube::series_args(&a.args)?;
-            Ok(Some(
-                crate::cube::metric_series_batch(shared, grain, world, name.as_deref()).await?,
-            ))
-        }
-        ("metric_axes", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "metric_axes() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
-            Ok(Some((crate::cube::metric_axes_batch(shared).await?).into()))
-        }
-        // The `USE`'d dataset, as a relation — the one thing a read
-        // written in SQL cannot spell for itself, and the reason the
-        // reads over the workspace-wide relations had no way to narrow
-        // to the session they answer for.
-        ("current_dataset", None) => Ok(Some((current_dataset_batch(shared)).into())),
-        // The pages the door serves, as rows — the same pages that are
-        // its MCP resources, for a client that has the statement tool
-        // and nothing else.
-        ("pages", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "pages() takes no arguments — `WHERE uri = '…'` reads one".into(),
-                ));
-            }
-            Ok(Some(pages_batch(shared).into()))
-        }
-        // The store's relations, readable as plain tables. Which names
-        // qualify lives in one place: the store's RELATIONS table.
-        (name, None) if glossql_glossary::relation_columns(name).is_some() => {
-            let rows = shared.store.relation_rows(&fname).await?;
-            Ok(Some((relation_batch(&fname, rows)).into()))
-        }
-        _ => Ok(None),
     }
 }
 
@@ -1449,7 +628,10 @@ async fn read_context_at(shared: &Shared, dataset: &str) -> Result<ReadContext, 
     shared.read_context_for(dataset).await
 }
 
-async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatch, SessionError> {
+pub(crate) async fn glossary_read(
+    shared: &Shared,
+    args: &[FunctionArg],
+) -> Result<RecordBatch, SessionError> {
     let (subject, all) = split_args(&shared.idents(), args, true)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
     let aspect = aspect.as_deref();
@@ -1466,7 +648,10 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
     }
 }
 
-async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatch, SessionError> {
+pub(crate) async fn attest_read(
+    shared: &Shared,
+    args: &[FunctionArg],
+) -> Result<RecordBatch, SessionError> {
     let (subject, _) = split_args(&shared.idents(), args, false)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
     let ctx = read_context_at(shared, &dataset).await?;
@@ -1750,11 +935,11 @@ fn rel_op(op: &BinaryOperator) -> Option<&'static str> {
 
 // -- batch shapes --------------------------------------------------------
 
-fn utf8(name: &str) -> Field {
+pub(crate) fn utf8(name: &str) -> Field {
     Field::new(name, DataType::Utf8, true)
 }
 
-fn batch(schema: SchemaRef, columns: Vec<ArrayRef>) -> RecordBatch {
+pub(crate) fn batch(schema: SchemaRef, columns: Vec<ArrayRef>) -> RecordBatch {
     RecordBatch::try_new(schema, columns).expect("column shapes match the schema")
 }
 
@@ -1893,31 +1078,6 @@ fn served_body(body: &str) -> String {
         .unwrap_or_else(|| body.to_string())
 }
 
-/// `source_files('source')` — one row per file under the source's
-/// location: `path` (relative, what a `read_*` call names), `size`,
-/// `modified`.
-fn source_files_batch(files: Vec<glossql_import::SourceFile>) -> RecordBatch {
-    let schema = Arc::new(Schema::new(vec![
-        utf8("path"),
-        Field::new("size", DataType::Int64, false),
-        utf8("modified"),
-    ]));
-    batch(
-        schema,
-        vec![
-            Arc::new(StringArray::from_iter_values(
-                files.iter().map(|f| f.path.as_str()),
-            )),
-            Arc::new(datafusion::arrow::array::Int64Array::from(
-                files.iter().map(|f| f.size as i64).collect::<Vec<i64>>(),
-            )),
-            Arc::new(StringArray::from_iter_values(
-                files.iter().map(|f| f.modified.as_str()),
-            )),
-        ],
-    )
-}
-
 /// The extraction outcome, one row per call: the measurement served,
 /// and `computed` — true when this call computed it, false when the
 /// recorded row was served at an unchanged pin, its `computed_at` the
@@ -1954,61 +1114,6 @@ pub(crate) fn extraction_batch(rows: Vec<(glossql_glossary::MeasurementRow, bool
             )),
         ],
     )
-}
-
-/// `current_dataset` — the bound dataset as a one-row relation, or no
-/// rows at all when nothing is bound.
-///
-/// Zero rows rather than a NULL or a refusal, and that is the whole
-/// design: a read scopes itself by joining this, so an unbound session
-/// answers nothing instead of answering for every dataset in the
-/// workspace. `GLOSSARY()` refuses an unbound session outright
-/// ([`SessionError::NoDataset`]) because a sweep with no scope is a
-/// caller's mistake; a read that joins for its scope needs an empty
-/// relation, not an error, or every read building on it would have to
-/// handle the refusal.
-///
-/// It is session state, not the record: a glossary write cannot change
-/// it, only `USE` can, which is why it is absent from
-/// [`reads_the_record`].
-fn current_dataset_batch(shared: &Shared) -> RecordBatch {
-    let bound = shared.dataset.read().expect("state lock").clone();
-    batch(
-        Arc::new(Schema::new(vec![utf8("dataset")])),
-        vec![Arc::new(StringArray::from_iter(bound.iter().map(Some))) as ArrayRef],
-    )
-}
-
-/// `pages()` — every page the door serves: `uri`, `title`, `body`.
-fn pages_batch(shared: &Shared) -> RecordBatch {
-    let pages = Arc::clone(&shared.pages.read().expect("pages lock"));
-    batch(
-        Arc::new(Schema::new(vec![utf8("uri"), utf8("title"), utf8("body")])),
-        vec![
-            Arc::new(StringArray::from_iter_values(
-                pages.iter().map(|p| p.uri.as_str()),
-            )) as ArrayRef,
-            Arc::new(StringArray::from_iter_values(
-                pages.iter().map(|p| p.title.as_str()),
-            )),
-            Arc::new(StringArray::from_iter_values(
-                pages.iter().map(|p| p.body.as_str()),
-            )),
-        ],
-    )
-}
-
-fn relation_batch(table: &str, rows: Vec<Vec<Option<String>>>) -> RecordBatch {
-    // The store's RELATIONS table is the one home of each shape; the
-    // planner only routes names that table knows.
-    let names = glossql_glossary::relation_columns(table).expect("planner routed a known relation");
-    let schema = Arc::new(Schema::new(
-        names.iter().map(|n| utf8(n)).collect::<Vec<_>>(),
-    ));
-    let columns = (0..names.len())
-        .map(|i| Arc::new(StringArray::from_iter(rows.iter().map(|r| r[i].as_deref()))) as ArrayRef)
-        .collect();
-    batch(schema, columns)
 }
 
 #[cfg(test)]
@@ -2189,25 +1294,5 @@ mod detector_tests {
             mixed.column_by_name("body").unwrap().data_type(),
             &DataType::Utf8
         );
-    }
-}
-
-/// What a compute door serves: a table, as the batches that make it up.
-/// The planner mounts them as one `MemTable` partition, so the batches
-/// are read in this order and none is copied into another — a door
-/// that already holds its rows in memory (the cube) hands them over as
-/// they are. A door with one batch is the one-batch case of this.
-#[derive(Clone, Debug)]
-pub(crate) struct Served {
-    pub schema: SchemaRef,
-    pub partitions: Vec<RecordBatch>,
-}
-
-impl From<RecordBatch> for Served {
-    fn from(batch: RecordBatch) -> Self {
-        Served {
-            schema: batch.schema(),
-            partitions: vec![batch],
-        }
     }
 }

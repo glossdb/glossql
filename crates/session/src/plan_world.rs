@@ -26,10 +26,8 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use glossql_parser::{AspectDecl, AspectKind};
 use serde_json::Value;
 
-use crate::cube::Resolution;
-use crate::period;
-use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::period::{self, Resolution};
+use crate::shared::{SessionError, Shared};
 
 /// The metric a plan aspect's declaration names, where the schema
 /// declares `x-kind: plan`: `x-plan-of` as a string. None for any other

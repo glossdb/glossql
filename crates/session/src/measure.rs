@@ -12,7 +12,7 @@ use datafusion::sql::sqlparser::ast::{
 use glossql_parser::{GlossqlParser, Statement};
 use serde_json::Value;
 
-use crate::session::SessionError;
+use crate::shared::SessionError;
 
 /// The body as one substrate query, if that is what it is. Anything
 /// else — prose, a statement sequence — is `None`, and each caller

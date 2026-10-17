@@ -102,10 +102,9 @@ use datafusion::sql::sqlparser::ast::{
 };
 use serde_json::Value;
 
-use crate::period;
-use crate::reads::{Served, Shared};
+use crate::period::{self, Resolution};
 use crate::search::{QuerySlot, current_query_slots, int_column};
-use crate::session::SessionError;
+use crate::shared::{Served, SessionError, Shared};
 use crate::subject::qi;
 
 /// The process-wide byte cap when serverd is started without
@@ -154,61 +153,6 @@ impl World {
             "scenario" => Some(World::Scenario),
             "plan" => Some(World::Plan),
             _ => None,
-        }
-    }
-}
-
-/// A calendar resolution — the rungs of the ladder, finest first, and
-/// the grains a read may ask for. Ordered, so the coarser of two is
-/// `max`.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub(crate) enum Resolution {
-    Minute,
-    Hour,
-    Day,
-    Week,
-    Month,
-    Quarter,
-    Year,
-}
-
-impl Resolution {
-    const ALL: [Resolution; 7] = [
-        Resolution::Minute,
-        Resolution::Hour,
-        Resolution::Day,
-        Resolution::Week,
-        Resolution::Month,
-        Resolution::Quarter,
-        Resolution::Year,
-    ];
-
-    pub(crate) fn parse(s: &str) -> Option<Resolution> {
-        Self::ALL.into_iter().find(|r| r.as_str() == s)
-    }
-
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Resolution::Minute => "minute",
-            Resolution::Hour => "hour",
-            Resolution::Day => "day",
-            Resolution::Week => "week",
-            Resolution::Month => "month",
-            Resolution::Quarter => "quarter",
-            Resolution::Year => "year",
-        }
-    }
-
-    /// A judged cadence (`temporal_profile.granularity`) as a
-    /// resolution. `second` is finer than the finest rung, so it reads
-    /// as the finest and the floor decides; `irregular` and `unknown`
-    /// name no cadence — such a column anchors at the floor.
-    fn cadence(granularity: &str) -> Option<Resolution> {
-        match granularity {
-            "second" => Some(Resolution::Minute),
-            other => Self::parse(other),
         }
     }
 }
@@ -857,6 +801,21 @@ pub struct CubeCache {
     builds: Arc<AtomicU64>,
     /// Entries loaded from a landed head instead of built.
     loads: Arc<AtomicU64>,
+}
+
+impl Shared {
+    /// The cube cache this session reads and fills — the Plane's,
+    /// shared by every channel, or the session's own when it was built
+    /// without one. The slot is untyped where it is held; this is the
+    /// one place that reads it, beside the type it holds.
+    pub fn cube(&self) -> CubeCache {
+        self.cube
+            .read()
+            .expect("cube lock")
+            .downcast_ref::<CubeCache>()
+            .cloned()
+            .expect("the cube slot holds the cube cache, set at construction")
+    }
 }
 
 impl CubeCache {

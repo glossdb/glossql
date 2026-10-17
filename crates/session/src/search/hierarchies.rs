@@ -10,8 +10,7 @@ use datafusion::functions_aggregate::expr_fn::count;
 use datafusion::logical_expr::{Expr, ExprFunctionExt, LogicalPlanBuilder, ident, lit};
 use serde_json::json;
 
-use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::shared::{SessionError, Shared};
 
 use super::{detector_state, int_column, rows_batch, run_plan};
 
@@ -52,7 +51,7 @@ use super::{detector_state, int_column, rows_batch, run_plan};
 /// enumerated, and `seq` carries it so the body's array reproduces it.
 pub(crate) async fn hierarchy_candidates(
     shared: &Arc<Shared>,
-    resolved: &crate::prepass::Resolved,
+    resolved: &crate::shared::Resolved,
     table: &str,
 ) -> Result<RecordBatch, SessionError> {
     let bad = |d: String| SessionError::BadSubject(format!("hierarchy_candidates('{table}'): {d}"));
