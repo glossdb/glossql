@@ -30,6 +30,7 @@ mod rule;
 
 pub use app::AppDef;
 pub use builtin::{BUILTINS, BuiltinApp};
+pub use pages::CONTENT_SECURITY_POLICY;
 
 use std::sync::Arc;
 

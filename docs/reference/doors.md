@@ -85,6 +85,11 @@ an authorization server: it verifies, it does not issue, and there is
 no login flow, no client registration and no user table inside a
 workspace. Those are the issuer's.
 
+A page the human doors render is served under a
+`Content-Security-Policy` that runs the door's own assets and nothing
+the page carries ([`apps.md`](apps.md), "Pages and tiles"), so a page
+an agent glossed cannot act with the viewer's standing.
+
 **Identity is the token's; standing is the door's.** The token's `sub`
 is the actor id. The actor kind is which door the request came
 through: `/mcp` and `/<dataset>/mcp` are agent doors, `/`, `/query` and

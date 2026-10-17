@@ -18,6 +18,20 @@ use crate::AppDoor;
 use crate::app::AppDef;
 use crate::overview;
 
+/// The policy every page is served under. A page is markup an author
+/// glossed — an agent, as often as not — and the human door renders
+/// it with the viewer's standing, so what runs in a page is the
+/// shell's own assets and nothing the page carries: no inline script,
+/// no handler attribute, no `javascript:` URL, no eval. A vega-lite
+/// spec runs in vega's interpreter (`gl-chart.js`) rather than
+/// compiled to code. Inline style stays allowed: the tiles and vega
+/// set it, and style cannot post with the viewer's cookie. A form
+/// posts to this origin alone, nothing frames a page, and the base
+/// URL cannot be moved.
+pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; \
+     style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; \
+     object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
 const SHELL: &str = include_str!("../templates/shell.html");
 const DATASETS: &str = include_str!("../templates/datasets.html");
 const TILES: &str = include_str!("../templates/modules/tiles.html");
@@ -249,7 +263,14 @@ fn render(name: &str, ctx: tera::Context, tera: Result<Tera, tera::Error>) -> Re
         // browser would serve the pre-ruling copy from cache and the
         // change would only appear on a manual reload.
         // The redirect was correct; the caching was the bug.
-        Ok(html) => ([(header::CACHE_CONTROL, "no-store")], Html(html)).into_response(),
+        Ok(html) => (
+            [
+                (header::CACHE_CONTROL, "no-store"),
+                (header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY),
+            ],
+            Html(html),
+        )
+            .into_response(),
         Err(e) => {
             let mut lines = vec![e.to_string()];
             let mut source = std::error::Error::source(&e);

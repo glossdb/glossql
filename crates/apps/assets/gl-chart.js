@@ -11,6 +11,13 @@
 (function () {
   'use strict';
 
+  // A spec runs in vega's interpreter, never compiled to code: the
+  // door's content security policy allows no eval, and a spec is an
+  // author's text. The module loads once, at the first chart.
+  const interpreter = import('/assets/vendor/vega-interpreter.js').then(
+    (m) => m.expressionInterpreter
+  );
+
   // The instrument look, matched to app.css tokens: transparent
   // ground, hairline grid, mono axes.
   const CONFIG = {
@@ -82,7 +89,12 @@
           this._view.finalize();
           this._view = null;
         }
-        const result = await vegaEmbed(this._mount, spec, { actions: false, config: CONFIG });
+        const result = await vegaEmbed(this._mount, spec, {
+          actions: false,
+          config: CONFIG,
+          ast: true,
+          expr: await interpreter,
+        });
         if (!this.isConnected) {
           result.view.finalize();
           return;
