@@ -1,0 +1,25 @@
+---
+source: crates/session/src/cube.rs
+expression: plan.display_indent().to_string()
+---
+Sort: period ASC NULLS LAST, dimension ASC NULLS LAST, member ASC NULLS LAST
+  Projection: Utf8("m") AS metric, Utf8("actual") AS world, dimension, member, period, value, num, den, behavior
+    Filter: value IS NOT NULL AND period IS NOT NULL
+      Union
+        Union
+          Projection: h.dimension, h.member, period, value, Float64(NULL) AS num, Float64(NULL) AS den, h.behavior
+            Aggregate: groupBy=[[h.dimension, h.member, CAST(date_trunc(Utf8("month"), h.period) AS Timestamp(µs)) AS period, h.behavior]], aggr=[[sum(h.value) AS value]]
+              Filter: h.behavior = Utf8("flow")
+                Filter: h.period > TimestampMicrosecond(1733011200000000, None)
+                  TableScan: h
+          Projection: h.dimension, h.member, period, num / nullif(den, Float64(0)) AS value, num, den, h.behavior
+            Aggregate: groupBy=[[h.dimension, h.member, CAST(date_trunc(Utf8("month"), h.period) AS Timestamp(µs)) AS period, h.behavior]], aggr=[[sum(h.num) AS num, sum(h.den) AS den]]
+              Filter: h.behavior = Utf8("ratio")
+                Filter: h.period > TimestampMicrosecond(1733011200000000, None)
+                  TableScan: h
+        Projection: h.dimension, h.member, CAST(date_trunc(Utf8("month"), h.period) AS Timestamp(µs)) AS period, h.value, h.num, h.den, h.behavior
+          Filter: rn = Int64(1)
+            WindowAggr: windowExpr=[[row_number() PARTITION BY [h.dimension, h.member, CAST(date_trunc(Utf8("month"), h.period) AS Timestamp(µs))] ORDER BY [h.period DESC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW AS rn]]
+              Filter: h.behavior = Utf8("stock")
+                Filter: h.period > TimestampMicrosecond(1733011200000000, None)
+                  TableScan: h

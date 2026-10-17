@@ -8,10 +8,12 @@ use datafusion::arrow::array::{Array, Float64Array, Int64Array, RecordBatch, Str
 use datafusion::arrow::compute::{CastOptions, cast_with_options};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::display::array_value_to_string;
+use datafusion::functions_aggregate::expr_fn::max;
+use datafusion::logical_expr::{cast, col, try_cast};
 use serde_json::{Value, json};
 
 use crate::reads::Shared;
-use crate::session::{FORECAST, SessionError};
+use crate::session::{Answered, FORECAST, SessionError};
 use crate::subject::qi;
 
 use super::{current_query_slots, rows_batch};
@@ -81,7 +83,6 @@ async fn run_grain(
     halves: bool,
 ) -> Result<Vec<GrainRow>, SessionError> {
     use datafusion::arrow::array::Float64Array;
-    use datafusion::arrow::compute::{CastOptions, cast_with_options};
 
     let q = grain_sql(sql, tcol, verb, grain, halves);
     let plan = crate::plan::build_plan(shared, ctx, &q).await?;
@@ -457,19 +458,7 @@ pub(crate) async fn metric_band_walk(
                 .map_err(SessionError::Runtime)?,
         )
     };
-    let (points, errors, served_by) = match &answered {
-        Some(answered) => (
-            walk_points(&answered.table, &LEVELS)
-                .map_err(|e| SessionError::Runtime(format!("the forecast service answered {e}")))?,
-            walk_errors(&answered.answer),
-            Some(format!(
-                "{} {}",
-                answered.answer["service"].as_str().unwrap_or("?"),
-                answered.answer["version"].as_str().unwrap_or("?")
-            )),
-        ),
-        None => (HashMap::new(), HashMap::new(), None),
-    };
+    let (points, errors, served_by) = answer_of(shared, answered.as_ref(), &LEVELS).await?;
 
     let mut rows = Vec::new();
     for row in out {
@@ -604,64 +593,93 @@ struct Point {
     pit: Option<f64>,
 }
 
-/// The answer's period rows, by member and period: one row per level
-/// folded into one point. A total row (`span` set) is none of the
-/// walk's and is skipped; a level nobody asked, or a point missing a
-/// level, is a wrong answer.
-fn walk_points(
+/// The walk's answer as the rows read it: the points by member and
+/// period, each member's errors, and who served; nothing where
+/// nothing was asked.
+async fn answer_of(
+    shared: &Arc<Shared>,
+    answered: Option<&Answered>,
+    levels: &[f64; 5],
+) -> Result<Answer, SessionError> {
+    let Some(answered) = answered else {
+        return Ok((HashMap::new(), HashMap::new(), None));
+    };
+    let points = walk_points(shared, &answered.table, levels)
+        .await
+        .map_err(|e| SessionError::Runtime(format!("the forecast service answered {e}")))?;
+    let served_by = format!(
+        "{} {}",
+        answered.answer["service"].as_str().unwrap_or("?"),
+        answered.answer["version"].as_str().unwrap_or("?")
+    );
+    Ok((points, walk_errors(&answered.answer), Some(served_by)))
+}
+
+/// The points by member and period, the errors by member, and who
+/// served.
+type Answer = (
+    HashMap<(String, String), Point>,
+    HashMap<String, Vec<String>>,
+    Option<String>,
+);
+
+/// The answer's period rows, by member and period, one row per level
+/// folded into one point: an aggregate over the answer batch — each
+/// asked level's value its own column, the PIT beside them — run on
+/// the plane's pool. A total row (`span` set) is none of the walk's
+/// and is skipped; a level nobody asked, or a point missing a level,
+/// is a wrong answer.
+async fn walk_points(
+    shared: &Arc<Shared>,
     answer: &RecordBatch,
     levels: &[f64; 5],
 ) -> Result<HashMap<(String, String), Point>, String> {
-    let column = |name: &str| {
-        answer
-            .column_by_name(name)
-            .ok_or_else(|| format!("no `{name}` column"))
-    };
-    let floats = |name: &str| -> Result<Float64Array, String> {
-        cast_with_options(
-            column(name)?,
-            &DataType::Float64,
-            &CastOptions {
-                safe: true,
-                ..Default::default()
-            },
-        )
-        .map_err(|e| format!("`{name}` does not read as a number: {e}"))?
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .cloned()
-        .ok_or_else(|| format!("`{name}` does not read as a number"))
-    };
-    let (member, period, span) = (column("member")?, column("period")?, column("span")?);
-    let (level, value, pit) = (floats("level")?, floats("value")?, floats("pit")?);
-    let mut out: HashMap<(String, String), [Option<f64>; 5]> = HashMap::new();
-    let mut pits: HashMap<(String, String), Option<f64>> = HashMap::new();
-    for i in 0..answer.num_rows() {
-        if !span.is_null(i) || period.is_null(i) || member.is_null(i) || level.is_null(i) {
-            continue;
-        }
-        let key = (
-            array_value_to_string(member, i).map_err(|e| e.to_string())?,
-            array_value_to_string(period, i).map_err(|e| e.to_string())?,
-        );
-        let asked = levels
-            .iter()
-            .position(|l| (l - level.value(i)).abs() < 1e-9)
-            .ok_or_else(|| format!("a level {} nobody asked", level.value(i)))?;
-        out.entry(key.clone()).or_default()[asked] = (!value.is_null(i)).then(|| value.value(i));
-        pits.insert(key, (!pit.is_null(i)).then(|| pit.value(i)));
-    }
-    out.into_iter()
-        .map(|(key, q)| {
-            let mut levels = [0.0; 5];
-            for (slot, v) in levels.iter_mut().zip(q) {
-                *slot =
-                    v.ok_or_else(|| format!("{} at {} without every level asked", key.0, key.1))?;
-            }
-            let pit = pits.remove(&key).flatten();
-            Ok((key, Point { levels, pit }))
+    let plan = super::answer_source(answer)
+        .and_then(|a| {
+            let mut columns = super::level_columns(levels)?;
+            columns.push(max(try_cast(col("pit"), DataType::Float64)).alias("pit"));
+            a.filter(
+                col("span")
+                    .is_null()
+                    .and(col("period").is_not_null())
+                    .and(col("member").is_not_null())
+                    .and(col("level").is_not_null()),
+            )?
+            .aggregate(
+                vec![
+                    col("member"),
+                    cast(col("period"), DataType::Utf8).alias("period"),
+                ],
+                columns,
+            )?
+            .build()
         })
-        .collect()
+        .map_err(|e| e.to_string())?;
+    let mut out = HashMap::new();
+    for b in super::run_answer(shared, plan)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        let column = |name: &str| {
+            b.column_by_name(name)
+                .ok_or_else(|| format!("the fold served no `{name}`"))
+        };
+        let (member, period) = (column("member")?, column("period")?);
+        let pit = column("pit")?
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .ok_or_else(|| "`pit` did not read as a number".to_string())?;
+        for i in 0..b.num_rows() {
+            let key = (
+                array_value_to_string(member, i).map_err(|e| e.to_string())?,
+                array_value_to_string(period, i).map_err(|e| e.to_string())?,
+            );
+            let levels = super::levels_of::<5>(&b, i, &format!("{} at {}", key.0, key.1))?;
+            let pit = (!pit.is_null(i)).then(|| pit.value(i));
+            out.insert(key, Point { levels, pit });
+        }
+    }
+    Ok(out)
 }
 
 /// The answer's `errors` by member: what failed alone, in the service's

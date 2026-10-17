@@ -10,12 +10,17 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Array, Int64Array, RecordBatch};
-use datafusion::arrow::datatypes::{Field, Schema};
+use datafusion::arrow::array::{Array, Float64Array, Int64Array, RecordBatch};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::common::DataFusionError;
 use datafusion::common::config::ConfigNonZeroUsize;
+use datafusion::datasource::{MemTable, provider_as_source};
 use datafusion::execution::session_state::{SessionState, SessionStateBuilder};
-use datafusion::logical_expr::LogicalPlan;
+use datafusion::functions::expr_fn::abs;
+use datafusion::functions_aggregate::expr_fn::{max, min};
+use datafusion::logical_expr::{
+    Expr, ExprFunctionExt, LogicalPlan, LogicalPlanBuilder, cast, col, lit, not, try_cast,
+};
 use datafusion::prelude::SessionContext;
 use serde_json::Value;
 
@@ -44,6 +49,101 @@ pub(crate) use forecast::{
 };
 pub(crate) use hierarchies::hierarchy_candidates;
 pub(crate) use relationships::relationship_candidates;
+
+/// A service's answer as a plan source: the batch mounted as a
+/// `MemTable` under `a`, its `member` read as text and its `level`
+/// and `value` as numbers — a value that does not read as one is
+/// none — and every other column as the service typed it.
+pub(crate) fn answer_source(answer: &RecordBatch) -> Result<LogicalPlanBuilder, DataFusionError> {
+    let table = MemTable::try_new(answer.schema(), vec![vec![answer.clone()]])?;
+    let columns = answer
+        .schema()
+        .fields()
+        .iter()
+        .map(|f| match f.name().as_str() {
+            "member" => cast(col("member"), DataType::Utf8).alias("member"),
+            "level" => try_cast(col("level"), DataType::Float64).alias("level"),
+            "value" => try_cast(col("value"), DataType::Float64).alias("value"),
+            other => col(other),
+        })
+        .collect::<Vec<_>>();
+    LogicalPlanBuilder::scan("a", provider_as_source(Arc::new(table)), None)?.project(columns)
+}
+
+/// Each asked level's `value` as its own aggregate column, `l0` on:
+/// the pivot every answer fold runs over the rows of one point, with
+/// `unasked` the lowest level nobody asked where the answer carries
+/// one. A level reads within 1e-6; the service's grid is far coarser.
+pub(crate) fn level_columns(levels: &[f64]) -> Result<Vec<Expr>, DataFusionError> {
+    let at = |l: f64| abs(col("level") - lit(l)).lt(lit(1e-6));
+    let mut out = Vec::with_capacity(levels.len() + 1);
+    for (i, l) in levels.iter().enumerate() {
+        out.push(
+            max(col("value"))
+                .filter(at(*l))
+                .build()?
+                .alias(format!("l{i}")),
+        );
+    }
+    let asked = levels
+        .iter()
+        .map(|l| at(*l))
+        .reduce(|a, b| a.or(b))
+        .unwrap_or_else(|| lit(false));
+    out.push(
+        min(col("level"))
+            .filter(not(asked))
+            .build()?
+            .alias("unasked"),
+    );
+    Ok(out)
+}
+
+/// One folded row's levels, in the order asked: every one, or why
+/// not — a level nobody asked, or a point missing one, is a wrong
+/// answer. `who` names the point for the reason.
+pub(crate) fn levels_of<const N: usize>(
+    batch: &RecordBatch,
+    row: usize,
+    who: &str,
+) -> Result<[f64; N], String> {
+    let floats = |name: &str| {
+        batch
+            .column_by_name(name)
+            .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+            .ok_or_else(|| format!("the fold served no `{name}`"))
+    };
+    let unasked = floats("unasked")?;
+    if !unasked.is_null(row) {
+        return Err(format!("a level {} nobody asked", unasked.value(row)));
+    }
+    let mut out = [0.0; N];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let column = floats(&format!("l{i}"))?;
+        if column.is_null(row) {
+            return Err(format!("{who} without every level asked"));
+        }
+        *slot = column.value(row);
+    }
+    Ok(out)
+}
+
+/// A plan over a service's answer, run on the plane's pool: its
+/// batches with rows.
+pub(crate) async fn run_answer(
+    shared: &Arc<Shared>,
+    plan: LogicalPlan,
+) -> Result<Vec<RecordBatch>, DataFusionError> {
+    Ok(shared
+        .scratch_ctx()
+        .execute_logical_plan(plan)
+        .await?
+        .collect()
+        .await?
+        .into_iter()
+        .filter(|b| b.num_rows() > 0)
+        .collect())
+}
 
 /// A named Int64 column of a one-batch result, materialized.
 pub(crate) fn int_column(

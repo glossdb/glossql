@@ -87,6 +87,15 @@ use datafusion::arrow::array::{
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::util::display::array_value_to_string;
+use datafusion::common::ScalarValue;
+use datafusion::datasource::{MemTable, provider_as_source};
+use datafusion::error::DataFusionError;
+use datafusion::functions::expr_fn::{abs, coalesce, greatest, nullif};
+use datafusion::functions_aggregate::expr_fn::{count, count_distinct, max, sum};
+use datafusion::functions_window::expr_fn::row_number;
+use datafusion::logical_expr::{
+    Expr, ExprFunctionExt, JoinType, LogicalPlan, LogicalPlanBuilder, SortExpr, col, lit,
+};
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser::ast::{
     Expr as SQLExpr, FunctionArg, FunctionArgExpr, Value as SQLValue,
@@ -1516,7 +1525,7 @@ impl Surface {
         self.cache
             .inner
             .get_with(key, async {
-                match derive(&head, grain, window.as_deref()).await {
+                match derive(shared, &head, grain, window.as_deref()).await {
                     Ok(cube) => Arc::new(cube),
                     Err(Abstain(reason)) => {
                         let mut fact = Fact::abstain(&slot.aspect, reason);
@@ -1778,65 +1787,77 @@ async fn write_fact(
                 before.fact.behavior.as_deref().unwrap_or("none")
             )
         } else {
-            drift(&now.cells, &before.cells)
+            drift(shared, &now.cells, &before.cells).await?
         });
     }
     Ok(fact)
 }
 
-/// The totals of a cube's cells by period — the undimensioned rows.
-fn totals(cells: &RecordBatch) -> HashMap<i64, f64> {
-    use datafusion::arrow::array::AsArray;
-    use datafusion::arrow::datatypes::{Float64Type, TimestampMicrosecondType};
-    let column = |name: &str| {
-        cells
-            .column_by_name(name)
-            .expect("the cells carry the series schema")
-    };
-    let dimension = column("dimension").as_string::<i32>();
-    let period = column("period").as_primitive::<TimestampMicrosecondType>();
-    let value = column("value").as_primitive::<Float64Type>();
-    (0..cells.num_rows())
-        .filter(|&i| dimension.value(i).is_empty())
-        .map(|i| (period.value(i), value.value(i)))
-        .collect()
-}
-
 /// The gap between two frames' totals over their shared periods, in
 /// the rival divergence's words, and the periods one serves and the
-/// other does not. Agreement is a zero gap, never silence.
-fn drift(now: &RecordBatch, before: &RecordBatch) -> String {
-    let (now, before) = (totals(now), totals(before));
-    let day = period::date;
-    let mut shared = 0usize;
-    let mut max: Option<(f64, i64)> = None;
-    for (p, v) in &now {
-        let Some(b) = before.get(p) else { continue };
-        shared += 1;
-        let scale = v.abs().max(b.abs());
-        let gap = if scale == 0.0 {
-            0.0
-        } else {
-            (v - b).abs() / scale
-        };
-        if max.is_none_or(|(g, _)| gap > g) {
-            max = Some((gap, *p));
-        }
-    }
-    let mut out = match max {
+/// other does not. A full join of the two over the period: the counts
+/// an aggregate, the widest gap the first row of a sort. Agreement is
+/// a zero gap, never silence.
+async fn drift(
+    shared: &Arc<Shared>,
+    now: &RecordBatch,
+    before: &RecordBatch,
+) -> Result<String, DataFusionError> {
+    let before = scan_cells("b", before)?
+        .filter(col("dimension").eq(lit("")))?
+        .build()?;
+    let joined = scan_cells("n", now)?
+        .filter(col("dimension").eq(lit("")))?
+        .join(
+            before,
+            JoinType::Full,
+            (vec!["period"], vec!["period"]),
+            None,
+        )?
+        .project(vec![
+            col("n.period").alias("now"),
+            col("b.period").alias("before"),
+            gap(col("n.value"), col("b.value")).alias("gap"),
+        ])?
+        .build()?;
+    let both = col("now").is_not_null().and(col("before").is_not_null());
+    let stats = LogicalPlanBuilder::from(joined.clone())
+        .aggregate(
+            Vec::<Expr>::new(),
+            vec![
+                count(lit(1)).filter(both.clone()).build()?.alias("shared"),
+                count(lit(1))
+                    .filter(col("now").is_null())
+                    .build()?
+                    .alias("only_before"),
+                count(lit(1))
+                    .filter(col("before").is_null())
+                    .build()?
+                    .alias("only_now"),
+            ],
+        )?
+        .build()?;
+    let widest = LogicalPlanBuilder::from(joined)
+        .filter(both)?
+        .project(vec![col("now").alias("period"), col("gap")])?
+        .sort(widest_first())?
+        .limit(0, Some(1))?
+        .build()?;
+    let stats = run_cells(shared, stats).await?;
+    let n = |name: &str| int_column(&stats, name).map(|v| v.first().copied().unwrap_or(0));
+    let (shared_n, only_before, only_now) = (n("shared")?, n("only_before")?, n("only_now")?);
+    let mut out = match peak(&run_cells(shared, widest).await?) {
         None => "no shared periods with the writing it supersedes".to_string(),
         Some((0.0, _)) => {
-            format!("no gap against the writing it supersedes over {shared} shared periods")
+            format!("no gap against the writing it supersedes over {shared_n} shared periods")
         }
         Some((gap, at)) => format!(
             "the total moved {:.1} % at {} against the writing it supersedes, the widest gap \
-             over {shared} shared periods",
+             over {shared_n} shared periods",
             gap * 100.0,
-            day(at)
+            period::date(at)
         ),
     };
-    let only_before = before.keys().filter(|p| !now.contains_key(p)).count();
-    let only_now = now.keys().filter(|p| !before.contains_key(p)).count();
     if only_before > 0 {
         out.push_str(&format!(
             "; {only_before} periods only in the writing it supersedes"
@@ -1845,7 +1866,38 @@ fn drift(now: &RecordBatch, before: &RecordBatch) -> String {
     if only_now > 0 {
         out.push_str(&format!("; {only_now} periods only now"));
     }
-    out
+    Ok(out)
+}
+
+/// The relative gap between two values: the difference over the
+/// larger magnitude, so it reads as a share of the number itself;
+/// zero where both are zero.
+fn gap(a: Expr, b: Expr) -> Expr {
+    coalesce(vec![
+        abs(a.clone() - b.clone()) / nullif(greatest(vec![abs(a), abs(b)]), lit(0.0)),
+        lit(0.0),
+    ])
+}
+
+/// The order that puts the widest gap first, the earliest period
+/// among equals.
+fn widest_first() -> Vec<SortExpr> {
+    vec![
+        SortExpr::new(col("gap"), false, false),
+        SortExpr::new(col("period"), true, false),
+    ]
+}
+
+/// The first row of a gap plan sorted [`widest_first`]: `(gap,
+/// period)`; none where no period is shared.
+fn peak(batches: &[RecordBatch]) -> Option<(f64, i64)> {
+    let b = batches.iter().find(|b| b.num_rows() > 0)?;
+    let gap = b
+        .column_by_name("gap")?
+        .as_any()
+        .downcast_ref::<Float64Array>()?;
+    let period = period::column(b.column_by_name("period")?)?;
+    (!gap.is_null(0) && !period.is_null(0)).then(|| (gap.value(0), period.value(0)))
 }
 
 /// One metric's cube at this pin. A grounding that cannot serve — no
@@ -1897,15 +1949,10 @@ impl From<SessionError> for Abstain {
     }
 }
 
-/// One cell before it is a row of the batch.
-struct Cell {
-    dimension: String,
-    member: String,
-    period: i64,
-    value: f64,
-    num: Option<f64>,
-    den: Option<f64>,
-    behavior: &'static str,
+impl From<DataFusionError> for Abstain {
+    fn from(e: DataFusionError) -> Self {
+        Abstain(e.to_string())
+    }
 }
 
 /// One row of a series query: `(period, member, value, num, den)`.
@@ -2500,9 +2547,10 @@ async fn build(
         .filter_map(|r| Some((r, settings.windows.get(r)?)))
         .map(|(r, w)| {
             format!(
-                ", {} - INTERVAL '{}' AS \"since_{}\"",
+                ", CAST({} - INTERVAL '{}' AS {}) AS \"since_{}\"",
                 period::bucket("edge", *r),
                 w.replace('\'', "''"),
+                period::TYPE,
                 r.as_str()
             )
         })
@@ -2516,56 +2564,48 @@ async fn build(
     );
     let batches = run(shared, ctx, &q).await?;
     let row = batches.iter().find(|b| b.num_rows() > 0);
-    let text = |name: &str| -> Option<String> {
-        let col = row?.column_by_name(name)?;
-        (!col.is_null(0))
-            .then(|| array_value_to_string(col, 0).ok())
-            .flatten()
+    let at = |name: &str| -> Option<i64> {
+        let col = row?.column_by_name(name).and_then(period::column)?;
+        (!col.is_null(0)).then(|| col.value(0))
     };
     let spanned = int_column(&batches, "spanned")
         .map_err(|e| Abstain(e.to_string()))?
         .first()
         .copied()
         .unwrap_or(0);
-    let since_at = |r: Resolution| text(&format!("since_{}", r.as_str()));
+    let since_at = |r: Resolution| at(&format!("since_{}", r.as_str()));
     // The metric's own window — what its series is served over, what
-    // the members rank over, and what `outside` counts against.
-    let since_own = since_at(resolution).map(|t| format!("TIMESTAMP '{t}'"));
+    // the members rank over, and what `outside` counts against — and
+    // the head's, the earliest window of the served grains.
+    let since_own = since_at(resolution);
     let since = if unbounded {
         None
     } else {
-        served
-            .iter()
-            .filter_map(|r| since_at(*r))
-            .min()
-            .map(|t| format!("TIMESTAMP '{t}'"))
+        served.iter().filter_map(|r| since_at(*r)).min()
     };
+    // The windows as the series plans spell them.
+    let since_own_lit = since_own.map(period::literal);
+    let since_lit = since.map(period::literal);
 
-    let mut cells: Vec<Cell> = Vec::new();
-    let push =
-        |cells: &mut Vec<Cell>, dimension: &str, rows: Vec<SeriesRow>, verb: &'static str| {
-            for (period, member, value, num, den) in rows {
-                cells.push(Cell {
-                    dimension: dimension.to_string(),
-                    member: member.unwrap_or_default(),
-                    period,
-                    value,
-                    num,
-                    den,
-                    behavior: verb,
-                });
-            }
-        };
+    // Every series' batches, in the series schema: the total, the
+    // members, the zeros, the rival — one head once sorted.
+    let mut batches: Vec<RecordBatch> = Vec::new();
 
     // The total series, at the floor over the head's window.
-    let total = series(
-        shared,
-        ctx,
-        &total_sql(sql, tcol, verb, floor, since.as_deref()),
-        false,
-    )
-    .await?;
-    push(&mut cells, "", total, verb);
+    batches.extend(
+        cells(
+            shared,
+            ctx,
+            &cells_sql(
+                metric,
+                "",
+                "''",
+                verb,
+                &total_sql(sql, tcol, verb, floor, since_lit.as_deref()),
+            ),
+        )
+        .await?,
+    );
 
     // Member series per admitted dimension, same verb, same window —
     // independent plans, driven concurrently. A bucketed dimension
@@ -2575,8 +2615,8 @@ async fn build(
     // builds at one pin agree.
     let members = dims.iter().map(|dcol| {
         let bucketed = bucketed.iter().any(|b| b == dcol);
-        let since = since.as_deref();
-        let since_own = since_own.as_deref();
+        let since = since_lit.as_deref();
+        let since_own = since_own_lit.as_deref();
         let p_own = p_own.as_str();
         async move {
             let member = if bucketed {
@@ -2626,28 +2666,29 @@ async fn build(
             } else {
                 format!("CAST({dcol_q} AS VARCHAR)", dcol_q = qi(dcol))
             };
-            let rows = series(
+            let rows = cells(
                 shared,
                 ctx,
-                &member_sql(sql, tcol, dcol, &member, verb, floor, since),
-                true,
+                &cells_sql(
+                    metric,
+                    dcol,
+                    "member",
+                    verb,
+                    &member_sql(sql, tcol, dcol, &member, verb, floor, since),
+                ),
             )
             .await?;
-            Ok::<_, Abstain>((dcol.clone(), rows))
+            Ok::<_, Abstain>(rows)
         }
     });
-    for (dcol, rows) in futures::future::try_join_all(members).await? {
-        push(&mut cells, &dcol, rows, verb);
+    for rows in futures::future::try_join_all(members).await? {
+        batches.extend(rows);
     }
 
     // What the data holds inside the metric's own window, counted
     // before the zeros below: a zero cell is no period of data.
-    let inside = periods_inside(
-        &cells_batch(metric, World::Actual, &cells),
-        resolution,
-        since_own.as_deref(),
-    )
-    .await?;
+    let head = one_batch(&batches)?;
+    let inside = periods_inside(shared, &head, resolution, since_own).await?;
     // A flow's empty periods are zero cells, from the total's first
     // period at the metric's resolution to the data's edge: a sum over
     // no rows is zero, and a forecast for that period is checked
@@ -2657,8 +2698,9 @@ async fn build(
     if verb == "flow"
         && let Some(edge) = edge
     {
-        zero_fill(&mut cells, resolution, edge).await?;
+        batches.extend(zero_fill(shared, &head, resolution, edge).await?);
     }
+    let head = one_batch(&batches)?;
 
     // The named rival, when a grounding assumption discloses one. The
     // rival SQL is authored but never admission-validated: it runs
@@ -2682,37 +2724,42 @@ async fn build(
                 .get("alternative")
                 .and_then(Value::as_str)
                 .unwrap_or("(rival)");
-            match rival_series(shared, surface, alt_sql, verb, floor, since.as_deref()).await {
-                Ok((rows, rival_verb, rival_foreign)) => {
+            let served = rival_series(
+                shared,
+                surface,
+                metric,
+                rival,
+                alt_sql,
+                verb,
+                floor,
+                since_lit.as_deref(),
+            )
+            .await;
+            match served {
+                Ok((mut rows, rival_verb, rival_foreign)) => {
                     foreign.extend(rival_foreign);
                     foreign.sort();
                     foreign.dedup();
                     // The rival's cells at its own verb, its empty
                     // periods zero where it is a flow, so the two
                     // lines compare like with like.
-                    let mut rival_cells: Vec<Cell> = rows
-                        .into_iter()
-                        .map(|(period, _, value, num, den)| Cell {
-                            dimension: "alternative".into(),
-                            member: rival.to_string(),
-                            period,
-                            value,
-                            num,
-                            den,
-                            behavior: rival_verb,
-                        })
-                        .collect();
                     if rival_verb == "flow"
                         && let Some(edge) = edge
                     {
-                        zero_fill(&mut rival_cells, resolution, edge).await?;
+                        let zeros = zero_fill(shared, &one_batch(&rows)?, resolution, edge).await?;
+                        rows.extend(zeros);
                     }
-                    alternative_divergence = Some(divergence(
-                        &cells,
-                        &rival_cells,
-                        a.get("tolerance").and_then(Value::as_f64),
-                    ));
-                    cells.extend(rival_cells);
+                    let rival_cells = one_batch(&rows)?;
+                    alternative_divergence = Some(
+                        divergence(
+                            shared,
+                            &head,
+                            &rival_cells,
+                            a.get("tolerance").and_then(Value::as_f64),
+                        )
+                        .await?,
+                    );
+                    batches.push(rival_cells);
                     alternative = Some(rival.to_string());
                 }
                 Err(Abstain(why)) => {
@@ -2723,16 +2770,12 @@ async fn build(
         }
     }
 
-    // The head lands sorted by period, so a reader's window prunes
-    // the file's row groups; the cells then read in one order
-    // wherever they are served from.
-    cells.sort_by(|a, b| {
-        a.period
-            .cmp(&b.period)
-            .then_with(|| a.dimension.cmp(&b.dimension))
-            .then_with(|| a.member.cmp(&b.member))
-    });
-    let cells = cells_batch(&slot.aspect, World::Actual, &cells);
+    // The head lands in one order ([`head_order`]): a sort over every
+    // series' batches, the one pass the engine makes over the head.
+    let sorted = scan_cells("h", &one_batch(&batches)?)?
+        .sort(head_order())?
+        .build()?;
+    let cells = one_batch(&run_cells(shared, sorted).await?)?;
     // What the data holds at the resolution and the window leaves out:
     // the periods the frame spans less the periods of data the total
     // series serves inside the metric's own window.
@@ -2775,44 +2818,201 @@ async fn build(
     })
 }
 
-/// A context over one cube's cells as the table `h` — the cached
-/// batch mounted as a `MemTable`, copied into nothing; every grain
-/// and every count over a head is a plan on it.
-fn over_cells(cells: &RecordBatch) -> Result<SessionContext, Abstain> {
-    let ctx = SessionContext::new();
-    let table =
-        datafusion::datasource::MemTable::try_new(cells.schema(), vec![vec![cells.clone()]])
-            .map_err(|e| Abstain(e.to_string()))?;
-    ctx.register_table("h", Arc::new(table))
-        .map_err(|e| Abstain(e.to_string()))?;
-    Ok(ctx)
+/// A cube's cells as a plan source under `name`: the cached batch
+/// mounted as a `MemTable`, copied into nothing. Every grain, every
+/// count and every comparison over cells is a plan on one of these,
+/// run on the plane's pool ([`run_cells`]).
+fn scan_cells(name: &str, cells: &RecordBatch) -> Result<LogicalPlanBuilder, DataFusionError> {
+    let table = MemTable::try_new(cells.schema(), vec![vec![cells.clone()]])?;
+    LogicalPlanBuilder::scan(name, provider_as_source(Arc::new(table)), None)
+}
+
+/// A plan over cells, run on the plane's pool and spill space: its
+/// batches.
+async fn run_cells(
+    shared: &Arc<Shared>,
+    plan: LogicalPlan,
+) -> Result<Vec<RecordBatch>, DataFusionError> {
+    shared
+        .scratch_ctx()
+        .execute_logical_plan(plan)
+        .await?
+        .collect()
+        .await
+}
+
+/// The batches a plan over cells produced, as one batch in the series
+/// schema.
+fn one_batch(batches: &[RecordBatch]) -> Result<RecordBatch, DataFusionError> {
+    let conformed = batches.iter().map(conform).collect::<Result<Vec<_>, _>>()?;
+    Ok(datafusion::arrow::compute::concat_batches(
+        &series_schema(),
+        &conformed,
+    )?)
+}
+
+/// A batch a plan served in the series' columns, under the series
+/// schema: a column the plan typed otherwise — a string a planner
+/// spelled as a view — is cast to the schema's type; a column the
+/// schema holds non-null the plan has already filtered.
+fn conform(batch: &RecordBatch) -> Result<RecordBatch, DataFusionError> {
+    let schema = series_schema();
+    let columns = schema
+        .fields()
+        .iter()
+        .zip(batch.columns())
+        .map(|(f, c)| {
+            if c.data_type() == f.data_type() {
+                Ok(Arc::clone(c))
+            } else {
+                cast(c, f.data_type()).map_err(DataFusionError::from)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RecordBatch::try_new(schema, columns)?)
+}
+
+/// The series schema's columns as a projection over cells carrying
+/// the seven cell columns: the metric and the world as literals.
+fn series_columns(metric: &str, world: World) -> Vec<Expr> {
+    vec![
+        lit(metric).alias("metric"),
+        lit(world.as_str()).alias("world"),
+        col("dimension"),
+        col("member"),
+        col("period"),
+        col("value"),
+        col("num"),
+        col("den"),
+        col("behavior"),
+    ]
+}
+
+/// The order a head lands in: by period, so a reader's window prunes
+/// the file's row groups, then dimension and member, so the cells
+/// read in one order wherever they are served from.
+fn head_order() -> Vec<SortExpr> {
+    ["period", "dimension", "member"]
+        .into_iter()
+        .map(|c| SortExpr::new(col(c), true, false))
+        .collect()
+}
+
+/// A cube's cells under another name and world: a plan aspect's cells
+/// served as the plan world of the metric it names (fixture 27). A
+/// projection with two literal columns; the seven cell columns pass
+/// through, never copied.
+async fn relabel(
+    shared: &Arc<Shared>,
+    cells: &RecordBatch,
+    metric: &str,
+    world: World,
+) -> Result<RecordBatch, DataFusionError> {
+    let plan = scan_cells("h", cells)?
+        .project(series_columns(metric, world))?
+        .build()?;
+    one_batch(&run_cells(shared, plan).await?)
+}
+
+/// The last period of a cube's total cells — the data's edge for the
+/// metric's own series — as an aggregate over the cells.
+async fn last_period(
+    shared: &Arc<Shared>,
+    cells: &RecordBatch,
+) -> Result<Option<i64>, DataFusionError> {
+    let plan = scan_cells("h", cells)?
+        .filter(col("dimension").eq(lit("")))?
+        .aggregate(Vec::<Expr>::new(), vec![max(col("period")).alias("last")])?
+        .build()?;
+    Ok(first_period(&run_cells(shared, plan).await?, "last"))
+}
+
+/// The period in the first row of a one-row answer, by column.
+fn first_period(batches: &[RecordBatch], name: &str) -> Option<i64> {
+    let column = batches
+        .iter()
+        .find(|b| b.num_rows() > 0)?
+        .column_by_name(name)
+        .and_then(period::column)?;
+    (!column.is_null(0)).then(|| column.value(0))
+}
+
+/// A plan's total cells beside the metric's at one grain: the plan's
+/// periods left-joined to the actual's, `(period, value, actual)` in
+/// period order — a join of two cubes' cells with a projection.
+async fn aligned(
+    shared: &Arc<Shared>,
+    plan: &RecordBatch,
+    actual: &RecordBatch,
+) -> Result<Vec<(i64, f64, Option<f64>)>, DataFusionError> {
+    let actual = scan_cells("a", actual)?
+        .filter(col("dimension").eq(lit("")))?
+        .build()?;
+    let joined = scan_cells("p", plan)?
+        .filter(col("dimension").eq(lit("")))?
+        .join(
+            actual,
+            JoinType::Left,
+            (vec!["period"], vec!["period"]),
+            None,
+        )?
+        .project(vec![
+            col("p.period").alias("period"),
+            col("p.value").alias("value"),
+            col("a.value").alias("actual"),
+        ])?
+        .sort(vec![SortExpr::new(col("period"), true, false)])?
+        .build()?;
+    let mut out = Vec::new();
+    for b in run_cells(shared, joined)
+        .await?
+        .iter()
+        .filter(|b| b.num_rows() > 0)
+    {
+        let floats = |n: &str| {
+            b.column_by_name(n)
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+        };
+        let period = b.column_by_name("period").and_then(period::column);
+        let (Some(period), Some(value), Some(actual)) = (period, floats("value"), floats("actual"))
+        else {
+            continue;
+        };
+        for i in 0..b.num_rows() {
+            if period.is_null(i) || value.is_null(i) {
+                continue;
+            }
+            out.push((
+                period.value(i),
+                value.value(i),
+                (!actual.is_null(i)).then(|| actual.value(i)),
+            ));
+        }
+    }
+    Ok(out)
 }
 
 /// The periods of a head's total series at a resolution, after
 /// `since` — what the metric's own window serves; every period when
 /// the window is unbounded.
 async fn periods_inside(
+    shared: &Arc<Shared>,
     cells: &RecordBatch,
     resolution: Resolution,
-    since: Option<&str>,
-) -> Result<i64, Abstain> {
+    since: Option<i64>,
+) -> Result<i64, DataFusionError> {
     if cells.num_rows() == 0 {
         return Ok(0);
     }
-    let ctx = over_cells(cells)?;
-    let p = period::bucket("period", resolution);
-    let w = since.map_or(String::new(), |s| format!(" AND {p} > {s}"));
-    let batches = ctx
-        .sql(&format!(
-            "SELECT count(DISTINCT {p}) AS n FROM h WHERE dimension = ''{w}"
-        ))
-        .await
-        .map_err(|e| Abstain(e.to_string()))?
-        .collect()
-        .await
-        .map_err(|e| Abstain(e.to_string()))?;
-    Ok(int_column(&batches, "n")
-        .map_err(|e| Abstain(e.to_string()))?
+    let bucket = period::bucket_expr(col("period"), resolution);
+    let mut plan = scan_cells("h", cells)?.filter(col("dimension").eq(lit("")))?;
+    if let Some(since) = since {
+        plan = plan.filter(bucket.clone().gt(period::scalar(since)))?;
+    }
+    let plan = plan
+        .aggregate(Vec::<Expr>::new(), vec![count_distinct(bucket).alias("n")])?
+        .build()?;
+    Ok(int_column(&run_cells(shared, plan).await?, "n")?
         .first()
         .copied()
         .unwrap_or(0))
@@ -2826,158 +3026,189 @@ async fn periods_inside(
 /// from the metric's resolution up can keep ([`build`]), so nothing
 /// here scans. A bucketed stock member (`other`) takes the bucket's
 /// latest `other` cell, where the raw query would take each of its
-/// raw members' own latest; the fact row's `bucketed` names it.
-async fn derive(head: &Cube, grain: Resolution, window: Option<&str>) -> Result<Cube, Abstain> {
-    let ctx = over_cells(&head.cells)?;
-    let sql = |q: String| {
-        let ctx = ctx.clone();
-        async move {
-            ctx.sql(&q)
-                .await
-                .map_err(|e| Abstain(e.to_string()))?
-                .collect()
-                .await
-                .map_err(|e| Abstain(e.to_string()))
-        }
-    };
-    let p = period::bucket("period", grain);
+/// raw members' own latest; the fact row's `bucketed` names it. The
+/// cells are what the plan produced ([`derive_plan`]).
+async fn derive(
+    shared: &Arc<Shared>,
+    head: &Cube,
+    grain: Resolution,
+    window: Option<&str>,
+) -> Result<Cube, Abstain> {
+    // The window's start: the edge's bucket at the grain, less the
+    // grain's rung.
     let since = match window {
         Some(w) if head.cells.num_rows() > 0 => {
-            let edge = sql(format!(
-                "SELECT {} - INTERVAL '{}' AS since FROM h",
-                period::bucket("max(period)", grain),
-                w.replace('\'', "''")
-            ))
-            .await?;
-            edge.iter()
-                .find(|b| b.num_rows() > 0)
-                .and_then(|b| {
-                    let col = b.column_by_name("since")?;
-                    (!col.is_null(0))
-                        .then(|| array_value_to_string(col, 0).ok())
-                        .flatten()
-                })
-                .map(|t| format!("TIMESTAMP '{t}'"))
+            let plan = scan_cells("h", &head.cells)?
+                .aggregate(Vec::<Expr>::new(), vec![max(col("period")).alias("edge")])?
+                .project(vec![
+                    datafusion::logical_expr::cast(
+                        period::bucket_expr(col("edge"), grain) - period::rung(w)?,
+                        period::data_type(),
+                    )
+                    .alias("since"),
+                ])?
+                .build()?;
+            first_period(&run_cells(shared, plan).await?, "since")
         }
         _ => None,
     };
-    let w = since.map_or(String::new(), |s| format!(" WHERE {p} > {s}"));
-    let batches = sql(format!(
-        "WITH w AS (SELECT * FROM h{w}) \
-         SELECT dimension, member, {p} AS period, sum(value) AS value, \
-                CAST(NULL AS DOUBLE) AS num, CAST(NULL AS DOUBLE) AS den, behavior \
-         FROM w WHERE behavior = 'flow' GROUP BY 1, 2, 3, 7 \
-         UNION ALL \
-         SELECT dimension, member, {p} AS period, sum(num) / nullif(sum(den), 0) AS value, \
-                sum(num) AS num, sum(den) AS den, behavior \
-         FROM w WHERE behavior = 'ratio' GROUP BY 1, 2, 3, 7 \
-         UNION ALL \
-         SELECT dimension, member, period, value, num, den, behavior FROM (\
-            SELECT dimension, member, {p} AS period, value, num, den, behavior, \
-                   row_number() OVER (PARTITION BY dimension, member, {p} \
-                                      ORDER BY period DESC) AS rn \
-            FROM w WHERE behavior = 'stock') WHERE rn = 1 \
-         ORDER BY period, dimension, member"
-    ))
-    .await?;
-    let mut cells: Vec<Cell> = Vec::new();
-    for b in batches.iter().filter(|b| b.num_rows() > 0) {
-        let col = |n: &str| -> Result<&ArrayRef, Abstain> {
-            b.column_by_name(n)
-                .ok_or_else(|| Abstain(format!("the grain served no {n}")))
-        };
-        let floats = |n: &str| -> Result<Float64Array, Abstain> {
-            cast(col(n)?, &DataType::Float64)
-                .map_err(|e| Abstain(e.to_string()))?
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .cloned()
-                .ok_or_else(|| Abstain(format!("{n} did not read as a number")))
-        };
-        let period = period::column(col("period")?)
-            .ok_or_else(|| Abstain("period did not read as a period".into()))?;
-        let (dimension, member, behavior) = (col("dimension")?, col("member")?, col("behavior")?);
-        let (value, num, den) = (floats("value")?, floats("num")?, floats("den")?);
-        let at = |c: &Float64Array, i: usize| (!c.is_null(i)).then(|| c.value(i));
-        for i in 0..b.num_rows() {
-            if value.is_null(i) || period.is_null(i) {
-                continue;
-            }
-            let text =
-                |c: &ArrayRef| array_value_to_string(c, i).map_err(|e| Abstain(e.to_string()));
-            let behavior: &'static str = match text(behavior)?.as_str() {
-                "stock" => "stock",
-                "ratio" => "ratio",
-                _ => "flow",
-            };
-            cells.push(Cell {
-                dimension: text(dimension)?,
-                member: text(member)?,
-                period: period.value(i),
-                value: value.value(i),
-                num: at(&num, i),
-                den: at(&den, i),
-                behavior,
-            });
-        }
-    }
+    let plan = derive_plan(&head.cells, &head.fact.metric, grain, since)?;
+    let cells = one_batch(&run_cells(shared, plan).await?)?;
     let mut fact = head.fact.clone();
     fact.resolution = Some(grain);
     fact.window = window.map(str::to_string);
     Ok(Cube {
-        cells: cells_batch(&fact.metric, World::Actual, &cells),
+        cells,
         fact,
         version_bound: head.version_bound.clone(),
     })
 }
 
-/// The disagreement between the metric's total cells and the rival's
-/// series, over their shared periods — the coordinates the docket's
-/// question needs instead of two lines to eyeball. The gap is
-/// relative, scaled by the larger magnitude, so it reads as a share of
-/// the number itself. Agreement is a zero divergence, never silence;
-/// no shared periods is its own answer.
-fn divergence(cells: &[Cell], rival: &[Cell], tolerance: Option<f64>) -> String {
-    let total: std::collections::HashMap<i64, f64> = cells
-        .iter()
-        .filter(|c| c.dimension.is_empty())
-        .map(|c| (c.period, c.value))
-        .collect();
-    let day = period::date;
-    let mut shared = 0usize;
-    let mut breaches = 0usize;
-    let mut max: Option<(f64, i64)> = None;
-    for c in rival {
-        let (p, v) = (&c.period, &c.value);
-        let Some(t) = total.get(p) else { continue };
-        shared += 1;
-        let scale = t.abs().max(v.abs());
-        let gap = if scale == 0.0 {
-            0.0
-        } else {
-            (t - v).abs() / scale
-        };
-        if max.is_none_or(|(g, _)| gap > g) {
-            max = Some((gap, *p));
-        }
-        if tolerance.is_some_and(|tol| gap > tol) {
-            breaches += 1;
-        }
+/// The plan behind [`derive`]: the head's cells after `since`, each
+/// verb's arm folded into its bucket at the grain — a flow sums, a
+/// ratio re-divides its summed halves, a stock takes the bucket's
+/// latest floor cell — the arms united, NULL values and periods
+/// dropped, named for the metric and the actual world, in the order a
+/// head lands.
+fn derive_plan(
+    cells: &RecordBatch,
+    metric: &str,
+    grain: Resolution,
+    since: Option<i64>,
+) -> Result<LogicalPlan, DataFusionError> {
+    let mut base = scan_cells("h", cells)?;
+    if let Some(since) = since {
+        base = base.filter(col("period").gt(period::scalar(since)))?;
     }
-    let Some((gap, at)) = max else {
-        return "no shared periods".into();
+    let base = base.build()?;
+    let arm =
+        |verb: &str| LogicalPlanBuilder::from(base.clone()).filter(col("behavior").eq(lit(verb)));
+    let bucket = || period::bucket_expr(col("period"), grain);
+    let group = || {
+        vec![
+            col("dimension"),
+            col("member"),
+            bucket().alias("period"),
+            col("behavior"),
+        ]
     };
-    match tolerance {
+    let none = || lit(ScalarValue::Float64(None));
+    let flow = arm("flow")?
+        .aggregate(group(), vec![sum(col("value")).alias("value")])?
+        .project(vec![
+            col("dimension"),
+            col("member"),
+            col("period"),
+            col("value"),
+            none().alias("num"),
+            none().alias("den"),
+            col("behavior"),
+        ])?
+        .build()?;
+    let ratio = arm("ratio")?
+        .aggregate(
+            group(),
+            vec![sum(col("num")).alias("num"), sum(col("den")).alias("den")],
+        )?
+        .project(vec![
+            col("dimension"),
+            col("member"),
+            col("period"),
+            (col("num") / nullif(col("den"), lit(0.0))).alias("value"),
+            col("num"),
+            col("den"),
+            col("behavior"),
+        ])?
+        .build()?;
+    let latest = row_number()
+        .partition_by(vec![col("dimension"), col("member"), bucket()])
+        .order_by(vec![SortExpr::new(col("period"), false, false)])
+        .build()?
+        .alias("rn");
+    let stock = arm("stock")?
+        .window(vec![latest])?
+        .filter(col("rn").eq(lit(1_i64)))?
+        .project(vec![
+            col("dimension"),
+            col("member"),
+            bucket().alias("period"),
+            col("value"),
+            col("num"),
+            col("den"),
+            col("behavior"),
+        ])?
+        .build()?;
+    LogicalPlanBuilder::from(flow)
+        .union(ratio)?
+        .union(stock)?
+        .filter(col("value").is_not_null().and(col("period").is_not_null()))?
+        .project(series_columns(metric, World::Actual))?
+        .sort(head_order())?
+        .build()
+}
+
+/// The disagreement between the metric's total cells and the rival's,
+/// over their shared periods — the coordinates the docket's question
+/// needs instead of two lines to eyeball. A join of the two over the
+/// period, the relative gap ([`gap`]) a projection, the counts an
+/// aggregate and the widest gap the first row of a sort. Agreement is
+/// a zero divergence, never silence; no shared periods is its own
+/// answer.
+async fn divergence(
+    shared: &Arc<Shared>,
+    cells: &RecordBatch,
+    rival: &RecordBatch,
+    tolerance: Option<f64>,
+) -> Result<String, DataFusionError> {
+    let total = scan_cells("t", cells)?
+        .filter(col("dimension").eq(lit("")))?
+        .build()?;
+    let joined = scan_cells("r", rival)?
+        .filter(col("dimension").eq(lit("alternative")))?
+        .join(
+            total,
+            JoinType::Inner,
+            (vec!["period"], vec!["period"]),
+            None,
+        )?
+        .project(vec![
+            col("r.period").alias("period"),
+            gap(col("t.value"), col("r.value")).alias("gap"),
+        ])?
+        .build()?;
+    let mut counts = vec![count(lit(1)).alias("shared")];
+    if let Some(tol) = tolerance {
+        counts.push(
+            count(lit(1))
+                .filter(col("gap").gt(lit(tol)))
+                .build()?
+                .alias("breaches"),
+        );
+    }
+    let stats = LogicalPlanBuilder::from(joined.clone())
+        .aggregate(Vec::<Expr>::new(), counts)?
+        .build()?;
+    let widest = LogicalPlanBuilder::from(joined)
+        .sort(widest_first())?
+        .limit(0, Some(1))?
+        .build()?;
+    let stats = run_cells(shared, stats).await?;
+    let n = |name: &str| int_column(&stats, name).map(|v| v.first().copied().unwrap_or(0));
+    let shared_n = n("shared")?;
+    let Some((gap, at)) = peak(&run_cells(shared, widest).await?) else {
+        return Ok("no shared periods".into());
+    };
+    Ok(match tolerance {
         Some(tol) => format!(
-            "{breaches} of {shared} shared periods differ beyond {tol}; \
-             max relative gap {gap:.4} at {}",
-            day(at)
+            "{} of {shared_n} shared periods differ beyond {tol}; max relative gap {gap:.4} at {}",
+            n("breaches")?,
+            period::date(at)
         ),
         None => format!(
-            "max relative gap {gap:.4} at {} over {shared} shared periods",
-            day(at)
+            "max relative gap {gap:.4} at {} over {shared_n} shared periods",
+            period::date(at)
         ),
-    }
+    })
 }
 
 /// A flow's empty periods as zero cells, for the total series and the
@@ -2987,69 +3218,57 @@ fn divergence(cells: &[Cell], rival: &[Cell], tolerance: Option<f64>) -> String 
 /// at zero — a sum over no rows. The grid is the engine's: a series
 /// over the period range at the resolution's step, joined to the
 /// buckets the cells hold, and the periods the join leaves empty are
-/// the zeros. The head stays at the floor: one zero cell per empty
+/// the zeros, served as batches in the series schema beside the cells
+/// they fill. The head stays at the floor: one zero cell per empty
 /// period folds to zero at the resolution and above, and the floor is
 /// never served below the resolution. A member's gap stays a gap, and
 /// so does a stock's or a ratio's; the caller filters by verb.
 async fn zero_fill(
-    cells: &mut Vec<Cell>,
+    shared: &Arc<Shared>,
+    cells: &RecordBatch,
     resolution: Resolution,
     edge: i64,
-) -> Result<(), Abstain> {
-    if cells.is_empty() {
-        return Ok(());
+) -> Result<Vec<RecordBatch>, DataFusionError> {
+    if cells.num_rows() == 0 {
+        return Ok(Vec::new());
     }
-    let ctx = over_cells(&cells_batch("", World::Actual, cells))?;
+    let ctx = shared.scratch_ctx();
+    ctx.register_table(
+        "h",
+        Arc::new(MemTable::try_new(
+            cells.schema(),
+            vec![vec![cells.clone()]],
+        )?),
+    )?;
     let q = format!(
         "WITH present AS (\
-            SELECT dimension, member, {p} AS period FROM h \
-            WHERE behavior = 'flow' AND dimension IN ('', 'alternative') GROUP BY 1, 2, 3), \
+            SELECT metric, world, dimension, member, {p} AS period FROM h \
+            WHERE behavior = 'flow' AND dimension IN ('', 'alternative') \
+            GROUP BY 1, 2, 3, 4, 5), \
          grid AS (\
-            SELECT dimension, member, CAST(period AS {ty}) AS period FROM (\
-                SELECT dimension, member, unnest(generate_series(first, {to}, {step})) AS period \
-                FROM (SELECT dimension, member, min(period) AS first FROM present GROUP BY 1, 2))) \
-         SELECT g.dimension, g.member, g.period FROM grid g \
+            SELECT metric, world, dimension, member, CAST(period AS {ty}) AS period FROM (\
+                SELECT metric, world, dimension, member, \
+                       unnest(generate_series(first, {to}, {step})) AS period \
+                FROM (SELECT metric, world, dimension, member, min(period) AS first \
+                      FROM present GROUP BY 1, 2, 3, 4))) \
+         SELECT g.metric, g.world, g.dimension, g.member, g.period, 0.0 AS value, \
+                CAST(NULL AS DOUBLE) AS num, CAST(NULL AS DOUBLE) AS den, 'flow' AS behavior \
+         FROM grid g \
          LEFT JOIN present ON present.dimension = g.dimension \
                           AND present.member = g.member AND present.period = g.period \
-         WHERE present.period IS NULL ORDER BY 1, 2, 3",
+         WHERE present.period IS NULL ORDER BY 3, 4, 5",
         p = period::bucket("period", resolution),
         ty = period::TYPE,
         to = period::bucket(&period::literal(edge), resolution),
         step = period::interval(resolution, 1),
     );
-    let batches = ctx
-        .sql(&q)
-        .await
-        .map_err(|e| Abstain(e.to_string()))?
+    ctx.sql(&q)
+        .await?
         .collect()
-        .await
-        .map_err(|e| Abstain(e.to_string()))?;
-    for b in batches.iter().filter(|b| b.num_rows() > 0) {
-        let col = |n: &str| -> Result<&ArrayRef, Abstain> {
-            b.column_by_name(n)
-                .ok_or_else(|| Abstain(format!("the grid served no {n}")))
-        };
-        let (dimension, member) = (col("dimension")?, col("member")?);
-        let period = period::column(col("period")?)
-            .ok_or_else(|| Abstain("the grid's period did not read as a period".into()))?;
-        for i in 0..b.num_rows() {
-            if period.is_null(i) {
-                continue;
-            }
-            let text =
-                |c: &ArrayRef| array_value_to_string(c, i).map_err(|e| Abstain(e.to_string()));
-            cells.push(Cell {
-                dimension: text(dimension)?,
-                member: text(member)?,
-                period: period.value(i),
-                value: 0.0,
-                num: None,
-                den: None,
-                behavior: "flow",
-            });
-        }
-    }
-    Ok(())
+        .await?
+        .iter()
+        .map(conform)
+        .collect()
 }
 
 /// The rival's series at the metric's resolution and window, at its
@@ -3060,14 +3279,20 @@ async fn zero_fill(
 /// where several stand unjudged — a rival is a comparison cell, and an
 /// anchor guessed among several beside a judged series compares
 /// nothing. Every refusal carries its own reason for the fact row.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the rival's frame and the metric's window, named; #136 folds them"
+)]
 async fn rival_series(
     shared: &Arc<Shared>,
     surface: &Surface,
+    metric: &str,
+    rival: &str,
     sql: &str,
     chosen_verb: &str,
     resolution: Resolution,
     since: Option<&str>,
-) -> Result<(Vec<SeriesRow>, &'static str, Vec<String>), Abstain> {
+) -> Result<(Vec<RecordBatch>, &'static str, Vec<String>), Abstain> {
     let Surface {
         ctx,
         dataset,
@@ -3114,11 +3339,16 @@ async fn rival_series(
     } else {
         "flow"
     };
-    let rows = series(
+    let rows = cells(
         shared,
         ctx,
-        &total_sql(sql, &tcol, verb, resolution, since),
-        false,
+        &cells_sql(
+            metric,
+            "alternative",
+            &ql(rival),
+            verb,
+            &total_sql(sql, &tcol, verb, resolution, since),
+        ),
     )
     .await?;
     Ok((rows, verb, workspace_reads(&probe)))
@@ -3221,17 +3451,46 @@ async fn run(
         .map_err(|e| Abstain(format!("not served: {e}")))
 }
 
-/// A series query's rows — NULL values dropped (a period the verb
-/// could not value is no cell), periods in the period unit, halves
-/// where the query served them.
-async fn series(
+/// A series plan's rows as cells: planned through the session's own
+/// pipeline, run, and held under the series schema.
+async fn cells(
     shared: &Arc<Shared>,
     ctx: &SessionContext,
     sql: &str,
-    with_member: bool,
-) -> Result<Vec<SeriesRow>, Abstain> {
-    let batches = run(shared, ctx, sql).await?;
-    collect_series(&batches, with_member)
+) -> Result<Vec<RecordBatch>, Abstain> {
+    run(shared, ctx, sql)
+        .await?
+        .iter()
+        .map(|b| conform(b).map_err(Abstain::from))
+        .collect()
+}
+
+/// A series plan's rows in the series schema: the metric and the world
+/// as literals, the dimension named and the member an expression over
+/// the plan's columns, the value and the halves as doubles, NULL
+/// values and periods dropped — a period the verb could not value is
+/// no cell. `verb` is the cells' behavior; a ratio's plan serves its
+/// halves.
+fn cells_sql(metric: &str, dimension: &str, member: &str, verb: &str, series: &str) -> String {
+    let (num, den) = if verb == "ratio" {
+        ("CAST(num AS DOUBLE)", "CAST(den AS DOUBLE)")
+    } else {
+        ("CAST(NULL AS DOUBLE)", "CAST(NULL AS DOUBLE)")
+    };
+    format!(
+        "SELECT {} AS metric, 'actual' AS world, {} AS dimension, {member} AS member, \
+                period, CAST(value AS DOUBLE) AS value, {num} AS num, {den} AS den, \
+                {} AS behavior \
+         FROM ({series}) WHERE value IS NOT NULL AND period IS NOT NULL",
+        ql(metric),
+        ql(dimension),
+        ql(verb)
+    )
+}
+
+/// A string as a plan literal.
+fn ql(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
 }
 
 /// A series query planned, replayed under `overrides` (`crate::replay`)
@@ -3329,58 +3588,37 @@ fn series_schema() -> SchemaRef {
     Arc::clone(&SERIES)
 }
 
-/// A cube's cells as the read serves them, the metric and the world
-/// named on every row — one batch is one world. Built once, at build
-/// time: what the cache holds is what a read hands the planner, so a
-/// read allocates nothing for the cells.
-fn cells_batch(metric: &str, world: World, cells: &[Cell]) -> RecordBatch {
+/// A world's cells from a kernel's answer — the forecast's medians,
+/// the scenario's points — as one batch in the series schema: the
+/// total series only, the metric, the world and the verb named on
+/// every row.
+fn world_batch(
+    metric: &str,
+    world: World,
+    behavior: &str,
+    rows: &[(i64, f64, Option<f64>, Option<f64>)],
+) -> RecordBatch {
+    let n = rows.len();
+    let text = |s: &str| -> ArrayRef {
+        Arc::new(StringArray::from_iter_values(std::iter::repeat_n(s, n)))
+    };
     RecordBatch::try_new(
         series_schema(),
         vec![
-            Arc::new(StringArray::from_iter_values(std::iter::repeat_n(
-                metric,
-                cells.len(),
-            ))),
-            Arc::new(StringArray::from_iter_values(std::iter::repeat_n(
-                world.as_str(),
-                cells.len(),
-            ))),
-            Arc::new(StringArray::from_iter_values(
-                cells.iter().map(|c| c.dimension.as_str()),
-            )),
-            Arc::new(StringArray::from_iter_values(
-                cells.iter().map(|c| c.member.as_str()),
-            )),
+            text(metric),
+            text(world.as_str()),
+            text(""),
+            text(""),
             Arc::new(TimestampMicrosecondArray::from_iter_values(
-                cells.iter().map(|c| c.period),
+                rows.iter().map(|r| r.0),
             )),
-            Arc::new(Float64Array::from_iter_values(
-                cells.iter().map(|c| c.value),
-            )),
-            Arc::new(Float64Array::from_iter(cells.iter().map(|c| c.num))),
-            Arc::new(Float64Array::from_iter(cells.iter().map(|c| c.den))),
-            Arc::new(StringArray::from_iter_values(
-                cells.iter().map(|c| c.behavior),
-            )),
+            Arc::new(Float64Array::from_iter_values(rows.iter().map(|r| r.1))),
+            Arc::new(Float64Array::from_iter(rows.iter().map(|r| r.2))),
+            Arc::new(Float64Array::from_iter(rows.iter().map(|r| r.3))),
+            text(behavior),
         ],
     )
     .expect("column shapes match the schema")
-}
-
-/// A cube's cells under another name and world: a plan aspect's cells
-/// served as the plan world of the metric it names (fixture 27). The
-/// cell columns are shared, never copied; only the two labels are new.
-fn relabel(cells: &RecordBatch, metric: &str, world: World) -> RecordBatch {
-    let n = cells.num_rows();
-    let mut columns: Vec<ArrayRef> = Vec::with_capacity(cells.num_columns());
-    columns.push(Arc::new(StringArray::from_iter_values(
-        std::iter::repeat_n(metric, n),
-    )));
-    columns.push(Arc::new(StringArray::from_iter_values(
-        std::iter::repeat_n(world.as_str(), n),
-    )));
-    columns.extend(cells.columns()[2..].iter().cloned());
-    RecordBatch::try_new(series_schema(), columns).expect("the cells carry the series schema")
 }
 
 // -- the reads ---------------------------------------------------------
@@ -3606,7 +3844,7 @@ pub(crate) async fn metric_series_batch(
             let asked = grain.unwrap_or(resolution);
             if asked >= resolution {
                 let cells = surface.at_grain(shared, slot, head, asked).await;
-                partitions.push(relabel(&cells.cells, metric, World::Plan));
+                partitions.push(relabel(shared, &cells.cells, metric, World::Plan).await?);
             }
         }
         return Ok(Served {
@@ -3655,19 +3893,8 @@ pub(crate) async fn metric_series_batch(
                         continue;
                     }
                     let behavior = head.fact.behavior.as_deref().map(verb_static).unwrap_or("");
-                    let cells: Vec<Cell> = points
-                        .iter()
-                        .map(|&(period, value)| Cell {
-                            dimension: String::new(),
-                            member: String::new(),
-                            period,
-                            value,
-                            num: None,
-                            den: None,
-                            behavior,
-                        })
-                        .collect();
-                    partitions.push(cells_batch(&slot.aspect, World::Forecast, &cells));
+                    let rows: Vec<_> = points.iter().map(|&(p, v)| (p, v, None, None)).collect();
+                    partitions.push(world_batch(&slot.aspect, World::Forecast, behavior, &rows));
                 }
                 World::Plan => unreachable!("the plan world is served above"),
                 World::Scenario => {
@@ -3685,19 +3912,7 @@ pub(crate) async fn metric_series_batch(
                         continue;
                     };
                     let behavior = head.fact.behavior.as_deref().map(verb_static).unwrap_or("");
-                    let cells: Vec<Cell> = rows
-                        .iter()
-                        .map(|&(period, value, num, den)| Cell {
-                            dimension: String::new(),
-                            member: String::new(),
-                            period,
-                            value,
-                            num,
-                            den,
-                            behavior,
-                        })
-                        .collect();
-                    partitions.push(cells_batch(&slot.aspect, World::Scenario, &cells));
+                    partitions.push(world_batch(&slot.aspect, World::Scenario, behavior, rows));
                 }
             }
         }
@@ -3728,32 +3943,10 @@ pub(crate) struct PlanSeries {
 
 pub(crate) struct PlanGrain {
     pub resolution: Resolution,
-    /// The plan's total cells `(period, value)`, sorted.
-    pub cells: Vec<(i64, f64)>,
-    /// The metric's total cells at this grain, sorted; empty where the
-    /// metric is coarser than the grain or serves no cells.
-    pub actual: Vec<(i64, f64)>,
-}
-
-/// The total cells of a cube's batch, `(period, value)` sorted by
-/// period, whatever name the batch carries.
-fn totals_of(cells: &RecordBatch) -> Vec<(i64, f64)> {
-    let dimensions = cells
-        .column_by_name("dimension")
-        .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-    let periods = cells.column_by_name("period").and_then(period::column);
-    let values = cells
-        .column_by_name("value")
-        .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
-    let (Some(dimensions), Some(periods), Some(values)) = (dimensions, periods, values) else {
-        return Vec::new();
-    };
-    let mut out: Vec<(i64, f64)> = (0..cells.num_rows())
-        .filter(|&i| dimensions.value(i).is_empty() && !periods.is_null(i) && !values.is_null(i))
-        .map(|i| (periods.value(i), values.value(i)))
-        .collect();
-    out.sort_by_key(|(p, _)| *p);
-    out
+    /// The plan's total cells beside the metric's at this grain,
+    /// `(period, value, actual)` in period order; no actual where the
+    /// metric is coarser than the grain or serves none for the period.
+    pub rows: Vec<(i64, f64, Option<f64>)>,
 }
 
 /// Every served plan's series beside its metric's (fixture 27, #117).
@@ -3780,32 +3973,28 @@ pub(crate) async fn plan_series(shared: &Arc<Shared>) -> Result<Vec<PlanSeries>,
             let own = surface
                 .at_grain(shared, mslot, Arc::clone(&mhead), mres)
                 .await;
-            origin = totals_of(&own.cells).last().map(|(p, _)| *p);
+            origin = last_period(shared, &own.cells).await?;
         }
         let mut grains = Vec::new();
         for grain in [resolution, Resolution::Year] {
             if grain == Resolution::Year && resolution == Resolution::Year && !grains.is_empty() {
                 break;
             }
-            let cells = totals_of(
-                &surface
-                    .at_grain(shared, slot, Arc::clone(&head), grain)
-                    .await
-                    .cells,
-            );
+            let plan = surface
+                .at_grain(shared, slot, Arc::clone(&head), grain)
+                .await;
             let actual = match metric_resolution {
-                Some(mres) if grain >= mres => totals_of(
-                    &surface
-                        .at_grain(shared, mslot, Arc::clone(&mhead), grain)
-                        .await
-                        .cells,
-                ),
-                _ => Vec::new(),
+                Some(mres) if grain >= mres => surface
+                    .at_grain(shared, mslot, Arc::clone(&mhead), grain)
+                    .await
+                    .cells
+                    .clone(),
+                _ => RecordBatch::new_empty(series_schema()),
             };
+            let rows = aligned(shared, &plan.cells, &actual).await?;
             grains.push(PlanGrain {
                 resolution: grain,
-                cells,
-                actual,
+                rows,
             });
         }
         out.push(PlanSeries {
@@ -4107,22 +4296,74 @@ mod tests {
     use super::*;
 
     fn cube(rows: usize) -> Arc<Cube> {
-        let cells: Vec<Cell> = (0..rows)
-            .map(|i| Cell {
-                dimension: String::new(),
-                member: String::new(),
-                period: i as i64,
-                value: 1.0,
-                num: None,
-                den: None,
-                behavior: "flow",
-            })
-            .collect();
+        let rows: Vec<_> = (0..rows).map(|i| (i as i64, 1.0, None, None)).collect();
         Arc::new(Cube {
             fact: Fact::abstain("m", String::new()),
-            cells: cells_batch("m", World::Actual, &cells),
+            cells: world_batch("m", World::Actual, "flow", &rows),
             version_bound: None,
         })
+    }
+
+    /// The derive plan, pinned: a change to its shape is a visible
+    /// diff, not a quiet one.
+    #[test]
+    fn the_derive_plan_is_pinned() {
+        let since = period::parse_date("2024-12-01").expect("a date");
+        let plan =
+            derive_plan(&cube(1).cells, "m", Resolution::Month, Some(since)).expect("a plan");
+        insta::assert_snapshot!("derive_plan", plan.display_indent().to_string());
+    }
+
+    /// The series plans as the engine reads them over a frame with a
+    /// date, a value, a member column and a ratio's halves, pinned the
+    /// same way: the total and the member series at each verb.
+    #[tokio::test]
+    async fn the_series_plans_are_pinned() {
+        let ctx = SessionContext::new();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("d", DataType::Date32, false),
+            Field::new("value", DataType::Float64, false),
+            Field::new("num", DataType::Float64, true),
+            Field::new("den", DataType::Float64, true),
+            Field::new("r", DataType::Utf8, true),
+        ]));
+        ctx.register_table(
+            "t",
+            Arc::new(MemTable::try_new(schema, vec![vec![]]).expect("a table")),
+        )
+        .expect("registers");
+        let frame = "SELECT d, value, num, den, r FROM t";
+        let since = Some("TIMESTAMP '2024-12-15T00:00:00'");
+        let mut shown = String::new();
+        for verb in ["flow", "ratio", "stock"] {
+            let total = cells_sql(
+                "m",
+                "",
+                "''",
+                verb,
+                &total_sql(frame, "d", verb, Resolution::Month, since),
+            );
+            let member = cells_sql(
+                "m",
+                "r",
+                "member",
+                verb,
+                &member_sql(
+                    frame,
+                    "d",
+                    "r",
+                    "CAST(\"r\" AS VARCHAR)",
+                    verb,
+                    Resolution::Month,
+                    since,
+                ),
+            );
+            for (name, sql) in [("total", total), ("member", member)] {
+                let plan = ctx.state().create_logical_plan(&sql).await.expect("plans");
+                shown.push_str(&format!("-- {name} {verb}\n{}\n", plan.display_indent()));
+            }
+        }
+        insta::assert_snapshot!("series_plans", shown);
     }
 
     fn key(metric: &str) -> CubeKey {

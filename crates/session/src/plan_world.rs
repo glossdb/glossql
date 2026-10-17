@@ -295,13 +295,12 @@ pub(crate) async fn plan_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
             None => None,
         };
         for g in &s.grains {
-            let actual: HashMap<i64, f64> = g.actual.iter().copied().collect();
             let resolution = g.resolution;
             // Each plan period's end and, for a stock at a coarser
             // grain, the bucket at the metric's own grain that holds
             // the period's last instant: one pass of the calendar per
             // grain.
-            let periods: Vec<i64> = g.cells.iter().map(|(p, _)| *p).collect();
+            let periods: Vec<i64> = g.rows.iter().map(|(p, ..)| *p).collect();
             let step = period::interval(resolution, 1);
             let mut exprs = vec![format!("p + {step}")];
             if let Some(mres) = s.metric_resolution {
@@ -313,16 +312,12 @@ pub(crate) async fn plan_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
             let calendar = period::over(&periods, &exprs)
                 .await
                 .map_err(period::refused)?;
-            for (i, &(period, value)) in g.cells.iter().enumerate() {
+            for (i, &(period, value, actual)) in g.rows.iter().enumerate() {
                 let end = calendar[0][i];
                 let last_inside = calendar.get(1).and_then(|c| c[i]);
                 let begun = s.origin.is_some_and(|o| period <= o);
                 let complete = end.zip(origin_end).is_some_and(|(e, oe)| e <= oe);
-                let a = if begun {
-                    actual.get(&period).copied()
-                } else {
-                    None
-                };
+                let a = if begun { actual } else { None };
                 let (mut low, mut expected, mut high) = (None, None, None);
                 let (mut held_80, mut held_from, mut origin) = (None, None, None);
                 let mut variance = None;
