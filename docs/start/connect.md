@@ -130,6 +130,6 @@ A browser needs no setup: open `http://127.0.0.1:8080/` — the
 workspace root, every dataset at a glance with the way into each —
 and the server sends it to the issuer to sign in, then brings it back
 with the token in a cookie
-(`/auth/login`, `/auth/callback`; `/auth/logout` clears it). The person
+(`/auth/login`, `/auth/callback`; a POST to `/auth/logout` clears it). The person
 signing in is the token's subject — the same name an agent's connection
 carries when that person is behind it.

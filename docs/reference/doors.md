@@ -143,7 +143,10 @@ same gate every door uses, and sets it as the `glossql_token` cookie.
 The issuer must list `<audience>/auth/callback` as a redirect URI. The
 login in progress — state, PKCE verifier, where to go back to — rides a
 ten-minute cookie scoped to `/auth`; the server holds no session.
-`/auth/logout` clears the cookie.
+Where to go back to is a path on this server and nothing else: a
+`next` that reads as another host, or that carries a backslash or a
+control character, lands on `/`. A POST to `/auth/logout` clears the
+cookie; a GET does not, since a link on any page could send one.
 
 Three things sit outside the gate: `/auth`, where a browser goes
 because it holds no token; the discovery document, which is

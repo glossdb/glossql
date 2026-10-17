@@ -21,10 +21,11 @@ use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use oauth2::basic::BasicClient;
+use oauth2::url::Url;
 use oauth2::{
     AuthType, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointNotSet,
     EndpointSet, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, TokenResponse, TokenUrl,
@@ -44,6 +45,8 @@ const PENDING_SECONDS: u64 = 600;
 /// and to exchange what comes back.
 pub struct Login {
     gate: Arc<Gate>,
+    /// The server's own URI, parsed once: what a `next` is read against.
+    resource: Url,
     client: BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
     /// Redirects are not followed: the token endpoint answers, it does
     /// not send us on, and a redirect there is something to refuse.
@@ -92,7 +95,13 @@ impl Login {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| e.to_string())?;
-        Ok(Login { gate, client, http })
+        let resource = Url::parse(gate.resource()).map_err(|e| e.to_string())?;
+        Ok(Login {
+            gate,
+            resource,
+            client,
+            http,
+        })
     }
 
     pub fn gate(&self) -> &Arc<Gate> {
@@ -101,12 +110,14 @@ impl Login {
 }
 
 /// The three routes, outside the gate: a browser arrives here precisely
-/// because it holds no token yet.
+/// because it holds no token yet. Logout is a POST: a `SameSite=Lax`
+/// cookie rides a cross-site top-level GET, so a GET here would let
+/// any page sign the person out by link.
 pub fn router(login: Arc<Login>) -> Router {
     Router::new()
         .route("/auth/login", get(start))
         .route("/auth/callback", get(finish))
-        .route("/auth/logout", get(logout))
+        .route("/auth/logout", post(logout))
         .with_state(login)
 }
 
@@ -127,7 +138,7 @@ async fn start(State(login): State<Arc<Login>>, Query(q): Query<Next>) -> Respon
     let pending = Pending {
         state: state.secret().clone(),
         verifier: verifier.secret().clone(),
-        next: local_path(q.next.as_deref()),
+        next: local_path(q.next.as_deref(), &login.resource),
     };
     let sealed = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&pending).expect("plain fields"));
     let mut response = see_other(url.as_str());
@@ -235,13 +246,44 @@ async fn logout(State(login): State<Arc<Login>>) -> Response {
     response
 }
 
-/// A path on this server: it starts with one slash and no more, so
-/// `//evil.example` (a scheme-relative URL) is not a path.
-fn local_path(next: Option<&str>) -> String {
-    match next {
-        Some(p) if p.starts_with('/') && !p.starts_with("//") => p.to_string(),
-        _ => "/".to_string(),
+/// A path on this server, else `/`. `next` is read as a URL against
+/// the server's own and kept only when it lands on the same origin,
+/// so a scheme-relative `//evil.example`, an absolute URL elsewhere,
+/// and a backslash a browser would read as a second slash all come
+/// back as `/`. A backslash, a control character or an encoded form
+/// of either is refused before parsing: none has a place in a path
+/// here, and the parser's view of one need not be the browser's.
+fn local_path(next: Option<&str>, resource: &Url) -> String {
+    let root = || "/".to_string();
+    let Some(next) = next else {
+        return root();
+    };
+    let bad = |b: u8| b < 0x20 || b == 0x7f || b == b'\\';
+    if next.bytes().any(bad) || encoded(next).any(bad) {
+        return root();
     }
+    let Ok(url) = Url::options().base_url(Some(resource)).parse(next) else {
+        return root();
+    };
+    if url.origin() != resource.origin() {
+        return root();
+    }
+    match url.query() {
+        Some(query) => format!("{}?{query}", url.path()),
+        None => url.path().to_string(),
+    }
+}
+
+/// The bytes the percent-escapes of `s` stand for.
+fn encoded(s: &str) -> impl Iterator<Item = u8> + '_ {
+    let bytes = s.as_bytes();
+    bytes.iter().enumerate().filter_map(move |(i, b)| {
+        if *b != b'%' {
+            return None;
+        }
+        let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+        u8::from_str_radix(hex, 16).ok()
+    })
 }
 
 fn plain(status: StatusCode, text: &str) -> Response {

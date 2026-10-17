@@ -744,9 +744,17 @@ async fn a_browser_signs_in_at_the_issuer_and_comes_back_with_a_cookie() {
         .unwrap();
     assert_eq!(docket.status(), StatusCode::OK);
 
-    // And logout takes it away.
-    let out = app
+    // And logout takes it away — on a POST, the person's own act; a
+    // GET, which any page could send with the cookie riding along, is
+    // not a way out.
+    let link = app
+        .clone()
         .oneshot(Request::get("/auth/logout").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(link.status(), StatusCode::METHOD_NOT_ALLOWED);
+    let out = app
+        .oneshot(Request::post("/auth/logout").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(out.status(), StatusCode::SEE_OTHER);
@@ -756,6 +764,57 @@ async fn a_browser_signs_in_at_the_issuer_and_comes_back_with_a_cookie() {
             .unwrap()
             .starts_with("glossql_token=;")
     );
+}
+
+/// Where a sign-in comes back to is a path on this server and nothing
+/// else: a `next` that a browser would read as another host — a
+/// scheme-relative URL, a backslash after the slash, an absolute URL
+/// elsewhere — or that carries a control character lands on `/`.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_login_brings_a_person_back_to_this_server_alone() {
+    use base64::Engine as _;
+    let (app, _dir) = app().await;
+    // `next` as the browser sends it (the request line is encoded) and
+    // the path the pending cookie keeps.
+    let cases = [
+        ("%2Ffin%2Fapp%2Fdocket%3Fpage%3D2", "/fin/app/docket?page=2"),
+        ("http%3A%2F%2F127.0.0.1%3A8080%2Ffin", "/fin"),
+        ("", "/"),
+        ("%2F%5Cevil.example", "/"),
+        ("%2F%255Cevil.example", "/"),
+        ("%2F%2Fevil.example", "/"),
+        ("https%3A%2F%2Fevil.example%2Fx", "/"),
+        ("https%3A%2F%2F127.0.0.1%3A8080%2Ffin", "/"),
+        ("%2Ffin%0D%0ASet-Cookie%3Ax", "/"),
+        ("%2Ffin%250D%250A", "/"),
+    ];
+    for (sent, kept) in cases {
+        let going = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/auth/login?next={sent}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(going.status(), StatusCode::SEE_OTHER, "{sent}");
+        let pending = going.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .trim_start_matches("glossql_login=")
+            .to_string();
+        let pending: serde_json::Value = serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(pending)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(pending["next"], kept, "{sent}");
+    }
 }
 
 /// The discovery document sits outside the gate — it is where a client
