@@ -65,13 +65,16 @@ its own cycle stack, one stack for the whole nesting.
   no heavy computation there — it blocks the planner; the pre-pass
   exists so nothing async is left by the time the planner runs.
 - **The zero-greps.** `block_in_place`, `block_on`, `thread_local!`,
-  and bare `tokio::spawn` stay at zero in the crates the server owns —
-  a hit means something is being built around the framework instead of
-  on it. The one named owner is the file reader, which infers a
-  schema inside the engine's synchronous table-function call; its
-  exact count is pinned by a conformance test. The ADBC driver, whose
-  Rust API is synchronous, runs on the runtime's blocking pool and
-  hands its batches over a bounded channel.
+  and bare `tokio::spawn` are counted in the crates the server owns,
+  and a conformance test fails when a count rises — a new hit means
+  something is being built around the framework instead of on it.
+  The owners today: the file reader, which infers a schema inside the
+  engine's synchronous table-function call, holds the one
+  `block_in_place` and the one `block_on`; the doors' response-stream
+  drivers hold the three `tokio::spawn`, serving work, not engine
+  work; `thread_local!` is at zero and stays there. The ADBC driver,
+  whose Rust API is synchronous, runs on the runtime's blocking pool
+  and hands its batches over a bounded channel.
 
 ## The data plane
 

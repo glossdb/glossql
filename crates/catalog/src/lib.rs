@@ -226,13 +226,6 @@ impl Lake {
         })
     }
 
-    /// The same lake with another grace before ended files are deleted
-    /// — the tests run with none.
-    pub fn with_grace(mut self, grace: std::time::Duration) -> Self {
-        self.grace = grace;
-        self
-    }
-
     /// The database the catalog tables and the record share.
     pub fn db(&self) -> Db {
         self.db.clone()

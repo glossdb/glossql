@@ -49,7 +49,7 @@ every workspace at every boot (`crates/serverd/src/bootstrap.rs`):
   vocabulary. What a column means, its role, how a measure behaves,
   its unit, which columns slice, what a table is, the dataset
   registries, the source conventions, the `cube` settings.
-- **The measurement library** (`bootstrap.glossql` and the fourteen
+- **The measurement library** (`bootstrap.glossql` and the fifteen
   bodies beside it): the profilers, the detectors of relationships,
   hierarchies and derivations, the coherence check, the bands walk and
   its detector.

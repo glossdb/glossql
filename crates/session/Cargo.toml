@@ -8,10 +8,7 @@ repository.workspace = true
 [dependencies]
 glossql-parser = { path = "../parser" }
 glossql-glossary = { path = "../glossary" }
-# No backend feature: the library runs on the `Lake`, whichever
-# constructor built it. The binary picks the backend; the suite's
-# fixtures get `sql` through the dev-dependency below.
-glossql-catalog = { path = "../catalog", default-features = false }
+glossql-catalog = { path = "../catalog" }
 glossql-import = { path = "../import" }
 datafusion.workspace = true
 datafusion-functions-json.workspace = true
@@ -29,7 +26,6 @@ blake3.workspace = true
 async-trait.workspace = true
 
 [dev-dependencies]
-glossql-catalog = { path = "../catalog" }
 tokio.workspace = true
 insta.workspace = true
 tempfile.workspace = true
