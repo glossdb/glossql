@@ -18,7 +18,6 @@ glossql-session = { path = "../session" }
 glossql-apps = { path = "../apps" }
 glossql-catalog = { path = "../catalog" }
 glossql-scripts = { path = "../scripts" }
-glossql-parser = { path = "../parser" }
 datafusion = { workspace = true }
 arrow-json = { workspace = true }
 axum = { workspace = true }
@@ -55,6 +54,8 @@ base64 = "0.22"
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
+# The docs and skills suites parse every fenced example.
+glossql-parser = { path = "../parser" }
 arrow-ipc = { workspace = true }
 tower.workspace = true
 tempfile.workspace = true
