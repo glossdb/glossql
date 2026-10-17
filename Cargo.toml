@@ -77,7 +77,7 @@ datafusion-functions-json = "0.55"
 # (`GLOSSQL_CATALOG_SQL`); `any` is the driver both sit behind;
 # `tls-rustls` is rustls on ring, the provider the rest of the tree
 # already carries.
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any", "sqlite", "postgres", "tls-rustls"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "any", "sqlite", "postgres", "tls-rustls"] }
 # The warehouse's object store — the crate DataFusion already runs on,
 # so the binary carries one storage stack: `aws` is the S3 family,
 # `azure` the ADLS/Blob family (Container Apps' managed identity is
