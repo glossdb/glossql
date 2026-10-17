@@ -135,7 +135,7 @@ blake3 = "1"
 # opentelemetry-rust, traces only, protobuf over HTTP through the
 # reqwest already in the tree; tracing-opentelemetry is the bridge from
 # `tracing` spans to theirs and pins the opentelemetry it works with.
-opentelemetry = "0.32"
+opentelemetry = "0.33"
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "logs"] }
 # The exporter's clients, one per transport OTEL_EXPORTER_OTLP_PROTOCOL
 # names: protobuf over HTTP on reqwest, and gRPC on tonic — what a
