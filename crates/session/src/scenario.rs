@@ -649,6 +649,10 @@ pub(crate) async fn read(shared: &Arc<Shared>, name: &str) -> Result<Read, Sessi
 /// answer's `parts` say what each does alone. Where the estimate cannot
 /// come — no service, a lever with no series, the service's refusal —
 /// every cell and every part says why.
+#[expect(
+    clippy::too_many_lines,
+    reason = "an orchestrator above the threshold; #136 extracts its phases"
+)]
 async fn estimate(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,

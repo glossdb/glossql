@@ -1931,6 +1931,11 @@ pub(crate) type SeriesRow = (i64, Option<String>, f64, Option<f64>, Option<f64>)
 /// the plan's schema, its provenance and the judged surface; nothing
 /// scans. `probe` is the frame's plan where the caller built it for
 /// the key.
+#[expect(
+    clippy::too_many_lines,
+    clippy::cognitive_complexity,
+    reason = "an orchestrator above the threshold; #136 extracts its phases"
+)]
 async fn plan(
     shared: &Arc<Shared>,
     surface: &Surface,
@@ -2337,6 +2342,10 @@ async fn plan(
     })
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "an orchestrator above the threshold; #136 extracts its phases"
+)]
 async fn build(
     shared: &Arc<Shared>,
     surface: &Surface,

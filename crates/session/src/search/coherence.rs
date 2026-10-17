@@ -48,6 +48,10 @@ use super::{dataset_pins, int_column, rows_batch};
 /// orphans are the rows whose finer value maps to more than one.
 /// Neither carries temporal evidence — a date pair across a table and
 /// itself says nothing.
+#[expect(
+    clippy::too_many_lines,
+    reason = "an orchestrator above the threshold; #136 extracts its phases"
+)]
 pub(crate) async fn relationship_checks(
     shared: &Arc<Shared>,
     dataset: &str,

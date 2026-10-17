@@ -23,5 +23,6 @@ first chart.
 | dagre.min.js | @dagrejs/dagre (dist/dagre.min.js) | 3.1.1 | MIT |
 
 To bump: download the same path from npm via a CDN mirror and update
-this table. arrow-js only reads the IPC wire, which is stable across
+this table and `package.json`, which Dependabot watches — a release on
+any line opens a pull request naming it, and the copy is this step. arrow-js only reads the IPC wire, which is stable across
 arrow versions — it does not move in lockstep with the Rust arrow tree.

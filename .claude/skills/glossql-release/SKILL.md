@@ -30,9 +30,10 @@ nowhere else.
    `cargo test` green — a datafusion pin move since the last release
    fails the vendored-guide test until `vendor/datafusion/refresh.sh
    <tag>` has run.
-3. Tag and push: `git tag v<version> && git push origin v<version>`.
-   The workflow builds the image and pushes it to GHCR — public the
-   moment the push lands.
+3. Tag and push: `git tag v<version> && git push origin v<version>`,
+   from a commit the `ci` workflow ran green on — the tag run builds,
+   it does not test. The workflow builds the image and pushes it to
+   GHCR — public the moment the push lands.
 4. The laptop half: `.github/release-macos.sh` opens the draft
    release on the tag, builds, uploads the tarball, and renders
    `.github/homebrew/glossql.rb` with the real checksum.

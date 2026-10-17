@@ -5,6 +5,12 @@ members = ["crates/parser", "crates/glossary", "crates/session", "crates/catalog
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
+# The minor rust-toolchain.toml pins; a crate built alone says so.
+rust-version = "1.98"
+# Nothing here is published to a registry: the artifacts are the image
+# and the tarball (the glossql-release skill), and the crates reference
+# each other by path.
+publish = false
 license = "Apache-2.0"
 repository = "https://github.com/glossdb/glossql"
 
@@ -24,6 +30,11 @@ linker_messages = "allow"
 [workspace.lints.clippy]
 large_futures = "warn"
 redundant_clone = "warn"
+# The size of a function, two ways (the thresholds: clippy.toml). A
+# function above either carries `#[expect]` for the lint, so the list
+# of them shrinks itself: an expect that no longer fires is an error.
+too_many_lines = "warn"
+cognitive_complexity = "warn"
 
 # The released binary: symbols stripped (a quarter of the size back;
 # the spans and events are the observability story, not backtrace names).

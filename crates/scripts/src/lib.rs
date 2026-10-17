@@ -575,6 +575,10 @@ fn median(mut v: Vec<f64>) -> Option<f64> {
 /// convention) under the gates above. Returns per-convention
 /// summaries; support policy (Wilson, winner, alternatives) stays in
 /// the door.
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "an orchestrator above the threshold; #136 extracts its phases"
+)]
 fn reconcile_kernel(
     aligned: &[RecordBatch],
     n_common: i64,

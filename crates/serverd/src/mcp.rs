@@ -990,6 +990,10 @@ impl ServerHandler for GlossqlMcp {
         )
     }
 
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "an orchestrator above the threshold; #136 extracts its phases"
+    )]
     async fn call_tool(
         &self,
         request: CallToolRequestParams,

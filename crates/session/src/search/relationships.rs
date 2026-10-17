@@ -66,6 +66,11 @@ use super::{dataset_pins, detector_state, int_column, rows_batch, run_plan};
 /// surviving from combinations joined to the surviving to combinations
 /// on both legs, never a side to itself. Width 2 only — wider
 /// composites stay future work. Data decides, not names.
+#[expect(
+    clippy::too_many_lines,
+    clippy::cognitive_complexity,
+    reason = "an orchestrator above the threshold; #136 extracts its phases"
+)]
 pub(crate) async fn relationship_candidates(
     shared: &Arc<Shared>,
     dataset: &str,

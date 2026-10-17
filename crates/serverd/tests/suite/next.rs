@@ -201,6 +201,7 @@ const SURFACES: [&str; 8] = [
 ];
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(clippy::too_many_lines, reason = "one door walked end to end")]
 async fn the_routes_answer_from_the_record() {
     let (_dir, plane) = scratch_plane().await;
     plane
