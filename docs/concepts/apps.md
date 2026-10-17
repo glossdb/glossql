@@ -69,6 +69,11 @@ URL; drill is navigation, nothing else.
 encodings and marks. A spec that filters or aggregates is doing the
 frame's job in a place nobody can test.
 
+**A page is markup, not code.** The door serves every page under a
+content security policy that runs the shell's own assets and nothing
+the page carries. What a page needs, it gets from a frame, a spec, a
+tile or a link.
+
 ## The docket
 
 One app ships in the binary, and it is the dataset's own page: the

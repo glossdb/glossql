@@ -87,6 +87,7 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
             "/{dataset}/app",
             glossql_apps::router(Arc::clone(&plane), ORIGIN),
         )
+        .nest("/assets", glossql_apps::assets_router())
         .layer(axum::Extension(Caller(Actor {
             kind: ActorKind::Human,
             id: "ada".into(),
@@ -235,7 +236,7 @@ async fn pages_render_and_frames_stream() {
     // its tabs, the manifest's order, the current one marked.
     let docket = text(get(&app, "/perf/app/docket/p/export").await).await;
     assert!(
-        docket.contains("<option value=\"board\">Perf</option>"),
+        docket.contains("<option value=\"/perf/app/board\">Perf</option>"),
         "the picker lists the app:\n{docket}"
     );
     let open = docket.find("href=\"/perf/app/docket\">Open</a>").unwrap();
@@ -400,6 +401,126 @@ async fn the_door_refuses_what_it_should() {
     // A frame name is one flat segment; nothing walks.
     let escape = get(&app, "/perf/app/board/frames/..%2Findex").await;
     assert_eq!(escape.status(), StatusCode::NOT_FOUND);
+}
+
+/// A page body is markup. The door serves every page under a policy
+/// that runs the shell's own assets and nothing the page carries, so
+/// a script an author glosses — an agent's, rendered with the human
+/// viewer's standing on the query and rule doors — is served as text
+/// the browser does not run.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_body_is_markup_not_script() {
+    let (app, plane, _dir) = workspace().await;
+    let session = plane
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let planted = "<script>fetch('/perf/query', {method: 'POST', body: 'DROP TABLE ledger'})\
+                   </script><button onclick='alert(1)'>x</button>";
+    session
+        .execute(&format!(
+            r#"USE perf;
+               GLOSS app ON planted AS $${{"title": "Planted"}}$$;
+               GLOSS app_page ON planted.index AS $${{"html": "{{% extends \"shell.html\" %}}{{% block main %}}{planted}{{% endblock %}}"}}$$;"#
+        ))
+        .await
+        .unwrap();
+
+    let page = get(&app, "/perf/app/planted").await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let policy = page.headers()[header::CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(policy, glossql_apps::CONTENT_SECURITY_POLICY);
+    // What the policy must say, whatever else it comes to say: script
+    // from this origin's files alone, no eval, no object, no moved
+    // base, no form posting elsewhere.
+    let script = policy
+        .split(';')
+        .map(str::trim)
+        .find(|d| d.starts_with("script-src"))
+        .unwrap();
+    assert_eq!(script, "script-src 'self'", "{policy}");
+    for directive in ["object-src 'none'", "base-uri 'none'", "form-action 'self'"] {
+        assert!(policy.contains(directive), "{policy}");
+    }
+    assert!(!policy.contains("unsafe-eval"), "{policy}");
+    // The markup serves as authored; the policy is what stops it.
+    let body = text(page).await;
+    assert!(body.contains(planted), "{body}");
+
+    // The workspace root and the built-in carry the same policy.
+    for uri in ["/", "/perf/app/docket"] {
+        let response = get(&app, uri).await;
+        assert_eq!(
+            response.headers()[header::CONTENT_SECURITY_POLICY],
+            glossql_apps::CONTENT_SECURITY_POLICY,
+            "{uri}"
+        );
+    }
+}
+
+/// The shell passes its own policy: every script a rendered page
+/// loads is one of the door's assets by `src` and served as such,
+/// nothing is inline, no element carries a handler attribute, no URL
+/// is `javascript:`, and htmx is told not to evaluate — over the
+/// workspace root, the built-in's every page, and a glossed app's.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shell_passes_its_own_policy() {
+    let (app, _plane, _dir) = workspace().await;
+    for uri in [
+        "/",
+        "/perf/app/docket",
+        "/perf/app/docket/p/metrics",
+        "/perf/app/docket/p/quality",
+        "/perf/app/docket/p/lineage",
+        "/perf/app/docket/p/export",
+        "/perf/app/board",
+    ] {
+        let response = get(&app, uri).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        let html = text(response).await;
+        for (at, _) in html.match_indices("<script") {
+            let end = at + html[at..].find('>').unwrap();
+            let tag = &html[at..end];
+            let src = tag
+                .split("src=\"")
+                .nth(1)
+                .and_then(|s| s.split('"').next())
+                .unwrap_or_else(|| panic!("{uri}: a script with no src: {tag}"));
+            assert!(src.starts_with("/assets/"), "{uri}: {tag}");
+            let asset = get(&app, src).await;
+            assert_eq!(asset.status(), StatusCode::OK, "{uri}: {src}");
+            let rest = &html[end + 1..];
+            let inline = &rest[..rest.find("</script>").unwrap()];
+            assert!(
+                inline.trim().is_empty(),
+                "{uri}: an inline script: {inline}"
+            );
+        }
+        for (at, _) in html.match_indices(" on") {
+            let after = &html[at + 3..];
+            let name: String = after
+                .chars()
+                .take_while(char::is_ascii_alphabetic)
+                .collect();
+            assert!(
+                name.is_empty() || !after[name.len()..].starts_with('='),
+                "{uri}: a handler attribute: on{name}="
+            );
+        }
+        assert!(!html.contains("javascript:"), "{uri}");
+        if uri != "/" {
+            assert!(html.contains("\"allowEval\":false"), "{uri}");
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

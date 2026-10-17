@@ -21,6 +21,7 @@ macro_rules! asset {
 
 const ASSETS: &[(&str, &[u8], &str)] = &[
     asset!("app.css", "text/css"),
+    asset!("shell.js", "text/javascript"),
     asset!("store.js", "text/javascript"),
     asset!("gl-chart.js", "text/javascript"),
     asset!("gl-table.js", "text/javascript"),
@@ -28,10 +29,12 @@ const ASSETS: &[(&str, &[u8], &str)] = &[
     asset!("gl-rows.js", "text/javascript"),
     asset!("gl-window.js", "text/javascript"),
     asset!("gl-graph.js", "text/javascript"),
+    asset!("vega-util.js", "text/javascript"),
     asset!("vendor/htmx.min.js", "text/javascript"),
     asset!("vendor/vega.min.js", "text/javascript"),
     asset!("vendor/vega-lite.min.js", "text/javascript"),
     asset!("vendor/vega-embed.min.js", "text/javascript"),
+    asset!("vendor/vega-interpreter.js", "text/javascript"),
     asset!("vendor/arrow.min.js", "text/javascript"),
     asset!("vendor/dagre.min.js", "text/javascript"),
 ];

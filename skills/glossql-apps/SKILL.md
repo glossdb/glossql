@@ -162,7 +162,11 @@ it.
 ## Tiles place what the frame computed
 
 Pages are tera, extending `shell.html` and importing the tile
-vocabulary. Four macros and a prose block:
+vocabulary. A page carries no script: the door serves it under a
+content security policy that runs the shell's assets alone, so a
+`<script>`, an `on…=` handler or a `javascript:` URL in a page is
+served as text and never runs. What a page does, it does through a
+frame, a spec, a tile or a link. Four macros and a prose block:
 
 ```html
 {% extends "shell.html" %}

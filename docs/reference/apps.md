@@ -72,9 +72,15 @@ sources; narrow a workspace-wide one by joining `current_dataset`.
 
 ## Pages and tiles
 
-Pages are tera templates; pages of one app can include each other. The
+Pages are tera templates; pages of one app can include each other. A
+page is markup. The door serves every page under a
+`Content-Security-Policy` that runs the shell's own assets and nothing
+the page carries: a `<script>`, an `on…=` handler or a `javascript:`
+URL in a page is served as text the browser does not run, no eval is
+allowed, and a vega-lite spec runs in vega's interpreter rather than
+compiled to code. Inline style is allowed. The
 door ships the assets (all vendored, the only JS): htmx, vega-lite
-(vega, vega-embed), arrow-js, and the `gl-*` tiles — `gl-chart` (a
+(vega, vega-embed, vega-interpreter), arrow-js, and the `gl-*` tiles — `gl-chart` (a
 vega-lite spec over a frame), `gl-table`, `gl-value`, and `gl-rows`:
 
 ```html
