@@ -732,7 +732,9 @@ async fn estimate(
         let answer = Answer::read(&answered)?;
         for a in asked {
             let planned = planned_of.get(&a.metric).map_or(&[][..], Vec::as_slice);
-            answer.points_of(a, grain, scenario, planned, &held, &mut out, &mut parts);
+            let (cells, given) = answer.points_of(a, grain, scenario, planned, &held);
+            out.extend(cells);
+            parts.extend(given);
         }
     }
     Ok((out, parts))
@@ -810,20 +812,16 @@ async fn lever_inputs(
 /// then each period ahead twice — as planned and under the scenario.
 /// Beside it, per metric, each lever's value held as planned: its
 /// last value at or before the metric's origin.
-#[expect(
-    clippy::type_complexity,
-    reason = "the table and the planned values it was built from"
-)]
 fn ask_table(
     asked: &[&Ask],
     scenario: &Scenario,
     bounds: &HashMap<String, (i64, i64)>,
     inputs: &[HashMap<i64, f64>],
-) -> Result<(RecordBatch, HashMap<String, Vec<Option<f64>>>), SessionError> {
+) -> Result<(RecordBatch, Planned), SessionError> {
     let (mut members, mut periods, mut status, mut values) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut columns: Vec<Vec<Option<f64>>> = vec![Vec::new(); scenario.levers.len()];
-    let mut planned_of: HashMap<String, Vec<Option<f64>>> = HashMap::new();
+    let mut planned_of: Planned = HashMap::new();
     for a in asked {
         let origin = a.series.last().map(|(d, _)| *d);
         let planned: Vec<Option<f64>> = inputs
@@ -885,6 +883,9 @@ fn ask_table(
     Ok((table, planned_of))
 }
 
+/// Per metric, each lever's value held as planned.
+type Planned = HashMap<String, Vec<Option<f64>>>;
+
 /// The what-if's answer as the cells read it: who served, what each
 /// member's rows folded to, the service's errors by member, and the
 /// parts it gave.
@@ -915,10 +916,6 @@ impl<'a> Answer<'a> {
     /// column. Why a cell or a part has no number: the service's word
     /// on the member first, then its errors, then a lever with no
     /// value to hold as planned, then the default.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the ask, its answer and the two rows it fills"
-    )]
     fn points_of(
         &self,
         a: &Ask,
@@ -926,9 +923,8 @@ impl<'a> Answer<'a> {
         scenario: &Scenario,
         planned: &[Option<f64>],
         held: &crate::search::HeldTable,
-        out: &mut Vec<Point>,
-        parts: &mut Vec<Part>,
-    ) {
+    ) -> (Vec<Point>, Vec<Part>) {
+        let (mut out, mut parts) = (Vec::new(), Vec::new());
         let said = self.folded.get(&a.metric);
         let unheld: Vec<&str> = scenario
             .levers
@@ -997,6 +993,7 @@ impl<'a> Answer<'a> {
                 served_by: Some(self.served_by.clone()),
             });
         }
+        (out, parts)
     }
 }
 
