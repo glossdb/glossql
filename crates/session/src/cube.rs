@@ -103,8 +103,8 @@ use datafusion::sql::sqlparser::ast::{
 use serde_json::Value;
 
 use crate::period::{self, Resolution};
-use crate::search::{QuerySlot, current_query_slots, int_column};
-use crate::shared::{Served, SessionError, Shared};
+use crate::search::{QuerySlot, current_query_slots, int_column, int_value};
+use crate::shared::{Held, Served, SessionError, Shared};
 use crate::subject::qi;
 
 /// The process-wide byte cap when serverd is started without
@@ -811,8 +811,7 @@ impl Shared {
     /// one place that reads it, beside the type it holds.
     pub fn cube(&self) -> CubeCache {
         self.cube
-            .read()
-            .expect("cube lock")
+            .held()
             .downcast_ref::<CubeCache>()
             .cloned()
             .expect("the cube slot holds the cube cache, set at construction")
@@ -1190,12 +1189,7 @@ impl Surface {
     /// there is nothing to key, and a workspace without the `cube`
     /// aspect is not asked for it.
     async fn load(shared: &Arc<Shared>) -> Result<Option<Surface>, SessionError> {
-        let dataset = shared
-            .dataset
-            .read()
-            .expect("state lock")
-            .clone()
-            .ok_or(SessionError::NoDataset)?;
+        let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
         let rctx = shared.read_context().await?;
         // The plan aspects apart (fixture 27): a plan is a grounding
         // with a head of its own and no metric of the actual world.
@@ -1679,7 +1673,7 @@ async fn write_fact(
     subject: &str,
     aspect: &str,
 ) -> Result<Fact, Abstain> {
-    let bound = shared.dataset.read().expect("state lock").clone();
+    let bound = shared.dataset();
     if bound.as_deref() != Some(dataset) {
         let here = bound.map_or("no dataset".to_string(), |b| format!("`{b}`"));
         return Err(Abstain::shape(
@@ -2705,8 +2699,8 @@ async fn broken_grain(
     let q =
         format!("SELECT count(*) AS total, count(DISTINCT struct({keys})) AS keys FROM ({sql})");
     let batches = run(shared, ctx, &q).await?;
-    let key_count = int_column(&batches, "keys")?[0];
-    let total = int_column(&batches, "total")?[0];
+    let key_count = int_value(&batches, "keys")?;
+    let total = int_value(&batches, "total")?;
     if total <= key_count {
         return Ok(None);
     }
@@ -2756,7 +2750,7 @@ async fn admitted_axes(
         )
         .await?;
         for (i, c) in cand.into_iter().enumerate() {
-            let n = int_column(&batches, &format!("n_{i}"))?[0];
+            let n = int_value(&batches, &format!("n_{i}"))?;
             counts.push((c, n));
         }
     }
@@ -4399,12 +4393,7 @@ pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatc
 /// same rows `owed` derives in SQL as `never measured`; re-measure
 /// runs these.
 pub(crate) async fn wanted(shared: &Arc<Shared>) -> Result<Vec<(String, String)>, SessionError> {
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+    let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
     let mut out: Vec<(String, String)> = Vec::new();
     for cube in cubes(shared).await? {
         for (function, subject) in cube.fact.wanted.iter().zip(&cube.fact.wanted_over) {
@@ -4593,7 +4582,9 @@ mod tests {
     use super::*;
 
     fn cube(rows: usize) -> Arc<Cube> {
-        let rows: Vec<_> = (0..rows).map(|i| (i as i64, 1.0, None, None)).collect();
+        let rows: Vec<_> = (0..rows)
+            .map(|i| (crate::shared::integer(i), 1.0, None, None))
+            .collect();
         Arc::new(Cube {
             fact: Fact::abstain("m", String::new()),
             cells: world_batch("m", World::Actual, "flow", &rows),

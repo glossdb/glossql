@@ -82,7 +82,7 @@ use datafusion::logical_expr::{Expr, JoinType, LogicalPlanBuilder, col};
 use serde_json::{Value, json};
 
 use crate::search::rows_batch;
-use crate::shared::{SessionError, Shared};
+use crate::shared::{SessionError, Shared, integer};
 use crate::subject::qi;
 
 /// Wilson score lower bound (Wilson 1927): the parameter-free way to
@@ -315,7 +315,7 @@ async fn declared_edges(
     shared: &Arc<Shared>,
     schemas: &Schemas,
 ) -> Result<Vec<Pointer>, SessionError> {
-    let bound = shared.dataset.read().expect("state lock").clone();
+    let bound = shared.dataset();
     let rows = shared.store.relation_rows("relationships").await?;
     Ok(declared_pointers(&rows, bound.as_deref().unwrap_or(""))
         .into_iter()
@@ -404,11 +404,12 @@ impl Probes {
         label: &str,
         side: &Side,
     ) -> Result<String, SessionError> {
-        if !self.grain.contains_key(label) {
-            let g = native_grain(shared, &side.from, &side.texpr, &side.ts).await?;
-            self.grain.insert(label.to_string(), g);
+        if let Some(g) = self.grain.get(label) {
+            return Ok(g.clone());
         }
-        Ok(self.grain[label].clone())
+        let g = native_grain(shared, &side.from, &side.texpr, &side.ts).await?;
+        self.grain.insert(label.to_string(), g.clone());
+        Ok(g)
     }
 
     /// Key-shaped integers, one probe per event table: distinct over
@@ -447,7 +448,7 @@ impl Probes {
             )
             .await?;
             for (i, c) in ints.iter().enumerate() {
-                let at = |k: &str| crate::search::int_column(&kq, k).map(|v| v[0]).unwrap_or(0);
+                let at = |k: &str| crate::search::int_value(&kq, k).unwrap_or(0);
                 let (d, f) = (at(&format!("d{i}")), at(&format!("f{i}")));
                 if f > 0 && d >= 2 && d as f64 / f as f64 >= 0.9 {
                     keyish.insert((*c).clone());
@@ -470,32 +471,31 @@ impl Probes {
             "viable|{}|{}|{}|{}",
             at.maxis.label, sides.alabel, at.grain, at.scope
         );
-        if !self.viable.contains_key(&vkey) {
-            let vq = run(
-                shared,
-                format!(
-                    "SELECT count(*) AS v FROM \
-                     (SELECT {m_e} AS e FROM {am_from} \
-                      WHERE {m_guard} AND {m_texpr} IS NOT NULL \
-                        AND s.{qcol} IS NOT NULL \
-                      GROUP BY 1 \
-                      HAVING count(DISTINCT date_trunc('{grain}', {m_ts})) >= 4) AS g",
-                    m_e = sides.m_e,
-                    am_from = sides.am_from,
-                    m_guard = sides.m_guard,
-                    m_texpr = at.measure.texpr,
-                    grain = at.grain,
-                    m_ts = at.measure.ts,
-                    qcol = qi(at.column)
-                ),
-            )
-            .await?;
-            let v = crate::search::int_column(&vq, "v")
-                .map(|v| v[0])
-                .unwrap_or(0);
-            self.viable.insert(vkey.clone(), v);
+        if let Some(v) = self.viable.get(&vkey) {
+            return Ok(*v);
         }
-        Ok(self.viable[&vkey])
+        let vq = run(
+            shared,
+            format!(
+                "SELECT count(*) AS v FROM \
+                 (SELECT {m_e} AS e FROM {am_from} \
+                  WHERE {m_guard} AND {m_texpr} IS NOT NULL \
+                    AND s.{qcol} IS NOT NULL \
+                  GROUP BY 1 \
+                  HAVING count(DISTINCT date_trunc('{grain}', {m_ts})) >= 4) AS g",
+                m_e = sides.m_e,
+                am_from = sides.am_from,
+                m_guard = sides.m_guard,
+                m_texpr = at.measure.texpr,
+                grain = at.grain,
+                m_ts = at.measure.ts,
+                qcol = qi(at.column)
+            ),
+        )
+        .await?;
+        let v = crate::search::int_value(&vq, "v").unwrap_or(0);
+        self.viable.insert(vkey.clone(), v);
+        Ok(v)
     }
 
     /// Measure-side series, cached per (axis, entity, grain, scope)
@@ -513,30 +513,31 @@ impl Probes {
             "{}|{}|{}|{}",
             at.maxis.label, sides.alabel, at.grain, at.scope
         );
-        if !self.series.contains_key(&ykey) {
-            let yt = run_table(
-                shared,
-                format!(
-                    "SELECT {m_e} AS e, \
-                     date_trunc('{grain}', {m_ts}) AS b, \
-                     SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
-                     FROM {am_from} \
-                     WHERE {m_guard} AND {m_texpr} IS NOT NULL \
-                       AND s.{qcol} IS NOT NULL \
-                     GROUP BY 1, 2",
-                    m_e = sides.m_e,
-                    grain = at.grain,
-                    m_ts = at.measure.ts,
-                    am_from = sides.am_from,
-                    m_guard = sides.m_guard,
-                    m_texpr = at.measure.texpr,
-                    qcol = qi(at.column)
-                ),
-            )
-            .await?;
-            self.series.insert(ykey.clone(), yt);
+        if let Some(yt) = self.series.get(&ykey) {
+            return Ok(Arc::clone(yt));
         }
-        Ok(Arc::clone(&self.series[&ykey]))
+        let yt = run_table(
+            shared,
+            format!(
+                "SELECT {m_e} AS e, \
+                 date_trunc('{grain}', {m_ts}) AS b, \
+                 SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
+                 FROM {am_from} \
+                 WHERE {m_guard} AND {m_texpr} IS NOT NULL \
+                   AND s.{qcol} IS NOT NULL \
+                 GROUP BY 1, 2",
+                m_e = sides.m_e,
+                grain = at.grain,
+                m_ts = at.measure.ts,
+                am_from = sides.am_from,
+                m_guard = sides.m_guard,
+                m_texpr = at.measure.texpr,
+                qcol = qi(at.column)
+            ),
+        )
+        .await?;
+        self.series.insert(ykey, Arc::clone(&yt));
+        Ok(yt)
     }
 
     /// The entity intersection, which the alignment cannot answer: an
@@ -568,14 +569,13 @@ impl Probes {
             e_guard = sides.e_guard,
             e_texpr = at.event.texpr,
         );
-        if !self.common.contains_key(&cq) {
-            let cb = run(shared, cq.clone()).await?;
-            let n = crate::search::int_column(&cb, "n")
-                .map(|v| v[0])
-                .unwrap_or(0);
-            self.common.insert(cq.clone(), n);
+        if let Some(v) = self.common.get(&cq) {
+            return Ok(*v);
         }
-        Ok(self.common[&cq])
+        let cb = run(shared, cq.clone()).await?;
+        let n = crate::search::int_value(&cb, "n").unwrap_or(0);
+        self.common.insert(cq.clone(), n);
+        Ok(n)
     }
 
     /// The monotone read per (axis, alignment, scope), at the axis's
@@ -588,56 +588,51 @@ impl Probes {
         sides: &Sides,
     ) -> Result<(i64, i64, i64, i64), SessionError> {
         let mkey = format!("mono|{}|{}|{}", at.maxis.label, sides.alabel, at.scope);
-        if !self.mono.contains_key(&mkey) {
-            let mq = run(
-                shared,
-                format!(
-                    "SELECT count(*) AS considered, \
-                     coalesce(sum(CASE WHEN decreases = 0 AND increases > 0 \
-                                        THEN 1 ELSE 0 END), 0) AS monotone, \
-                     coalesce(sum(CASE WHEN increases > 0 OR decreases > 0 \
-                                        THEN 1 ELSE 0 END), 0) AS movers, \
-                     coalesce(sum(steps), 0) AS steps \
-                     FROM (SELECT e, count(*) AS steps, \
-                             sum(CASE WHEN yv < prev THEN 1 ELSE 0 END) AS decreases, \
-                             sum(CASE WHEN yv > prev THEN 1 ELSE 0 END) AS increases \
-                           FROM (SELECT e, b, yv, \
-                                   lag(yv) OVER (PARTITION BY e ORDER BY b) AS prev \
-                                 FROM (SELECT {m_e} AS e, \
-                                         date_trunc('{m_native}', {m_ts}) AS b, \
-                                         SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
-                                       FROM {am_from} \
-                                       WHERE {m_guard} AND {m_texpr} IS NOT NULL \
-                                         AND s.{qcol} IS NOT NULL \
-                                       GROUP BY 1, 2)) \
-                           WHERE prev IS NOT NULL \
-                           GROUP BY e HAVING count(*) >= 3)",
-                    m_e = sides.m_e,
-                    m_native = at.m_native,
-                    m_ts = at.measure.ts,
-                    qcol = qi(at.column),
-                    am_from = sides.am_from,
-                    m_guard = sides.m_guard,
-                    m_texpr = at.measure.texpr,
-                ),
-            )
-            .await?;
-            let read = |name: &str| {
-                crate::search::int_column(&mq, name)
-                    .map(|v| v[0])
-                    .unwrap_or(0)
-            };
-            self.mono.insert(
-                mkey.clone(),
-                (
-                    read("considered"),
-                    read("monotone"),
-                    read("movers"),
-                    read("steps"),
-                ),
-            );
+        if let Some(m) = self.mono.get(&mkey) {
+            return Ok(*m);
         }
-        Ok(self.mono[&mkey])
+        let mq = run(
+            shared,
+            format!(
+                "SELECT count(*) AS considered, \
+                 coalesce(sum(CASE WHEN decreases = 0 AND increases > 0 \
+                                    THEN 1 ELSE 0 END), 0) AS monotone, \
+                 coalesce(sum(CASE WHEN increases > 0 OR decreases > 0 \
+                                    THEN 1 ELSE 0 END), 0) AS movers, \
+                 coalesce(sum(steps), 0) AS steps \
+                 FROM (SELECT e, count(*) AS steps, \
+                         sum(CASE WHEN yv < prev THEN 1 ELSE 0 END) AS decreases, \
+                         sum(CASE WHEN yv > prev THEN 1 ELSE 0 END) AS increases \
+                       FROM (SELECT e, b, yv, \
+                               lag(yv) OVER (PARTITION BY e ORDER BY b) AS prev \
+                             FROM (SELECT {m_e} AS e, \
+                                     date_trunc('{m_native}', {m_ts}) AS b, \
+                                     SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
+                                   FROM {am_from} \
+                                   WHERE {m_guard} AND {m_texpr} IS NOT NULL \
+                                     AND s.{qcol} IS NOT NULL \
+                                   GROUP BY 1, 2)) \
+                       WHERE prev IS NOT NULL \
+                       GROUP BY e HAVING count(*) >= 3)",
+                m_e = sides.m_e,
+                m_native = at.m_native,
+                m_ts = at.measure.ts,
+                qcol = qi(at.column),
+                am_from = sides.am_from,
+                m_guard = sides.m_guard,
+                m_texpr = at.measure.texpr,
+            ),
+        )
+        .await?;
+        let read = |name: &str| crate::search::int_value(&mq, name).unwrap_or(0);
+        let m = (
+            read("considered"),
+            read("monotone"),
+            read("movers"),
+            read("steps"),
+        );
+        self.mono.insert(mkey, m);
+        Ok(m)
     }
 }
 
@@ -1146,7 +1141,7 @@ pub(crate) async fn behavior_anchors(
     let legs = identifier_legs(&pointers);
     let owns_entity = owns_entity(&pointers, table);
     let all_axes = time_axes(&tables, &schemas, &pointers);
-    let m_axes = all_axes[table].clone();
+    let m_axes = all_axes.get(table).cloned().unwrap_or_default();
     if m_axes.is_empty() {
         return bare(json!({
             "applicable": false,
@@ -1386,7 +1381,7 @@ fn elect(anchors: &[Value]) -> Vec<Value> {
         .iter()
         .filter(|a| a["verdict"] != json!("abstain"))
         .collect();
-    let decided = ranked.len() as i64;
+    let decided = integer(ranked.len());
     ranked.sort_by(|a, b| {
         let (sa, sb) = (sup(a), sup(b));
         if (sa - sb).abs() > SUPPORT_EPS {
@@ -1413,7 +1408,7 @@ fn elect(anchors: &[Value]) -> Vec<Value> {
     };
     let mut fact = serde_json::Map::new();
     fact.insert("applicable".into(), json!(true));
-    fact.insert("anchors_n".into(), json!(anchors.len() as i64));
+    fact.insert("anchors_n".into(), json!(integer(anchors.len())));
     fact.insert("decided".into(), json!(decided));
     if let Some(b) = best {
         for (from, to) in [
@@ -1464,7 +1459,7 @@ fn elect(anchors: &[Value]) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     for (seq, a) in anchors.iter().enumerate() {
         let mut row = a.as_object().expect("object").clone();
-        row.insert("seq".into(), json!(seq as i64));
+        row.insert("seq".into(), json!(integer(seq)));
         if let Some(sign) = row.remove("sign") {
             row.insert("sign_primary".into(), sign["primary"].clone());
             row.insert("sign_mirror".into(), sign["mirror"].clone());
@@ -1609,7 +1604,7 @@ fn judge_anchor(base: Value, n_common: i64, summaries: &[Value]) -> Value {
                     a.insert("voted".into(), f["voted"].clone());
                     format!(
                         "{} of {n_common} common entities voted {} — under the majority floor",
-                        winners(f) as i64,
+                        winners(f),
                         f["verdict"].as_str().unwrap_or("")
                     )
                 }
@@ -1643,8 +1638,7 @@ async fn native_grain(
         ),
     )
     .await?;
-    let cell =
-        |name: &str| -> Option<i64> { crate::search::int_column(&g, name).ok().map(|v| v[0]) };
+    let cell = |name: &str| -> Option<i64> { crate::search::int_value(&g, name).ok() };
     Ok(match (cell("ny"), cell("nq"), cell("nm")) {
         (None, _, _) => "empty".into(),
         (Some(0), _, _) => "year".into(),

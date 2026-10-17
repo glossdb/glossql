@@ -179,7 +179,7 @@ mod tests {
         let dates: Vec<i32> = (1..=12)
             .map(|m| {
                 let day = chrono::NaiveDate::from_ymd_opt(2026, m, 15).expect("a date");
-                (day - epoch).num_days() as i32
+                i32::try_from((day - epoch).num_days()).expect("a day")
             })
             .collect();
         let batch = RecordBatch::try_new(
@@ -250,7 +250,10 @@ mod tests {
             Arc::clone(&schema),
             vec![
                 Arc::new(Date32Array::from(vec![
-                    (july - epoch).num_days() as i32;
+                    i32::try_from(
+                        (july - epoch).num_days()
+                    )
+                    .expect("a day");
                     10
                 ])),
                 Arc::new(Int64Array::from(vec![10i64; 10])),

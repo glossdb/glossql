@@ -20,6 +20,14 @@
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
 #![warn(clippy::unwrap_used)]
+// A narrowing cast is a value the type did not promise: a count or an
+// offset converts through `try_from` or a named conversion that states
+// its bound.
+#![warn(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation
+)]
 
 pub mod accounting;
 mod adbc;
@@ -852,7 +860,7 @@ async fn account_casts(
                 .as_any()
                 .downcast_ref::<Int64Array>()
                 .filter(|a| !a.is_empty() && !a.is_null(0))
-                .map(|a| a.value(0) as u64)
+                .and_then(|a| u64::try_from(a.value(0)).ok())
                 .ok_or_else(|| {
                     Error::Batches(format!(
                         "the cast companion's column {i} does not read as a count"
@@ -890,9 +898,15 @@ async fn account_casts(
                             let token =
                                 datafusion::arrow::util::display::array_value_to_string(t, i)
                                     .map_err(|e| Error::Batches(e.to_string()))?;
+                            let hits = u64::try_from(n.value(i)).map_err(|_| {
+                                Error::Batches(format!(
+                                    "token `{token}` counted {} times",
+                                    n.value(i)
+                                ))
+                            })?;
                             match merged.iter_mut().find(|(k, _)| *k == token) {
-                                Some((_, c)) => *c += n.value(i) as u64,
-                                None => merged.push((token, n.value(i) as u64)),
+                                Some((_, c)) => *c += hits,
+                                None => merged.push((token, hits)),
                             }
                         }
                     }

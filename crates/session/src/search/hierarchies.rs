@@ -10,7 +10,7 @@ use datafusion::functions_aggregate::expr_fn::count;
 use datafusion::logical_expr::{Expr, ExprFunctionExt, LogicalPlanBuilder, ident, lit};
 use serde_json::json;
 
-use crate::shared::{SessionError, Shared};
+use crate::shared::{SessionError, Shared, integer};
 
 use super::{detector_state, int_column, rows_batch, run_plan};
 
@@ -126,7 +126,8 @@ pub(crate) async fn hierarchy_candidates(
             int_column(std::slice::from_ref(b), "filled").map_err(|e| bad(e.to_string()))?;
         for r in 0..b.num_rows() {
             n = total[r];
-            by_ci[ci[r] as usize] = Some(ColStat {
+            let at = super::offset(ci[r], by_ci.len()).map_err(&bad)?;
+            by_ci[at] = Some(ColStat {
                 groups: groups[r],
                 modal: modal[r],
                 distinct_vals: dv[r],
@@ -184,7 +185,10 @@ pub(crate) async fn hierarchy_candidates(
                 int_column(std::slice::from_ref(b), "agree_ba").map_err(|e| bad(e.to_string()))?;
             for r in 0..b.num_rows() {
                 pairs.insert(
-                    (ca[r] as usize, cb[r] as usize),
+                    (
+                        super::offset(ca[r], names.len()).map_err(&bad)?,
+                        super::offset(cb[r], names.len()).map_err(&bad)?,
+                    ),
                     Pair {
                         pair_groups: pg[r],
                         agree_ab: ab[r],
@@ -255,7 +259,7 @@ fn plan_long(
     use datafusion::functions_nested::expr_fn::make_array;
     use datafusion::logical_expr::cast;
 
-    let ci = make_array(cols.iter().map(|(ci, _)| lit(*ci as i64)).collect()).alias("ci");
+    let ci = make_array(cols.iter().map(|(ci, _)| lit(integer(*ci))).collect()).alias("ci");
     let val = make_array(
         cols.iter()
             .map(|(_, name)| cast(ident(name), DataType::Utf8))
@@ -336,8 +340,20 @@ fn plan_pairs(
         .map(|&k| cast(ident(&cols[k].1), DataType::Utf8).alias(format!("s{k}")))
         .collect();
     let lists = vec![
-        make_array(pairs.iter().map(|(a, _)| lit(cols[*a].0 as i64)).collect()).alias("ca"),
-        make_array(pairs.iter().map(|(_, b)| lit(cols[*b].0 as i64)).collect()).alias("cb"),
+        make_array(
+            pairs
+                .iter()
+                .map(|(a, _)| lit(integer(cols[*a].0)))
+                .collect(),
+        )
+        .alias("ca"),
+        make_array(
+            pairs
+                .iter()
+                .map(|(_, b)| lit(integer(cols[*b].0)))
+                .collect(),
+        )
+        .alias("cb"),
         make_array(pairs.iter().map(|(a, _)| col(format!("s{a}"))).collect()).alias("av"),
         make_array(pairs.iter().map(|(_, b)| col(format!("s{b}"))).collect()).alias("bv"),
     ];

@@ -343,7 +343,7 @@ async fn resolve_door(
     // version and pin produced, planned as a table. The bound dataset
     // keys it; unbound, the read expands like any other and refuses
     // wherever it would have.
-    let bound = shared.dataset.read().expect("state lock").clone();
+    let bound = shared.dataset();
     if let Door::Shipped(name) = &door
         && crate::memo::memoized(name)
         && let Some(dataset) = bound

@@ -45,7 +45,7 @@ use serde_json::{Value, json};
 
 use super::rows_batch;
 use crate::period::{self, Resolution};
-use crate::shared::{Answered, FORECAST, SessionError, Shared};
+use crate::shared::{Answered, FORECAST, SessionError, Shared, integer};
 
 /// The levels asked, the walk's own: the 80% band is p10 to p90, the
 /// 90% band p05 to p95.
@@ -228,7 +228,7 @@ pub(crate) async fn metric_forecast_ahead(
     if !runtime.serves(FORECAST) {
         return Err(crate::shared::no_model("metric_forecast()", FORECAST));
     }
-    let bound = shared.dataset.read().expect("state lock").clone();
+    let bound = shared.dataset();
     if bound.as_deref() != Some(dataset) {
         return Err(SessionError::shape(
             dataset,
@@ -246,7 +246,7 @@ pub(crate) async fn metric_forecast_ahead(
     // world of the metric it names, not a metric.
     let metrics = cubes.iter().filter(|c| c.fact.plan_of.is_none());
     for (seq, cube) in metrics.enumerate() {
-        let seq = seq as i64;
+        let seq = integer(seq);
         let fact = &cube.fact;
         let not_applicable = |reason: String| {
             Row::Ready(json!({
@@ -389,17 +389,17 @@ pub(crate) async fn metric_forecast_ahead(
         };
         let mut served: Vec<Value> = Vec::new();
         let mut point = |step: usize, span: Option<usize>, to_go: Option<&str>| {
-            let key = (a.metric.clone(), step as i64, span.map(|s| s as i64));
+            let key = (a.metric.clone(), integer(step), span.map(integer));
             let Some(q) = points.get(&key) else { return };
             let Some(&period) = step.checked_sub(1).and_then(|k| a.ahead.get(k)) else {
                 return;
             };
             let held = coverage
-                .get(&(a.grain, step as i64, span.map(|s| s as i64)))
+                .get(&(a.grain, integer(step), span.map(integer)))
                 .copied()
                 .unwrap_or_default();
             served.push(json!({
-                "step": step as i64, "span": span.map(|s| s as i64), "to_go": to_go,
+                "step": integer(step), "span": span.map(integer), "to_go": to_go,
                 "period": period::date(period),
                 "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
                 "service_80": held.0, "service_90": held.1,
@@ -430,7 +430,7 @@ pub(crate) async fn metric_forecast_ahead(
             row.insert("grain".into(), json!(a.grain));
             row.insert("origin".into(), json!(period::date(a.origin)));
             row.insert("served_by".into(), json!(served_by));
-            row.insert("point_seq".into(), json!(point_seq as i64));
+            row.insert("point_seq".into(), json!(integer(point_seq)));
             for (k, val) in p.as_object().expect("point object") {
                 row.insert(k.clone(), val.clone());
             }
@@ -715,12 +715,7 @@ fn quantiles(point: &Value) -> Option<Quantiles> {
 pub(crate) async fn world_cells(
     shared: &Arc<Shared>,
 ) -> Result<HashMap<String, (String, Vec<(i64, f64)>)>, SessionError> {
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+    let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
     let rctx = shared.read_context().await?;
     let mut out = HashMap::new();
     let Some(verdict) = crate::cube::judged_bodies(&rctx, &dataset, ASPECT).remove(&dataset) else {
@@ -753,12 +748,7 @@ pub(crate) async fn world_cells(
 }
 
 pub(crate) async fn forecast_points(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+    let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
     let rctx = shared.read_context().await?;
     let landed_bodies = crate::cube::judged_bodies(&rctx, &dataset, ASPECT);
     let mut out = Vec::new();
@@ -777,7 +767,7 @@ pub(crate) async fn forecast_points(shared: &Arc<Shared>) -> Result<RecordBatch,
         {
             let head = || {
                 let mut row = serde_json::Map::new();
-                row.insert("seq".into(), json!(seq as i64));
+                row.insert("seq".into(), json!(integer(seq)));
                 for key in [
                     "metric",
                     "applicable",
@@ -818,7 +808,7 @@ pub(crate) async fn forecast_points(shared: &Arc<Shared>) -> Result<RecordBatch,
             };
             for (point_seq, point) in points.iter().enumerate() {
                 let mut row = head();
-                row.insert("point_seq".into(), json!(point_seq as i64));
+                row.insert("point_seq".into(), json!(integer(point_seq)));
                 for (k, v) in point.as_object().into_iter().flatten() {
                     row.insert(k.clone(), v.clone());
                 }
@@ -1059,12 +1049,7 @@ pub(crate) async fn held_table(
 /// newest run at that origin. `forecast_points()` serves a point's
 /// `held_*` share from these rows once one reaches [`RECORD_FLOOR`].
 pub(crate) async fn forecast_coverage(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+    let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
     let cells = actuals(shared).await?;
     let mut out = Vec::new();
     for ((metric, grain, step, span, to_go), tally) in tallies(shared, &dataset, &cells).await? {
@@ -1073,7 +1058,7 @@ pub(crate) async fn forecast_coverage(shared: &Arc<Shared>) -> Result<RecordBatc
             "metric": metric, "grain": grain, "step": step, "span": span, "to_go": to_go,
             "points": tally.points,
             "inside_80": share(tally.inside_80), "inside_90": share(tally.inside_90),
-            "forecasts": tally.origins.len() as i64,
+            "forecasts": integer(tally.origins.len()),
         }));
     }
     rows_batch(

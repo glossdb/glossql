@@ -88,7 +88,7 @@ fn runtime_env(megabytes: u64, spill_megabytes: Option<u64>) -> Arc<RuntimeEnv> 
             // consumer tracking is what names the top holders in a
             // refusal.
             .with_memory_pool(Arc::new(TrackConsumersPool::new(
-                FairSpillPool::new(pool as usize),
+                FairSpillPool::new(usize::try_from(pool).unwrap_or(usize::MAX)),
                 NonZeroUsize::new(5).expect("five"),
             )))
             .with_disk_manager_builder(
