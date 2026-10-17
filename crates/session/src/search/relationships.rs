@@ -65,17 +65,11 @@ use super::{dataset_pins, detector_state, int_column, rows_batch, run_plan};
 /// surviving from combinations joined to the surviving to combinations
 /// on both legs, never a side to itself. Width 2 only — wider
 /// composites stay future work. Data decides, not names.
-#[expect(
-    clippy::too_many_lines,
-    clippy::cognitive_complexity,
-    reason = "an orchestrator above the threshold; #136 extracts its phases"
-)]
 pub(crate) async fn relationship_candidates(
     shared: &Arc<Shared>,
     dataset: &str,
 ) -> Result<RecordBatch, SessionError> {
     let door = format!("relationship_candidates('{dataset}')");
-    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
     let ctx = shared.session_ctx();
     // The shape scans are fixed-memory aggregates and run through the
     // session's own state; the pair passes run through the detector's.
@@ -84,26 +78,99 @@ pub(crate) async fn relationship_candidates(
 
     let pinned = dataset_pins(shared, dataset).await?;
     let resolved = &pinned;
+    let (cols, rows) = column_shapes(&scans, resolved, &door).await?;
+
+    // One arm per scalar column, and the whole matrix in one pass per
+    // dtype.
+    let arms: Vec<Arm> = cols
+        .iter()
+        .map(|c| Arm {
+            table: c.table.clone(),
+            columns: vec![c.column.clone()],
+        })
+        .collect();
+    let counts = pair_counts(&state, resolved, &door, &arms).await?;
+    let shapes = Shapes { cols, rows, counts };
+
+    let pairs = admitted_pairs(&shapes);
+    let mut candidates = single_candidates(&shapes, &pairs);
+
+    // Composite rescue: the attempts, then the combinations either side
+    // needs, counted in two phases with the exact prunes between them.
+    let (mut attempts, combos) = composite_attempts(&shapes, &pairs);
+    let combo_arms: Vec<Arm> = combos
+        .iter()
+        .map(|(t, a, b)| Arm {
+            table: t.clone(),
+            columns: vec![a.clone(), b.clone()],
+        })
+        .collect();
+
+    // The co-filled count of every combination, then the first exact
+    // prune: implied by the near-unique bar, never a heuristic. The
+    // combined to side's distinct pairs cannot exceed the product of
+    // the legs' distinct counts, so a product under 0.9 of the
+    // co-filled count can never key the table.
+    let filled = combo_filled(&scans, resolved, &door, &combos).await?;
+    attempts.retain(|a| {
+        let (p, s) = (&pairs[a.p], &pairs[a.s]);
+        filled[a.to] > 0
+            && (shapes.distinct(p.k) as f64) * (shapes.distinct(s.k) as f64)
+                >= 0.9 * filled[a.to] as f64
+    });
+
+    // Phase A: every surviving combination's own distinct count, an
+    // aggregate and no join. Then the prunes it makes exact, in Rust
+    // over schema-sized numbers.
+    let needed: HashSet<usize> = attempts.iter().flat_map(|a| [a.from, a.to]).collect();
+    let combo_distinct = arm_distinct(&state, resolved, &door, &combo_arms, &needed).await?;
+    prune_by_distinct(&mut attempts, &shapes, &pairs, &filled, &combo_distinct);
+
+    // Phase B: the from sides joined to the to sides on both legs,
+    // never one side to itself, grouped by the pair.
+    let from_arms: HashSet<usize> = attempts.iter().map(|a| a.from).collect();
+    let to_arms: HashSet<usize> = attempts.iter().map(|a| a.to).collect();
+    tracing::debug!(
+        attempts = attempts.len(),
+        from_arms = from_arms.len(),
+        to_arms = to_arms.len(),
+        "composite rescue joined"
+    );
+    let matched = cross_counts(&state, resolved, &door, &combo_arms, &from_arms, &to_arms).await?;
+
+    let rescued = rescues(&attempts, &filled, &combo_distinct, &matched);
+    candidates.extend(rescued_candidates(&shapes, &pairs, &rescued));
+    rows_batch(candidate_rows(&candidates), relationship_shape())
+}
+
+/// Per-column shape: the filled count. The distinct count is the
+/// diagonal of the pair pass and is never asked for separately.
+struct ColShape {
+    table: String,
+    column: String,
+    filled: i64,
+    /// Date or Timestamp: a reference is never a point in time.
+    temporal: bool,
+}
+
+/// Every scalar column's shape and every table's row count, one
+/// aggregate per table through the session's own state. Scalar
+/// columns only: a key is a scalar, so a nested column is never a
+/// candidate.
+async fn column_shapes(
+    scans: &SessionState,
+    resolved: &crate::shared::Resolved,
+    door: &str,
+) -> Result<(Vec<ColShape>, HashMap<String, i64>), SessionError> {
+    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
     let mut tables: Vec<String> = resolved.tables();
     tables.sort();
-
-    // Per-column shape: the filled count. The distinct count is the
-    // diagonal of the pair pass and is never asked for separately.
-    struct ColShape {
-        table: String,
-        column: String,
-        filled: i64,
-        /// Date or Timestamp: a reference is never a point in time.
-        temporal: bool,
-    }
     let mut cols: Vec<ColShape> = Vec::new();
     let mut rows: HashMap<String, i64> = HashMap::new();
     for t in &tables {
         let provider = resolved
             .pin(t)
             .ok_or_else(|| bad(format!("no pin for `{t}`")))?;
-        // Scalar columns only: a key is a scalar, so a nested column is
-        // never a candidate.
         let fields = provider.schema();
         let scalar: Vec<_> = fields
             .fields()
@@ -122,9 +189,9 @@ pub(crate) async fn relationship_candidates(
             .and_then(|b| b.aggregate(Vec::<Expr>::new(), aggs))
             .and_then(|b| b.build())
             .map_err(|e| bad(e.to_string()))?;
-        let batches = run_plan(&scans, plan)
+        let batches = run_plan(scans, plan)
             .await
-            .map_err(|e| SessionError::door(&door, e))?;
+            .map_err(|e| SessionError::door(door, e))?;
         let one = batches
             .iter()
             .find(|b| b.num_rows() > 0)
@@ -149,50 +216,69 @@ pub(crate) async fn relationship_candidates(
         }
         rows.insert(t.clone(), counted(scalar.len())?);
     }
+    Ok((cols, rows))
+}
 
-    // One arm per scalar column, and the whole matrix in one pass per
-    // dtype.
-    let arms: Vec<Arm> = cols
-        .iter()
-        .map(|c| Arm {
-            table: c.table.clone(),
-            columns: vec![c.column.clone()],
-        })
-        .collect();
-    let counts = pair_counts(&state, resolved, &door, &arms).await?;
-    let distinct = |i: usize| counts.get(i, i);
-    // Near-unique, not strictly unique, so dirty keys stay in the
-    // running.
-    let key_like = |i: usize| {
-        let d = distinct(i);
-        cols[i].filled > 0 && d >= 2 && d as f64 / cols[i].filled as f64 >= 0.9
-    };
-    let unique = |i: usize| cols[i].filled > 0 && distinct(i) == cols[i].filled;
+/// What the shape scans and the width-1 pass know of every column:
+/// its filled count, its table's rows, and the pair matrix whose
+/// diagonal is its distinct count.
+struct Shapes {
+    cols: Vec<ColShape>,
+    rows: HashMap<String, i64>,
+    counts: Counts,
+}
 
-    // Every pair the bar admits, keys or not — the non-key pairs are
-    // the raw material for composite rescue. Same-table pairs stay in.
-    // A cross-dtype pair carries a zero off the matrix and falls out
-    // here rather than being excluded by name.
-    struct Pair {
-        f: usize,
-        k: usize,
-        overlap: f64,
-        matched: i64,
+impl Shapes {
+    fn distinct(&self, i: usize) -> i64 {
+        self.counts.get(i, i)
     }
+
+    /// Near-unique, not strictly unique, so dirty keys stay in the
+    /// running.
+    fn key_like(&self, i: usize) -> bool {
+        let d = self.distinct(i);
+        self.cols[i].filled > 0 && d >= 2 && d as f64 / self.cols[i].filled as f64 >= 0.9
+    }
+
+    fn unique(&self, i: usize) -> bool {
+        self.cols[i].filled > 0 && self.distinct(i) == self.cols[i].filled
+    }
+
+    fn path(&self, i: usize) -> String {
+        format!("{}.{}", self.cols[i].table, self.cols[i].column)
+    }
+}
+
+/// One pair the bar admits: the from column, the to column, and how
+/// far the from side reaches the to side.
+struct Pair {
+    f: usize,
+    k: usize,
+    overlap: f64,
+    matched: i64,
+}
+
+/// Every pair the bar admits, keys or not — the non-key pairs are
+/// the raw material for composite rescue. Same-table pairs stay in.
+/// A cross-dtype pair carries a zero off the matrix and falls out
+/// here rather than being excluded by name.
+fn admitted_pairs(shapes: &Shapes) -> Vec<Pair> {
     let mut pairs: Vec<Pair> = Vec::new();
-    for ki in 0..cols.len() {
-        if distinct(ki) < 2 {
+    for ki in 0..shapes.cols.len() {
+        if shapes.distinct(ki) < 2 {
             continue;
         }
-        for fi in 0..cols.len() {
-            if cols[fi].table == cols[ki].table && cols[fi].column == cols[ki].column {
+        for fi in 0..shapes.cols.len() {
+            if shapes.cols[fi].table == shapes.cols[ki].table
+                && shapes.cols[fi].column == shapes.cols[ki].column
+            {
                 continue;
             }
-            let from_distinct = distinct(fi);
+            let from_distinct = shapes.distinct(fi);
             if from_distinct == 0 {
                 continue;
             }
-            let matched = counts.get(fi, ki);
+            let matched = shapes.counts.get(fi, ki);
             let overlap = matched as f64 / from_distinct as f64;
             if overlap < 0.5 {
                 continue;
@@ -205,64 +291,86 @@ pub(crate) async fn relationship_candidates(
             });
         }
     }
+    pairs
+}
 
-    // Single-column candidates: the pairs whose to side stands as a key
-    // on its own. The row says what the to side is — exactly unique in
-    // its table, a point in time — beside how far the from side
-    // reaches it; the body ranks on both, and demotes only.
-    #[derive(Clone)]
-    struct Candidate {
-        from: String,
-        to: String,
-        cardinality: &'static str,
-        overlap: f64,
-        matched: i64,
-        orphans: i64,
-        from_distinct: i64,
-        to_distinct: i64,
-        to_unique: bool,
-        to_temporal: bool,
-        key_columns: Option<(String, String)>,
-    }
-    let path = |i: usize| format!("{}.{}", cols[i].table, cols[i].column);
+/// One candidate as the row carries it: what the to side is —
+/// exactly unique in its table, a point in time — beside how far the
+/// from side reaches it; the body ranks on both, and demotes only.
+#[derive(Clone)]
+struct Candidate {
+    from: String,
+    to: String,
+    cardinality: &'static str,
+    overlap: f64,
+    matched: i64,
+    orphans: i64,
+    from_distinct: i64,
+    to_distinct: i64,
+    to_unique: bool,
+    to_temporal: bool,
+    key_columns: Option<(String, String)>,
+}
+
+/// Single-column candidates: the pairs whose to side stands as a key
+/// on its own.
+fn single_candidates(shapes: &Shapes, pairs: &[Pair]) -> Vec<Candidate> {
     let mut candidates: Vec<Candidate> = Vec::new();
-    for p in &pairs {
-        if !key_like(p.k) {
+    for p in pairs {
+        if !shapes.key_like(p.k) {
             continue;
         }
         candidates.push(Candidate {
-            from: path(p.f),
-            to: path(p.k),
-            cardinality: if unique(p.f) {
+            from: shapes.path(p.f),
+            to: shapes.path(p.k),
+            cardinality: if shapes.unique(p.f) {
                 "one-to-one"
             } else {
                 "many-to-one"
             },
             overlap: p.overlap,
             matched: p.matched,
-            orphans: distinct(p.f) - p.matched,
-            from_distinct: distinct(p.f),
-            to_distinct: distinct(p.k),
-            to_unique: unique(p.k),
-            to_temporal: cols[p.k].temporal,
+            orphans: shapes.distinct(p.f) - p.matched,
+            from_distinct: shapes.distinct(p.f),
+            to_distinct: shapes.distinct(p.k),
+            to_unique: shapes.unique(p.k),
+            to_temporal: shapes.cols[p.k].temporal,
             key_columns: None,
         });
     }
+    candidates
+}
 
-    // Composite rescue: the attempts, then the combinations either side
-    // needs, counted in two phases with the exact prunes between them.
-    struct Attempt {
-        p: usize, // into pairs — the anchor leg
-        s: usize,
-        order: i64,
-        from: usize, // into combos
-        to: usize,
-    }
-    // The combinations both sides need, interned once each: the same
-    // (table, a, b) can be a to side for one attempt and a from side
-    // for another, and an arm counted twice is a scan wasted.
-    let mut combos: Vec<(String, String, String)> = Vec::new();
-    let mut combo_of: HashMap<(String, String, String), usize> = HashMap::new();
+/// One composite attempt: the anchor pair, the scoping pair, the
+/// scope's rank in overlap order, and the two combinations it needs.
+struct Attempt {
+    /// Into the pairs — the anchor leg.
+    p: usize,
+    s: usize,
+    order: i64,
+    /// Into the combinations.
+    from: usize,
+    to: usize,
+}
+
+/// A combination: the table, the leg and the scope column.
+type Combo = (String, String, String);
+
+/// The composite attempts and the combinations they need. The scopes
+/// an anchor can take are the pairs between its two tables, in
+/// overlap order — one order per table pair, shared by every anchor
+/// on it. Two tables one key-like pair already joins are never tried:
+/// a scope beside a second column could only re-key a pair that has a
+/// key, and what such a pass serves is two date or code columns that
+/// happen to coincide; the multi-tenant shape is untouched — no
+/// single column keys it. The combinations both sides need are
+/// interned once each: the same (table, a, b) can be a to side for
+/// one attempt and a from side for another, and an arm counted twice
+/// is a scan wasted.
+fn composite_attempts(shapes: &Shapes, pairs: &[Pair]) -> (Vec<Attempt>, Vec<Combo>) {
+    let cols = &shapes.cols;
+    let mut combos: Vec<Combo> = Vec::new();
+    let mut combo_of: HashMap<Combo, usize> = HashMap::new();
     let mut intern = |leg: &ColShape, scope: &ColShape| {
         let key = (leg.table.clone(), leg.column.clone(), scope.column.clone());
         let next = combos.len();
@@ -272,9 +380,6 @@ pub(crate) async fn relationship_candidates(
         }
         at
     };
-    // The scopes an anchor can take are the pairs between its two
-    // tables, in overlap order — one order per table pair, shared by
-    // every anchor on it.
     let mut by_tables: HashMap<(&str, &str), Vec<usize>> = HashMap::new();
     for (si, s) in pairs.iter().enumerate() {
         by_tables
@@ -287,14 +392,9 @@ pub(crate) async fn relationship_candidates(
         // the read.
         list.sort_by(|a, b| pairs[*b].overlap.total_cmp(&pairs[*a].overlap));
     }
-    // Two tables one key-like pair already joins are never tried for
-    // a composite: a scope beside a second column could only re-key a
-    // pair that has a key, and what such a pass serves is two date or
-    // code columns that happen to coincide. The multi-tenant shape is
-    // untouched — no single column keys it.
     let linked: HashSet<(&str, &str)> = pairs
         .iter()
-        .filter(|p| key_like(p.k))
+        .filter(|p| shapes.key_like(p.k))
         .map(|p| {
             let (a, b) = (cols[p.f].table.as_str(), cols[p.k].table.as_str());
             (a.min(b), a.max(b))
@@ -303,38 +403,20 @@ pub(crate) async fn relationship_candidates(
     let mut attempts: Vec<Attempt> = Vec::new();
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
     for (pi, p) in pairs.iter().enumerate() {
-        if key_like(p.k) {
+        if shapes.key_like(p.k) {
             continue;
         }
         let (ta, tb) = (cols[p.f].table.as_str(), cols[p.k].table.as_str());
         if linked.contains(&(ta.min(tb), ta.max(tb))) {
             continue;
         }
-        let Some(scopes) = by_tables.get(&(cols[p.f].table.as_str(), cols[p.k].table.as_str()))
-        else {
+        let Some(scopes) = by_tables.get(&(ta, tb)) else {
             continue;
         };
         let mut order = 0i64;
         for &si in scopes {
             let s = &pairs[si];
-            if cols[s.f].column == cols[p.f].column || cols[s.k].column == cols[p.k].column {
-                continue;
-            }
-            // A scoping leg that is unique on its own did all the
-            // identifying: the pair's distinct count cannot exceed the
-            // leg's, so the composite would add nothing to the leg's
-            // own candidate.
-            if unique(s.k) {
-                continue;
-            }
-            // The near-unique bar, bounded from the shape scan alone:
-            // the pair's distinct count is at most the product of the
-            // legs', and the rows carrying both legs are at least the
-            // legs' filled counts less the table's rows. Implied by the
-            // bar, never a heuristic — what it keeps, the co-filled
-            // count settles below.
-            let floor = (cols[p.k].filled + cols[s.k].filled - rows[&cols[p.k].table]).max(0);
-            if (distinct(p.k) as f64) * (distinct(s.k) as f64) < 0.9 * floor as f64 {
+            if !scope_admits(shapes, p, s) {
                 continue;
             }
             // An attempt and its mirror — the scope as the anchor — are
@@ -369,32 +451,44 @@ pub(crate) async fn relationship_candidates(
         table_pairs = table_pairs.len(),
         "composite rescue asked"
     );
-    let combo_arms: Vec<Arm> = combos
-        .iter()
-        .map(|(t, a, b)| Arm {
-            table: t.clone(),
-            columns: vec![a.clone(), b.clone()],
-        })
-        .collect();
+    (attempts, combos)
+}
 
-    // The co-filled count of every combination, then the first exact
-    // prune: implied by the near-unique bar, never a heuristic. The
-    // combined to side's distinct pairs cannot exceed the product of
-    // the legs' distinct counts, so a product under 0.9 of the
-    // co-filled count can never key the table.
-    let filled = combo_filled(&scans, resolved, &door, &combos).await?;
-    attempts.retain(|a| {
-        let (p, s) = (&pairs[a.p], &pairs[a.s]);
-        filled[a.to] > 0
-            && (distinct(p.k) as f64) * (distinct(s.k) as f64) >= 0.9 * filled[a.to] as f64
-    });
+/// Whether a scope pair may try to rescue an anchor pair. A scoping
+/// leg that is unique on its own did all the identifying: the pair's
+/// distinct count cannot exceed the leg's, so the composite would add
+/// nothing to the leg's own candidate. The near-unique bar, bounded
+/// from the shape scan alone: the pair's distinct count is at most the
+/// product of the legs', and the rows carrying both legs are at least
+/// the legs' filled counts less the table's rows. Implied by the bar,
+/// never a heuristic — what it keeps, the co-filled count settles.
+fn scope_admits(shapes: &Shapes, p: &Pair, s: &Pair) -> bool {
+    let cols = &shapes.cols;
+    if cols[s.f].column == cols[p.f].column || cols[s.k].column == cols[p.k].column {
+        return false;
+    }
+    if shapes.unique(s.k) {
+        return false;
+    }
+    let floor = (cols[p.k].filled + cols[s.k].filled - shapes.rows[&cols[p.k].table]).max(0);
+    (shapes.distinct(p.k) as f64) * (shapes.distinct(s.k) as f64) >= 0.9 * floor as f64
+}
 
-    // Phase A: every surviving combination's own distinct count, an
-    // aggregate and no join. Then the prunes it makes exact, in Rust
-    // over schema-sized numbers.
-    let needed: HashSet<usize> = attempts.iter().flat_map(|a| [a.from, a.to]).collect();
-    let combo_distinct = arm_distinct(&state, resolved, &door, &combo_arms, &needed).await?;
-    // The combined to side keys its table inside the scope.
+/// The prunes phase A makes exact: the combined to side keys its
+/// table inside the scope; matched ≤ the to side's distinct count,
+/// and the rescue needs matched ≥ half the from side's; and the
+/// scoping leg must identify more with the anchor than it does alone,
+/// otherwise the leg's own candidate already carries everything the
+/// pair would. Inside one scope the anchor may well be unique by
+/// itself — that is the shape the rescue exists for — so the anchor
+/// leg is not held to this.
+fn prune_by_distinct(
+    attempts: &mut Vec<Attempt>,
+    shapes: &Shapes,
+    pairs: &[Pair],
+    filled: &[i64],
+    combo_distinct: &[i64],
+) {
     let combo_ok = |i: usize| {
         let d = combo_distinct[i];
         filled[i] > 0 && d >= 2 && d as f64 / filled[i] as f64 >= 0.9
@@ -402,47 +496,34 @@ pub(crate) async fn relationship_candidates(
     attempts.retain(|a| {
         let s = &pairs[a.s];
         let (df, dt) = (combo_distinct[a.from], combo_distinct[a.to]);
-        combo_ok(a.to)
-            && df > 0
-            // matched ≤ the to side's distinct count, and the rescue
-            // needs matched ≥ half the from side's.
-            && dt as f64 >= 0.5 * df as f64
-            // The scoping leg must identify more with the anchor than
-            // it does alone; otherwise the leg's own candidate already
-            // carries everything the pair would. Inside one scope the
-            // anchor may well be unique by itself — that is the shape
-            // the rescue exists for — so the anchor leg is not held to
-            // this.
-            && dt > distinct(s.k)
+        combo_ok(a.to) && df > 0 && dt as f64 >= 0.5 * df as f64 && dt > shapes.distinct(s.k)
     });
+}
 
-    // Phase B: the from sides joined to the to sides on both legs,
-    // never one side to itself, grouped by the pair.
-    let from_arms: HashSet<usize> = attempts.iter().map(|a| a.from).collect();
-    let to_arms: HashSet<usize> = attempts.iter().map(|a| a.to).collect();
-    tracing::debug!(
-        attempts = attempts.len(),
-        from_arms = from_arms.len(),
-        to_arms = to_arms.len(),
-        "composite rescue joined"
-    );
-    let matched = cross_counts(&state, resolved, &door, &combo_arms, &from_arms, &to_arms).await?;
+/// One rescued anchor: the scope that rescued it and the composite's
+/// own counts.
+struct Rescue {
+    order: i64,
+    p: usize,
+    s: usize,
+    matched: i64,
+    overlap: f64,
+    to_distinct: i64,
+    tfilled: i64,
+    ffilled: i64,
+    fpairs: i64,
+}
 
-    // The two-leg resolution reads off the pass. First passing scope
-    // per anchor, in overlap order.
-    struct Rescue {
-        order: i64,
-        p: usize,
-        s: usize,
-        matched: i64,
-        overlap: f64,
-        to_distinct: i64,
-        tfilled: i64,
-        ffilled: i64,
-        fpairs: i64,
-    }
+/// The two-leg resolution read off the pass: the first passing scope
+/// per anchor, in overlap order.
+fn rescues(
+    attempts: &[Attempt],
+    filled: &[i64],
+    combo_distinct: &[i64],
+    matched: &HashMap<(usize, usize), i64>,
+) -> HashMap<usize, Rescue> {
     let mut rescued: HashMap<usize, Rescue> = HashMap::new();
-    for a in &attempts {
+    for a in attempts {
         let fpairs = combo_distinct[a.from];
         let matched = matched.get(&(a.from, a.to)).copied().unwrap_or(0);
         let overlap = matched as f64 / fpairs as f64;
@@ -467,20 +548,31 @@ pub(crate) async fn relationship_candidates(
             },
         );
     }
+    rescued
+}
+
+/// The rescued anchors as candidates, in anchor order. The anchor is
+/// the identifying leg — the higher-cardinality to side; the scope is
+/// the tenant leg. Which pair triggered the rescue is iteration order,
+/// not evidence. The tuple is the key: unique when its distinct pairs
+/// are its co-filled rows; temporal when the identifying leg is.
+fn rescued_candidates(
+    shapes: &Shapes,
+    pairs: &[Pair],
+    rescued: &HashMap<usize, Rescue>,
+) -> Vec<Candidate> {
     let mut anchor_keys: Vec<usize> = rescued.keys().copied().collect();
     anchor_keys.sort_unstable();
+    let mut candidates = Vec::new();
     for akey in anchor_keys {
         let r = &rescued[&akey];
-        // The anchor is the identifying leg — the higher-cardinality to
-        // side; the scope is the tenant leg. Which pair triggered the
-        // rescue is iteration order, not evidence.
         let (mut a, mut sc) = (&pairs[r.p], &pairs[r.s]);
-        if distinct(pairs[r.s].k) > distinct(pairs[r.p].k) {
+        if shapes.distinct(pairs[r.s].k) > shapes.distinct(pairs[r.p].k) {
             (a, sc) = (&pairs[r.s], &pairs[r.p]);
         }
         candidates.push(Candidate {
-            from: path(a.f),
-            to: path(a.k),
+            from: shapes.path(a.f),
+            to: shapes.path(a.k),
             cardinality: if r.fpairs == r.ffilled {
                 "one-to-one"
             } else {
@@ -491,16 +583,18 @@ pub(crate) async fn relationship_candidates(
             orphans: r.fpairs - r.matched,
             from_distinct: r.fpairs,
             to_distinct: r.to_distinct,
-            // The tuple is the key: unique when its distinct pairs are
-            // its co-filled rows; temporal when the identifying leg is.
             to_unique: r.to_distinct == r.tfilled,
-            to_temporal: cols[a.k].temporal,
-            key_columns: Some((path(sc.f), path(sc.k))),
+            to_temporal: shapes.cols[a.k].temporal,
+            key_columns: Some((shapes.path(sc.f), shapes.path(sc.k))),
         });
     }
+    candidates
+}
 
-    // One row per candidate, seq in push order — the body's last
-    // tie-breaker, which reproduces the script's stable sort.
+/// One row per candidate, seq in push order — the body's last
+/// tie-breaker, which reproduces the script's stable sort. No
+/// candidate is one empty row.
+fn candidate_rows(candidates: &[Candidate]) -> Vec<Value> {
     let mut out = Vec::new();
     for (seq, c) in candidates.iter().enumerate() {
         let mut row = serde_json::Map::new();
@@ -524,7 +618,7 @@ pub(crate) async fn relationship_candidates(
     if out.is_empty() {
         out.push(json!({}));
     }
-    rows_batch(out, relationship_shape())
+    out
 }
 
 /// One arm of a pair pass: a table's column, or the two columns of a
