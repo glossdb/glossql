@@ -80,17 +80,30 @@ async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
 }
 
 /// Everything between the runtime's start and the server's stop.
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "an orchestrator above the threshold; #136 extracts its phases"
-)]
 async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // The native kernels, and the service behind each point the
-    // environment names (bodies ride their declarations, fixture 24 —
-    // nothing of the runtime's lives in the workspace). Every point is
-    // on the record at start-up, named or not.
+    let runtime = runtime_of(&config.points)?;
+    let store = Store::open(open_lake(config.catalog).await?).await?;
+    let plane = Plane::new(store.clone(), runtime)
+        .with_row_cap(config.row_cap)
+        .with_cube_cache(config.cube_cache_mb)
+        .with_memory_limit(config.memory_limit_mb)
+        .with_spill_limit(config.spill_limit_mb)
+        .with_local_sources(config.local_sources);
+    let plane = bootstrapped(plane).await?;
+    let access = access_of(config.auth, &config.audience).await?;
+    let app = router(plane, config.doors, access);
+    serve_until_stopped(app, &config.addr).await
+}
+
+/// The native kernels, and the service behind each point the
+/// environment names (bodies ride their declarations, fixture 24 —
+/// nothing of the runtime's lives in the workspace). Every point is
+/// on the record at start-up, named or not.
+fn runtime_of(
+    points: &[config::Point],
+) -> Result<Arc<KernelRuntime>, Box<dyn std::error::Error + Send + Sync>> {
     let mut runtime = KernelRuntime::native();
-    for point in &config.points {
+    for point in points {
         runtime = runtime.with_point(
             point.name,
             &point.url,
@@ -108,15 +121,15 @@ async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
             ),
         }
     }
-    let store = Store::open(open_lake(config.catalog).await?).await?;
+    Ok(runtime)
+}
 
-    let plane = Plane::new(store.clone(), runtime)
-        .with_row_cap(config.row_cap)
-        .with_cube_cache(config.cube_cache_mb)
-        .with_memory_limit(config.memory_limit_mb)
-        .with_spill_limit(config.spill_limit_mb)
-        .with_local_sources(config.local_sources);
-    // A fresh workspace receives the shipped system before any door opens.
+/// A fresh workspace receives the shipped system before any door
+/// opens; the function listings read the registries the shipped
+/// system declared into, so they follow the bootstrap.
+async fn bootstrapped(
+    plane: Plane,
+) -> Result<Arc<Plane>, Box<dyn std::error::Error + Send + Sync>> {
     bootstrap(
         &plane,
         Actor {
@@ -125,22 +138,26 @@ async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
         },
     )
     .await?;
-    // The function listings read the registries the shipped system
-    // declared into, so they follow the bootstrap.
     let listings = glossql_serverd::functions::pages(&plane).await?;
-    let plane = Arc::new(plane.with_pages(glossql_serverd::skills::door_pages_with(listings)));
+    Ok(Arc::new(plane.with_pages(
+        glossql_serverd::skills::door_pages_with(listings),
+    )))
+}
 
-    // Who may speak: whoever the issuer says. Its keys are discovered
-    // here, and a server that cannot reach them does not open. Under
-    // the open switch there is nobody to ask, and the record says so
-    // out loud.
-    let access = match config.auth {
+/// Who may speak: whoever the issuer says. Its keys are discovered
+/// here, and a server that cannot reach them does not open. Under the
+/// open switch there is nobody to ask, and the record says so out
+/// loud.
+async fn access_of(
+    auth: Option<config::Auth>,
+    audience: &str,
+) -> Result<Access, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(match auth {
         Some(auth) => {
-            let gate =
-                Arc::new(Gate::discover(&auth.issuer, &config.audience, &auth.client_id).await?);
+            let gate = Arc::new(Gate::discover(&auth.issuer, audience, &auth.client_id).await?);
             tracing::info!(
                 issuer = %gate.issuer(),
-                audience = %config.audience,
+                audience = %audience,
                 application = %auth.client_id,
                 "verifying tokens"
             );
@@ -153,18 +170,23 @@ async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
             );
             Access::Open
         }
-    };
+    })
+}
 
-    let app = router(plane, config.doors, access);
-    let listener = tokio::net::TcpListener::bind(&config.addr).await?;
+/// The doors served until the stop. The first stop signal closes the
+/// listener and the idle connections and lets what is in flight
+/// finish — a write mid-commit lands rather than being cut. A second
+/// one ends the wait; a platform's own bound is the kill that follows
+/// its grace period.
+async fn serve_until_stopped(
+    app: axum::Router,
+    addr: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(
-        addr = %config.addr,
+        addr = %addr,
         "glossql listening — / (datasets), /mcp, /<dataset>/mcp, /<dataset>/query, /<dataset>/app"
     );
-    // The first stop signal closes the listener and the idle
-    // connections and lets what is in flight finish — a write mid-commit
-    // lands rather than being cut. A second one ends the wait; a
-    // platform's own bound is the kill that follows its grace period.
     let stopping = Arc::new(tokio::sync::Notify::new());
     let drain = {
         let stopping = Arc::clone(&stopping);

@@ -528,164 +528,17 @@ impl Session {
         Ok(outcomes)
     }
 
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "an orchestrator above the threshold; #136 extracts its phases"
-    )]
     async fn declare(&self, declaration: Declaration) -> Result<Outcome, SessionError> {
         let store = &self.shared.store;
         let done = match &declaration {
-            Declaration::Source(d) => {
-                // SPEC.md §3 rules the `type` vocabulary; a spelling
-                // outside it is refused here, where the typo is, rather
-                // than at the first recipe against the source.
-                let setting = |key: &str| {
-                    d.settings
-                        .iter()
-                        .find(|s| s.key.value == key)
-                        .map(|s| match &s.value {
-                            SettingValue::Name(n) => n.value.clone(),
-                            SettingValue::String(t) | SettingValue::Number(t) => t.clone(),
-                        })
-                };
-                let spelled = setting("type");
-                if spelled
-                    .as_deref()
-                    .and_then(glossql_import::SourceKind::parse)
-                    .is_none()
-                {
-                    let types = glossql_import::SOURCE_TYPES;
-                    return Err(glossql_import::Error::BadSource {
-                        name: d.name.value.clone(),
-                        detail: match spelled {
-                            Some(t) => format!("unknown type `{t}` — one of {types}"),
-                            None => format!("missing `type` — one of {types}"),
-                        },
-                    }
-                    .into());
-                }
-                // Where it lives is judged here too, before the record
-                // holds a source no recipe could read.
-                self.admit_source(&d.name.value, &setting("location").unwrap_or_default())?;
-                store.declare_source(d).await?;
-                format!("DECLARE SOURCE {}", d.name.value)
-            }
+            Declaration::Source(d) => self.declare_source(d).await?,
             Declaration::Dataset(d) => {
                 store.declare_dataset(d).await?;
                 self.mount_schema(&d.name.value).await?;
                 format!("DECLARE DATASET {}", d.name.value)
             }
-            Declaration::Recipe(d) => {
-                let admission = store.recipe_admission(d).await?;
-                let (dataset, table) = (d.dataset.value.as_str(), d.table.value.as_str());
-                let lake = self.lake();
-                // One name space per dataset (SPEC.md §3): a table never
-                // lands under a grounded metric's name. Refused before
-                // the source is read.
-                if lake.view_exists(dataset, table).await? {
-                    return Err(SessionError::BadSubject(format!(
-                        "DECLARE RECIPE {table} ON {dataset}: the grounded metric `{table}` holds \
-                         the name — a metric and a table of one dataset never share a name; \
-                         name the table differently"
-                    )));
-                }
-                if admission == RecipeAdmission::Unchanged
-                    && lake.table_exists(dataset, table).await?
-                {
-                    format!("DECLARE RECIPE {table} ON {dataset} (unchanged)")
-                } else {
-                    // Supersede-and-reland: a changed recipe replaces
-                    // the old landing whole. Glosses stay — the version
-                    // they carry discloses their age.
-                    let replaced = admission == RecipeAdmission::Replaced
-                        && lake.table_exists(dataset, table).await?;
-                    let recipe = glossql_import::open_recipe(
-                        &self.shared.env(),
-                        &self.source_spec(&d.source.value).await?,
-                        &d.sql,
-                    )
-                    .await?;
-                    // The key is a column of the result (SPEC.md §3):
-                    // a name the recipe does not produce is refused
-                    // here, where the declaration is, not at the first
-                    // import's merge.
-                    for k in recipe_key(&d.settings) {
-                        if recipe.schema.field_with_name(&k).is_err() {
-                            return Err(SessionError::Runtime(format!(
-                                "DECLARE RECIPE {table}: the key names `{k}`, which the recipe \
-                                 does not produce — it gives {}",
-                                recipe
-                                    .schema
-                                    .fields()
-                                    .iter()
-                                    .map(|f| format!("`{}`", f.name()))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            )));
-                        }
-                    }
-                    // A replace is one commit on the standing table: the
-                    // new rows are written beside the old files, and the
-                    // commit ends the old and begins the new. A recipe
-                    // that errors has written nothing the table holds.
-                    let landing = if replaced {
-                        Landing::Replace
-                    } else {
-                        Landing::Create
-                    };
-                    let (summary, casts) =
-                        self.materialize(dataset, table, recipe, landing).await?;
-                    store.put_recipe(d).await?;
-                    let tail = self.landing_tail(dataset).await;
-                    // The counts arrive at the decision moment: whether
-                    // the dropped rows — and the cells the casts nulled
-                    // — are acceptable is the author's call, made now.
-                    // A multi-source recipe reports per-scan counts
-                    // instead of a misleading difference — the sum
-                    // across providers would read as one source's
-                    // drop count.
-                    let verb = if replaced {
-                        "superseded and re-landed: "
-                    } else {
-                        ""
-                    };
-                    format!("DECLARE RECIPE {table} ON {dataset} ({verb}{summary}{casts}{tail})")
-                }
-            }
-            Declaration::Relationship(d) => {
-                let (left, op, right) = self.pair(&d.left, d.op, &d.right).await?;
-                // An endpoint is a key column of a landed table (SPEC.md
-                // §4), reached by its landed spelling (§1). A column that
-                // is not there is refused here, where the typo is,
-                // instead of reading later as an orphan rate in
-                // `relationship_coherence`.
-                let mut sides = [d.left.clone(), d.right.clone()];
-                let mut respelled = false;
-                for side in &mut sides {
-                    let (table, columns) = endpoint_parts(side);
-                    let table = table.last().expect("an endpoint names its table");
-                    let columns: Vec<&str> = columns.iter().map(String::as_str).collect();
-                    let landed = self.landed_spelling(&left.dataset, table, &columns).await?;
-                    for (ident, spelling) in side.columns.iter_mut().zip(landed) {
-                        if ident.value != spelling {
-                            ident.value = spelling;
-                            respelled = true;
-                        }
-                    }
-                }
-                let (left, op, right) = if respelled {
-                    self.pair(&sides[0], d.op, &sides[1]).await?
-                } else {
-                    (left, op, right)
-                };
-                store
-                    .declare_relationship(&left.dataset, &left.subject, op, &right.subject)
-                    .await?;
-                format!(
-                    "DECLARE RELATIONSHIP {} {op} {}",
-                    left.subject, right.subject
-                )
-            }
+            Declaration::Recipe(d) => self.declare_recipe(d).await?,
+            Declaration::Relationship(d) => self.declare_relationship(d).await?,
             Declaration::Aspect(d) => {
                 // A plan names the metric it plans (fixture 27): refused
                 // before it is declared where the tie does not hold.
@@ -703,6 +556,170 @@ impl Session {
             }
         };
         Ok(Outcome::Done(done))
+    }
+
+    /// A source declared: its type one of SPEC.md §3's vocabulary and
+    /// its location one this run reads, judged here — where the typo
+    /// is — before the record holds a source no recipe could read.
+    async fn declare_source(&self, d: &glossql_parser::SourceDecl) -> Result<String, SessionError> {
+        let store = &self.shared.store;
+        let setting = |key: &str| {
+            d.settings
+                .iter()
+                .find(|s| s.key.value == key)
+                .map(|s| match &s.value {
+                    SettingValue::Name(n) => n.value.clone(),
+                    SettingValue::String(t) | SettingValue::Number(t) => t.clone(),
+                })
+        };
+        let spelled = setting("type");
+        if spelled
+            .as_deref()
+            .and_then(glossql_import::SourceKind::parse)
+            .is_none()
+        {
+            let types = glossql_import::SOURCE_TYPES;
+            return Err(glossql_import::Error::BadSource {
+                name: d.name.value.clone(),
+                detail: match spelled {
+                    Some(t) => format!("unknown type `{t}` — one of {types}"),
+                    None => format!("missing `type` — one of {types}"),
+                },
+            }
+            .into());
+        }
+        // Where it lives is judged here too, before the record
+        // holds a source no recipe could read.
+        self.admit_source(&d.name.value, &setting("location").unwrap_or_default())?;
+        store.declare_source(d).await?;
+        Ok(format!("DECLARE SOURCE {}", d.name.value))
+    }
+
+    /// A recipe declared: refused where a grounded metric holds the
+    /// table's name or the key names a column the recipe does not
+    /// produce; unchanged, it lands nothing; changed, it supersedes
+    /// and re-lands the table whole, and the outcome carries the cast
+    /// account at the decision moment.
+    async fn declare_recipe(&self, d: &glossql_parser::RecipeDecl) -> Result<String, SessionError> {
+        let store = &self.shared.store;
+        let admission = store.recipe_admission(d).await?;
+        let (dataset, table) = (d.dataset.value.as_str(), d.table.value.as_str());
+        let lake = self.lake();
+        // One name space per dataset (SPEC.md §3): a table never
+        // lands under a grounded metric's name. Refused before
+        // the source is read.
+        if lake.view_exists(dataset, table).await? {
+            return Err(SessionError::BadSubject(format!(
+                "DECLARE RECIPE {table} ON {dataset}: the grounded metric `{table}` holds \
+                 the name — a metric and a table of one dataset never share a name; \
+                 name the table differently"
+            )));
+        }
+        let done = if admission == RecipeAdmission::Unchanged
+            && lake.table_exists(dataset, table).await?
+        {
+            format!("DECLARE RECIPE {table} ON {dataset} (unchanged)")
+        } else {
+            // Supersede-and-reland: a changed recipe replaces
+            // the old landing whole. Glosses stay — the version
+            // they carry discloses their age.
+            let replaced =
+                admission == RecipeAdmission::Replaced && lake.table_exists(dataset, table).await?;
+            let recipe = glossql_import::open_recipe(
+                &self.shared.env(),
+                &self.source_spec(&d.source.value).await?,
+                &d.sql,
+            )
+            .await?;
+            // The key is a column of the result (SPEC.md §3):
+            // a name the recipe does not produce is refused
+            // here, where the declaration is, not at the first
+            // import's merge.
+            for k in recipe_key(&d.settings) {
+                if recipe.schema.field_with_name(&k).is_err() {
+                    return Err(SessionError::Runtime(format!(
+                        "DECLARE RECIPE {table}: the key names `{k}`, which the recipe \
+                         does not produce — it gives {}",
+                        recipe
+                            .schema
+                            .fields()
+                            .iter()
+                            .map(|f| format!("`{}`", f.name()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )));
+                }
+            }
+            // A replace is one commit on the standing table: the
+            // new rows are written beside the old files, and the
+            // commit ends the old and begins the new. A recipe
+            // that errors has written nothing the table holds.
+            let landing = if replaced {
+                Landing::Replace
+            } else {
+                Landing::Create
+            };
+            let (summary, casts) = self.materialize(dataset, table, recipe, landing).await?;
+            store.put_recipe(d).await?;
+            let tail = self.landing_tail(dataset).await;
+            // The counts arrive at the decision moment: whether
+            // the dropped rows — and the cells the casts nulled
+            // — are acceptable is the author's call, made now.
+            // A multi-source recipe reports per-scan counts
+            // instead of a misleading difference — the sum
+            // across providers would read as one source's
+            // drop count.
+            let verb = if replaced {
+                "superseded and re-landed: "
+            } else {
+                ""
+            };
+            format!("DECLARE RECIPE {table} ON {dataset} ({verb}{summary}{casts}{tail})")
+        };
+        Ok(done)
+    }
+
+    /// A relationship declared: each endpoint a key column of a landed
+    /// table (SPEC.md §4), reached by its landed spelling (§1) and
+    /// refused here, where the typo is, instead of reading later as an
+    /// orphan rate in `relationship_coherence`.
+    async fn declare_relationship(
+        &self,
+        d: &glossql_parser::RelationshipDecl,
+    ) -> Result<String, SessionError> {
+        let store = &self.shared.store;
+        let (left, op, right) = self.pair(&d.left, d.op, &d.right).await?;
+        // An endpoint is a key column of a landed table (SPEC.md
+        // §4), reached by its landed spelling (§1). A column that
+        // is not there is refused here, where the typo is,
+        // instead of reading later as an orphan rate in
+        // `relationship_coherence`.
+        let mut sides = [d.left.clone(), d.right.clone()];
+        let mut respelled = false;
+        for side in &mut sides {
+            let (table, columns) = endpoint_parts(side);
+            let table = table.last().expect("an endpoint names its table");
+            let columns: Vec<&str> = columns.iter().map(String::as_str).collect();
+            let landed = self.landed_spelling(&left.dataset, table, &columns).await?;
+            for (ident, spelling) in side.columns.iter_mut().zip(landed) {
+                if ident.value != spelling {
+                    ident.value = spelling;
+                    respelled = true;
+                }
+            }
+        }
+        let (left, op, right) = if respelled {
+            self.pair(&sides[0], d.op, &sides[1]).await?
+        } else {
+            (left, op, right)
+        };
+        store
+            .declare_relationship(&left.dataset, &left.subject, op, &right.subject)
+            .await?;
+        Ok(format!(
+            "DECLARE RELATIONSHIP {} {op} {}",
+            left.subject, right.subject
+        ))
     }
 
     /// The bound dataset — fixed at channel construction on the plane;
@@ -1239,31 +1256,9 @@ impl Session {
             .collect()
     }
 
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "an orchestrator above the threshold; #136 extracts its phases"
-    )]
     async fn gloss(&self, gloss: Gloss) -> Result<Outcome, SessionError> {
         let aspect = gloss.aspect.value.as_str();
-        // An app part's subject is `<app>.<part>` under the bound
-        // dataset: the head is the app, never a dataset, so an app
-        // named like its dataset keeps its parts (`app_parts`, the
-        // app door). Every other subject is a path (SPEC.md §4).
-        let mut resolved = match &gloss.subject {
-            Subject::Path(p) if APP_PARTS.contains(&aspect) && p.segments.len() == 2 => {
-                let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
-                Resolved {
-                    dataset,
-                    subject: p
-                        .segments
-                        .iter()
-                        .map(|i| i.value.as_str())
-                        .collect::<Vec<_>>()
-                        .join("."),
-                }
-            }
-            _ => self.subject(&gloss.subject).await?,
-        };
+        let mut resolved = self.glossed_subject(aspect, &gloss.subject).await?;
         // An aspect declared ON TABLE or ON COLUMN says its subject is
         // one, so the subject must be landed — checked here, where the
         // typo is. An aspect with no grain clause claims nothing about
@@ -1308,7 +1303,66 @@ impl Session {
                  differently, or drop the table"
             )));
         }
-        let snapshot = self.stamp(&resolved).await?;
+        self.write_gloss(&resolved, aspect, &gloss.body, is_grounding)
+            .await?;
+        // The catalog's view of the metric follows the collapse the
+        // record now serves: the serving grounding's SQL, or none
+        // where the metric is stopped. Never fails the write — the
+        // gloss landed; a view that could not is logged.
+        if is_grounding {
+            self.sync_view(&resolved.dataset, aspect).await;
+        }
+        // Every other gloss answers as it did.
+        if is_grounding {
+            return self.grounding_answer(&resolved, aspect).await;
+        }
+        Ok(Outcome::Done(format!(
+            "GLOSS {aspect} ON {}",
+            resolved.subject
+        )))
+    }
+
+    /// A gloss's subject, resolved: an app part's is `<app>.<part>`
+    /// under the bound dataset — the head is the app, never a dataset,
+    /// so an app named like its dataset keeps its parts (`app_parts`,
+    /// the app door). Every other subject is a path (SPEC.md §4).
+    async fn glossed_subject(
+        &self,
+        aspect: &str,
+        subject: &Subject,
+    ) -> Result<Resolved, SessionError> {
+        Ok(match subject {
+            Subject::Path(p) if APP_PARTS.contains(&aspect) && p.segments.len() == 2 => {
+                let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
+                Resolved {
+                    dataset,
+                    subject: p
+                        .segments
+                        .iter()
+                        .map(|i| i.value.as_str())
+                        .collect::<Vec<_>>()
+                        .join("."),
+                }
+            }
+            _ => self.subject(subject).await?,
+        })
+    }
+
+    /// The gloss written at the subject's snapshot. A grain the store
+    /// refuses is answered with the road: a metric is grounded on the
+    /// dataset (SPEC.md §4), so a grounding on a table or a column
+    /// says so; a table that carries its dataset's name is the dataset
+    /// by its bare name (§4), so a table-grain aspect refuses it and
+    /// names what is reachable — the columns, as `table.column` under
+    /// the dataset's own USE (§3).
+    async fn write_gloss(
+        &self,
+        resolved: &Resolved,
+        aspect: &str,
+        body: &glossql_parser::JsonBody,
+        is_grounding: bool,
+    ) -> Result<(), SessionError> {
+        let snapshot = self.stamp(resolved).await?;
         let written = self
             .shared
             .store
@@ -1317,12 +1371,10 @@ impl Session {
                 &self.actor,
                 aspect,
                 &resolved.subject,
-                &gloss.body,
+                body,
                 snapshot,
             )
             .await;
-        // A metric is grounded on the dataset (SPEC.md §4); a grounding
-        // on a table or a column is refused with the write that lands.
         if let Err(e @ glossql_glossary::Error::GrainRefused { .. }) = &written
             && is_grounding
         {
@@ -1332,10 +1384,6 @@ impl Session {
                  `GLOSS {aspect} ON {dataset} AS $${{\"sql\": …}}$$`"
             )));
         }
-        // A table that carries its dataset's name: the bare name is the
-        // dataset (SPEC.md §4), so a table-grain aspect refuses it, and
-        // the refusal says what is reachable — the columns, as
-        // `table.column` under the dataset's own USE (SPEC.md §3).
         if let Err(
             e @ glossql_glossary::Error::GrainRefused {
                 grain: "dataset", ..
@@ -1356,25 +1404,25 @@ impl Session {
             )));
         }
         written?;
-        // The catalog's view of the metric follows the collapse the
-        // record now serves: the serving grounding's SQL, or none
-        // where the metric is stopped. Never fails the write — the
-        // gloss landed; a view that could not is logged.
-        if is_grounding {
-            self.sync_view(&resolved.dataset, aspect).await;
-        }
-        // A grounding's write answers with the metric's fact row — the
-        // `metric_axes()` shape at the pin the write moved to: whether
-        // the SQL plans, the verb and where it came from, the axes the
-        // verdicts admit and the served columns they do not, each with
-        // its road back in. The recipe's outcome carries the cast
-        // account at the decision moment (SPEC.md §3); this is the
-        // same rule for the other authored SQL, so what the cube will
-        // do with a grounding is read before the next write, not
-        // discovered at the first read. Nothing is refused on it: the
-        // language rules no shape for a grounding, and the row tells.
-        // Every other gloss answers as it did.
-        if is_grounding {
+        Ok(())
+    }
+
+    /// A grounding's write answers with the metric's fact row — the
+    /// `metric_axes()` shape at the pin the write moved to: whether
+    /// the SQL plans, the verb and where it came from, the axes the
+    /// verdicts admit and the served columns they do not, each with
+    /// its road back in. The recipe's outcome carries the cast
+    /// account at the decision moment (SPEC.md §3); this is the
+    /// same rule for the other authored SQL, so what the cube will
+    /// do with a grounding is read before the next write, not
+    /// discovered at the first read. Nothing is refused on it: the
+    /// language rules no shape for a grounding, and the row tells.
+    async fn grounding_answer(
+        &self,
+        resolved: &Resolved,
+        aspect: &str,
+    ) -> Result<Outcome, SessionError> {
+        {
             use datafusion::sql::sqlparser::ast::Ident;
             let dataset = resolved.dataset.clone();
             let mut fact =
@@ -1416,15 +1464,11 @@ impl Session {
                     crate::cube::fact_at_write(&self.shared, &dataset, &resolved.subject, aspect)
                         .await?;
             }
-            return Ok(Outcome::Rows {
+            Ok(Outcome::Rows {
                 batches: vec![crate::cube::fact_batch(&[&fact])?],
                 truncated: false,
-            });
+            })
         }
-        Ok(Outcome::Done(format!(
-            "GLOSS {aspect} ON {}",
-            resolved.subject
-        )))
     }
 
     /// The catalog's view of one metric brought to the record's

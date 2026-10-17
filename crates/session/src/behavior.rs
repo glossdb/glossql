@@ -247,64 +247,56 @@ fn cols_label(cols: &[String]) -> String {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    clippy::cognitive_complexity,
-    reason = "an orchestrator above the threshold; #136 extracts its phases"
-)]
-pub(crate) async fn behavior_anchors(
-    shared: &Arc<Shared>,
-    resolved: &crate::shared::Resolved,
-    subject: &str,
-) -> Result<RecordBatch, SessionError> {
+/// A plan over the bound dataset, through the session's own pipeline,
+/// collected: the door's reads, one statement each.
+async fn run(shared: &Arc<Shared>, q: String) -> Result<Vec<RecordBatch>, SessionError> {
     let ctx = shared.session_ctx();
-    let runtime = shared.runtime();
-    let run = |q: String| {
-        let shared = Arc::clone(shared);
-        let ctx = ctx.clone();
-        async move {
-            let plan = crate::plan::build_plan(&shared, &ctx, &q).await?;
-            ctx.execute_logical_plan(plan)
-                .await
-                .map_err(SessionError::not_served)?
-                .collect()
-                .await
-                .map_err(SessionError::not_served)
-        }
-    };
-    // The same, held as a table: the plan's schema first, so an
-    // answer with no batches still mounts, then the batches as one
-    // partition — read as they stand, copied into nothing.
-    let run_table = |q: String| {
-        let shared = Arc::clone(shared);
-        let ctx = ctx.clone();
-        async move {
-            let plan = crate::plan::build_plan(&shared, &ctx, &q).await?;
-            let served = ctx
-                .execute_logical_plan(plan)
-                .await
-                .map_err(SessionError::not_served)?;
-            let schema = Arc::new(served.schema().as_arrow().clone());
-            let batches = served.collect().await.map_err(SessionError::not_served)?;
-            MemTable::try_new(schema, vec![batches])
-                .map(|t| Arc::new(t) as Arc<dyn TableProvider>)
-                .map_err(SessionError::not_served)
-        }
-    };
-    let bare = |value: Value| rows_batch(vec![value], behavior_shape());
+    let plan = crate::plan::build_plan(shared, &ctx, &q).await?;
+    ctx.execute_logical_plan(plan)
+        .await
+        .map_err(SessionError::not_served)?
+        .collect()
+        .await
+        .map_err(SessionError::not_served)
+}
 
-    let Some((table, column)) = subject.split_once('.') else {
-        return bare(json!({"applicable": false}));
-    };
+/// The same, held as a table: the plan's schema first, so an answer
+/// with no batches still mounts, then the batches as one partition —
+/// read as they stand, copied into nothing.
+async fn run_table(
+    shared: &Arc<Shared>,
+    q: String,
+) -> Result<Arc<dyn TableProvider>, SessionError> {
+    let ctx = shared.session_ctx();
+    let plan = crate::plan::build_plan(shared, &ctx, &q).await?;
+    let served = ctx
+        .execute_logical_plan(plan)
+        .await
+        .map_err(SessionError::not_served)?;
+    let schema = Arc::new(served.schema().as_arrow().clone());
+    let batches = served.collect().await.map_err(SessionError::not_served)?;
+    MemTable::try_new(schema, vec![batches])
+        .map(|t| Arc::new(t) as Arc<dyn TableProvider>)
+        .map_err(SessionError::not_served)
+}
 
-    // Landed tables and their shapes, from the statement's own pins.
+/// One row in the door's shape: the abstention, or the plain refusal.
+fn bare(value: Value) -> Result<RecordBatch, SessionError> {
+    rows_batch(vec![value], behavior_shape())
+}
+
+/// A column's name and the display form of its type, per landed table.
+type Schemas = HashMap<String, Vec<(String, String)>>;
+
+/// Landed tables and their shapes, from the statement's own pins.
+fn table_shapes(resolved: &crate::shared::Resolved) -> (Vec<String>, Schemas) {
     let mut tables = resolved.tables();
     tables.sort();
-    let mut schemas: HashMap<&str, Vec<(String, String)>> = HashMap::new();
+    let mut schemas: Schemas = HashMap::new();
     for t in &tables {
         let provider = resolved.pin(t).expect("pinned");
         schemas.insert(
-            t,
+            t.clone(),
             provider
                 .schema()
                 .fields()
@@ -313,32 +305,28 @@ pub(crate) async fn behavior_anchors(
                 .collect(),
         );
     }
-    let numeric = schemas
-        .get(table)
-        .into_iter()
-        .flatten()
-        .any(|(n, d)| n == column && numeric_dtype(d));
-    if !numeric {
-        // Not a numeric measure — genuinely doesn't fit, like outliers
-        // on text.
-        return bare(json!({"applicable": false}));
-    }
+    (tables, schemas)
+}
 
-    // The dataset's declared edges. The endpoint check drops an edge
-    // naming a table this dataset lacks, but a foreign edge whose table
-    // name also exists here would pass it and supply the wrong evidence.
+/// The dataset's declared edges. The endpoint check drops an edge
+/// naming a table this dataset lacks, but a foreign edge whose table
+/// name also exists here would pass it and supply the wrong evidence.
+async fn declared_edges(
+    shared: &Arc<Shared>,
+    schemas: &Schemas,
+) -> Result<Vec<Pointer>, SessionError> {
     let bound = shared.dataset.read().expect("state lock").clone();
     let rows = shared.store.relation_rows("relationships").await?;
-    let pointers: Vec<Pointer> = declared_pointers(&rows, bound.as_deref().unwrap_or(""))
+    Ok(declared_pointers(&rows, bound.as_deref().unwrap_or(""))
         .into_iter()
-        .filter(|p| {
-            schemas.contains_key(p.src_t.as_str()) && schemas.contains_key(p.dst_t.as_str())
-        })
-        .collect();
+        .filter(|p| schemas.contains_key(&p.src_t) && schemas.contains_key(&p.dst_t))
+        .collect())
+}
 
-    // A declared edge's legs are identifiers — every leg of a tuple too.
-    let mut legs: std::collections::HashSet<(String, String)> = Default::default();
-    for p in &pointers {
+/// A declared edge's legs are identifiers — every leg of a tuple too.
+fn identifier_legs(pointers: &[Pointer]) -> HashSet<(String, String)> {
+    let mut legs: HashSet<(String, String)> = Default::default();
+    for p in pointers {
         for c in &p.src_cols {
             legs.insert((p.src_t.clone(), c.clone()));
         }
@@ -346,45 +334,32 @@ pub(crate) async fn behavior_anchors(
             legs.insert((p.dst_t.clone(), c.clone()));
         }
     }
+    legs
+}
 
-    // Whether the measure table owns an entity key: an edge onto a leaf
-    // — a table with no outgoing edges of its own. A table that does
-    // never borrows an entity through a document (the gate on the
-    // borrowed alignments below); one whose every edge lands on another
-    // document may.
+/// Whether the measure table owns an entity key: an edge onto a leaf
+/// — a table with no outgoing edges of its own. A table that does
+/// never borrows an entity through a document (the gate on the
+/// borrowed alignments, [`alignments`]); one whose every edge lands on
+/// another document may.
+fn owns_entity(pointers: &[Pointer], table: &str) -> bool {
     let documents: HashSet<&str> = pointers.iter().map(|p| p.src_t.as_str()).collect();
-    let owns_entity = pointers
+    pointers
         .iter()
-        .any(|p| p.src_t == table && p.dst_t != table && !documents.contains(p.dst_t.as_str()));
+        .any(|p| p.src_t == table && p.dst_t != table && !documents.contains(p.dst_t.as_str()))
+}
 
-    let all_axes = time_axes(&tables, &schemas, &pointers);
+/// One side of an anchor as its plans read it: the FROM clause with
+/// the time table joined where the axis is borrowed, the time
+/// expression, and the same cast to a timestamp.
+struct Side {
+    from: String,
+    texpr: String,
+    ts: String,
+}
 
-    let m_axes = all_axes[table].clone();
-    if m_axes.is_empty() {
-        return bare(json!({
-            "applicable": false,
-            "reason": format!(
-                "no period axis: no date column on {table} or one declared hop away"
-            ),
-        }));
-    }
-
-    // The axis's NATIVE grain: the coarsest named grain it is already
-    // truncated to; event-grain axes are daily.
-    let mut grain_cache: HashMap<String, String> = HashMap::new();
-    let mut viable_cache: HashMap<String, i64> = HashMap::new();
-    let mut y_cache: HashMap<String, Arc<dyn TableProvider>> = HashMap::new();
-    // The entity intersection per alignment, keyed by its own query.
-    let mut common_cache: HashMap<String, i64> = HashMap::new();
-    // The monotone read per (axis, entity, scope): entities with 4+
-    // periods, how many never decrease, how many move at all, the
-    // steps walked.
-    let mut mono_cache: HashMap<String, (i64, i64, i64, i64)> = HashMap::new();
-    let mut mono_pushed: HashSet<String> = HashSet::new();
-    // Key-shaped integer columns per event table, one probe each.
-    let mut keyish_cache: HashMap<String, HashSet<String>> = HashMap::new();
-
-    let from_of = |t: &str, axis: &Axis| -> (String, String) {
+impl Side {
+    fn of(t: &str, axis: &Axis) -> Side {
         let mut from = format!("{} s", qi(t));
         let texpr = match &axis.borrowed {
             None => format!("s.{}", qi(&axis.time_col)),
@@ -397,505 +372,805 @@ pub(crate) async fn behavior_anchors(
                 format!("tt.{}", qi(&axis.time_col))
             }
         };
-        (from, texpr)
-    };
+        let ts = format!("CAST({texpr} AS TIMESTAMP)");
+        Side { from, texpr, ts }
+    }
+}
 
-    let mut anchors: Vec<Value> = Vec::new();
-    for maxis in &m_axes {
-        let (m_from, m_texpr) = from_of(table, maxis);
-        let m_ts = format!("CAST({m_texpr} AS TIMESTAMP)");
+/// The probes one walk caches, each keyed by what it stands for: the
+/// native grain per axis, the viable entities and the measure series
+/// per (axis, alignment, grain, scope), the entity intersection per
+/// its own query, the monotone read per (axis, alignment, scope), and
+/// the key-shaped integers per event table.
+#[derive(Default)]
+struct Probes {
+    grain: HashMap<String, String>,
+    viable: HashMap<String, i64>,
+    series: HashMap<String, Arc<dyn TableProvider>>,
+    common: HashMap<String, i64>,
+    /// Entities with 4+ periods, how many never decrease, how many
+    /// move at all, the steps walked.
+    mono: HashMap<String, (i64, i64, i64, i64)>,
+    mono_pushed: HashSet<String>,
+    keyish: HashMap<String, HashSet<String>>,
+}
 
-        if !grain_cache.contains_key(&maxis.label) {
-            let g = native_grain(&run, &m_from, &m_texpr, &m_ts).await?;
-            grain_cache.insert(maxis.label.clone(), g);
+impl Probes {
+    /// The axis's NATIVE grain: the coarsest named grain it is already
+    /// truncated to; event-grain axes are daily.
+    async fn native_grain(
+        &mut self,
+        shared: &Arc<Shared>,
+        label: &str,
+        side: &Side,
+    ) -> Result<String, SessionError> {
+        if !self.grain.contains_key(label) {
+            let g = native_grain(shared, &side.from, &side.texpr, &side.ts).await?;
+            self.grain.insert(label.to_string(), g);
         }
-        let m_native = grain_cache[&maxis.label].clone();
-        if m_native == "empty" {
+        Ok(self.grain[label].clone())
+    }
+
+    /// Key-shaped integers, one probe per event table: distinct over
+    /// filled at or above 0.9 (the relationship detector's `key_like`,
+    /// `search/relationships.rs`), approximate so the probe holds
+    /// fixed memory whatever the table's width.
+    async fn key_shaped(
+        &mut self,
+        shared: &Arc<Shared>,
+        ev: &str,
+        schema: &[(String, String)],
+    ) -> Result<HashSet<String>, SessionError> {
+        if let Some(keyish) = self.keyish.get(ev) {
+            return Ok(keyish.clone());
+        }
+        let ints: Vec<&String> = schema
+            .iter()
+            .filter(|(_, d)| d.starts_with("Int") || d.starts_with("UInt"))
+            .map(|(n, _)| n)
+            .collect();
+        let mut keyish: HashSet<String> = HashSet::new();
+        if !ints.is_empty() {
+            let sel: Vec<String> = ints
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    format!(
+                        "CAST(approx_distinct(s.{c}) AS BIGINT) AS d{i}, count(s.{c}) AS f{i}",
+                        c = qi(c)
+                    )
+                })
+                .collect();
+            let kq = run(
+                shared,
+                format!("SELECT {} FROM {} s", sel.join(", "), qi(ev)),
+            )
+            .await?;
+            for (i, c) in ints.iter().enumerate() {
+                let at = |k: &str| crate::search::int_column(&kq, k).map(|v| v[0]).unwrap_or(0);
+                let (d, f) = (at(&format!("d{i}")), at(&format!("f{i}")));
+                if f > 0 && d >= 2 && d as f64 / f as f64 >= 0.9 {
+                    keyish.insert((*c).clone());
+                }
+            }
+        }
+        self.keyish.insert(ev.to_string(), keyish.clone());
+        Ok(keyish)
+    }
+
+    /// Viability, on one probe: fewer than two entities with 4+
+    /// periods cannot clear the voting floor.
+    async fn viable_entities(
+        &mut self,
+        shared: &Arc<Shared>,
+        at: &AnchorAt<'_>,
+        sides: &Sides,
+    ) -> Result<i64, SessionError> {
+        let vkey = format!(
+            "viable|{}|{}|{}|{}",
+            at.maxis.label, sides.alabel, at.grain, at.scope
+        );
+        if !self.viable.contains_key(&vkey) {
+            let vq = run(
+                shared,
+                format!(
+                    "SELECT count(*) AS v FROM \
+                     (SELECT {m_e} AS e FROM {am_from} \
+                      WHERE {m_guard} AND {m_texpr} IS NOT NULL \
+                        AND s.{qcol} IS NOT NULL \
+                      GROUP BY 1 \
+                      HAVING count(DISTINCT date_trunc('{grain}', {m_ts})) >= 4) AS g",
+                    m_e = sides.m_e,
+                    am_from = sides.am_from,
+                    m_guard = sides.m_guard,
+                    m_texpr = at.measure.texpr,
+                    grain = at.grain,
+                    m_ts = at.measure.ts,
+                    qcol = qi(at.column)
+                ),
+            )
+            .await?;
+            let v = crate::search::int_column(&vq, "v")
+                .map(|v| v[0])
+                .unwrap_or(0);
+            self.viable.insert(vkey.clone(), v);
+        }
+        Ok(self.viable[&vkey])
+    }
+
+    /// Measure-side series, cached per (axis, entity, grain, scope)
+    /// and held as the table it is: a MemTable over the batches it
+    /// already returned, copied into nothing (`reads.rs` mounts a
+    /// door's own rows the same way). Held as a table it can be
+    /// joined, so the alignment is a plan.
+    async fn measure_series(
+        &mut self,
+        shared: &Arc<Shared>,
+        at: &AnchorAt<'_>,
+        sides: &Sides,
+    ) -> Result<Arc<dyn TableProvider>, SessionError> {
+        let ykey = format!(
+            "{}|{}|{}|{}",
+            at.maxis.label, sides.alabel, at.grain, at.scope
+        );
+        if !self.series.contains_key(&ykey) {
+            let yt = run_table(
+                shared,
+                format!(
+                    "SELECT {m_e} AS e, \
+                     date_trunc('{grain}', {m_ts}) AS b, \
+                     SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
+                     FROM {am_from} \
+                     WHERE {m_guard} AND {m_texpr} IS NOT NULL \
+                       AND s.{qcol} IS NOT NULL \
+                     GROUP BY 1, 2",
+                    m_e = sides.m_e,
+                    grain = at.grain,
+                    m_ts = at.measure.ts,
+                    am_from = sides.am_from,
+                    m_guard = sides.m_guard,
+                    m_texpr = at.measure.texpr,
+                    qcol = qi(at.column)
+                ),
+            )
+            .await?;
+            self.series.insert(ykey.clone(), yt);
+        }
+        Ok(Arc::clone(&self.series[&ykey]))
+    }
+
+    /// The entity intersection, which the alignment cannot answer: an
+    /// entity on both sides with no bucket in common carries no cell
+    /// and still counts in the Wilson denominator. Keyed by the query,
+    /// so the key cannot drift from what it stands for.
+    async fn common_entities(
+        &mut self,
+        shared: &Arc<Shared>,
+        at: &AnchorAt<'_>,
+        sides: &Sides,
+    ) -> Result<i64, SessionError> {
+        let cq = format!(
+            "SELECT count(*) AS n FROM (\
+             SELECT {m_e} AS e FROM {am_from} \
+             WHERE {m_guard} AND {m_texpr} IS NOT NULL \
+               AND s.{qcol} IS NOT NULL GROUP BY 1 \
+             INTERSECT \
+             SELECT {e_e} AS e FROM {ae_from} \
+             WHERE {e_guard} AND {e_texpr} IS NOT NULL \
+             GROUP BY 1) AS g",
+            m_e = sides.m_e,
+            am_from = sides.am_from,
+            m_guard = sides.m_guard,
+            m_texpr = at.measure.texpr,
+            qcol = qi(at.column),
+            e_e = sides.e_e,
+            ae_from = sides.ae_from,
+            e_guard = sides.e_guard,
+            e_texpr = at.event.texpr,
+        );
+        if !self.common.contains_key(&cq) {
+            let cb = run(shared, cq.clone()).await?;
+            let n = crate::search::int_column(&cb, "n")
+                .map(|v| v[0])
+                .unwrap_or(0);
+            self.common.insert(cq.clone(), n);
+        }
+        Ok(self.common[&cq])
+    }
+
+    /// The monotone read per (axis, alignment, scope), at the axis's
+    /// native grain: entities with 4+ periods, how many never
+    /// decrease, how many move at all, the steps walked.
+    async fn monotone_read(
+        &mut self,
+        shared: &Arc<Shared>,
+        at: &AnchorAt<'_>,
+        sides: &Sides,
+    ) -> Result<(i64, i64, i64, i64), SessionError> {
+        let mkey = format!("mono|{}|{}|{}", at.maxis.label, sides.alabel, at.scope);
+        if !self.mono.contains_key(&mkey) {
+            let mq = run(
+                shared,
+                format!(
+                    "SELECT count(*) AS considered, \
+                     coalesce(sum(CASE WHEN decreases = 0 AND increases > 0 \
+                                        THEN 1 ELSE 0 END), 0) AS monotone, \
+                     coalesce(sum(CASE WHEN increases > 0 OR decreases > 0 \
+                                        THEN 1 ELSE 0 END), 0) AS movers, \
+                     coalesce(sum(steps), 0) AS steps \
+                     FROM (SELECT e, count(*) AS steps, \
+                             sum(CASE WHEN yv < prev THEN 1 ELSE 0 END) AS decreases, \
+                             sum(CASE WHEN yv > prev THEN 1 ELSE 0 END) AS increases \
+                           FROM (SELECT e, b, yv, \
+                                   lag(yv) OVER (PARTITION BY e ORDER BY b) AS prev \
+                                 FROM (SELECT {m_e} AS e, \
+                                         date_trunc('{m_native}', {m_ts}) AS b, \
+                                         SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
+                                       FROM {am_from} \
+                                       WHERE {m_guard} AND {m_texpr} IS NOT NULL \
+                                         AND s.{qcol} IS NOT NULL \
+                                       GROUP BY 1, 2)) \
+                           WHERE prev IS NOT NULL \
+                           GROUP BY e HAVING count(*) >= 3)",
+                    m_e = sides.m_e,
+                    m_native = at.m_native,
+                    m_ts = at.measure.ts,
+                    qcol = qi(at.column),
+                    am_from = sides.am_from,
+                    m_guard = sides.m_guard,
+                    m_texpr = at.measure.texpr,
+                ),
+            )
+            .await?;
+            let read = |name: &str| {
+                crate::search::int_column(&mq, name)
+                    .map(|v| v[0])
+                    .unwrap_or(0)
+            };
+            self.mono.insert(
+                mkey.clone(),
+                (
+                    read("considered"),
+                    read("monotone"),
+                    read("movers"),
+                    read("steps"),
+                ),
+            );
+        }
+        Ok(self.mono[&mkey])
+    }
+}
+
+/// What one walk holds still: the measure, the dataset's edges and
+/// what they imply, and every table's time axes.
+struct Walk<'a> {
+    table: &'a str,
+    column: &'a str,
+    tables: &'a [String],
+    schemas: &'a Schemas,
+    pointers: &'a [Pointer],
+    legs: &'a HashSet<(String, String)>,
+    owns_entity: bool,
+    all_axes: &'a HashMap<&'a str, Vec<Axis>>,
+}
+
+/// One anchor's coordinates: the two sides as their plans read them,
+/// the measure axis's native grain, the grain and the scope, the
+/// alignment, and the event table's movement pool beside its
+/// identifiers.
+struct AnchorAt<'a> {
+    table: &'a str,
+    column: &'a str,
+    ev: &'a str,
+    maxis: &'a Axis,
+    eaxis: &'a Axis,
+    measure: &'a Side,
+    event: &'a Side,
+    m_native: &'a str,
+    grain: &'a str,
+    scope: &'a str,
+    align: &'a Align,
+    terms_pool: &'a [String],
+    identifier_cols: &'a [String],
+}
+
+impl AnchorAt<'_> {
+    /// The anchor's coordinates as every row of it carries them.
+    fn base(&self, sides: &Sides) -> Value {
+        json!({
+            "event": self.ev, "align": sides.align_label,
+            "measure_time": self.maxis.label,
+            "event_time": self.eaxis.label,
+            "grain": self.grain, "scope": self.scope,
+            "identifier_columns": self.identifier_cols,
+        })
+    }
+
+    /// The alignment's two sides at this scope: the measure side
+    /// joins the document table `dd` where the entity is borrowed and
+    /// keys on ITS columns; the event side mirrors the hop — a
+    /// document-keyed event table joins its master `ee` and keys on
+    /// the master's columns; its movements stay its own. A year scope
+    /// suffixes each entity with the period's year.
+    fn sides(&self) -> Sides {
+        let (table, ev, al) = (self.table, self.ev, self.align);
+        let mut am_from = self.measure.from.clone();
+        let (am_base, alabel, align_label) = match &al.via {
+            None => (
+                "s".to_string(),
+                cols_label(&al.m_cols),
+                format!(
+                    "{table}.{} = {ev}.{}",
+                    cols_label(&al.m_cols),
+                    cols_label(&al.e_cols)
+                ),
+            ),
+            Some((via_t, via_fk, via_key)) => {
+                am_from.push_str(&format!(
+                    " JOIN {} dd ON {}",
+                    qi(via_t),
+                    join_on("s", via_fk, "dd", via_key)
+                ));
+                (
+                    "dd".to_string(),
+                    format!("{via_t}>{}", cols_label(&al.m_cols)),
+                    format!(
+                        "{table} via {via_t}.{} = {ev}.{}",
+                        cols_label(&al.m_cols),
+                        cols_label(&al.e_cols)
+                    ),
+                )
+            }
+        };
+        let mut ae_from = self.event.from.clone();
+        let (ae_base, align_label) = match &al.e_via {
+            None => ("s".to_string(), align_label),
+            Some((via_t, via_fk, via_key)) => {
+                ae_from.push_str(&format!(
+                    " JOIN {} ee ON {}",
+                    qi(via_t),
+                    join_on("s", via_fk, "ee", via_key)
+                ));
+                (
+                    "ee".to_string(),
+                    format!(
+                        "{table}.{} = {ev} via {via_t}.{}",
+                        cols_label(&al.m_cols),
+                        cols_label(&al.e_cols)
+                    ),
+                )
+            }
+        };
+        let mut m_e = entity_expr(&am_base, &al.m_cols);
+        let mut e_e = entity_expr(&ae_base, &al.e_cols);
+        if self.scope == "year" {
+            m_e = format!(
+                "CAST({m_e} AS VARCHAR) || '@' || CAST(extract(year FROM {}) AS VARCHAR)",
+                self.measure.ts
+            );
+            e_e = format!(
+                "CAST({e_e} AS VARCHAR) || '@' || CAST(extract(year FROM {}) AS VARCHAR)",
+                self.event.ts
+            );
+        }
+        Sides {
+            am_from,
+            ae_from,
+            alabel,
+            align_label,
+            m_e,
+            e_e,
+            m_guard: not_null_guard(&am_base, &al.m_cols),
+            e_guard: not_null_guard(&ae_base, &al.e_cols),
+        }
+    }
+}
+
+/// An alignment's two sides as its plans read them: each FROM clause
+/// with its hop joined, the alignment's label and its key, the entity
+/// expression and the not-null guard per side.
+struct Sides {
+    am_from: String,
+    ae_from: String,
+    alabel: String,
+    align_label: String,
+    m_e: String,
+    e_e: String,
+    m_guard: String,
+    e_guard: String,
+}
+
+/// The anchor at its coordinates, abstaining with its reason where
+/// the pool is wider than the kernel takes or fewer than two entities
+/// carry 4+ periods; the alignment's other anchors and the monotone
+/// read still speak.
+fn abstaining(base: Value, reason: String, viable: Option<i64>) -> Value {
+    let mut a = base.as_object().expect("object").clone();
+    if let Some(v) = viable {
+        a.insert("viable_entities".into(), json!(v));
+    }
+    a.insert("verdict".into(), json!("abstain"));
+    a.insert("reason".into(), json!(reason));
+    Value::Object(a)
+}
+
+/// The reconciliation anchor at one set of coordinates: the measure
+/// series joined to the event-side sums in the plan, the discriminator
+/// in one kernel call, the verdict judged from its summaries.
+async fn reconciled(
+    shared: &Arc<Shared>,
+    probes: &mut Probes,
+    at: &AnchorAt<'_>,
+) -> Result<Value, SessionError> {
+    let sides = at.sides();
+    let base = at.base(&sides);
+    if at.terms_pool.len() > MAX_TERMS {
+        return Ok(abstaining(
+            base,
+            format!(
+                "{} movement terms on {}, above the {MAX_TERMS} one reconciliation takes",
+                at.terms_pool.len(),
+                at.ev
+            ),
+            None,
+        ));
+    }
+    let viable = probes.viable_entities(shared, at, &sides).await?;
+    if viable < 2 {
+        return Ok(abstaining(
+            base,
+            "fewer than two entities carry 4+ periods on this alignment".into(),
+            Some(viable),
+        ));
+    }
+    let yt = probes.measure_series(shared, at, &sides).await?;
+    let aligned = aligned_cells(shared, at, &sides, yt).await?;
+    let n_common = probes.common_entities(shared, at, &sides).await?;
+    // The discriminator in one kernel call.
+    let rec = shared
+        .runtime()
+        .reconcile(&aligned, n_common, at.terms_pool)
+        .map_err(SessionError::Runtime)?;
+    let mut summaries: Vec<Value> = rec["summaries"].as_array().cloned().unwrap_or_default();
+    for s in &mut summaries {
+        let winners = s["winners"].as_f64().unwrap_or(0.0);
+        s["support"] = json!(wilson_lcb(winners, n_common));
+    }
+    Ok(judge_anchor(base, n_common, &summaries))
+}
+
+/// Event-side sums for every term at once, joined to the measure
+/// side in the plan: the kernel receives one aligned batch in entity
+/// order and pairs nothing itself. An inner join is the intersection
+/// pairing the kernel's header records. The plan's schema is kept: a
+/// join with no pair in common collects no batch at all, and the
+/// kernel still reads its columns — an empty intersection is an
+/// alignment that abstains, not a refusal.
+async fn aligned_cells(
+    shared: &Arc<Shared>,
+    at: &AnchorAt<'_>,
+    sides: &Sides,
+    yt: Arc<dyn TableProvider>,
+) -> Result<Vec<RecordBatch>, SessionError> {
+    let ctx = shared.session_ctx();
+    let sel: String = at
+        .terms_pool
+        .iter()
+        .map(|c| format!(", SUM(CAST(s.{} AS DOUBLE)) AS \"s_{c}\"", qi(c)))
+        .collect();
+    let mp = crate::plan::build_plan(
+        shared,
+        &ctx,
+        &format!(
+            "SELECT {e_e} AS e, \
+             date_trunc('{grain}', {e_ts}) AS b{sel} \
+             FROM {ae_from} \
+             WHERE {e_guard} AND {e_texpr} IS NOT NULL \
+             GROUP BY 1, 2",
+            e_e = sides.e_e,
+            grain = at.grain,
+            e_ts = at.event.ts,
+            ae_from = sides.ae_from,
+            e_guard = sides.e_guard,
+            e_texpr = at.event.texpr,
+        ),
+    )
+    .await?;
+    let mut project = vec![
+        col("y.e").alias("e"),
+        col("y.b").alias("b"),
+        col("y.yv").alias("yv"),
+    ];
+    for t in at.terms_pool {
+        // Through `Column::new`, never a qualified name: a source
+        // column may carry a dot and the parse would split on it.
+        project.push(
+            Expr::Column(Column::new(
+                Some(TableReference::bare("m")),
+                format!("s_{t}"),
+            ))
+            .alias(format!("s_{t}")),
+        );
+    }
+    let aligned = LogicalPlanBuilder::scan("y", provider_as_source(yt), None)
+        .and_then(|b| {
+            LogicalPlanBuilder::from(mp)
+                .alias("m")
+                .and_then(|m| m.build())
+                .and_then(|m| {
+                    b.join_on(
+                        m,
+                        JoinType::Inner,
+                        [col("y.e").eq(col("m.e")), col("y.b").eq(col("m.b"))],
+                    )
+                })
+        })
+        .and_then(|b| b.project(project))
+        .and_then(|b| b.sort(vec![col("e").sort(true, true), col("b").sort(true, true)]))
+        .and_then(|b| b.build())
+        .map_err(SessionError::not_served)?;
+    let schema = Arc::new(aligned.schema().as_arrow().clone());
+    let mut aligned = ctx
+        .execute_logical_plan(aligned)
+        .await
+        .map_err(SessionError::not_served)?
+        .collect()
+        .await
+        .map_err(SessionError::not_served)?;
+    if aligned.is_empty() {
+        aligned.push(RecordBatch::new_empty(schema));
+    }
+    Ok(aligned)
+}
+
+/// The monotone anchor, once per alignment and scope, at the axis's
+/// native grain — after the reconciliation, which is the anchor a
+/// reader meets first. Movers only (the module doc's rule): a flat
+/// entity abstains rather than votes.
+async fn monotone(
+    shared: &Arc<Shared>,
+    probes: &mut Probes,
+    at: &AnchorAt<'_>,
+) -> Result<Option<Value>, SessionError> {
+    let sides = at.sides();
+    if !probes
+        .mono_pushed
+        .insert(format!("{}|{}|{}", at.ev, sides.alabel, at.scope))
+    {
+        return Ok(None);
+    }
+    let (considered, monotone, movers, steps) = probes.monotone_read(shared, at, &sides).await?;
+    let mut a = at.base(&sides).as_object().expect("object").clone();
+    a.insert("grain".into(), json!(at.m_native));
+    a.insert("convention".into(), json!("monotone"));
+    a.insert("entities".into(), json!(considered));
+    a.insert("viable_entities".into(), json!(considered));
+    a.insert("alternatives".into(), json!([]));
+    if considered < 2 {
+        a.insert("verdict".into(), json!("abstain"));
+        a.insert(
+            "reason".into(),
+            json!("fewer than two entities carry 4+ periods at the native grain"),
+        );
+    } else if movers < 2 {
+        a.insert("verdict".into(), json!("abstain"));
+        a.insert(
+            "reason".into(),
+            json!(format!(
+                "{movers} of {considered} entities move within the scope — no monotone evidence"
+            )),
+        );
+    } else {
+        a.insert("voted".into(), json!(movers));
+        a.insert("agreement".into(), json!(monotone as f64 / movers as f64));
+        a.insert("support".into(), json!(wilson_lcb(monotone as f64, movers)));
+        if monotone * 2 >= movers {
+            a.insert("verdict".into(), json!("stock"));
+        } else {
+            a.insert("verdict".into(), json!("abstain"));
+            a.insert(
+                "reason".into(),
+                json!(format!(
+                    "{} of {movers} moving entities decrease within the scope over {steps} steps — not a cumulative here",
+                    movers - monotone
+                )),
+            );
+        }
+    }
+    Ok(Some(Value::Object(a)))
+}
+
+/// Movement candidates: the event table's numeric columns, minus the
+/// identifiers — declared-edge legs and key-shaped integers. The
+/// identifiers first, then the pool; the alignment column leaves the
+/// pool per alignment.
+fn movement_pool(
+    schema: &[(String, String)],
+    ev: &str,
+    legs: &HashSet<(String, String)>,
+    keyish: &HashSet<String>,
+) -> (Vec<String>, Vec<String>) {
+    let mut identifier_cols: Vec<String> = Vec::new();
+    let mut base_pool: Vec<String> = Vec::new();
+    for (name, dtype) in schema {
+        if !numeric_dtype(dtype) {
             continue;
         }
+        if legs.contains(&(ev.to_string(), name.clone())) || keyish.contains(name) {
+            identifier_cols.push(name.clone());
+        } else {
+            base_pool.push(name.clone());
+        }
+    }
+    (identifier_cols, base_pool)
+}
 
-        for ev in &tables {
-            if ev == table {
-                continue;
-            }
+/// One event table's alignment against the measure, on one measure
+/// axis: what every anchor on it shares.
+struct Aligned<'a> {
+    ev: &'a str,
+    maxis: &'a Axis,
+    measure: &'a Side,
+    m_native: &'a str,
+    align: &'a Align,
+    terms_pool: &'a [String],
+    identifier_cols: &'a [String],
+}
 
-            let deduped = alignments(table, ev, &pointers, owns_entity);
-            if deduped.is_empty() {
-                continue;
-            }
-
-            let e_axes = all_axes[ev.as_str()].clone();
-            if e_axes.is_empty() {
-                continue;
-            }
-
-            // Key-shaped integers, one probe per event table: distinct
-            // over filled at or above 0.9 (the relationship detector's
-            // `key_like`, `search/relationships.rs`), approximate so the probe holds
-            // fixed memory whatever the table's width.
-            if !keyish_cache.contains_key(ev.as_str()) {
-                let ints: Vec<&String> = schemas[ev.as_str()]
-                    .iter()
-                    .filter(|(_, d)| d.starts_with("Int") || d.starts_with("UInt"))
-                    .map(|(n, _)| n)
-                    .collect();
-                let mut keyish: HashSet<String> = HashSet::new();
-                if !ints.is_empty() {
-                    let sel: Vec<String> = ints
-                        .iter()
-                        .enumerate()
-                        .map(|(i, c)| {
-                            format!(
-                                "CAST(approx_distinct(s.{c}) AS BIGINT) AS d{i}, count(s.{c}) AS f{i}",
-                                c = qi(c)
-                            )
-                        })
-                        .collect();
-                    let kq = run(format!("SELECT {} FROM {} s", sel.join(", "), qi(ev))).await?;
-                    for (i, c) in ints.iter().enumerate() {
-                        let at =
-                            |k: &str| crate::search::int_column(&kq, k).map(|v| v[0]).unwrap_or(0);
-                        let (d, f) = (at(&format!("d{i}")), at(&format!("f{i}")));
-                        if f > 0 && d >= 2 && d as f64 / f as f64 >= 0.9 {
-                            keyish.insert((*c).clone());
-                        }
-                    }
-                }
-                keyish_cache.insert(ev.clone(), keyish);
-            }
-            let keyish = &keyish_cache[ev.as_str()];
-
-            // Movement candidates: the event table's numeric columns,
-            // minus the identifiers — declared-edge legs and key-shaped
-            // integers — and the alignment column itself.
-            let mut identifier_cols: Vec<String> = Vec::new();
-            let mut base_pool: Vec<String> = Vec::new();
-            for (name, dtype) in &schemas[ev.as_str()] {
-                if !numeric_dtype(dtype) {
-                    continue;
-                }
-                if legs.contains(&(ev.clone(), name.clone())) || keyish.contains(name) {
-                    identifier_cols.push(name.clone());
-                } else {
-                    base_pool.push(name.clone());
-                }
-            }
-
-            for al in &deduped {
-                let terms_pool: Vec<String> = base_pool
-                    .iter()
-                    .filter(|c| !al.e_cols.contains(c))
-                    .cloned()
-                    .collect();
-                if terms_pool.is_empty() {
-                    continue;
-                }
-                let too_wide = terms_pool.len() > MAX_TERMS;
-
-                for eaxis in &e_axes {
-                    let (e_from, e_texpr) = from_of(ev, eaxis);
-                    let e_ts = format!("CAST({e_texpr} AS TIMESTAMP)");
-
-                    if !grain_cache.contains_key(&eaxis.label) {
-                        let g = native_grain(&run, &e_from, &e_texpr, &e_ts).await?;
-                        grain_cache.insert(eaxis.label.clone(), g);
-                    }
-                    let e_native = grain_cache[&eaxis.label].clone();
-                    if e_native == "empty" {
-                        continue;
-                    }
-                    // A day-native alignment also serves a month
-                    // variant; native first, so the first anchor per
-                    // event keeps its old meaning.
-                    let native = coarser(&m_native, &e_native).to_string();
-                    let mut grains = vec![native.clone()];
-                    if native == "day" {
-                        grains.push("month".into());
-                    }
-                    for grain in &grains {
-                        let scopes: &[&str] = if grain == "year" {
-                            &["none"]
-                        } else {
-                            &["none", "year"]
-                        };
-                        for scope in scopes {
-                            let mut am_from = m_from.clone();
-                            let (am_base, alabel, align_label) = match &al.via {
-                                None => (
-                                    "s".to_string(),
-                                    cols_label(&al.m_cols),
-                                    format!(
-                                        "{table}.{} = {ev}.{}",
-                                        cols_label(&al.m_cols),
-                                        cols_label(&al.e_cols)
-                                    ),
-                                ),
-                                Some((via_t, via_fk, via_key)) => {
-                                    am_from.push_str(&format!(
-                                        " JOIN {} dd ON {}",
-                                        qi(via_t),
-                                        join_on("s", via_fk, "dd", via_key)
-                                    ));
-                                    (
-                                        "dd".to_string(),
-                                        format!("{via_t}>{}", cols_label(&al.m_cols)),
-                                        format!(
-                                            "{table} via {via_t}.{} = {ev}.{}",
-                                            cols_label(&al.m_cols),
-                                            cols_label(&al.e_cols)
-                                        ),
-                                    )
-                                }
-                            };
-                            // The event side mirrors the hop: a
-                            // document-keyed event table joins its
-                            // master `ee` and keys on the master's
-                            // columns; its movements stay its own.
-                            let mut ae_from = e_from.clone();
-                            let (ae_base, align_label) = match &al.e_via {
-                                None => ("s".to_string(), align_label),
-                                Some((via_t, via_fk, via_key)) => {
-                                    ae_from.push_str(&format!(
-                                        " JOIN {} ee ON {}",
-                                        qi(via_t),
-                                        join_on("s", via_fk, "ee", via_key)
-                                    ));
-                                    (
-                                        "ee".to_string(),
-                                        format!(
-                                            "{table}.{} = {ev} via {via_t}.{}",
-                                            cols_label(&al.m_cols),
-                                            cols_label(&al.e_cols)
-                                        ),
-                                    )
-                                }
-                            };
-                            let mut m_e = entity_expr(&am_base, &al.m_cols);
-                            let mut e_e = entity_expr(&ae_base, &al.e_cols);
-                            if *scope == "year" {
-                                m_e = format!(
-                                    "CAST({m_e} AS VARCHAR) || '@' || CAST(extract(year FROM {m_ts}) AS VARCHAR)"
-                                );
-                                e_e = format!(
-                                    "CAST({e_e} AS VARCHAR) || '@' || CAST(extract(year FROM {e_ts}) AS VARCHAR)"
-                                );
-                            }
-                            let m_guard = not_null_guard(&am_base, &al.m_cols);
-                            let e_guard = not_null_guard(&ae_base, &al.e_cols);
-
-                            // Viability, on one probe: fewer than two
-                            // entities with 4+ periods cannot clear the
-                            // voting floor.
-                            let vkey = format!("viable|{}|{alabel}|{grain}|{scope}", maxis.label);
-                            if !too_wide && !viable_cache.contains_key(&vkey) {
-                                let vq = run(format!(
-                                    "SELECT count(*) AS v FROM \
-                                     (SELECT {m_e} AS e FROM {am_from} \
-                                      WHERE {m_guard} AND {m_texpr} IS NOT NULL \
-                                        AND s.{qcol} IS NOT NULL \
-                                      GROUP BY 1 \
-                                      HAVING count(DISTINCT date_trunc('{grain}', {m_ts})) >= 4) AS g",
-                                    qcol = qi(column)
-                                ))
-                                .await?;
-                                let v = crate::search::int_column(&vq, "v")
-                                    .map(|v| v[0])
-                                    .unwrap_or(0);
-                                viable_cache.insert(vkey.clone(), v);
-                            }
-                            let base = json!({
-                                "event": ev, "align": align_label,
-                                "measure_time": maxis.label,
-                                "event_time": eaxis.label,
-                                "grain": grain, "scope": scope,
-                                "identifier_columns": identifier_cols,
-                            });
-                            let mono_base = base.clone();
-                            'reconcile: {
-                                // Wider than the kernel takes: this
-                                // anchor abstains and says why; the
-                                // alignment's other anchors and the
-                                // monotone read still speak.
-                                if too_wide {
-                                    let mut a = base.as_object().expect("object").clone();
-                                    a.insert("verdict".into(), json!("abstain"));
-                                    a.insert(
-                                        "reason".into(),
-                                        json!(format!(
-                                            "{} movement terms on {ev}, above the {MAX_TERMS} one \
-                                             reconciliation takes",
-                                            terms_pool.len()
-                                        )),
-                                    );
-                                    anchors.push(Value::Object(a));
-                                    break 'reconcile;
-                                }
-                                if viable_cache[&vkey] < 2 {
-                                    let mut a = base.as_object().expect("object").clone();
-                                    a.insert("viable_entities".into(), json!(viable_cache[&vkey]));
-                                    a.insert("verdict".into(), json!("abstain"));
-                                    a.insert(
-                                    "reason".into(),
-                                    json!(
-                                        "fewer than two entities carry 4+ periods on this alignment"
-                                    ),
-                                );
-                                    anchors.push(Value::Object(a));
-                                    break 'reconcile;
-                                }
-
-                                // Measure-side series, cached per (axis,
-                                // entity, grain, scope) and held as the
-                                // table it is: a MemTable over the batches
-                                // it already returned, copied into nothing
-                                // (`reads.rs` mounts a door's own rows the
-                                // same way). Held as a table it can be
-                                // joined, so the alignment is a plan.
-                                let ykey = format!("{}|{alabel}|{grain}|{scope}", maxis.label);
-                                if !y_cache.contains_key(&ykey) {
-                                    let yt = run_table(format!(
-                                        "SELECT {m_e} AS e, \
-                                     date_trunc('{grain}', {m_ts}) AS b, \
-                                     SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
-                                     FROM {am_from} \
-                                     WHERE {m_guard} AND {m_texpr} IS NOT NULL \
-                                       AND s.{qcol} IS NOT NULL \
-                                     GROUP BY 1, 2",
-                                        qcol = qi(column)
-                                    ))
-                                    .await?;
-                                    y_cache.insert(ykey.clone(), yt);
-                                }
-                                let yt = Arc::clone(&y_cache[&ykey]);
-
-                                // Event-side sums for every term at once,
-                                // joined to the measure side in the plan:
-                                // the kernel receives one aligned batch in
-                                // entity order and pairs nothing itself.
-                                // An inner join is the intersection pairing
-                                // the kernel's header records.
-                                let sel: String = terms_pool
-                                    .iter()
-                                    .map(|c| {
-                                        format!(", SUM(CAST(s.{} AS DOUBLE)) AS \"s_{c}\"", qi(c))
-                                    })
-                                    .collect();
-                                let mp = crate::plan::build_plan(
-                                    shared,
-                                    &ctx,
-                                    &format!(
-                                        "SELECT {e_e} AS e, \
-                                     date_trunc('{grain}', {e_ts}) AS b{sel} \
-                                     FROM {ae_from} \
-                                     WHERE {e_guard} AND {e_texpr} IS NOT NULL \
-                                     GROUP BY 1, 2"
-                                    ),
-                                )
-                                .await?;
-                                let mut project = vec![
-                                    col("y.e").alias("e"),
-                                    col("y.b").alias("b"),
-                                    col("y.yv").alias("yv"),
-                                ];
-                                for t in &terms_pool {
-                                    // Through `Column::new`, never a
-                                    // qualified name: a source column may
-                                    // carry a dot and the parse would split
-                                    // on it.
-                                    project.push(
-                                        Expr::Column(Column::new(
-                                            Some(TableReference::bare("m")),
-                                            format!("s_{t}"),
-                                        ))
-                                        .alias(format!("s_{t}")),
-                                    );
-                                }
-                                let aligned =
-                                    LogicalPlanBuilder::scan("y", provider_as_source(yt), None)
-                                        .and_then(|b| {
-                                            LogicalPlanBuilder::from(mp)
-                                                .alias("m")
-                                                .and_then(|m| m.build())
-                                                .and_then(|m| {
-                                                    b.join_on(
-                                                        m,
-                                                        JoinType::Inner,
-                                                        [
-                                                            col("y.e").eq(col("m.e")),
-                                                            col("y.b").eq(col("m.b")),
-                                                        ],
-                                                    )
-                                                })
-                                        })
-                                        .and_then(|b| b.project(project))
-                                        .and_then(|b| {
-                                            b.sort(vec![
-                                                col("e").sort(true, true),
-                                                col("b").sort(true, true),
-                                            ])
-                                        })
-                                        .and_then(|b| b.build())
-                                        .map_err(SessionError::not_served)?;
-                                // The plan's schema, kept: a join with no
-                                // pair in common collects no batch at all,
-                                // and the kernel still reads its columns —
-                                // an empty intersection is an alignment
-                                // that abstains, not a refusal.
-                                let schema = Arc::new(aligned.schema().as_arrow().clone());
-                                let mut aligned = ctx
-                                    .execute_logical_plan(aligned)
-                                    .await
-                                    .map_err(SessionError::not_served)?
-                                    .collect()
-                                    .await
-                                    .map_err(SessionError::not_served)?;
-                                if aligned.is_empty() {
-                                    aligned.push(RecordBatch::new_empty(schema));
-                                }
-
-                                // The entity intersection, which the
-                                // alignment cannot answer: an entity on
-                                // both sides with no bucket in common
-                                // carries no cell and still counts in the
-                                // Wilson denominator. Keyed by the query,
-                                // so the key cannot drift from what it
-                                // stands for.
-                                let cq = format!(
-                                    "SELECT count(*) AS n FROM (\
-                                     SELECT {m_e} AS e FROM {am_from} \
-                                     WHERE {m_guard} AND {m_texpr} IS NOT NULL \
-                                       AND s.{qcol} IS NOT NULL GROUP BY 1 \
-                                     INTERSECT \
-                                     SELECT {e_e} AS e FROM {ae_from} \
-                                     WHERE {e_guard} AND {e_texpr} IS NOT NULL \
-                                     GROUP BY 1) AS g",
-                                    qcol = qi(column)
-                                );
-                                if !common_cache.contains_key(&cq) {
-                                    let cb = run(cq.clone()).await?;
-                                    let n = crate::search::int_column(&cb, "n")
-                                        .map(|v| v[0])
-                                        .unwrap_or(0);
-                                    common_cache.insert(cq.clone(), n);
-                                }
-                                let n_common = common_cache[&cq];
-
-                                // The discriminator in one kernel call.
-                                let rec = runtime
-                                    .reconcile(&aligned, n_common, &terms_pool)
-                                    .map_err(SessionError::Runtime)?;
-                                let mut summaries: Vec<Value> =
-                                    rec["summaries"].as_array().cloned().unwrap_or_default();
-                                for s in &mut summaries {
-                                    let winners = s["winners"].as_f64().unwrap_or(0.0);
-                                    s["support"] = json!(wilson_lcb(winners, n_common));
-                                }
-
-                                anchors.push(judge_anchor(base, n_common, &summaries));
-                            }
-
-                            // The monotone anchor, once per alignment and
-                            // scope, at the axis's native grain — after
-                            // the reconciliation, which is the anchor a
-                            // reader meets first.
-                            if !mono_pushed.insert(format!("{ev}|{alabel}|{scope}")) {
-                                continue;
-                            }
-                            let mkey = format!("mono|{}|{alabel}|{scope}", maxis.label);
-                            if !mono_cache.contains_key(&mkey) {
-                                let mq = run(format!(
-                                    "SELECT count(*) AS considered, \
-                                     coalesce(sum(CASE WHEN decreases = 0 AND increases > 0 \
-                                                        THEN 1 ELSE 0 END), 0) AS monotone, \
-                                     coalesce(sum(CASE WHEN increases > 0 OR decreases > 0 \
-                                                        THEN 1 ELSE 0 END), 0) AS movers, \
-                                     coalesce(sum(steps), 0) AS steps \
-                                     FROM (SELECT e, count(*) AS steps, \
-                                             sum(CASE WHEN yv < prev THEN 1 ELSE 0 END) AS decreases, \
-                                             sum(CASE WHEN yv > prev THEN 1 ELSE 0 END) AS increases \
-                                           FROM (SELECT e, b, yv, \
-                                                   lag(yv) OVER (PARTITION BY e ORDER BY b) AS prev \
-                                                 FROM (SELECT {m_e} AS e, \
-                                                         date_trunc('{m_native}', {m_ts}) AS b, \
-                                                         SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
-                                                       FROM {am_from} \
-                                                       WHERE {m_guard} AND {m_texpr} IS NOT NULL \
-                                                         AND s.{qcol} IS NOT NULL \
-                                                       GROUP BY 1, 2)) \
-                                           WHERE prev IS NOT NULL \
-                                           GROUP BY e HAVING count(*) >= 3)",
-                                    qcol = qi(column)
-                                ))
-                                .await?;
-                                let read = |name: &str| {
-                                    crate::search::int_column(&mq, name)
-                                        .map(|v| v[0])
-                                        .unwrap_or(0)
-                                };
-                                mono_cache.insert(
-                                    mkey.clone(),
-                                    (
-                                        read("considered"),
-                                        read("monotone"),
-                                        read("movers"),
-                                        read("steps"),
-                                    ),
-                                );
-                            }
-                            let (considered, monotone, movers, steps) = mono_cache[&mkey];
-                            let mut a = mono_base.as_object().expect("object").clone();
-                            a.insert("grain".into(), json!(m_native));
-                            a.insert("convention".into(), json!("monotone"));
-                            a.insert("entities".into(), json!(considered));
-                            a.insert("viable_entities".into(), json!(considered));
-                            a.insert("alternatives".into(), json!([]));
-                            // Movers only (the module doc's rule): a flat
-                            // entity abstains rather than votes.
-                            if considered < 2 {
-                                a.insert("verdict".into(), json!("abstain"));
-                                a.insert(
-                                    "reason".into(),
-                                    json!("fewer than two entities carry 4+ periods at the native grain"),
-                                );
-                            } else if movers < 2 {
-                                a.insert("verdict".into(), json!("abstain"));
-                                a.insert(
-                                    "reason".into(),
-                                    json!(format!(
-                                        "{movers} of {considered} entities move within the scope — no monotone evidence"
-                                    )),
-                                );
-                            } else {
-                                a.insert("voted".into(), json!(movers));
-                                a.insert(
-                                    "agreement".into(),
-                                    json!(monotone as f64 / movers as f64),
-                                );
-                                a.insert(
-                                    "support".into(),
-                                    json!(wilson_lcb(monotone as f64, movers)),
-                                );
-                                if monotone * 2 >= movers {
-                                    a.insert("verdict".into(), json!("stock"));
-                                } else {
-                                    a.insert("verdict".into(), json!("abstain"));
-                                    a.insert(
-                                        "reason".into(),
-                                        json!(format!(
-                                            "{} of {movers} moving entities decrease within the scope over {steps} steps — not a cumulative here",
-                                            movers - monotone
-                                        )),
-                                    );
-                                }
-                            }
-                            anchors.push(Value::Object(a));
-                        }
-                    }
-                }
+/// The anchors of one alignment on one event axis: the native grain
+/// is the coarser of the two sides'; a day-native alignment also
+/// serves a month variant, native first, so the first anchor per
+/// event keeps its old meaning; a year grain takes no year scope.
+async fn anchors_on_alignment(
+    shared: &Arc<Shared>,
+    probes: &mut Probes,
+    walk: &Walk<'_>,
+    on: &Aligned<'_>,
+    eaxis: &Axis,
+) -> Result<Vec<Value>, SessionError> {
+    let mut anchors = Vec::new();
+    let event = Side::of(on.ev, eaxis);
+    let e_native = probes.native_grain(shared, &eaxis.label, &event).await?;
+    if e_native == "empty" {
+        return Ok(anchors);
+    }
+    let native = coarser(on.m_native, &e_native).to_string();
+    let mut grains = vec![native.clone()];
+    if native == "day" {
+        grains.push("month".into());
+    }
+    for grain in &grains {
+        let scopes: &[&str] = if grain == "year" {
+            &["none"]
+        } else {
+            &["none", "year"]
+        };
+        for scope in scopes {
+            let at = AnchorAt {
+                table: walk.table,
+                column: walk.column,
+                ev: on.ev,
+                maxis: on.maxis,
+                eaxis,
+                measure: on.measure,
+                event: &event,
+                m_native: on.m_native,
+                grain,
+                scope,
+                align: on.align,
+                terms_pool: on.terms_pool,
+                identifier_cols: on.identifier_cols,
+            };
+            anchors.push(reconciled(shared, probes, &at).await?);
+            if let Some(a) = monotone(shared, probes, &at).await? {
+                anchors.push(a);
             }
         }
     }
+    Ok(anchors)
+}
 
+/// The anchors on one measure axis: every event table it aligns with
+/// through the declared edges, every alignment, every event axis.
+async fn anchors_on_axis(
+    shared: &Arc<Shared>,
+    probes: &mut Probes,
+    walk: &Walk<'_>,
+    maxis: &Axis,
+) -> Result<Vec<Value>, SessionError> {
+    let mut anchors = Vec::new();
+    let measure = Side::of(walk.table, maxis);
+    let m_native = probes.native_grain(shared, &maxis.label, &measure).await?;
+    if m_native == "empty" {
+        return Ok(anchors);
+    }
+    for ev in walk.tables {
+        if ev == walk.table {
+            continue;
+        }
+        let deduped = alignments(walk.table, ev, walk.pointers, walk.owns_entity);
+        if deduped.is_empty() {
+            continue;
+        }
+        let e_axes = &walk.all_axes[ev.as_str()];
+        if e_axes.is_empty() {
+            continue;
+        }
+        let keyish = probes.key_shaped(shared, ev, &walk.schemas[ev]).await?;
+        let (identifier_cols, base_pool) = movement_pool(&walk.schemas[ev], ev, walk.legs, &keyish);
+        for al in &deduped {
+            let terms_pool: Vec<String> = base_pool
+                .iter()
+                .filter(|c| !al.e_cols.contains(c))
+                .cloned()
+                .collect();
+            if terms_pool.is_empty() {
+                continue;
+            }
+            let on = Aligned {
+                ev,
+                maxis,
+                measure: &measure,
+                m_native: &m_native,
+                align: al,
+                terms_pool: &terms_pool,
+                identifier_cols: &identifier_cols,
+            };
+            for eaxis in e_axes {
+                anchors.extend(anchors_on_alignment(shared, probes, walk, &on, eaxis).await?);
+            }
+        }
+    }
+    Ok(anchors)
+}
+
+pub(crate) async fn behavior_anchors(
+    shared: &Arc<Shared>,
+    resolved: &crate::shared::Resolved,
+    subject: &str,
+) -> Result<RecordBatch, SessionError> {
+    let Some((table, column)) = subject.split_once('.') else {
+        return bare(json!({"applicable": false}));
+    };
+    let (tables, schemas) = table_shapes(resolved);
+    let numeric = schemas
+        .get(table)
+        .into_iter()
+        .flatten()
+        .any(|(n, d)| n == column && numeric_dtype(d));
+    if !numeric {
+        // Not a numeric measure — genuinely doesn't fit, like outliers
+        // on text.
+        return bare(json!({"applicable": false}));
+    }
+    let pointers = declared_edges(shared, &schemas).await?;
+    let legs = identifier_legs(&pointers);
+    let owns_entity = owns_entity(&pointers, table);
+    let all_axes = time_axes(&tables, &schemas, &pointers);
+    let m_axes = all_axes[table].clone();
+    if m_axes.is_empty() {
+        return bare(json!({
+            "applicable": false,
+            "reason": format!(
+                "no period axis: no date column on {table} or one declared hop away"
+            ),
+        }));
+    }
+    let walk = Walk {
+        table,
+        column,
+        tables: &tables,
+        schemas: &schemas,
+        pointers: &pointers,
+        legs: &legs,
+        owns_entity,
+        all_axes: &all_axes,
+    };
+    let mut probes = Probes::default();
+    let mut anchors: Vec<Value> = Vec::new();
+    for maxis in &m_axes {
+        anchors.extend(anchors_on_axis(shared, &mut probes, &walk, maxis).await?);
+    }
     if anchors.is_empty() {
         return bare(json!({
             "applicable": false,
@@ -904,7 +1179,6 @@ pub(crate) async fn behavior_anchors(
             ),
         }));
     }
-
     rows_batch(elect(&anchors), behavior_shape())
 }
 
@@ -912,7 +1186,7 @@ pub(crate) async fn behavior_anchors(
 /// none borrows one declared hop away.
 fn time_axes<'a>(
     tables: &'a [String],
-    schemas: &HashMap<&str, Vec<(String, String)>>,
+    schemas: &Schemas,
     pointers: &[Pointer],
 ) -> HashMap<&'a str, Vec<Axis>> {
     let mut all_axes: HashMap<&str, Vec<Axis>> = HashMap::new();
@@ -1353,23 +1627,22 @@ fn judge_anchor(base: Value, n_common: i64, summaries: &[Value]) -> Value {
 }
 
 /// The coarsest named grain an axis is already truncated to.
-async fn native_grain<F, Fut>(
-    run: &F,
+async fn native_grain(
+    shared: &Arc<Shared>,
     from: &str,
     texpr: &str,
     ts: &str,
-) -> Result<String, SessionError>
-where
-    F: Fn(String) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<RecordBatch>, SessionError>>,
-{
-    let g = run(format!(
-        "SELECT \
+) -> Result<String, SessionError> {
+    let g = run(
+        shared,
+        format!(
+            "SELECT \
          SUM(CASE WHEN date_trunc('year', {ts}) = {ts} THEN 0 ELSE 1 END) AS ny, \
          SUM(CASE WHEN date_trunc('quarter', {ts}) = {ts} THEN 0 ELSE 1 END) AS nq, \
          SUM(CASE WHEN date_trunc('month', {ts}) = {ts} THEN 0 ELSE 1 END) AS nm \
          FROM {from} WHERE {texpr} IS NOT NULL"
-    ))
+        ),
+    )
     .await?;
     let cell =
         |name: &str| -> Option<i64> { crate::search::int_column(&g, name).ok().map(|v| v[0]) };

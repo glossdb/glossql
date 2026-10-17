@@ -575,10 +575,6 @@ fn median(mut v: Vec<f64>) -> Option<f64> {
 /// convention) under the gates above. Returns per-convention
 /// summaries; support policy (Wilson, winner, alternatives) stays in
 /// the door.
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "an orchestrator above the threshold; #136 extracts its phases"
-)]
 fn reconcile_kernel(
     aligned: &[RecordBatch],
     n_common: i64,
@@ -597,116 +593,18 @@ fn reconcile_kernel(
     for t in &terms {
         mcols.push(as_floats(&column_of(aligned, &format!("s_{t}"))?)?);
     }
+    let cells = stacked(&entity, &yv, &mcols)?;
+    let (conv_terms, conv_names) = conventions(&terms);
+    let mw = conventions_product(&cells, &conv_terms);
 
-    // Contiguous entity segments. The two sides arrive aligned and in
-    // entity order — the pairing is the door's join, and cells missing
-    // on either side never reach here — so a segment is a run of equal
-    // keys, which arrow's own partition finds by comparing the values
-    // rather than a hash of them.
-    let ranges = if entity.is_empty() {
-        Vec::new()
-    } else {
-        partition(std::slice::from_ref(&entity))
-            .map_err(|e| e.to_string())?
-            .ranges()
-    };
-
-    // Stack the cells: M (cells × k, NULL as 0.0 with a validity bit)
-    // and the y vector, segment bounds kept.
-    let mut mmat: Vec<f64> = Vec::with_capacity(entity.len() * k);
-    let mut valid: Vec<u64> = Vec::with_capacity(entity.len());
-    let mut yvec: Vec<f64> = Vec::with_capacity(entity.len());
-    let mut bounds = Vec::with_capacity(ranges.len());
-    for r in ranges {
-        let start = yvec.len();
-        for row in r {
-            if yv.is_null(row) {
-                continue;
-            }
-            yvec.push(yv.value(row));
-            let mut bits = 0u64;
-            for (t, col) in mcols.iter().enumerate() {
-                if col.is_null(row) {
-                    mmat.push(0.0);
-                } else {
-                    mmat.push(col.value(row));
-                    bits |= 1u64 << t;
-                }
-            }
-            valid.push(bits);
-        }
-        bounds.push((start, yvec.len() - start));
-    }
-    let ncells = yvec.len();
-
-    // Conventions: each term, then every ordered pair difference,
-    // evaluated as M · W in one product.
-    let mut conv_terms: Vec<(usize, Option<usize>)> = Vec::new();
-    let mut conv_names: Vec<String> = Vec::new();
-    for (i, t) in terms.iter().enumerate() {
-        conv_terms.push((i, None));
-        conv_names.push(t.clone());
-    }
-    for i1 in 0..k {
-        for i2 in 0..k {
-            if i1 != i2 {
-                conv_terms.push((i1, Some(i2)));
-                conv_names.push(format!("{} - {}", terms[i1], terms[i2]));
-            }
-        }
-    }
-    let cc = conv_terms.len();
-    let mmatf = faer::Mat::from_fn(ncells, k, |i, j| mmat[i * k + j]);
-    let w = faer::Mat::from_fn(k, cc, |i, j| {
-        let (t1, t2) = conv_terms[j];
-        if i == t1 {
-            1.0
-        } else if Some(i) == t2 {
-            -1.0
-        } else {
-            0.0
-        }
-    });
-    let mw = &mmatf * &w;
-
-    let mut summaries = Vec::with_capacity(cc);
-    let mut ys_buf: Vec<f64> = Vec::new();
-    let mut ms_buf: Vec<f64> = Vec::new();
+    let mut summaries = Vec::with_capacity(conv_terms.len());
     for (c, &(t1, t2)) in conv_terms.iter().enumerate() {
         let mask = (1u64 << t1) | t2.map_or(0, |t| 1u64 << t);
-        let mut flow_votes = 0usize;
-        let mut stock_votes = 0usize;
-        let mut rf_flow = Vec::new();
-        let mut rs_flow = Vec::new();
-        let mut rf_stock = Vec::new();
-        let mut rs_stock = Vec::new();
-        for &(start, len) in &bounds {
-            ys_buf.clear();
-            ms_buf.clear();
-            for cell in start..start + len {
-                if valid[cell] & mask == mask {
-                    ys_buf.push(yvec[cell]);
-                    ms_buf.push(mw[(cell, c)]);
-                }
-            }
-            let (label, rf, rs) = classify_series(&ys_buf, &ms_buf);
-            match label {
-                Some(true) => {
-                    stock_votes += 1;
-                    rf_stock.push(rf);
-                    rs_stock.push(rs);
-                }
-                Some(false) => {
-                    flow_votes += 1;
-                    rf_flow.push(rf);
-                    rs_flow.push(rs);
-                }
-                None => {}
-            }
-        }
-        let voted = flow_votes + stock_votes;
-        let stock_wins = stock_votes > flow_votes;
-        let winners = if stock_wins { stock_votes } else { flow_votes };
+        let series = |start: usize, len: usize| cells.series(start, len, mask, &mw, c);
+        let votes = votes(&cells, &series);
+        let voted = votes.flow + votes.stock;
+        let stock_wins = votes.stock > votes.flow;
+        let winners = if stock_wins { votes.stock } else { votes.flow };
         let agreement = if voted > 0 {
             winners as f64 / voted as f64
         } else {
@@ -731,9 +629,9 @@ fn reconcile_kernel(
             // Medians over the winning-label voters only — a dissenting
             // minority's residuals would contaminate the diagnostics.
             let (rf, rs) = if stock_wins {
-                (rf_stock.clone(), rs_stock.clone())
+                (votes.rf_stock, votes.rs_stock)
             } else {
-                (rf_flow.clone(), rs_flow.clone())
+                (votes.rf_flow, votes.rs_flow)
             };
             if let Some(v) = median(rf) {
                 s.insert("r_flow".into(), json!(v));
@@ -741,55 +639,18 @@ fn reconcile_kernel(
             if let Some(v) = median(rs) {
                 s.insert("r_stock".into(), json!(v));
             }
-            // The sign partition: every entity
-            // re-classified against the negated anchor. A voter firing
-            // the winning pattern only under negation stores the mirror
-            // convention — ledger-signed data reads this way. Diagnostic
-            // only: selection stays on original-sign support.
-            let mut primary = 0i64;
-            let mut mirror = 0i64;
-            let mut both = 0i64;
-            let mut rss = 0.0f64;
-            let mut voters = 0usize;
-            let mut neg_buf: Vec<f64> = Vec::new();
-            for &(start, len) in &bounds {
-                ys_buf.clear();
-                ms_buf.clear();
-                for cell in start..start + len {
-                    if valid[cell] & mask == mask {
-                        ys_buf.push(yvec[cell]);
-                        ms_buf.push(mw[(cell, c)]);
-                    }
-                }
-                let (label, rf, rs) = classify_series(&ys_buf, &ms_buf);
-                let fires = label == Some(stock_wins);
-                neg_buf.clear();
-                neg_buf.extend(ms_buf.iter().map(|v| -v));
-                let (mlabel, _, _) = classify_series(&ys_buf, &neg_buf);
-                let mirrored = mlabel == Some(stock_wins);
-                match (fires, mirrored) {
-                    (true, true) => both += 1,
-                    (true, false) => primary += 1,
-                    (false, true) => mirror += 1,
-                    (false, false) => {}
-                }
-                if fires {
-                    let r = rf.min(rs);
-                    rss += r * r;
-                    voters += 1;
-                }
-            }
-            s.insert("sign_primary".into(), json!(primary));
-            s.insert("sign_mirror".into(), json!(mirror));
-            s.insert("sign_both".into(), json!(both));
+            let signs = sign_partition(&cells, &series, stock_wins);
+            s.insert("sign_primary".into(), json!(signs.primary));
+            s.insert("sign_mirror".into(), json!(signs.mirror));
+            s.insert("sign_both".into(), json!(signs.both));
             // BIC over the winning voters' best residuals:
             // n·ln(RSS/n) + arity·ln(n), RSS floored so an
             // exact fit stays finite. The ΔBIC>10 arity tiebreak in the
             // script reads this.
-            if voters > 0 {
-                let n = voters as f64;
+            if signs.voters > 0 {
+                let n = signs.voters as f64;
                 let arity = if t2.is_some() { 2.0 } else { 1.0 };
-                let bic = n * (rss.max(1e-12) / n).ln() + arity * n.ln();
+                let bic = n * (signs.rss.max(1e-12) / n).ln() + arity * n.ln();
                 s.insert("bic".into(), json!(bic));
             }
         }
@@ -800,4 +661,202 @@ fn reconcile_kernel(
         "n_common": n_common,
         "summaries": summaries,
     }))
+}
+
+/// The cells stacked: M (cells × k, NULL as 0.0 with a validity bit)
+/// and the y vector, with each entity's segment bounds kept.
+struct Stacked {
+    mmat: Vec<f64>,
+    valid: Vec<u64>,
+    yvec: Vec<f64>,
+    bounds: Vec<(usize, usize)>,
+    k: usize,
+}
+
+impl Stacked {
+    /// One entity's series under a convention: the y values and the
+    /// convention's column of the product, over the cells whose terms
+    /// are all valid.
+    fn series(
+        &self,
+        start: usize,
+        len: usize,
+        mask: u64,
+        mw: &faer::Mat<f64>,
+        c: usize,
+    ) -> (Vec<f64>, Vec<f64>) {
+        let mut ys = Vec::new();
+        let mut ms = Vec::new();
+        for cell in start..start + len {
+            if self.valid[cell] & mask == mask {
+                ys.push(self.yvec[cell]);
+                ms.push(mw[(cell, c)]);
+            }
+        }
+        (ys, ms)
+    }
+}
+
+/// The cells stacked by entity. Contiguous entity segments: the two
+/// sides arrive aligned and in entity order — the pairing is the
+/// door's join, and cells missing on either side never reach here —
+/// so a segment is a run of equal keys, which arrow's own partition
+/// finds by comparing the values rather than a hash of them.
+fn stacked(entity: &ArrayRef, yv: &Float64Array, mcols: &[Float64Array]) -> ScriptResult<Stacked> {
+    let k = mcols.len();
+    let ranges = if entity.is_empty() {
+        Vec::new()
+    } else {
+        partition(std::slice::from_ref(entity))
+            .map_err(|e| e.to_string())?
+            .ranges()
+    };
+    let mut mmat: Vec<f64> = Vec::with_capacity(entity.len() * k);
+    let mut valid: Vec<u64> = Vec::with_capacity(entity.len());
+    let mut yvec: Vec<f64> = Vec::with_capacity(entity.len());
+    let mut bounds = Vec::with_capacity(ranges.len());
+    for r in ranges {
+        let start = yvec.len();
+        for row in r {
+            if yv.is_null(row) {
+                continue;
+            }
+            yvec.push(yv.value(row));
+            let mut bits = 0u64;
+            for (t, col) in mcols.iter().enumerate() {
+                if col.is_null(row) {
+                    mmat.push(0.0);
+                } else {
+                    mmat.push(col.value(row));
+                    bits |= 1u64 << t;
+                }
+            }
+            valid.push(bits);
+        }
+        bounds.push((start, yvec.len() - start));
+    }
+    Ok(Stacked {
+        mmat,
+        valid,
+        yvec,
+        bounds,
+        k,
+    })
+}
+
+/// Conventions: each term, then every ordered pair difference, as
+/// the term indices each reads and the name each carries.
+fn conventions(terms: &[String]) -> (Vec<(usize, Option<usize>)>, Vec<String>) {
+    let k = terms.len();
+    let mut conv_terms: Vec<(usize, Option<usize>)> = Vec::new();
+    let mut conv_names: Vec<String> = Vec::new();
+    for (i, t) in terms.iter().enumerate() {
+        conv_terms.push((i, None));
+        conv_names.push(t.clone());
+    }
+    for i1 in 0..k {
+        for i2 in 0..k {
+            if i1 != i2 {
+                conv_terms.push((i1, Some(i2)));
+                conv_names.push(format!("{} - {}", terms[i1], terms[i2]));
+            }
+        }
+    }
+    (conv_terms, conv_names)
+}
+
+/// Every convention evaluated as M · W in one product.
+fn conventions_product(cells: &Stacked, conv_terms: &[(usize, Option<usize>)]) -> faer::Mat<f64> {
+    let k = cells.k;
+    let ncells = cells.yvec.len();
+    let cc = conv_terms.len();
+    let mmatf = faer::Mat::from_fn(ncells, k, |i, j| cells.mmat[i * k + j]);
+    let w = faer::Mat::from_fn(k, cc, |i, j| {
+        let (t1, t2) = conv_terms[j];
+        if i == t1 {
+            1.0
+        } else if Some(i) == t2 {
+            -1.0
+        } else {
+            0.0
+        }
+    });
+    &mmatf * &w
+}
+
+/// The entities' votes under one convention: how many fired flow and
+/// how many stock, with each voter's two residuals kept by label.
+#[derive(Default)]
+struct Votes {
+    flow: usize,
+    stock: usize,
+    rf_flow: Vec<f64>,
+    rs_flow: Vec<f64>,
+    rf_stock: Vec<f64>,
+    rs_stock: Vec<f64>,
+}
+
+fn votes(cells: &Stacked, series: &dyn Fn(usize, usize) -> (Vec<f64>, Vec<f64>)) -> Votes {
+    let mut votes = Votes::default();
+    for &(start, len) in &cells.bounds {
+        let (ys, ms) = series(start, len);
+        let (label, rf, rs) = classify_series(&ys, &ms);
+        match label {
+            Some(true) => {
+                votes.stock += 1;
+                votes.rf_stock.push(rf);
+                votes.rs_stock.push(rs);
+            }
+            Some(false) => {
+                votes.flow += 1;
+                votes.rf_flow.push(rf);
+                votes.rs_flow.push(rs);
+            }
+            None => {}
+        }
+    }
+    votes
+}
+
+/// The sign partition of a winning convention: every entity
+/// re-classified against the negated anchor. A voter firing the
+/// winning pattern only under negation stores the mirror convention —
+/// ledger-signed data reads this way. Diagnostic only: selection stays
+/// on original-sign support. Beside it, the winning voters' count and
+/// the sum of their best squared residuals, for the BIC.
+#[derive(Default)]
+struct Signs {
+    primary: i64,
+    mirror: i64,
+    both: i64,
+    rss: f64,
+    voters: usize,
+}
+
+fn sign_partition(
+    cells: &Stacked,
+    series: &dyn Fn(usize, usize) -> (Vec<f64>, Vec<f64>),
+    stock_wins: bool,
+) -> Signs {
+    let mut signs = Signs::default();
+    for &(start, len) in &cells.bounds {
+        let (ys, ms) = series(start, len);
+        let (label, rf, rs) = classify_series(&ys, &ms);
+        let fires = label == Some(stock_wins);
+        let negated: Vec<f64> = ms.iter().map(|v| -v).collect();
+        let (mlabel, _, _) = classify_series(&ys, &negated);
+        let mirrored = mlabel == Some(stock_wins);
+        match (fires, mirrored) {
+            (true, true) => signs.both += 1,
+            (true, false) => signs.primary += 1,
+            (false, true) => signs.mirror += 1,
+            (false, false) => {}
+        }
+        if fires {
+            let r = rf.min(rs);
+            signs.rss += r * r;
+            signs.voters += 1;
+        }
+    }
+    signs
 }

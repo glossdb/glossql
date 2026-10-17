@@ -1917,15 +1917,14 @@ impl From<DataFusionError> for Abstain {
 /// One row of a series query: `(period, member, value, num, den)`.
 pub(crate) type SeriesRow = (i64, Option<String>, f64, Option<f64>, Option<f64>);
 
+/// A column left out of the axes: its name, the reason, and the act
+/// the row names it by.
+type Unadmitted = (String, String, &'static str);
+
 /// The plan stage — see [`Planned`]. Everything here is decided by
 /// the plan's schema, its provenance and the judged surface; nothing
 /// scans. `probe` is the frame's plan where the caller built it for
 /// the key.
-#[expect(
-    clippy::too_many_lines,
-    clippy::cognitive_complexity,
-    reason = "an orchestrator above the threshold; #136 extracts its phases"
-)]
 async fn plan(
     shared: &Arc<Shared>,
     surface: &Surface,
@@ -1941,84 +1940,19 @@ async fn plan(
         ..
     } = surface;
     let dataset = dataset.as_str();
-    let body: Value = serde_json::from_str(&slot.body)
-        .map_err(|e| Abstain(format!("the grounding is not JSON: {e}")))?;
-    // The author's stop (SPEC.md §5.2): no number is served, and the
-    // reason is theirs, carried as written.
-    if let Some(why) = body.get("stopped").and_then(Value::as_str) {
-        return Err(Abstain(format!("stopped: {why}")));
-    }
-    let sql = body
-        .get("sql")
-        .and_then(Value::as_str)
-        .ok_or_else(|| Abstain("the grounding carries no `sql`".into()))?;
-    let probe = match probe {
-        Some(p) => p,
-        None => crate::plan::build_plan(shared, ctx, sql).await?,
-    };
-    // Planned through to the physical plan as well: the engine admits
-    // at the logical stage what it refuses at the physical one — a
-    // scalar subquery inside an aggregate's argument arrives there as
-    // `ScalarSubquery` and is refused ("Physical plan does not support
-    // …") — and the row answers whether the SQL plans, so it answers
-    // for both stages. The scans are the pinned providers' and plan
-    // without I/O; nothing runs.
-    ctx.state()
-        .create_physical_plan(&probe)
-        .await
-        .map_err(|e| Abstain(format!("not served: {e}")))?;
+    let (body, sql, probe) = frame(shared, ctx, slot, probe).await?;
     let fields = probe.schema();
     let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
     if !has("value") {
         return Err(Abstain("no value column".into()));
     }
-    // The declared row identity: every grain column must be served —
-    // a declaration over a column the frame does not carry judges
-    // nothing.
-    let grain: Vec<String> = body
-        .get("grain")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    if let Some(missing) = grain.iter().find(|c| !has(c)) {
-        return Err(Abstain(format!(
-            "the declared grain names `{missing}`, which the frame does not serve — \
-             serve the column, or fix the declaration"
-        )));
-    }
+    let grain = declared_grain(&body, fields)?;
     // Which table columns each served field descends from — the judged
     // verdicts key by subject, the frame names aliases. The time axis
     // reads every source; admission reads the fields with one.
     let sources = crate::provenance::served_sources(&probe, dataset);
     let subjects = crate::provenance::single(&sources);
-    // What the row reads and nobody measured: the source columns of
-    // every served date of one table without a temporal verdict; the
-    // candidate columns add theirs below.
-    let mut wanted: Vec<(String, String)> = Vec::new();
-    if let Some(function) = &judged.temporal_fn {
-        for f in fields.fields() {
-            if !crate::plan::is_temporal(f.data_type()) {
-                continue;
-            }
-            let Some(columns) = sources.get(f.name()) else {
-                continue;
-            };
-            if !crate::provenance::one_table(columns) {
-                continue;
-            }
-            for column in columns {
-                if !judged.temporal.contains_key(column) && !wanted.iter().any(|(_, s)| s == column)
-                {
-                    wanted.push((function.clone(), column.clone()));
-                }
-            }
-        }
-    }
+    let mut wanted = wanted_temporal(fields, &sources, judged);
     // No judged time axis is no series: the plan stage still names
     // what it wants, and the fact row abstains carrying it.
     let (time_column, cadence, time_current) =
@@ -2027,7 +1961,7 @@ async fn plan(
             None => (None, None, true),
         };
     // Whether every verdict admitted on stands at this pin — the time
-    // axis now, each admitted dimension below.
+    // axis now, each admitted dimension at the scan.
     let mut judged_current = time_current;
     // The metric's own resolution is the coarser of the judged cadence
     // and the declared floor — the floor alone where the verdict names
@@ -2054,68 +1988,226 @@ async fn plan(
         &judged.behavior_gloss,
     );
     judged_current &= verb_current;
-    // The verb's own measurement, where the value is or sums a column
-    // nobody measured: the grounding write runs it, and re-measure
-    // runs it. A shape or a ratio needs none.
+    wanted_behavior(
+        &probe,
+        dataset,
+        judged,
+        is_ratio,
+        behavior_basis,
+        &mut wanted,
+    );
+
+    let scanned = crate::provenance::scanned_tables(&probe, dataset);
+    let (authored, axes_basis) = authored_axes(&body, is_ratio, &probe);
+    let admission = Admission {
+        judged,
+        subjects: &subjects,
+        scanned: &scanned,
+        author: if slot.rank == 0 { "human" } else { "agent" },
+    };
+    let (candidates, unadmitted) = admit_axes(
+        &admission,
+        fields,
+        is_ratio,
+        authored.as_deref(),
+        &mut wanted,
+    );
+    let unserved = if candidates.is_empty() && authored.is_none() {
+        unserved_axes(&scanned, shapes, &sources, judged)
+    } else {
+        Vec::new()
+    };
+    Ok(Planned {
+        body,
+        sql,
+        tcol: time_column,
+        grain,
+        resolution,
+        window,
+        verb,
+        behavior_basis,
+        judged_current,
+        candidates,
+        unadmitted,
+        axes_basis,
+        wanted,
+        unserved,
+        foreign: workspace_reads(&probe),
+    })
+}
+
+/// The frame a grounding serves: its body, its `sql` and the plan.
+/// The author's stop (SPEC.md §5.2) abstains first — no number is
+/// served, and the reason is theirs, carried as written. Planned
+/// through to the physical plan as well: the engine admits at the
+/// logical stage what it refuses at the physical one — a scalar
+/// subquery inside an aggregate's argument arrives there as
+/// `ScalarSubquery` and is refused ("Physical plan does not support
+/// …") — and the row answers whether the SQL plans, so it answers for
+/// both stages. The scans are the pinned providers' and plan without
+/// I/O; nothing runs.
+async fn frame(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    slot: &QuerySlot,
+    probe: Option<datafusion::logical_expr::LogicalPlan>,
+) -> Result<(Value, String, datafusion::logical_expr::LogicalPlan), Abstain> {
+    let body: Value = serde_json::from_str(&slot.body)
+        .map_err(|e| Abstain(format!("the grounding is not JSON: {e}")))?;
+    if let Some(why) = body.get("stopped").and_then(Value::as_str) {
+        return Err(Abstain(format!("stopped: {why}")));
+    }
+    let sql = body
+        .get("sql")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Abstain("the grounding carries no `sql`".into()))?
+        .to_string();
+    let probe = match probe {
+        Some(p) => p,
+        None => crate::plan::build_plan(shared, ctx, &sql).await?,
+    };
+    ctx.state()
+        .create_physical_plan(&probe)
+        .await
+        .map_err(|e| Abstain(format!("not served: {e}")))?;
+    Ok((body, sql, probe))
+}
+
+/// The declared row identity: every grain column must be served — a
+/// declaration over a column the frame does not carry judges nothing.
+fn declared_grain(
+    body: &Value,
+    fields: &datafusion::common::DFSchema,
+) -> Result<Vec<String>, Abstain> {
+    let grain: Vec<String> = body
+        .get("grain")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(missing) = grain
+        .iter()
+        .find(|c| !fields.fields().iter().any(|f| f.name() == *c))
+    {
+        return Err(Abstain(format!(
+            "the declared grain names `{missing}`, which the frame does not serve — \
+             serve the column, or fix the declaration"
+        )));
+    }
+    Ok(grain)
+}
+
+/// What the row reads and nobody measured: the source columns of
+/// every served date of one table without a temporal verdict; the
+/// candidate columns add theirs at admission.
+fn wanted_temporal(
+    fields: &datafusion::common::DFSchema,
+    sources: &HashMap<String, Vec<String>>,
+    judged: &Judged,
+) -> Vec<(String, String)> {
+    let mut wanted: Vec<(String, String)> = Vec::new();
+    let Some(function) = &judged.temporal_fn else {
+        return wanted;
+    };
+    for f in fields.fields() {
+        if !crate::plan::is_temporal(f.data_type()) {
+            continue;
+        }
+        let Some(columns) = sources.get(f.name()) else {
+            continue;
+        };
+        if !crate::provenance::one_table(columns) {
+            continue;
+        }
+        for column in columns {
+            if !judged.temporal.contains_key(column) && !wanted.iter().any(|(_, s)| s == column) {
+                wanted.push((function.clone(), column.clone()));
+            }
+        }
+    }
+    wanted
+}
+
+/// The verb's own measurement, where the value is or sums a column
+/// nobody measured: the grounding write runs it, and re-measure runs
+/// it. A shape or a ratio needs none.
+fn wanted_behavior(
+    probe: &datafusion::logical_expr::LogicalPlan,
+    dataset: &str,
+    judged: &Judged,
+    is_ratio: bool,
+    behavior_basis: &str,
+    wanted: &mut Vec<(String, String)>,
+) {
     if !is_ratio
         && behavior_basis != "shape"
         && let Some(function) = &judged.behavior_fn
-        && let Some(column) = crate::provenance::summed_source(&probe, "value", dataset)
+        && let Some(column) = crate::provenance::summed_source(probe, "value", dataset)
         && !judged.behavior.contains_key(&column)
         && !wanted.iter().any(|(f, s)| f == function && *s == column)
     {
         wanted.push((function.clone(), column));
     }
+}
 
-    // Judged dimensions: a served column (neither the value nor
-    // time-typed nor a ratio's own halves) enters when a verdict admits
-    // it — its own dimension_relevance, or, for a label whose own
-    // verdict is a near-key in its table, the verdict on the key
-    // column that reaches it through a declared edge. The collapsed
-    // `dimension` gloss on the column is the read policy over that:
-    // `none` closes the axis whatever was measured, `primary` admits
-    // it and ranks it first, `supporting` admits it. Relevance orders
-    // the admitted, fewest members break a tie, the cap keeps the top
-    // four. Counting admits nothing; its two jobs are the served-frame
-    // floor and the bucketing split, one aggregate pass.
-    let scanned = crate::provenance::scanned_tables(&probe, dataset);
-    let mut cand: Vec<Candidate> = Vec::new();
-    let mut unadmitted: Vec<(String, String, &'static str)> = Vec::new();
-    // The grounding's own word on its axes: `axes` lists the served
-    // columns the metric is sliced by, in order, and closes every other
-    // served column — the empty list closes them all, where it holds.
-    // Its author's word admits a listed column whatever was measured,
-    // as a `dimension` gloss would; a listed name the frame does not
-    // serve as a sliceable column is named back. Absent, the verdicts
-    // and the column glosses decide below.
+/// The grounding's own word on its axes: `axes` lists the served
+/// columns the metric is sliced by, in order, and closes every other
+/// served column — the empty list closes them all, where it holds.
+/// Its author's word admits a listed column whatever was measured, as
+/// a `dimension` gloss would; a listed name the frame does not serve
+/// as a sliceable column is named back. Absent, the verdicts and the
+/// column glosses decide. The empty list holds for the two shapes no
+/// column slices whole: a distinct count, whose members double-count
+/// across any column, and a ratio, whose members do not add up to it.
+/// On any other shape every member adds up to the total, so the
+/// verdicts keep deciding, and the row says the word was measured
+/// over.
+fn authored_axes(
+    body: &Value,
+    is_ratio: bool,
+    probe: &datafusion::logical_expr::LogicalPlan,
+) -> (Option<Vec<String>>, &'static str) {
     let authored: Option<Vec<String>> = body.get("axes").and_then(Value::as_array).map(|a| {
         a.iter()
             .filter_map(Value::as_str)
             .map(str::to_string)
             .collect()
     });
-    // The empty list holds for the two shapes no column slices whole:
-    // a distinct count, whose members double-count across any column,
-    // and a ratio, whose members do not add up to it. On any other
-    // shape every member adds up to the total, so the verdicts keep
-    // deciding, and the row says the word was measured over.
-    let (authored, axes_basis): (Option<Vec<String>>, &'static str) = match authored {
+    match authored {
         Some(list)
             if list.is_empty()
                 && !is_ratio
-                && !crate::provenance::distinct_count(&probe, "value") =>
+                && !crate::provenance::distinct_count(probe, "value") =>
         {
             (None, "measured over authored")
         }
         Some(list) => (Some(list), "authored"),
         None => (None, "measured"),
-    };
-    // What the record says of a column without the author's word: a
-    // `dimension` gloss that admits it, a verdict that does — its own,
-    // or one reached through a declared edge — or nothing. A closed
-    // column's act carries it, so the line can name what the word
-    // closed over.
-    let admits = |subject: &String| -> Option<&'static str> {
+    }
+}
+
+/// What admission reads of the surface: the verdicts and the glosses,
+/// each served field's one source column, the tables the frame scans,
+/// and who authored the grounding.
+struct Admission<'a> {
+    judged: &'a Judged,
+    subjects: &'a HashMap<String, String>,
+    scanned: &'a HashSet<String>,
+    author: &'static str,
+}
+
+impl Admission<'_> {
+    /// What the record says of a column without the author's word: a
+    /// `dimension` gloss that admits it, a verdict that does — its own,
+    /// or one reached through a declared edge — or nothing. A closed
+    /// column's act carries it, so the line can name what the word
+    /// closed over.
+    fn admits(&self, subject: &str) -> Option<&'static str> {
+        let judged = self.judged;
         match judged
             .dimension
             .get(subject)
@@ -2130,10 +2222,33 @@ async fn plan(
             .get(subject)
             .filter(|v| v.body["applicable"].as_bool() == Some(true))
             .is_some()
-            || through_edge(subject, &scanned, &judged.pointers, &judged.relevance).is_some();
+            || through_edge(subject, self.scanned, &judged.pointers, &judged.relevance).is_some();
         measured.then_some("verdict")
-    };
-    let author: &'static str = if slot.rank == 0 { "human" } else { "agent" };
+    }
+}
+
+/// Judged dimensions: a served column (neither the value nor
+/// time-typed nor a ratio's own halves) enters when a verdict admits
+/// it — its own dimension_relevance, or, for a label whose own
+/// verdict is a near-key in its table, the verdict on the key column
+/// that reaches it through a declared edge. The collapsed `dimension`
+/// gloss on the column is the read policy over that: `none` closes
+/// the axis whatever was measured, `primary` admits it and ranks it
+/// first, `supporting` admits it. Relevance orders the admitted,
+/// fewest members break a tie, the cap keeps the top four. Counting
+/// admits nothing; its two jobs are the served-frame floor and the
+/// bucketing split, one aggregate pass ([`admitted_axes`]). Under the
+/// author's word ([`authored_axes`]) the list decides instead, and a
+/// listed name no served column answers to is named back.
+fn admit_axes(
+    admission: &Admission,
+    fields: &datafusion::common::DFSchema,
+    is_ratio: bool,
+    authored: Option<&[String]>,
+    wanted: &mut Vec<(String, String)>,
+) -> (Vec<Candidate>, Vec<Unadmitted>) {
+    let mut cand: Vec<Candidate> = Vec::new();
+    let mut unadmitted: Vec<Unadmitted> = Vec::new();
     let mut sliceable: Vec<&str> = Vec::new();
     for f in fields.fields() {
         let n = f.name().as_str();
@@ -2144,126 +2259,16 @@ async fn plan(
             continue;
         }
         sliceable.push(n);
-        if let Some(listed) = &authored {
-            match listed.iter().position(|a| a == n) {
-                Some(i) => cand.push(Candidate {
-                    column: n.to_string(),
-                    relevance: (listed.len() - i) as f64,
-                    current: true,
-                    basis: subjects.get(n).cloned().unwrap_or_else(|| n.to_string()),
-                    admitted_by: author,
-                    primary: false,
-                }),
-                None => {
-                    let (why, act) = match subjects.get(n).and_then(admits) {
-                        Some("gloss") => ("a dimension gloss admits it", "closed over gloss"),
-                        Some("verdict") => ("a verdict admits it", "closed over verdict"),
-                        _ => ("nothing measured admits it", "closed"),
-                    };
-                    unadmitted.push((
-                        n.to_string(),
-                        format!("closed by the grounding's axes ({author}); {why}"),
-                        act,
-                    ));
-                }
-            }
-            continue;
+        let axis = match authored {
+            Some(listed) => authored_axis(admission, n, listed),
+            None => measured_axis(admission, n, wanted),
+        };
+        match axis {
+            Ok(candidate) => cand.push(candidate),
+            Err(left_out) => unadmitted.push(left_out),
         }
-        let Some(subject) = subjects.get(n) else {
-            unadmitted.push((
-                n.to_string(),
-                "an expression, not a table column: no verdict can reach it — serve the \
-                 column it derives from, or land it as a recipe column"
-                    .into(),
-                "expression",
-            ));
-            continue;
-        };
-        let gloss = judged.dimension.get(subject);
-        let stance = gloss.and_then(|(v, _)| v["value"].as_str()).unwrap_or("");
-        let speaker: &'static str = match gloss {
-            Some((_, 0)) => "human",
-            Some(_) => "agent",
-            None => "measurement",
-        };
-        if stance == "none" {
-            unadmitted.push((
-                n.to_string(),
-                format!("closed by a dimension gloss on {subject} ({speaker}: none)"),
-                "none",
-            ));
-            continue;
-        }
-        let measured = match judged
-            .relevance
-            .get(subject)
-            .filter(|v| v.body["applicable"].as_bool() == Some(true))
-        {
-            Some(v) => Some((
-                v.body["relevance"].as_f64().unwrap_or(0.0),
-                v.current,
-                subject.clone(),
-            )),
-            None => through_edge(subject, &scanned, &judged.pointers, &judged.relevance),
-        };
-        let candidate = match (measured, stance) {
-            (Some((relevance, current, basis)), "primary") => Candidate {
-                column: n.to_string(),
-                relevance,
-                current,
-                basis,
-                admitted_by: speaker,
-                primary: true,
-            },
-            (Some((relevance, current, basis)), _) => Candidate {
-                column: n.to_string(),
-                relevance,
-                current,
-                basis,
-                admitted_by: "measurement",
-                primary: false,
-            },
-            // Admitted on the gloss alone: a gloss always stands, and
-            // without a verdict `primary` leads, `supporting` trails.
-            (None, "primary" | "supporting") => Candidate {
-                column: n.to_string(),
-                relevance: if stance == "primary" { 1.0 } else { 0.0 },
-                current: true,
-                basis: subject.clone(),
-                admitted_by: speaker,
-                primary: stance == "primary",
-            },
-            (None, _) => {
-                let (why, act) = match judged.relevance.get(subject) {
-                    Some(v) => (
-                        format!(
-                            "dimension_relevance abstained on {subject} ({}), and no declared \
-                             relationship reaches it from a judged key the grounding scans — \
-                             declare the edge, or gloss dimension on it",
-                            v.body["reason"].as_str().unwrap_or("no reason given")
-                        ),
-                        "abstained",
-                    ),
-                    None => {
-                        if let Some(function) = &judged.relevance_fn {
-                            wanted.push((function.clone(), subject.clone()));
-                        }
-                        (
-                            format!(
-                                "no verdict on {subject} — run dimension_relevance() over it, \
-                                 or gloss dimension on it"
-                            ),
-                            "verdict",
-                        )
-                    }
-                };
-                unadmitted.push((n.to_string(), why, act));
-                continue;
-            }
-        };
-        cand.push(candidate);
     }
-    if let Some(listed) = &authored {
+    if let Some(listed) = authored {
         for a in listed.iter().filter(|a| !sliceable.contains(&a.as_str())) {
             unadmitted.push((
                 a.clone(),
@@ -2274,68 +2279,204 @@ async fn plan(
             ));
         }
     }
-    // Where nothing served can be an axis and the author listed none,
-    // the frame is a date and a value: the row names the columns of
-    // the tables it scans that a gloss or a verdict already admits and
-    // it does not serve — the axis is judged, the road is to serve it.
-    let mut unserved: Vec<String> = Vec::new();
-    if cand.is_empty() && authored.is_none() {
-        let served: std::collections::HashSet<&String> = sources.values().flatten().collect();
-        for table in &scanned {
-            let Some(shape) = shapes.get(table) else {
-                continue;
-            };
-            for column in shape.columns.keys() {
-                let subject = format!("{table}.{column}");
-                if served.contains(&subject) {
-                    continue;
-                }
-                // The gloss is the read policy over the verdict, here
-                // as in admission: `none` closes the column, a word
-                // admits it, and without one the verdict decides.
-                let admitted = match judged
-                    .dimension
-                    .get(&subject)
-                    .and_then(|(v, _)| v["value"].as_str())
-                {
-                    Some("none") => false,
-                    Some("primary" | "supporting") => true,
-                    _ => judged
-                        .relevance
-                        .get(&subject)
-                        .is_some_and(|v| v.body["applicable"].as_bool() == Some(true)),
-                };
-                if admitted {
-                    unserved.push(subject);
-                }
-            }
-        }
-        unserved.sort();
-    }
-    let sql = sql.to_string();
-    Ok(Planned {
-        body,
-        sql,
-        tcol: time_column,
-        grain,
-        resolution,
-        window,
-        verb,
-        behavior_basis,
-        judged_current,
-        candidates: cand,
-        unadmitted,
-        axes_basis,
-        wanted,
-        unserved,
-        foreign: workspace_reads(&probe),
-    })
+    (cand, unadmitted)
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "an orchestrator above the threshold; #136 extracts its phases"
-)]
+/// One served column under the author's word: listed, it is admitted
+/// in the list's order whatever was measured; unlisted, it is closed,
+/// and the act names what the word closed over.
+fn authored_axis(
+    admission: &Admission,
+    n: &str,
+    listed: &[String],
+) -> Result<Candidate, Unadmitted> {
+    let author = admission.author;
+    match listed.iter().position(|a| a == n) {
+        Some(i) => Ok(Candidate {
+            column: n.to_string(),
+            relevance: (listed.len() - i) as f64,
+            current: true,
+            basis: admission
+                .subjects
+                .get(n)
+                .cloned()
+                .unwrap_or_else(|| n.to_string()),
+            admitted_by: author,
+            primary: false,
+        }),
+        None => {
+            let (why, act) = match admission.subjects.get(n).and_then(|s| admission.admits(s)) {
+                Some("gloss") => ("a dimension gloss admits it", "closed over gloss"),
+                Some("verdict") => ("a verdict admits it", "closed over verdict"),
+                _ => ("nothing measured admits it", "closed"),
+            };
+            Err((
+                n.to_string(),
+                format!("closed by the grounding's axes ({author}); {why}"),
+                act,
+            ))
+        }
+    }
+}
+
+/// One served column under the record alone: an expression no verdict
+/// can reach is named back; a `dimension` gloss of `none` closes it;
+/// a verdict — its own, or one reached through a declared edge —
+/// admits it with its relevance, a `primary` gloss ranking it first;
+/// a gloss alone admits it, `primary` leading and `supporting`
+/// trailing; and a column nothing admits is named back with the road,
+/// the verdict it wants added to the row's wants.
+fn measured_axis(
+    admission: &Admission,
+    n: &str,
+    wanted: &mut Vec<(String, String)>,
+) -> Result<Candidate, Unadmitted> {
+    let judged = admission.judged;
+    let Some(subject) = admission.subjects.get(n) else {
+        return Err((
+            n.to_string(),
+            "an expression, not a table column: no verdict can reach it — serve the \
+             column it derives from, or land it as a recipe column"
+                .into(),
+            "expression",
+        ));
+    };
+    let gloss = judged.dimension.get(subject);
+    let stance = gloss.and_then(|(v, _)| v["value"].as_str()).unwrap_or("");
+    let speaker: &'static str = match gloss {
+        Some((_, 0)) => "human",
+        Some(_) => "agent",
+        None => "measurement",
+    };
+    if stance == "none" {
+        return Err((
+            n.to_string(),
+            format!("closed by a dimension gloss on {subject} ({speaker}: none)"),
+            "none",
+        ));
+    }
+    let measured = match judged
+        .relevance
+        .get(subject)
+        .filter(|v| v.body["applicable"].as_bool() == Some(true))
+    {
+        Some(v) => Some((
+            v.body["relevance"].as_f64().unwrap_or(0.0),
+            v.current,
+            subject.clone(),
+        )),
+        None => through_edge(
+            subject,
+            admission.scanned,
+            &judged.pointers,
+            &judged.relevance,
+        ),
+    };
+    match (measured, stance) {
+        (Some((relevance, current, basis)), "primary") => Ok(Candidate {
+            column: n.to_string(),
+            relevance,
+            current,
+            basis,
+            admitted_by: speaker,
+            primary: true,
+        }),
+        (Some((relevance, current, basis)), _) => Ok(Candidate {
+            column: n.to_string(),
+            relevance,
+            current,
+            basis,
+            admitted_by: "measurement",
+            primary: false,
+        }),
+        // Admitted on the gloss alone: a gloss always stands, and
+        // without a verdict `primary` leads, `supporting` trails.
+        (None, "primary" | "supporting") => Ok(Candidate {
+            column: n.to_string(),
+            relevance: if stance == "primary" { 1.0 } else { 0.0 },
+            current: true,
+            basis: subject.clone(),
+            admitted_by: speaker,
+            primary: stance == "primary",
+        }),
+        (None, _) => {
+            let (why, act) = match judged.relevance.get(subject) {
+                Some(v) => (
+                    format!(
+                        "dimension_relevance abstained on {subject} ({}), and no declared \
+                         relationship reaches it from a judged key the grounding scans — \
+                         declare the edge, or gloss dimension on it",
+                        v.body["reason"].as_str().unwrap_or("no reason given")
+                    ),
+                    "abstained",
+                ),
+                None => {
+                    if let Some(function) = &judged.relevance_fn {
+                        wanted.push((function.clone(), subject.clone()));
+                    }
+                    (
+                        format!(
+                            "no verdict on {subject} — run dimension_relevance() over it, \
+                             or gloss dimension on it"
+                        ),
+                        "verdict",
+                    )
+                }
+            };
+            Err((n.to_string(), why, act))
+        }
+    }
+}
+
+/// Where nothing served can be an axis and the author listed none,
+/// the frame is a date and a value: the row names the columns of the
+/// tables it scans that a gloss or a verdict already admits and it
+/// does not serve — the axis is judged, the road is to serve it. The
+/// gloss is the read policy over the verdict, here as in admission:
+/// `none` closes the column, a word admits it, and without one the
+/// verdict decides.
+fn unserved_axes(
+    scanned: &HashSet<String>,
+    shapes: &HashMap<String, glossql_catalog::Shape>,
+    sources: &HashMap<String, Vec<String>>,
+    judged: &Judged,
+) -> Vec<String> {
+    let served: HashSet<&String> = sources.values().flatten().collect();
+    let mut unserved: Vec<String> = Vec::new();
+    for table in scanned {
+        let Some(shape) = shapes.get(table) else {
+            continue;
+        };
+        for column in shape.columns.keys() {
+            let subject = format!("{table}.{column}");
+            if served.contains(&subject) {
+                continue;
+            }
+            let admitted = match judged
+                .dimension
+                .get(&subject)
+                .and_then(|(v, _)| v["value"].as_str())
+            {
+                Some("none") => false,
+                Some("primary" | "supporting") => true,
+                _ => judged
+                    .relevance
+                    .get(&subject)
+                    .is_some_and(|v| v.body["applicable"].as_bool() == Some(true)),
+            };
+            if admitted {
+                unserved.push(subject);
+            }
+        }
+    }
+    unserved.sort();
+    unserved
+}
+
+/// The build stage: the plan stage's answer carried into the scans —
+/// the grain checked, the axes counted and admitted, the windows and
+/// the reach read off the frame, every series as cells, the zeros, the
+/// rival, and the head landed in one order under its fact row.
 async fn build(
     shared: &Arc<Shared>,
     surface: &Surface,
@@ -2383,7 +2524,7 @@ async fn build(
         verb,
         behavior_basis,
         mut judged_current,
-        candidates: cand,
+        candidates,
         mut unadmitted,
         axes_basis,
         wanted,
@@ -2394,255 +2535,50 @@ async fn build(
     let sql = sql.as_str();
     let tcol = tcol.as_str();
 
-    // The declared grain, validated where the frame is built: one row
-    // per key, or the metric abstains — a frame that breaks its
-    // declared identity multiplies every aggregating reader, and
-    // nothing downstream can tell duplication from multi-entity.
-    // One aggregate over the frame, never a count over the frame
-    // grouped again: the engine's projection pruner keeps only the
-    // group keys the input's functional dependencies call sufficient
-    // when the parent reads no key (`optimize_projections`), and an
-    // aggregate over a join whose one side is DISTINCT mints a
-    // dependency from that side's key to the whole row, which is
-    // false — the grouped shape then counts one side's keys. At this
-    // pin and on upstream main.
-    if !grain.is_empty() {
-        let keys = grain.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
-        let q = format!(
-            "SELECT count(*) AS total, count(DISTINCT struct({keys})) AS keys FROM ({sql})"
-        );
-        let batches = run(shared, ctx, &q).await?;
-        let key_count = int_column(&batches, "keys").map_err(|e| Abstain(e.to_string()))?[0];
-        let total = int_column(&batches, "total").map_err(|e| Abstain(e.to_string()))?[0];
-        if total > key_count {
-            let cols = grain.join(", ");
-            // The one data-derived abstention: over a frame that also
-            // scans a workspace relation, a write can flip it, so it
-            // carries the binding a built cube would.
-            return Ok(Cube {
-                fact: Fact::abstain(
-                    metric,
-                    format!(
-                        "the frame breaks its declared grain ({cols}): {total} rows over \
-                         {key_count} distinct keys — serve one row per ({cols}), or fix the \
-                         declaration"
-                    ),
-                ),
-                cells: RecordBatch::new_empty(series_schema()),
-                version_bound: bound(&foreign),
-            });
-        }
+    if let Some(reason) = broken_grain(shared, ctx, sql, &grain).await? {
+        // The one data-derived abstention: over a frame that also
+        // scans a workspace relation, a write can flip it, so it
+        // carries the binding a built cube would.
+        return Ok(Cube {
+            fact: Fact::abstain(metric, reason),
+            cells: RecordBatch::new_empty(series_schema()),
+            version_bound: bound(&foreign),
+        });
     }
-    let mut counts: Vec<(Candidate, i64)> = Vec::new();
-    if !cand.is_empty() {
-        let parts: Vec<String> = cand
-            .iter()
-            .enumerate()
-            .map(|(i, c)| format!("count(DISTINCT {}) AS \"n_{i}\"", qi(&c.column)))
-            .collect();
-        let batches = run(
-            shared,
-            ctx,
-            &format!("SELECT {} FROM ({sql})", parts.join(", ")),
-        )
-        .await?;
-        for (i, c) in cand.into_iter().enumerate() {
-            let n = int_column(&batches, &format!("n_{i}")).map_err(|e| Abstain(e.to_string()))?[0];
-            counts.push((c, n));
-        }
-    }
-    counts.sort_by(|(a, an), (b, bn)| {
-        b.primary
-            .cmp(&a.primary)
-            .then(b.relevance.total_cmp(&a.relevance))
-            .then(an.cmp(bn))
-            .then(a.column.cmp(&b.column))
-    });
-    let mut dims: Vec<String> = Vec::new();
-    let mut basis: Vec<String> = Vec::new();
-    let mut admitted_by: Vec<String> = Vec::new();
-    let mut bucketed: Vec<String> = Vec::new();
-    for (c, n) in &counts {
-        if dims.len() >= DIMS_CAP {
-            unadmitted.push((
-                c.column.clone(),
-                format!("ranked below the {DIMS_CAP} admitted axes"),
-                "cap",
-            ));
-            continue;
-        }
-        if *n < 2 {
-            unadmitted.push((
-                c.column.clone(),
-                "one member across the frame: nothing to slice".into(),
-                "single",
-            ));
-            continue;
-        }
-        dims.push(c.column.clone());
-        basis.push(c.basis.clone());
-        admitted_by.push(c.admitted_by.to_string());
-        judged_current &= c.current;
-        if *n > MEMBERS_CAP {
-            bucketed.push(c.column.clone());
-        }
-    }
-
-    // The windows and the data's reach, one pass over the frame: the
-    // edge (the latest observation) and the periods the data holds at
-    // the metric's resolution. A grain's window is the edge's bucket
-    // at that grain less the grain's rung; the head keeps every floor
-    // bucket after the earliest window of the grains from the
-    // resolution up, so each of them derives from it whole. A grain
-    // without a rung is unbounded, and so is the head.
-    let p_own = period::bucket(&qi(tcol), resolution);
-    let served: Vec<Resolution> = Resolution::ALL
-        .into_iter()
-        .filter(|r| *r >= resolution)
-        .collect();
-    let unbounded = served.iter().any(|r| !settings.windows.contains_key(r));
-    let sinces: String = served
-        .iter()
-        .filter_map(|r| Some((r, settings.windows.get(r)?)))
-        .map(|(r, w)| {
-            format!(
-                ", CAST({} - INTERVAL '{}' AS {}) AS \"since_{}\"",
-                period::bucket("edge", *r),
-                w.replace('\'', "''"),
-                period::TYPE,
-                r.as_str()
-            )
-        })
-        .collect();
-    let q = format!(
-        "SELECT edge, spanned{sinces} FROM (\
-            SELECT max({tcol_q}) AS edge, \
-                   count(DISTINCT {p_own}) FILTER (WHERE value IS NOT NULL) AS spanned \
-            FROM ({sql}))",
-        tcol_q = qi(tcol)
-    );
-    let batches = run(shared, ctx, &q).await?;
-    let row = batches.iter().find(|b| b.num_rows() > 0);
-    let at = |name: &str| -> Option<i64> {
-        let col = row?.column_by_name(name).and_then(period::column)?;
-        (!col.is_null(0)).then(|| col.value(0))
+    let Admitted {
+        dims,
+        basis,
+        admitted_by,
+        bucketed,
+    } = admitted_axes(
+        shared,
+        ctx,
+        sql,
+        candidates,
+        &mut unadmitted,
+        &mut judged_current,
+    )
+    .await?;
+    let Reach {
+        spanned,
+        since_own,
+        since,
+    } = reach(shared, ctx, sql, tcol, resolution, settings).await?;
+    let series = Series {
+        metric,
+        sql,
+        tcol,
+        verb,
+        floor,
+        resolution,
+        since: since.map(period::literal),
+        since_own: since_own.map(period::literal),
     };
-    let spanned = int_column(&batches, "spanned")
-        .map_err(|e| Abstain(e.to_string()))?
-        .first()
-        .copied()
-        .unwrap_or(0);
-    let since_at = |r: Resolution| at(&format!("since_{}", r.as_str()));
-    // The metric's own window — what its series is served over, what
-    // the members rank over, and what `outside` counts against — and
-    // the head's, the earliest window of the served grains.
-    let since_own = since_at(resolution);
-    let since = if unbounded {
-        None
-    } else {
-        served.iter().filter_map(|r| since_at(*r)).min()
-    };
-    // The windows as the series plans spell them.
-    let since_own_lit = since_own.map(period::literal);
-    let since_lit = since.map(period::literal);
 
     // Every series' batches, in the series schema: the total, the
     // members, the zeros, the rival — one head once sorted.
-    let mut batches: Vec<RecordBatch> = Vec::new();
-
-    // The total series, at the floor over the head's window.
-    batches.extend(
-        cells(
-            shared,
-            ctx,
-            &cells_sql(
-                metric,
-                "",
-                "''",
-                verb,
-                &total_sql(sql, tcol, verb, floor, since_lit.as_deref()),
-            ),
-        )
-        .await?,
-    );
-
-    // Member series per admitted dimension, same verb, same window —
-    // independent plans, driven concurrently. A bucketed dimension
-    // names its top members by weight over the metric's own window
-    // and folds the rest into 'other'; the set is resolved first and
-    // spliced as literals, deterministic (weight, then name) so two
-    // builds at one pin agree.
-    let members = dims.iter().map(|dcol| {
-        let bucketed = bucketed.iter().any(|b| b == dcol);
-        let since = since_lit.as_deref();
-        let since_own = since_own_lit.as_deref();
-        let p_own = p_own.as_str();
-        async move {
-            let member = if bucketed {
-                let weight = if verb == "ratio" {
-                    "sum(den)"
-                } else {
-                    "sum(value)"
-                };
-                let clause = since_own.map_or(String::new(), |s| format!(" AND {p_own} > {s}"));
-                let q = format!(
-                    "SELECT CAST({dcol_q} AS VARCHAR) AS mc_member FROM ({sql}) \
-                     WHERE {dcol_q} IS NOT NULL{clause} GROUP BY 1 \
-                     ORDER BY {weight} DESC NULLS LAST, mc_member LIMIT {}",
-                    MEMBERS_CAP - 1,
-                    dcol_q = qi(dcol)
-                );
-                let mut named = Vec::new();
-                for b in run(shared, ctx, &q)
-                    .await?
-                    .iter()
-                    .filter(|b| b.num_rows() > 0)
-                {
-                    let col = b
-                        .column_by_name("mc_member")
-                        .ok_or_else(|| Abstain("the member pass served no mc_member".into()))?;
-                    for i in 0..b.num_rows() {
-                        let m =
-                            array_value_to_string(col, i).map_err(|e| Abstain(e.to_string()))?;
-                        named.push(format!("'{}'", m.replace('\'', "''")));
-                    }
-                }
-                if named.is_empty() {
-                    // No member stands inside the window — every row
-                    // of the column there is NULL — so there is
-                    // nothing to name and no cell to serve; the plain
-                    // cast, never an empty IN list, which is not a
-                    // query.
-                    format!("CAST({dcol_q} AS VARCHAR)", dcol_q = qi(dcol))
-                } else {
-                    format!(
-                        "CASE WHEN CAST({dcol_q} AS VARCHAR) IN ({}) \
-                         THEN CAST({dcol_q} AS VARCHAR) ELSE 'other' END",
-                        named.join(", "),
-                        dcol_q = qi(dcol)
-                    )
-                }
-            } else {
-                format!("CAST({dcol_q} AS VARCHAR)", dcol_q = qi(dcol))
-            };
-            let rows = cells(
-                shared,
-                ctx,
-                &cells_sql(
-                    metric,
-                    dcol,
-                    "member",
-                    verb,
-                    &member_sql(sql, tcol, dcol, &member, verb, floor, since),
-                ),
-            )
-            .await?;
-            Ok::<_, Abstain>(rows)
-        }
-    });
-    for rows in futures::future::try_join_all(members).await? {
-        batches.extend(rows);
-    }
+    let mut batches = total_series(shared, ctx, &series).await?;
+    batches.extend(member_series(shared, ctx, &series, &dims, &bucketed).await?);
 
     // What the data holds inside the metric's own window, counted
     // before the zeros below: a zero cell is no period of data.
@@ -2661,80 +2597,21 @@ async fn build(
     }
     let head = one_batch(&batches)?;
 
-    // The named rival, when a grounding assumption discloses one. The
-    // rival SQL is authored but never admission-validated: it runs
-    // behind a guard and a refusal is reported in the fact row, never
-    // thrown. Its verb is its own — a rival serving num/den is a ratio
-    // whatever the metric is — and its time axis is judged like the
-    // chosen reading's wherever a verdict stands, since the rival is a
-    // comparison cell. Where the rival's frame carries one date column
-    // and no verdict, that column is not a choice and is taken; where
-    // it carries several unjudged, the rival is not served and the fact
-    // row says why.
-    let mut alternative = None;
-    let mut alternative_divergence = None;
-    let mut alternative_error = None;
-    if let Some(assumptions) = body.get("assumptions").and_then(Value::as_array) {
-        for a in assumptions {
-            let Some(alt_sql) = a.get("alternative_sql").and_then(Value::as_str) else {
-                continue;
-            };
-            let rival = a
-                .get("alternative")
-                .and_then(Value::as_str)
-                .unwrap_or("(rival)");
-            let served = rival_series(
-                shared,
-                surface,
-                metric,
-                rival,
-                alt_sql,
-                verb,
-                floor,
-                since_lit.as_deref(),
-            )
-            .await;
-            match served {
-                Ok((mut rows, rival_verb, rival_foreign)) => {
-                    foreign.extend(rival_foreign);
-                    foreign.sort();
-                    foreign.dedup();
-                    // The rival's cells at its own verb, its empty
-                    // periods zero where it is a flow, so the two
-                    // lines compare like with like.
-                    if rival_verb == "flow"
-                        && let Some(edge) = edge
-                    {
-                        let zeros = zero_fill(shared, &one_batch(&rows)?, resolution, edge).await?;
-                        rows.extend(zeros);
-                    }
-                    let rival_cells = one_batch(&rows)?;
-                    alternative_divergence = Some(
-                        divergence(
-                            shared,
-                            &head,
-                            &rival_cells,
-                            a.get("tolerance").and_then(Value::as_f64),
-                        )
-                        .await?,
-                    );
-                    batches.push(rival_cells);
-                    alternative = Some(rival.to_string());
-                }
-                Err(Abstain(why)) => {
-                    alternative_error = Some(format!("the rival is not served: {why}"));
-                }
-            }
-            break;
-        }
+    let Rival {
+        alternative,
+        alternative_divergence,
+        alternative_error,
+        cells: rival_cells,
+        foreign: rival_foreign,
+    } = rival(shared, surface, &series, &body, &head, edge).await?;
+    batches.extend(rival_cells);
+    if let Some(rival_foreign) = rival_foreign {
+        foreign.extend(rival_foreign);
+        foreign.sort();
+        foreign.dedup();
     }
 
-    // The head lands in one order ([`head_order`]): a sort over every
-    // series' batches, the one pass the engine makes over the head.
-    let sorted = scan_cells("h", &one_batch(&batches)?)?
-        .sort(head_order())?
-        .build()?;
-    let cells = one_batch(&run_cells(shared, sorted).await?)?;
+    let cells = landed(shared, &batches).await?;
     // What the data holds at the resolution and the window leaves out:
     // the periods the frame spans less the periods of data the total
     // series serves inside the metric's own window.
@@ -2775,6 +2652,441 @@ async fn build(
         cells,
         version_bound: bound(&foreign),
     })
+}
+
+/// The declared grain, validated where the frame is built: one row
+/// per key, or the metric abstains — a frame that breaks its declared
+/// identity multiplies every aggregating reader, and nothing
+/// downstream can tell duplication from multi-entity. The abstention's
+/// text where it breaks; none where it holds or nothing is declared.
+/// One aggregate over the frame, never a count over the frame grouped
+/// again: the engine's projection pruner keeps only the group keys the
+/// input's functional dependencies call sufficient when the parent
+/// reads no key (`optimize_projections`), and an aggregate over a join
+/// whose one side is DISTINCT mints a dependency from that side's key
+/// to the whole row, which is false — the grouped shape then counts
+/// one side's keys. At this pin and on upstream main.
+async fn broken_grain(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    sql: &str,
+    grain: &[String],
+) -> Result<Option<String>, Abstain> {
+    if grain.is_empty() {
+        return Ok(None);
+    }
+    let keys = grain.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
+    let q =
+        format!("SELECT count(*) AS total, count(DISTINCT struct({keys})) AS keys FROM ({sql})");
+    let batches = run(shared, ctx, &q).await?;
+    let key_count = int_column(&batches, "keys")?[0];
+    let total = int_column(&batches, "total")?[0];
+    if total <= key_count {
+        return Ok(None);
+    }
+    let cols = grain.join(", ");
+    Ok(Some(format!(
+        "the frame breaks its declared grain ({cols}): {total} rows over {key_count} distinct \
+         keys — serve one row per ({cols}), or fix the declaration"
+    )))
+}
+
+/// The axes the scan admits: the dimension columns in rank order, each
+/// with its basis and who admitted it, and among them the ones past
+/// the member cap, which bucket.
+struct Admitted {
+    dims: Vec<String>,
+    basis: Vec<String>,
+    admitted_by: Vec<String>,
+    bucketed: Vec<String>,
+}
+
+/// The candidates counted and admitted: each candidate's members in
+/// one aggregate pass over the frame, the candidates ranked — primary
+/// first, then relevance, then fewest members, then name — and the
+/// top four kept; a column with one member slices nothing, and one
+/// past the member cap is bucketed. A candidate left out joins the
+/// unadmitted with its act, and an admitted one judged at an earlier
+/// pin marks the row not current.
+async fn admitted_axes(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    sql: &str,
+    cand: Vec<Candidate>,
+    unadmitted: &mut Vec<Unadmitted>,
+    judged_current: &mut bool,
+) -> Result<Admitted, Abstain> {
+    let mut counts: Vec<(Candidate, i64)> = Vec::new();
+    if !cand.is_empty() {
+        let parts: Vec<String> = cand
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("count(DISTINCT {}) AS \"n_{i}\"", qi(&c.column)))
+            .collect();
+        let batches = run(
+            shared,
+            ctx,
+            &format!("SELECT {} FROM ({sql})", parts.join(", ")),
+        )
+        .await?;
+        for (i, c) in cand.into_iter().enumerate() {
+            let n = int_column(&batches, &format!("n_{i}"))?[0];
+            counts.push((c, n));
+        }
+    }
+    counts.sort_by(|(a, an), (b, bn)| {
+        b.primary
+            .cmp(&a.primary)
+            .then(b.relevance.total_cmp(&a.relevance))
+            .then(an.cmp(bn))
+            .then(a.column.cmp(&b.column))
+    });
+    let mut admitted = Admitted {
+        dims: Vec::new(),
+        basis: Vec::new(),
+        admitted_by: Vec::new(),
+        bucketed: Vec::new(),
+    };
+    for (c, n) in &counts {
+        if admitted.dims.len() >= DIMS_CAP {
+            unadmitted.push((
+                c.column.clone(),
+                format!("ranked below the {DIMS_CAP} admitted axes"),
+                "cap",
+            ));
+            continue;
+        }
+        if *n < 2 {
+            unadmitted.push((
+                c.column.clone(),
+                "one member across the frame: nothing to slice".into(),
+                "single",
+            ));
+            continue;
+        }
+        admitted.dims.push(c.column.clone());
+        admitted.basis.push(c.basis.clone());
+        admitted.admitted_by.push(c.admitted_by.to_string());
+        *judged_current &= c.current;
+        if *n > MEMBERS_CAP {
+            admitted.bucketed.push(c.column.clone());
+        }
+    }
+    Ok(admitted)
+}
+
+/// What one pass over the frame says of its reach: the periods the
+/// data holds at the metric's resolution, the metric's own window —
+/// what its series is served over, what the members rank over, and
+/// what `outside` counts against — and the head's, the earliest
+/// window of the served grains.
+struct Reach {
+    spanned: i64,
+    since_own: Option<i64>,
+    since: Option<i64>,
+}
+
+/// The windows and the data's reach, one pass over the frame: the
+/// edge (the latest observation) and the periods the data holds at
+/// the metric's resolution. A grain's window is the edge's bucket at
+/// that grain less the grain's rung; the head keeps every floor
+/// bucket after the earliest window of the grains from the resolution
+/// up, so each of them derives from it whole. A grain without a rung
+/// is unbounded, and so is the head.
+async fn reach(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    sql: &str,
+    tcol: &str,
+    resolution: Resolution,
+    settings: &Settings,
+) -> Result<Reach, Abstain> {
+    let p_own = period::bucket(&qi(tcol), resolution);
+    let served: Vec<Resolution> = Resolution::ALL
+        .into_iter()
+        .filter(|r| *r >= resolution)
+        .collect();
+    let unbounded = served.iter().any(|r| !settings.windows.contains_key(r));
+    let sinces: String = served
+        .iter()
+        .filter_map(|r| Some((r, settings.windows.get(r)?)))
+        .map(|(r, w)| {
+            format!(
+                ", CAST({} - INTERVAL '{}' AS {}) AS \"since_{}\"",
+                period::bucket("edge", *r),
+                w.replace('\'', "''"),
+                period::TYPE,
+                r.as_str()
+            )
+        })
+        .collect();
+    let q = format!(
+        "SELECT edge, spanned{sinces} FROM (\
+            SELECT max({tcol_q}) AS edge, \
+                   count(DISTINCT {p_own}) FILTER (WHERE value IS NOT NULL) AS spanned \
+            FROM ({sql}))",
+        tcol_q = qi(tcol)
+    );
+    let batches = run(shared, ctx, &q).await?;
+    let row = batches.iter().find(|b| b.num_rows() > 0);
+    let since_at = |r: Resolution| -> Option<i64> {
+        let col = row?
+            .column_by_name(&format!("since_{}", r.as_str()))
+            .and_then(period::column)?;
+        (!col.is_null(0)).then(|| col.value(0))
+    };
+    let spanned = int_column(&batches, "spanned")?
+        .first()
+        .copied()
+        .unwrap_or(0);
+    let since_own = since_at(resolution);
+    let since = if unbounded {
+        None
+    } else {
+        served.iter().filter_map(|r| since_at(*r)).min()
+    };
+    Ok(Reach {
+        spanned,
+        since_own,
+        since,
+    })
+}
+
+/// What every series plan of one build reads: the metric, its frame
+/// and time column, the verb, the floor the head stands at, the
+/// metric's own resolution, and the two windows as the plans spell
+/// them — the head's (`since`) and the metric's own (`since_own`).
+struct Series<'a> {
+    metric: &'a str,
+    sql: &'a str,
+    tcol: &'a str,
+    verb: &'static str,
+    floor: Resolution,
+    resolution: Resolution,
+    since: Option<String>,
+    since_own: Option<String>,
+}
+
+/// The total series, at the floor over the head's window.
+async fn total_series(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    s: &Series<'_>,
+) -> Result<Vec<RecordBatch>, Abstain> {
+    cells(
+        shared,
+        ctx,
+        &cells_sql(
+            s.metric,
+            "",
+            "''",
+            s.verb,
+            &total_sql(s.sql, s.tcol, s.verb, s.floor, s.since.as_deref()),
+        ),
+    )
+    .await
+}
+
+/// Member series per admitted dimension, same verb, same window —
+/// independent plans, driven concurrently.
+async fn member_series(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    s: &Series<'_>,
+    dims: &[String],
+    bucketed: &[String],
+) -> Result<Vec<RecordBatch>, Abstain> {
+    let members = dims
+        .iter()
+        .map(|dcol| member_cells(shared, ctx, s, dcol, bucketed.iter().any(|b| b == dcol)));
+    Ok(futures::future::try_join_all(members)
+        .await?
+        .into_iter()
+        .flatten()
+        .collect())
+}
+
+/// One dimension's series: the member expression plain, or the
+/// bucketing CASE for a dimension past the member cap.
+async fn member_cells(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    s: &Series<'_>,
+    dcol: &str,
+    bucketed: bool,
+) -> Result<Vec<RecordBatch>, Abstain> {
+    let member = if bucketed {
+        bucketed_member(shared, ctx, s, dcol).await?
+    } else {
+        format!("CAST({dcol_q} AS VARCHAR)", dcol_q = qi(dcol))
+    };
+    cells(
+        shared,
+        ctx,
+        &cells_sql(
+            s.metric,
+            dcol,
+            "member",
+            s.verb,
+            &member_sql(
+                s.sql,
+                s.tcol,
+                dcol,
+                &member,
+                s.verb,
+                s.floor,
+                s.since.as_deref(),
+            ),
+        ),
+    )
+    .await
+}
+
+/// A bucketed dimension's member expression: its top members by weight
+/// over the metric's own window, and the rest folded into 'other'. The
+/// set is resolved first and spliced as literals, deterministic
+/// (weight, then name) so two builds at one pin agree. Where no member
+/// stands inside the window — every row of the column there is NULL —
+/// there is nothing to name and no cell to serve: the plain cast,
+/// never an empty IN list, which is not a query.
+async fn bucketed_member(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    s: &Series<'_>,
+    dcol: &str,
+) -> Result<String, Abstain> {
+    let weight = if s.verb == "ratio" {
+        "sum(den)"
+    } else {
+        "sum(value)"
+    };
+    let p_own = period::bucket(&qi(s.tcol), s.resolution);
+    let clause = s
+        .since_own
+        .as_deref()
+        .map_or(String::new(), |since| format!(" AND {p_own} > {since}"));
+    let q = format!(
+        "SELECT CAST({dcol_q} AS VARCHAR) AS mc_member FROM ({sql}) \
+         WHERE {dcol_q} IS NOT NULL{clause} GROUP BY 1 \
+         ORDER BY {weight} DESC NULLS LAST, mc_member LIMIT {}",
+        MEMBERS_CAP - 1,
+        sql = s.sql,
+        dcol_q = qi(dcol)
+    );
+    let mut named = Vec::new();
+    for b in run(shared, ctx, &q)
+        .await?
+        .iter()
+        .filter(|b| b.num_rows() > 0)
+    {
+        let col = b
+            .column_by_name("mc_member")
+            .ok_or_else(|| Abstain("the member pass served no mc_member".into()))?;
+        for i in 0..b.num_rows() {
+            let m = array_value_to_string(col, i).map_err(|e| Abstain(e.to_string()))?;
+            named.push(ql(&m));
+        }
+    }
+    Ok(if named.is_empty() {
+        format!("CAST({dcol_q} AS VARCHAR)", dcol_q = qi(dcol))
+    } else {
+        format!(
+            "CASE WHEN CAST({dcol_q} AS VARCHAR) IN ({}) \
+             THEN CAST({dcol_q} AS VARCHAR) ELSE 'other' END",
+            named.join(", "),
+            dcol_q = qi(dcol)
+        )
+    })
+}
+
+/// The rival as the fact row carries it: its name, its divergence from
+/// the metric's total, or why it is not served; its cells beside the
+/// metric's, and the workspace relations its frame scans, where it
+/// served.
+struct Rival {
+    alternative: Option<String>,
+    alternative_divergence: Option<String>,
+    alternative_error: Option<String>,
+    cells: Vec<RecordBatch>,
+    foreign: Option<Vec<String>>,
+}
+
+/// The named rival, when a grounding assumption discloses one. The
+/// rival SQL is authored but never admission-validated: it runs behind
+/// a guard and a refusal is reported in the fact row, never thrown.
+/// Its verb is its own — a rival serving num/den is a ratio whatever
+/// the metric is — and its time axis is judged like the chosen
+/// reading's wherever a verdict stands, since the rival is a
+/// comparison cell. Where the rival's frame carries one date column
+/// and no verdict, that column is not a choice and is taken; where it
+/// carries several unjudged, the rival is not served and the fact row
+/// says why. The rival's cells stand at its own verb, its empty
+/// periods zero where it is a flow, so the two lines compare like
+/// with like.
+async fn rival(
+    shared: &Arc<Shared>,
+    surface: &Surface,
+    s: &Series<'_>,
+    body: &Value,
+    head: &RecordBatch,
+    edge: Option<i64>,
+) -> Result<Rival, Abstain> {
+    let mut out = Rival {
+        alternative: None,
+        alternative_divergence: None,
+        alternative_error: None,
+        cells: Vec::new(),
+        foreign: None,
+    };
+    let Some(assumptions) = body.get("assumptions").and_then(Value::as_array) else {
+        return Ok(out);
+    };
+    let Some((a, alt_sql)) = assumptions
+        .iter()
+        .find_map(|a| Some((a, a.get("alternative_sql").and_then(Value::as_str)?)))
+    else {
+        return Ok(out);
+    };
+    let name = a
+        .get("alternative")
+        .and_then(Value::as_str)
+        .unwrap_or("(rival)");
+    match rival_series(shared, surface, s, name, alt_sql).await {
+        Ok((mut rows, rival_verb, rival_foreign)) => {
+            if rival_verb == "flow"
+                && let Some(edge) = edge
+            {
+                let zeros = zero_fill(shared, &one_batch(&rows)?, s.resolution, edge).await?;
+                rows.extend(zeros);
+            }
+            let rival_cells = one_batch(&rows)?;
+            out.alternative_divergence = Some(
+                divergence(
+                    shared,
+                    head,
+                    &rival_cells,
+                    a.get("tolerance").and_then(Value::as_f64),
+                )
+                .await?,
+            );
+            out.cells.push(rival_cells);
+            out.alternative = Some(name.to_string());
+            out.foreign = Some(rival_foreign);
+        }
+        Err(Abstain(why)) => {
+            out.alternative_error = Some(format!("the rival is not served: {why}"));
+        }
+    }
+    Ok(out)
+}
+
+/// The head in one order ([`head_order`]): a sort over every series'
+/// batches, the one pass the engine makes over the head.
+async fn landed(shared: &Arc<Shared>, batches: &[RecordBatch]) -> Result<RecordBatch, Abstain> {
+    let sorted = scan_cells("h", &one_batch(batches)?)?
+        .sort(head_order())?
+        .build()?;
+    Ok(one_batch(&run_cells(shared, sorted).await?)?)
 }
 
 /// A cube's cells as a plan source under `name`: the cached batch
@@ -3238,19 +3550,12 @@ async fn zero_fill(
 /// where several stand unjudged — a rival is a comparison cell, and an
 /// anchor guessed among several beside a judged series compares
 /// nothing. Every refusal carries its own reason for the fact row.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the rival's frame and the metric's window, named; #136 folds them"
-)]
 async fn rival_series(
     shared: &Arc<Shared>,
     surface: &Surface,
-    metric: &str,
+    s: &Series<'_>,
     rival: &str,
     sql: &str,
-    chosen_verb: &str,
-    resolution: Resolution,
-    since: Option<&str>,
 ) -> Result<(Vec<RecordBatch>, &'static str, Vec<String>), Abstain> {
     let Surface {
         ctx,
@@ -3293,7 +3598,7 @@ async fn rival_series(
     };
     let verb: &'static str = if has("num") && has("den") {
         "ratio"
-    } else if chosen_verb == "stock" {
+    } else if s.verb == "stock" {
         "stock"
     } else {
         "flow"
@@ -3302,11 +3607,11 @@ async fn rival_series(
         shared,
         ctx,
         &cells_sql(
-            metric,
+            s.metric,
             "alternative",
             &ql(rival),
             verb,
-            &total_sql(sql, &tcol, verb, resolution, since),
+            &total_sql(sql, &tcol, verb, s.floor, s.since.as_deref()),
         ),
     )
     .await?;
