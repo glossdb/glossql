@@ -14,12 +14,12 @@ first chart.
 
 | file | package | version | license |
 | :--- | :--- | :--- | :--- |
-| htmx.min.js | htmx.org | 2.0.8 | 0BSD |
-| vega.min.js | vega | 6.2.0 | BSD-3-Clause |
-| vega-lite.min.js | vega-lite | 6.4.3 | BSD-3-Clause |
-| vega-embed.min.js | vega-embed | 7.0.2 | BSD-3-Clause |
+| htmx.min.js | htmx.org | 2.0.11 | 0BSD |
+| vega.min.js | vega | 6.4.0 | BSD-3-Clause |
+| vega-lite.min.js | vega-lite | 6.5.0 | BSD-3-Clause |
+| vega-embed.min.js | vega-embed | 7.3.0 | BSD-3-Clause |
 | vega-interpreter.js | vega-interpreter (build/vega-interpreter.js, import rewritten) | 2.3.2 | BSD-3-Clause |
-| arrow.min.js | apache-arrow (Arrow.es2015.min.js) | 21.0.0 | Apache-2.0 |
+| arrow.min.js | apache-arrow (Arrow.es2015.min.js) | 21.2.0 | Apache-2.0 |
 | dagre.min.js | @dagrejs/dagre (dist/dagre.min.js) | 3.1.1 | MIT |
 
 To bump: download the same path from npm via a CDN mirror and update
