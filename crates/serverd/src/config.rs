@@ -93,6 +93,10 @@ pub struct Config {
     /// The disk the engine may spill onto, in megabytes — the box's
     /// disk, a number of its own; unset, twice the memory ceiling.
     pub spill_limit_mb: Option<u64>,
+    /// Whether a source may be a path on this machine: the laptop's
+    /// shape, under `--workspace`. A deployment names its catalog and
+    /// warehouse in the environment and reads no path of its own.
+    pub local_sources: bool,
     /// This server's own URI — `GLOSSQL_AUDIENCE`, the API identifier a
     /// token must name (RFC 8707 §2) and the host the world reaches
     /// the doors at — defaulting to the bind address. Read under both
@@ -189,6 +193,7 @@ impl Config {
                 Some(mb) => Some(mb),
                 None => sized("GLOSSQL_SPILL_LIMIT")?,
             },
+            local_sources: flags.workspace.is_some(),
             points: glossql_session::POINTS
                 .iter()
                 .filter_map(|point| {
@@ -478,6 +483,29 @@ mod tests {
 
         let bad = refusal(read(&[], &[("GLOSSQL_MEMORY_LIMIT", "4g")]));
         assert!(bad.contains("GLOSSQL_MEMORY_LIMIT"), "{bad}");
+    }
+
+    /// Whether a source may be a path follows the shape of the run: a
+    /// workspace directory reads one, a deployment does not.
+    #[test]
+    fn the_source_rule_follows_the_shape() {
+        let laptop = read(&[], &[]).expect("readable");
+        assert!(laptop.local_sources, "a workspace directory reads a path");
+
+        let deployment = Config::read(flags(&[]), |name| {
+            match name {
+                "GLOSSQL_INSECURE_OPEN" => Some("true"),
+                "GLOSSQL_CATALOG_SQL" => Some("postgres://catalog.internal/glossql"),
+                "GLOSSQL_WAREHOUSE" => Some("s3://warehouse/glossql"),
+                _ => None,
+            }
+            .map(str::to_string)
+        })
+        .expect("readable");
+        assert!(
+            !deployment.local_sources,
+            "a deployment reads no path of its own"
+        );
     }
 
     /// A service is named per point, each with its own bearer; a point

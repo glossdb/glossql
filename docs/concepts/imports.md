@@ -14,7 +14,11 @@ DECLARE SOURCE crm SET (type: relational_db, location: 'postgres://crm.internal/
 ```
 
 `type` is `relational_db | parquet | csv | json`; any other spelling
-is refused at the declaration. For file sources, `location` is the
+is refused at the declaration. On a deployment — no `--workspace`,
+the catalog and the warehouse named in the environment — a `location`
+that is a path on the server is refused too, at the declaration and at
+every read: a deployment's sources live in an object store or behind a
+relational URI. For file sources, `location` is the
 root recipe paths resolve under: a directory on the server's machine,
 or a location in an object store — `s3://bucket/prefix`,
 `gs://bucket/prefix`,

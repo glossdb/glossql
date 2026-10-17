@@ -93,6 +93,12 @@ flag wins where both are set.
 | `--memory-limit <megabytes>` | `GLOSSQL_MEMORY_LIMIT` | `4096` | the engine's memory ceiling for the whole process. A sort or a hash aggregate that outgrows it spills to the OS temp directory, up to `--spill-limit`. Past that bound, or for a shape that cannot spill (a `count(DISTINCT …)` held whole per partition), the plan is refused by name with the shape that fits. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment's memory for the sum |
 | `--spill-limit <megabytes>` | `GLOSSQL_SPILL_LIMIT` | twice `--memory-limit` | how much of the disk the engine may spill onto, at its temp directory. The disk's own number, set from the box: a container's ephemeral disk, or a disk mounted at the temp directory. Unset, it follows the memory ceiling |
 
+A deployment reads no path of its own. A source declared with a path
+for its `location` — no scheme, or `file://` — is refused when it is
+declared and again when a recipe reads it, naming the location and the
+forms a source takes there: a location in an object store or a
+relational URI. The laptop's shape, under `--workspace`, reads a path.
+
 Authorization is not a flag. A run with a workspace reads `.env` in
 the working directory, and the environment on top of it (a set
 variable wins over the file); a deployment reads no file — its

@@ -434,3 +434,60 @@ async fn unquoted_names_fold_and_quoted_names_keep_case() {
         .expect_err("holds data, and is the folded table");
     assert!(dropped.to_string().contains("adsinfo"), "{dropped}");
 }
+
+/// A deployment reads no path of its own: a source whose location is
+/// a path on the server is refused when it is declared, naming the
+/// location and the forms a source takes there; a location in an
+/// object store declares.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_deployment_refuses_a_source_on_its_own_filesystem() {
+    let dir = tempfile::tempdir().unwrap();
+    let deployment = plane(dir.path()).await.with_local_sources(false);
+    let actor = agent("agent-1");
+    deployment
+        .execute(
+            actor.clone(),
+            None,
+            "DECLARE DATASET fin SET (purpose: 'p');",
+        )
+        .await
+        .unwrap();
+    for location in ["/", "/proc/self", "file:///etc", "data/erp"] {
+        let refused = deployment
+            .execute(
+                actor.clone(),
+                Some("fin"),
+                &format!("DECLARE SOURCE erp SET (type: csv, location: '{location}');"),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains(&format!(
+                "`{location}` is a path on the server's own filesystem"
+            )) && refused.contains("s3://"),
+            "{refused}"
+        );
+    }
+    deployment
+        .execute(
+            actor.clone(),
+            Some("fin"),
+            "DECLARE SOURCE lake SET (type: parquet, location: 's3://bucket/erp');",
+        )
+        .await
+        .unwrap();
+    // The laptop's shape reads a path.
+    let laptop = plane(dir.path()).await;
+    laptop
+        .execute(
+            actor,
+            Some("fin"),
+            &format!(
+                "DECLARE SOURCE local SET (type: csv, location: '{}');",
+                dir.path().display()
+            ),
+        )
+        .await
+        .unwrap();
+}

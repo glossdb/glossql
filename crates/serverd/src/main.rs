@@ -110,7 +110,8 @@ async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
         .with_row_cap(config.row_cap)
         .with_cube_cache(config.cube_cache_mb)
         .with_memory_limit(config.memory_limit_mb)
-        .with_spill_limit(config.spill_limit_mb);
+        .with_spill_limit(config.spill_limit_mb)
+        .with_local_sources(config.local_sources);
     // A fresh workspace receives the shipped system before any door opens.
     bootstrap(
         &plane,

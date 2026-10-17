@@ -141,6 +141,8 @@ pub struct Plane {
     /// The pages the door serves, for `pages()` — what the binary
     /// embeds, handed to every channel.
     pages: Arc<[crate::reads::DoorPage]>,
+    /// Whether a source may be a path on this machine.
+    local_sources: bool,
 }
 
 impl Plane {
@@ -159,6 +161,7 @@ impl Plane {
             env: runtime_env(DEFAULT_MEMORY_LIMIT_MB, None),
             memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
             spill_limit_mb: None,
+            local_sources: true,
             row_cap: usize::MAX,
             pages: Arc::from(Vec::new()),
         }
@@ -217,6 +220,14 @@ impl Plane {
         self
     }
 
+    /// Whether a source may be a path on this machine — the laptop's
+    /// shape, under `--workspace`. A deployment has no directory and
+    /// refuses one: the filesystem is the process's own.
+    pub fn with_local_sources(mut self, allowed: bool) -> Self {
+        self.local_sources = allowed;
+        self
+    }
+
     /// The workspace's declared datasets — for doors that bind by
     /// convention: an app without a pinned dataset binds to the sole one.
     pub async fn datasets(&self) -> Result<Vec<String>, SessionError> {
@@ -255,7 +266,8 @@ impl Plane {
             .with_runtime(Arc::clone(&self.runtime))
             .with_cube_cache(self.cube.clone())
             .with_shipped_cache(self.shipped.clone())
-            .with_pages(Arc::clone(&self.pages));
+            .with_pages(Arc::clone(&self.pages))
+            .with_local_sources(self.local_sources);
         if let Some(dataset) = dataset {
             session.bind(dataset).await?;
         }
