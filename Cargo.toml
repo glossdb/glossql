@@ -150,7 +150,7 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 # channel spawns its connection onto the runtime it is built in.
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "logs", "http-proto", "reqwest-blocking-client", "grpc-tonic"] }
 # The bridge from `tracing` events to the SDK's log records.
-opentelemetry-appender-tracing = "0.32"
+opentelemetry-appender-tracing = "0.33"
 # The request span on every door, and the `traceparent` a client sends
 # becoming its parent. tower-http is in the tree through reqwest.
 tower-http = { version = "0.6", features = ["trace"] }
