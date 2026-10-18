@@ -52,7 +52,7 @@ dotenvy = "0.15"
 oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
 # The login-in-progress cookie: three strings sealed for the round trip
 # to the issuer and back.
-base64 = "0.22"
+base64 = "0.23"
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
