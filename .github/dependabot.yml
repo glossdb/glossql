@@ -23,6 +23,15 @@ updates:
       - dependency-name: "parquet"
       - dependency-name: "object_store"
       - dependency-name: "adbc*"
+      # tera stays on its 1 line: the agents write the page snippets
+      # in its syntax (Cargo.toml).
+      - dependency-name: "tera"
+        update-types: ["version-update:semver-major"]
+      # ed25519-dalek is a serverd dev-dependency that follows
+      # jsonwebtoken's pin, so one copy is in the tree; it moves when
+      # jsonwebtoken does (crates/serverd/Cargo.toml).
+      - dependency-name: "ed25519-dalek"
+        update-types: ["version-update:semver-major"]
     groups:
       crates:
         update-types: ["minor", "patch"]
