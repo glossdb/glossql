@@ -155,6 +155,6 @@ opentelemetry-otlp = { version = "0.33", default-features = false, features = ["
 opentelemetry-appender-tracing = "0.33"
 # The request span on every door, and the `traceparent` a client sends
 # becoming its parent. tower-http is in the tree through reqwest.
-tower-http = { version = "0.6", features = ["trace"] }
+tower-http = { version = "0.7", features = ["trace"] }
 opentelemetry-http = "0.33"
 tracing-opentelemetry = "0.34"
