@@ -15,7 +15,7 @@ use datafusion::sql::planner::IdentNormalizer;
 use datafusion::sql::sqlparser::ast::TableFactor;
 
 use crate::reads::{attest_read, batch, glossary_read, utf8};
-use crate::shared::{ReadSet, Resolved, Served, SessionError, Shared};
+use crate::shared::{Held, ReadSet, Resolved, Served, SessionError, Shared, integer};
 
 /// The reads the planner answers by name — the doors over the record
 /// that no SQL file carries — each with the call that reaches it. The
@@ -73,7 +73,7 @@ impl Shared {
         SessionError,
     > {
         use datafusion::common::TableReference;
-        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
+        let Some(dataset) = self.dataset() else {
             return Ok(None);
         };
         let mut names = Vec::with_capacity(relations.len());
@@ -101,7 +101,7 @@ impl Shared {
         // The statement's walk, when it stands, holds every table of the
         // dataset: a name it lacks is no table, and the caller wants the
         // walk's hint for it.
-        let walk = self.pins.read().expect("pins lock").get(&dataset).cloned();
+        let walk = self.walk(&dataset);
         if let Some(walk) = walk {
             let mut out = std::collections::HashMap::with_capacity(names.len());
             for name in &names {
@@ -114,13 +114,7 @@ impl Shared {
             }
             return Ok(Some(out));
         }
-        let held = self
-            .named
-            .read()
-            .expect("named lock")
-            .get(&dataset)
-            .cloned()
-            .unwrap_or_default();
+        let held = self.named.held().get(&dataset).cloned().unwrap_or_default();
         let mut out: std::collections::HashMap<_, _> = names
             .iter()
             .filter_map(|n| held.get(n).map(|p| (n.clone(), Arc::clone(p))))
@@ -134,7 +128,7 @@ impl Shared {
             let Some(loaded) = self.lake().pin_tables(&dataset, &missing).await? else {
                 return Ok(None);
             };
-            let mut named = self.named.write().expect("named lock");
+            let mut named = self.named.held_mut();
             let slot = named.entry(dataset).or_default();
             for p in loaded {
                 slot.insert(p.name.clone(), Arc::clone(&p.provider));
@@ -519,7 +513,7 @@ fn source_files_batch(files: Vec<glossql_import::SourceFile>) -> RecordBatch {
                 files.iter().map(|f| f.path.as_str()),
             )),
             Arc::new(datafusion::arrow::array::Int64Array::from(
-                files.iter().map(|f| f.size as i64).collect::<Vec<i64>>(),
+                files.iter().map(|f| integer(f.size)).collect::<Vec<i64>>(),
             )),
             Arc::new(StringArray::from_iter_values(
                 files.iter().map(|f| f.modified.as_str()),
@@ -544,7 +538,7 @@ fn source_files_batch(files: Vec<glossql_import::SourceFile>) -> RecordBatch {
 /// it, only `USE` can, which is why it is absent from
 /// [`reads_the_record`].
 fn current_dataset_batch(shared: &Shared) -> RecordBatch {
-    let bound = shared.dataset.read().expect("state lock").clone();
+    let bound = shared.dataset();
     batch(
         Arc::new(Schema::new(vec![utf8("dataset")])),
         vec![Arc::new(StringArray::from_iter(bound.iter().map(Some))) as ArrayRef],
@@ -553,7 +547,7 @@ fn current_dataset_batch(shared: &Shared) -> RecordBatch {
 
 /// `pages()` — every page the door serves: `uri`, `title`, `body`.
 fn pages_batch(shared: &Shared) -> RecordBatch {
-    let pages = Arc::clone(&shared.pages.read().expect("pages lock"));
+    let pages = Arc::clone(&shared.pages.held());
     batch(
         Arc::new(Schema::new(vec![utf8("uri"), utf8("title"), utf8("body")])),
         vec![

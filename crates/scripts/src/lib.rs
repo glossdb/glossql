@@ -10,6 +10,14 @@
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
 #![warn(clippy::unwrap_used)]
+// A narrowing cast is a value the type did not promise: a count or an
+// offset converts through `try_from` or a named conversion that states
+// its bound.
+#![warn(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation
+)]
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -246,7 +254,7 @@ pub(crate) fn len_stats_of(a: &ArrayRef) -> Option<(i64, i64, f64)> {
         if values.is_null(i) {
             continue;
         }
-        let len = values.value(i).chars().count() as i64;
+        let len = integer(values.value(i).chars().count());
         min = min.min(len);
         max = max.max(len);
         total += len;
@@ -298,12 +306,30 @@ fn valid_floats(array: &ArrayRef) -> ScriptResult<Vec<f64>> {
         .collect())
 }
 
-/// PERCENTILE_CONT over an already-sorted slice.
+/// PERCENTILE_CONT over an already-sorted, non-empty slice.
 fn interpolate(sorted: &[f64], p: f64) -> f64 {
     let rank = p * (sorted.len() - 1) as f64;
-    let low = rank.floor() as usize;
-    let high = rank.ceil() as usize;
+    let low = slot(rank.floor(), sorted.len());
+    let high = slot(rank.ceil(), sorted.len());
     sorted[low] + (sorted[high] - sorted[low]) * (rank - low as f64)
+}
+
+/// A rank as a slot of the slice it ranks. The rank is `p × (len − 1)`
+/// for a `p` in `[0, 1]`, so it is non-negative and under `len`; the
+/// clamp states that bound, which is the one the cast relies on.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a float has no `try_from` an integer; the clamp holds the bound"
+)]
+fn slot(rank: f64, len: usize) -> usize {
+    (rank.max(0.0) as usize).min(len.saturating_sub(1))
+}
+
+/// A count as the record's integer: the length of something in memory,
+/// so under `i64::MAX` on every target; the saturation states the bound.
+pub(crate) fn integer<N: TryInto<i64>>(n: N) -> i64 {
+    n.try_into().unwrap_or(i64::MAX)
 }
 
 fn as_floats(array: &ArrayRef) -> ScriptResult<Float64Array> {
@@ -386,7 +412,7 @@ fn cell_keys(array: &ArrayRef) -> ScriptResult<Vec<Option<u64>>> {
                 .downcast_ref::<Int64Array>()
                 .expect("cast to Int64 yields Int64");
             (0..a.len())
-                .map(|i| (!a.is_null(i)).then(|| a.value(i) as u64))
+                .map(|i| (!a.is_null(i)).then(|| a.value(i).cast_unsigned()))
                 .collect()
         }
         UInt8 | UInt16 | UInt32 | UInt64 => {
@@ -624,8 +650,8 @@ fn reconcile_kernel(
             json!(if t2.is_some() { 2i64 } else { 1i64 }),
         );
         s.insert("verdict".into(), json!(verdict));
-        s.insert("voted".into(), json!(voted as i64));
-        s.insert("winners".into(), json!(winners as i64));
+        s.insert("voted".into(), json!(integer(voted)));
+        s.insert("winners".into(), json!(integer(winners)));
         s.insert("agreement".into(), json!(agreement));
         if verdict != "abstain" {
             // Medians over the winning-label voters only — a dissenting

@@ -581,7 +581,8 @@ impl Store {
                         .any(|(t, l_at)| t == table && l_at.as_str() >= at.as_str())
                 })
             })
-            .count() as i64;
+            .count();
+        let approvals_pending = integer(approvals_pending);
         // A ruling awaits its fold-in while the assumption it rules —
         // named by its `key`, the agent-declared identity that survives
         // rephrasing (prose is never a join column) —
@@ -627,7 +628,7 @@ impl Store {
             }
         }
         Ok(BriefCounts {
-            human_writings: humans.len() as i64,
+            human_writings: integer(humans.len()),
             latest_human_at,
             approvals_pending,
             rulings_owed,
@@ -914,7 +915,8 @@ impl Store {
                 .await?
                 .iter()
                 .filter(|g| g.aspect == name)
-                .count() as i64;
+                .count();
+            let glosses = integer(glosses);
             if glosses > 0 {
                 return Err(Error::AspectInUse {
                     name: name.into(),
@@ -1125,13 +1127,14 @@ impl Store {
         // read, it selects the dataset's rows; asked of the rows, it
         // read the whole workspace first.
         let scope = Scope::Subject(table.to_string());
-        Ok(self
+        let glosses = self
             .record
             .scan_where("glossary", "dataset", dataset)
             .await?
             .iter()
             .filter(|r| scope.admits(&text(&r.cells, 1)))
-            .count() as i64)
+            .count();
+        Ok(integer(glosses))
     }
 
     // -- reads -----------------------------------------------------------
@@ -1876,6 +1879,12 @@ fn relation(name: &str) -> &'static Relation {
         .iter()
         .find(|r| r.name == name)
         .expect("a declared relation")
+}
+
+/// A count as the record's integer: the length of something in memory,
+/// so under `i64::MAX` on every target; the saturation states the bound.
+fn integer(n: usize) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
 }
 
 fn text(cells: &[Option<String>], i: usize) -> String {

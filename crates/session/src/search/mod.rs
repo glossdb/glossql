@@ -144,6 +144,24 @@ pub(crate) async fn run_answer(
         .collect())
 }
 
+/// The one Int64 cell of a plan's one-row answer: the first row's.
+pub(crate) fn int_value(batches: &[RecordBatch], name: &str) -> datafusion::common::Result<i64> {
+    int_column(batches, name)?
+        .first()
+        .copied()
+        .ok_or_else(|| DataFusionError::Execution(format!("`{name}`: the plan returned nothing")))
+}
+
+/// An offset a plan carried back, as the index it was built from: the
+/// plan took the index in as a literal, so a value outside the bound is
+/// a plan that answered another question.
+pub(crate) fn offset(carried: i64, bound: usize) -> Result<usize, String> {
+    usize::try_from(carried)
+        .ok()
+        .filter(|&at| at < bound)
+        .ok_or_else(|| format!("offset {carried} outside the {bound} it was built from"))
+}
+
 /// A named Int64 column of a one-batch result, materialized.
 pub(crate) fn int_column(
     batches: &[RecordBatch],
@@ -263,7 +281,7 @@ async fn run_plan(
     // for a door's own passes, which the statement's `executed` line
     // does not see.
     tracing::debug!(
-        elapsed_ms = started.elapsed().as_millis() as u64,
+        elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         metrics = %datafusion::physical_plan::display::DisplayableExecutionPlan::with_metrics(physical.as_ref())
             .indent(false),
         "door plan"

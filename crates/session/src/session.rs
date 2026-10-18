@@ -29,7 +29,9 @@ use glossql_parser::{
 };
 
 use crate::reads::GlossqlReads;
-use crate::shared::{FunctionRuntime, NoRuntime, Outcome, SessionError, Shared, sequence_context};
+use crate::shared::{
+    FunctionRuntime, Held, NoRuntime, Outcome, SessionError, Shared, sequence_context,
+};
 use crate::subject::{Resolved, pair_subject, resolve_endpoint, resolve_path};
 
 /// The landed spelling an unquoted name folded past: a name among
@@ -171,7 +173,7 @@ impl Session {
         // the way this config says the planner will.
         let shared = Arc::new(Shared {
             store,
-            dataset: RwLock::new(None),
+            bound: RwLock::new(None),
             runtime: RwLock::new(Arc::new(NoRuntime)),
             ctx: RwLock::new(None),
             cube: RwLock::new(Arc::new(crate::cube::CubeCache::new(
@@ -212,7 +214,7 @@ impl Session {
             .register_schema("glossql_stage", Arc::new(MemorySchemaProvider::new()))?;
         // The planner was built before the context existed; close the loop
         // so the metric bind can plan groundings as their own statements.
-        *shared.ctx.write().expect("ctx lock") = Some(ctx.clone());
+        *shared.ctx.held_mut() = Some(ctx.clone());
         Ok(Session {
             ctx,
             shared,
@@ -233,7 +235,7 @@ impl Session {
         for udaf in runtime.udafs() {
             self.ctx.register_udaf(udaf);
         }
-        *self.shared.runtime.write().expect("runtime lock") = runtime;
+        *self.shared.runtime.held_mut() = runtime;
         self
     }
 
@@ -241,14 +243,14 @@ impl Session {
     /// every channel shares one set of entries. A session built
     /// without a Plane carries its own from construction.
     pub fn with_cube_cache(self, cache: crate::cube::CubeCache) -> Self {
-        *self.shared.cube.write().expect("cube lock") = Arc::new(cache);
+        *self.shared.cube.held_mut() = Arc::new(cache);
         self
     }
 
     /// The shipped-read cache this session serves `next` from — the
     /// Plane's, so every channel shares one set of entries.
     pub fn with_shipped_cache(self, cache: crate::memo::ShippedCache) -> Self {
-        *self.shared.shipped.write().expect("shipped lock") = Arc::new(cache);
+        *self.shared.shipped.held_mut() = Arc::new(cache);
         self
     }
 
@@ -260,7 +262,7 @@ impl Session {
     /// The pages the door serves, for `pages()` — the Plane's, embedded
     /// in the binary that built it.
     pub fn with_pages(self, pages: Arc<[crate::shared::DoorPage]>) -> Self {
-        *self.shared.pages.write().expect("pages lock") = pages;
+        *self.shared.pages.held_mut() = pages;
         self
     }
 
@@ -731,7 +733,7 @@ impl Session {
     /// The bound dataset — fixed at channel construction on the plane;
     /// a directly held session may move it with `USE`/[`Session::bind`].
     pub fn dataset(&self) -> Option<String> {
-        self.shared.dataset.read().expect("state lock").clone()
+        self.shared.dataset()
     }
 
     async fn use_dataset(&self, name: &str) -> Result<Outcome, SessionError> {
@@ -761,7 +763,7 @@ impl Session {
             .options_mut()
             .catalog
             .default_schema = name.to_string();
-        *self.shared.dataset.write().expect("state lock") = Some(name.to_string());
+        self.shared.bind(name);
         Ok(())
     }
 
@@ -1137,8 +1139,7 @@ impl Session {
         let default = self.ctx.catalog("datafusion").expect("default catalog");
         let same_generation = self
             .mounted_provider
-            .lock()
-            .expect("mount lock")
+            .held_mut()
             .as_ref()
             .and_then(std::sync::Weak::upgrade)
             .is_some_and(|mounted| Arc::ptr_eq(&mounted, &current));
@@ -1157,7 +1158,7 @@ impl Session {
         default.register_schema(dataset, Arc::clone(&schema))?;
         // One provider serves every namespace, and a session is keyed to
         // one dataset, so a single tracked generation suffices.
-        *self.mounted_provider.lock().expect("mount lock") = Some(Arc::downgrade(&provider));
+        *self.mounted_provider.held_mut() = Some(Arc::downgrade(&provider));
         Ok(schema)
     }
 
@@ -1165,7 +1166,7 @@ impl Session {
     /// rebuilt since this session mounted. Cheap when nothing changed:
     /// one lock read and an Arc pointer compare.
     async fn refresh_mount(&self) -> Result<(), SessionError> {
-        let dataset = self.shared.dataset.read().expect("state lock").clone();
+        let dataset = self.shared.dataset();
         if let Some(dataset) = dataset {
             self.mount_schema(&dataset).await?;
         }
@@ -2115,13 +2116,7 @@ impl Session {
     /// whole: the lake table, its recipe property, its landings, the
     /// import records.
     async fn drop_table(&self, name: &str) -> Result<Outcome, SessionError> {
-        let dataset = self
-            .shared
-            .dataset
-            .read()
-            .expect("state lock")
-            .clone()
-            .ok_or(SessionError::NoDataset)?;
+        let dataset = self.shared.dataset().ok_or(SessionError::NoDataset)?;
         let table = name.rsplit('.').next().unwrap_or(name).trim_matches('"');
         let lake = self.lake();
         if !lake.table_exists(&dataset, table).await? {
@@ -2173,7 +2168,7 @@ impl Session {
     }
 
     async fn subject(&self, subject: &Subject) -> Result<Resolved, SessionError> {
-        let use_dataset = self.shared.dataset.read().expect("state lock").clone();
+        let use_dataset = self.shared.dataset();
         let use_dataset = use_dataset.as_deref();
         match subject {
             Subject::Path(p) => {
@@ -2196,7 +2191,7 @@ impl Session {
         op: RelOp,
         right: &glossql_parser::RelSide,
     ) -> Result<(Resolved, &'static str, Resolved), SessionError> {
-        let use_dataset = self.shared.dataset.read().expect("state lock").clone();
+        let use_dataset = self.shared.dataset();
         let use_dataset = use_dataset.as_deref();
         let store = &self.shared.store;
         let (lt, lc) = endpoint_parts(left);

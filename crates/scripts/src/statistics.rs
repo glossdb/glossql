@@ -22,6 +22,7 @@ use datafusion::logical_expr::{
 };
 use serde_json::{Value, json};
 
+use crate::integer;
 use crate::{
     Extremum, ScriptResult, display_counts, entropy_of, extremum_of, interpolate, len_stats_of,
     mad_of, mean_of, numeric_like, stddev_of, top_k, valid_floats,
@@ -67,9 +68,15 @@ impl Collected {
 
     fn state(&self) -> Result<Vec<ScalarValue>> {
         let child = self.all()?;
+        let end = i32::try_from(child.len()).map_err(|_| {
+            DataFusionError::Execution(format!(
+                "a profile state of {} values does not fit a list offset",
+                child.len()
+            ))
+        })?;
         let list = ListArray::new(
             Arc::new(Field::new_list_field(self.dt.clone(), true)),
-            OffsetBuffer::new(ScalarBuffer::from(vec![0, child.len() as i32])),
+            OffsetBuffer::new(ScalarBuffer::from(vec![0, end])),
             child,
             None,
         );
@@ -240,11 +247,11 @@ fn profile_fields(dt: &DataType) -> Fields {
 /// bodies through the door are the fan-out tax); the
 /// full body reads back via `GLOSSARY`.
 fn profile_value(a: &ArrayRef) -> ScriptResult<Value> {
-    let n = a.len() as i64;
-    let nulls = a.null_count() as i64;
+    let n = integer(a.len());
+    let nulls = integer(a.null_count());
     let non_null = n - nulls;
     let counts = display_counts(a)?;
-    let distinct = counts.len() as i64;
+    let distinct = integer(counts.len());
     let null_ratio = if n == 0 { 0.0 } else { nulls as f64 / n as f64 };
     let extremum = |min: bool| -> ScriptResult<Value> {
         Ok(match extremum_of(a, min)? {

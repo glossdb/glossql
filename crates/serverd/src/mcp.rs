@@ -608,8 +608,9 @@ async fn open_question_count(plane: &Plane) -> Option<usize> {
             .await
             .ok()
             .and_then(|rows| rows.first().and_then(|r| r["n"].as_u64()))
+            .and_then(|n| usize::try_from(n).ok())
         {
-            return Some(n as usize);
+            return Some(n);
         }
     }
     None

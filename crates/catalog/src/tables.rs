@@ -647,7 +647,7 @@ pub(crate) async fn commit_landing(
             .fetch_one(&mut **tx)
             .await?
             .try_get::<i64, _>(0)?;
-            for (i, file) in files.iter().enumerate() {
+            for (order, file) in (from + 1..).zip(files.iter()) {
                 let file_id = snapshot.file_id();
                 sqlx::query(&db.sql(
                     "INSERT INTO ducklake_data_file (data_file_id, table_id, begin_snapshot, end_snapshot, \
@@ -658,7 +658,7 @@ pub(crate) async fn commit_landing(
                 .bind(file_id)
                 .bind(id)
                 .bind(snapshot.id)
-                .bind(from + 1 + i as i64)
+                .bind(order)
                 .bind(&file.path)
                 .bind(true)
                 .bind(file.rows)

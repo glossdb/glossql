@@ -41,12 +41,7 @@ pub(crate) async fn misfit_batch(
     shared: &Arc<Shared>,
     frame: &str,
 ) -> Result<RecordBatch, SessionError> {
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+    let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
     let bad = |detail: String| SessionError::shape(frame, format!("misfit.{frame}(): {detail}"));
     let unknown =
         |detail: String| SessionError::unknown(frame, format!("misfit.{frame}(): {detail}"));
