@@ -135,8 +135,8 @@ blake3 = "1"
 # opentelemetry-rust, traces only, protobuf over HTTP through the
 # reqwest already in the tree; tracing-opentelemetry is the bridge from
 # `tracing` spans to theirs and pins the opentelemetry it works with.
-opentelemetry = "0.32"
-opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "logs"] }
+opentelemetry = "0.33"
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs"] }
 # The exporter's clients, one per transport OTEL_EXPORTER_OTLP_PROTOCOL
 # names: protobuf over HTTP on reqwest, and gRPC on tonic — what a
 # platform's managed collector speaks (Container Apps' agent takes
@@ -148,11 +148,11 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 # 0.1.0-alpha.3, or oauth2's own client trait). The SDK exports from
 # its own thread, which is why the blocking HTTP client fits; the gRPC
 # channel spawns its connection onto the runtime it is built in.
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "logs", "http-proto", "reqwest-blocking-client", "grpc-tonic"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "logs", "http-proto", "reqwest-blocking-client", "grpc-tonic"] }
 # The bridge from `tracing` events to the SDK's log records.
-opentelemetry-appender-tracing = "0.32"
+opentelemetry-appender-tracing = "0.33"
 # The request span on every door, and the `traceparent` a client sends
 # becoming its parent. tower-http is in the tree through reqwest.
 tower-http = { version = "0.6", features = ["trace"] }
-opentelemetry-http = "0.32"
-tracing-opentelemetry = "0.33"
+opentelemetry-http = "0.33"
+tracing-opentelemetry = "0.34"
