@@ -29,6 +29,7 @@ use std::collections::HashMap;
 
 use sqlx::any::{AnyPoolOptions, AnyRow};
 use sqlx::{AnyPool, Row as _};
+use sqlx::{AssertSqlSafe, SqlSafeStr, SqlStr};
 
 /// One stored row: its cells in the relation's declared column order,
 /// and what ordered the write.
@@ -144,8 +145,14 @@ impl Db {
     /// A statement written with `?` placeholders, in this database's
     /// bind style. No literal in the statements written here holds a
     /// question mark.
-    pub(crate) fn sql(&self, text: &str) -> String {
-        match self.bind {
+    ///
+    /// The one place a string becomes SQL, and the one that vouches
+    /// for the text: what a statement in this crate interpolates is an
+    /// identifier the stored relations declare as a static, a catalog
+    /// id, a timestamp or a uuid the code made, or a name from a fixed
+    /// list; every value a caller passes is bound.
+    pub(crate) fn sql(&self, text: &str) -> SqlStr {
+        let text = match self.bind {
             Bind::QMark => text.to_string(),
             Bind::Dollar => {
                 let mut out = String::with_capacity(text.len() + 8);
@@ -161,13 +168,13 @@ impl Db {
                 }
                 out
             }
-        }
+        };
+        AssertSqlSafe(text).into_sql_str()
     }
 }
 
 pub struct Record {
-    pool: AnyPool,
-    bind: Bind,
+    db: Db,
     specs: HashMap<String, RelationSpec>,
 }
 
@@ -192,8 +199,7 @@ impl Record {
     /// absent.
     pub async fn open(db: &Db, relations: &[RelationSpec]) -> crate::Result<Self> {
         let record = Record {
-            pool: db.pool.clone(),
-            bind: db.bind,
+            db: db.clone(),
             specs: relations
                 .iter()
                 .map(|s| (s.name.to_string(), s.clone()))
@@ -214,7 +220,7 @@ impl Record {
     /// The relation's table, if it is not there yet. The identity
     /// column is the one thing the two dialects spell differently.
     async fn create(&self, spec: &RelationSpec) -> crate::Result<()> {
-        let seq = match self.bind {
+        let seq = match self.db.bind {
             Bind::QMark => "\"seq\" INTEGER PRIMARY KEY AUTOINCREMENT",
             Bind::Dollar => "\"seq\" BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY",
         };
@@ -222,7 +228,7 @@ impl Record {
             .columns
             .iter()
             .map(|c| {
-                let kind = match (spec.number(c), self.bind) {
+                let kind = match (spec.number(c), self.db.bind) {
                     (None, _) => "TEXT",
                     (Some(Number::Integer), Bind::QMark) => "INTEGER",
                     (Some(Number::Integer), Bind::Dollar) => "BIGINT",
@@ -233,11 +239,11 @@ impl Record {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        sqlx::query(&format!(
+        sqlx::query(self.db.sql(&format!(
             "CREATE TABLE IF NOT EXISTS {} ({seq}, {columns})",
             table(spec.name)
-        ))
-        .execute(&self.pool)
+        )))
+        .execute(&self.db.pool)
         .await?;
         Ok(())
     }
@@ -262,22 +268,22 @@ impl Record {
             .join(", ");
         let mut sql = format!("SELECT {columns}, \"seq\" FROM {}", table(relation));
         if let Some((column, _)) = filter {
-            if !spec.columns.contains(&column) {
+            let Some(column) = spec.columns.iter().find(|c| **c == column) else {
                 return Err(crate::Error::Workspace(format!(
                     "`{relation}` has no column `{column}`"
                 )));
-            }
+            };
             sql.push_str(&format!(
                 " WHERE \"{column}\" = {}",
-                self.bind.placeholder(0)
+                self.db.bind.placeholder(0)
             ));
         }
         sql.push_str(" ORDER BY \"seq\"");
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(self.db.sql(&sql));
         if let Some((_, value)) = filter {
             query = query.bind(value.to_string());
         }
-        let rows = query.fetch_all(&self.pool).await?;
+        let rows = query.fetch_all(&self.db.pool).await?;
         tracing::Span::current().record("rows", rows.len());
         rows.iter().map(|row| decode(spec, row)).collect()
     }
@@ -349,7 +355,7 @@ impl Record {
             .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.db.pool.begin().await?;
         for row in &rows {
             // A missing cell is the literal NULL in the statement, never a
             // bound null: the `any` driver types a bound null on its own
@@ -364,7 +370,7 @@ impl Record {
                 values.push(match row.get(i) {
                     Some(Some(_)) => {
                         bound += 1;
-                        self.bind.placeholder(bound - 1)
+                        self.db.bind.placeholder(bound - 1)
                     }
                     _ => "NULL".to_string(),
                 });
@@ -374,7 +380,7 @@ impl Record {
                 table(relation),
                 values.join(", ")
             );
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(self.db.sql(&sql));
             for (i, column) in spec.columns.iter().enumerate() {
                 let Some(cell) = row.get(i).cloned().flatten() else {
                     continue;
@@ -403,9 +409,12 @@ impl Record {
         let mut names: Vec<&String> = self.specs.keys().collect();
         names.sort();
         let reads = names.iter().map(|name| async move {
-            let row = sqlx::query(&format!("SELECT MAX(\"seq\") FROM {}", table(name)))
-                .fetch_one(&self.pool)
-                .await?;
+            let row = sqlx::query(
+                self.db
+                    .sql(&format!("SELECT MAX(\"seq\") FROM {}", table(name))),
+            )
+            .fetch_one(&self.db.pool)
+            .await?;
             let max: Option<i64> = row.try_get(0)?;
             crate::Result::Ok((name.to_string(), max))
         });

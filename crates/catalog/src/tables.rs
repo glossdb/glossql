@@ -80,7 +80,7 @@ pub(crate) async fn create(db: &Db, data_path: &str) -> Result<()> {
             .replace("{BOOL}", bool_type)
             .replace("{TS}", ts_type)
             .replace("{UUID}", uuid_type);
-        sqlx::query(&statement).execute(db.pool()).await?;
+        sqlx::query(db.sql(&statement)).execute(db.pool()).await?;
     }
     let snapshots: i64 = sqlx::query("SELECT count(*) FROM ducklake_snapshot")
         .fetch_one(db.pool())
@@ -89,11 +89,11 @@ pub(crate) async fn create(db: &Db, data_path: &str) -> Result<()> {
     if snapshots == 0 {
         // Snapshot 0 creates the `main` schema, as a DuckLake client
         // expects a catalog to open with one.
-        sqlx::query(&format!(
+        sqlx::query(db.sql(&format!(
             "INSERT INTO ducklake_snapshot (snapshot_id, snapshot_time, schema_version, \
              next_catalog_id, next_file_id) VALUES (0, '{}', 0, 1, 0)",
             now()
-        ))
+        )))
         .execute(db.pool())
         .await?;
         sqlx::query(
@@ -102,7 +102,7 @@ pub(crate) async fn create(db: &Db, data_path: &str) -> Result<()> {
         )
         .execute(db.pool())
         .await?;
-        sqlx::query(&db.sql(&format!(
+        sqlx::query(db.sql(&format!(
             "INSERT INTO ducklake_schema (schema_id, schema_uuid, begin_snapshot, end_snapshot, \
              schema_name, path, path_is_relative) VALUES (0, '{}', 0, NULL, 'main', 'main/', ?)",
             uuid::Uuid::now_v7()
@@ -116,7 +116,7 @@ pub(crate) async fn create(db: &Db, data_path: &str) -> Result<()> {
             ("data_path", data_path),
             ("encrypted", "false"),
         ] {
-            sqlx::query(&db.sql(
+            sqlx::query(db.sql(
                 "INSERT INTO ducklake_metadata (\"key\", \"value\", \"scope\", scope_id) VALUES (?, ?, NULL, NULL)",
             ))
             .bind(key)
@@ -193,7 +193,7 @@ where
         };
         let (out, changes) = body(db, &mut tx, &mut snapshot).await?;
         let landed = async {
-            sqlx::query(&db.sql(&format!(
+            sqlx::query(db.sql(&format!(
                 "INSERT INTO ducklake_snapshot (snapshot_id, snapshot_time, schema_version, \
                  next_catalog_id, next_file_id) VALUES (?, '{}', 0, ?, ?)",
                 now()
@@ -203,7 +203,7 @@ where
             .bind(snapshot.next_file_id)
             .execute(&mut *tx)
             .await?;
-            sqlx::query(&db.sql(
+            sqlx::query(db.sql(
                 "INSERT INTO ducklake_snapshot_changes (snapshot_id, changes_made, author, \
                  commit_message, commit_extra_info) VALUES (?, ?, NULL, NULL, NULL)",
             ))
@@ -231,7 +231,7 @@ where
 
 /// The live schema's id, or none.
 async fn schema_id(db: &Db, executor: &mut Tx, name: &str) -> Result<Option<i64>> {
-    let row = sqlx::query(&db.sql(
+    let row = sqlx::query(db.sql(
         "SELECT schema_id FROM ducklake_schema WHERE schema_name = ? AND end_snapshot IS NULL",
     ))
     .bind(name)
@@ -256,7 +256,7 @@ pub(crate) async fn ensure_schema(db: &Db, name: &str) -> Result<bool> {
                 return Ok((false, String::new()));
             }
             let id = snapshot.catalog_id();
-            sqlx::query(&db.sql(&format!(
+            sqlx::query(db.sql(&format!(
                 "INSERT INTO ducklake_schema (schema_id, schema_uuid, begin_snapshot, end_snapshot, \
                  schema_name, path, path_is_relative) VALUES (?, '{}', ?, NULL, ?, ?, ?)",
                 uuid::Uuid::now_v7()
@@ -275,7 +275,7 @@ pub(crate) async fn ensure_schema(db: &Db, name: &str) -> Result<bool> {
 }
 
 pub(crate) async fn schema_exists(db: &Db, name: &str) -> Result<bool> {
-    let row = sqlx::query(&db.sql(
+    let row = sqlx::query(db.sql(
         "SELECT count(*) FROM ducklake_schema WHERE schema_name = ? AND end_snapshot IS NULL",
     ))
     .bind(name)
@@ -345,7 +345,7 @@ pub(crate) async fn pin(
     dataset: &str,
     names: Option<&[String]>,
 ) -> Result<Option<Vec<TableRows>>> {
-    let tables = sqlx::query(&db.sql(
+    let tables = sqlx::query(db.sql(
         "SELECT t.table_id, t.table_name, t.begin_snapshot FROM ducklake_table t \
          JOIN ducklake_schema s ON s.schema_id = t.schema_id \
          WHERE s.schema_name = ? AND s.end_snapshot IS NULL AND t.end_snapshot IS NULL \
@@ -372,26 +372,26 @@ pub(crate) async fn pin(
         .map(|(id, _, _)| id.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    let columns = sqlx::query(&format!(
+    let columns = sqlx::query(db.sql(&format!(
         "SELECT table_id, column_id, parent_column, column_order, column_name, column_type, \
          CAST(CAST(nulls_allowed AS INTEGER) AS BIGINT), begin_snapshot FROM ducklake_column \
          WHERE table_id IN ({list}) AND end_snapshot IS NULL ORDER BY table_id, column_order"
-    ))
+    )))
     .fetch_all(db.pool())
     .await?;
-    let files = sqlx::query(&format!(
+    let files = sqlx::query(db.sql(&format!(
         "SELECT table_id, path, file_size_bytes, begin_snapshot FROM ducklake_data_file \
          WHERE table_id IN ({list}) AND end_snapshot IS NULL ORDER BY table_id, file_order"
-    ))
+    )))
     .fetch_all(db.pool())
     .await?;
     // A replace or a drop ends files at the snapshot it happened in, so
     // the newest end is a change too — the version moves even when the
     // replace landed no file.
-    let ends = sqlx::query(&format!(
+    let ends = sqlx::query(db.sql(&format!(
         "SELECT table_id, MAX(end_snapshot) FROM ducklake_data_file WHERE table_id IN ({list}) \
          GROUP BY table_id"
-    ))
+    )))
     .fetch_all(db.pool())
     .await?;
     // The table's newest column change: the newest end over every
@@ -399,10 +399,10 @@ pub(crate) async fn pin(
     // column ends its previous version, a dropped column ends its
     // last. A column added ends nothing and is no change to what
     // stood.
-    let shapes = sqlx::query(&format!(
+    let shapes = sqlx::query(db.sql(&format!(
         "SELECT table_id, MAX(end_snapshot) FROM ducklake_column \
          WHERE table_id IN ({list}) GROUP BY table_id"
-    ))
+    )))
     .fetch_all(db.pool())
     .await?;
     struct Slot {
@@ -489,7 +489,7 @@ pub(crate) async fn pin(
 }
 
 pub(crate) async fn table_names(db: &Db, dataset: &str) -> Result<Vec<String>> {
-    let rows = sqlx::query(&db.sql(
+    let rows = sqlx::query(db.sql(
         "SELECT t.table_name FROM ducklake_table t JOIN ducklake_schema s ON s.schema_id = t.schema_id \
          WHERE s.schema_name = ? AND s.end_snapshot IS NULL AND t.end_snapshot IS NULL \
          ORDER BY t.table_name",
@@ -502,7 +502,7 @@ pub(crate) async fn table_names(db: &Db, dataset: &str) -> Result<Vec<String>> {
 
 /// The live table's id in the dataset, or none.
 async fn table_id(db: &Db, tx: &mut Tx, dataset: &str, table: &str) -> Result<Option<i64>> {
-    let row = sqlx::query(&db.sql(
+    let row = sqlx::query(db.sql(
         "SELECT t.table_id FROM ducklake_table t JOIN ducklake_schema s ON s.schema_id = t.schema_id \
          WHERE s.schema_name = ? AND t.table_name = ? AND s.end_snapshot IS NULL AND t.end_snapshot IS NULL",
     ))
@@ -596,7 +596,7 @@ pub(crate) async fn commit_landing(
             let (id, changes) = match (landing, existing) {
                 (Landing::Create, None) => {
                     let id = snapshot.catalog_id();
-                    sqlx::query(&db.sql(&format!(
+                    sqlx::query(db.sql(&format!(
                         "INSERT INTO ducklake_table (table_id, table_uuid, begin_snapshot, end_snapshot, \
                          schema_id, table_name, path, path_is_relative) VALUES (?, '{}', ?, NULL, ?, ?, ?, ?)",
                         uuid::Uuid::now_v7()
@@ -640,7 +640,7 @@ pub(crate) async fn commit_landing(
             if landing != Landing::Append {
                 set_exprs(db, tx, snapshot, id, &exprs).await?;
             }
-            let from = sqlx::query(&db.sql(
+            let from = sqlx::query(db.sql(
                 "SELECT COALESCE(MAX(file_order), -1) FROM ducklake_data_file WHERE table_id = ?",
             ))
             .bind(id)
@@ -649,7 +649,7 @@ pub(crate) async fn commit_landing(
             .try_get::<i64, _>(0)?;
             for (order, file) in (from + 1..).zip(files.iter()) {
                 let file_id = snapshot.file_id();
-                sqlx::query(&db.sql(
+                sqlx::query(db.sql(
                     "INSERT INTO ducklake_data_file (data_file_id, table_id, begin_snapshot, end_snapshot, \
                      file_order, path, path_is_relative, file_format, record_count, file_size_bytes, \
                      footer_size, row_id_start, partition_id, encryption_key, mapping_id, partial_max) \
@@ -691,7 +691,7 @@ pub(crate) async fn drop_table(db: &Db, dataset: &str, table: &str) -> Result<Ve
                 "UPDATE ducklake_column SET end_snapshot = ? WHERE table_id = ? AND end_snapshot IS NULL",
                 "UPDATE ducklake_table SET end_snapshot = ? WHERE table_id = ? AND end_snapshot IS NULL",
             ] {
-                sqlx::query(&db.sql(statement))
+                sqlx::query(db.sql(statement))
                     .bind(snapshot.id)
                     .bind(id)
                     .execute(&mut **tx)
@@ -711,7 +711,7 @@ async fn end_files(
     snapshot: &Snapshot,
     table_id: i64,
 ) -> Result<Vec<(i64, String)>> {
-    let live = sqlx::query(&db.sql(
+    let live = sqlx::query(db.sql(
         "SELECT data_file_id, path FROM ducklake_data_file WHERE table_id = ? AND end_snapshot IS NULL",
     ))
     .bind(table_id)
@@ -721,7 +721,7 @@ async fn end_files(
         .iter()
         .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
         .collect::<Result<_>>()?;
-    sqlx::query(&db.sql(
+    sqlx::query(db.sql(
         "UPDATE ducklake_data_file SET end_snapshot = ? WHERE table_id = ? AND end_snapshot IS NULL",
     ))
     .bind(snapshot.id)
@@ -729,7 +729,7 @@ async fn end_files(
     .execute(&mut **tx)
     .await?;
     for (file_id, path) in &ended {
-        sqlx::query(&db.sql(&format!(
+        sqlx::query(db.sql(&format!(
             "INSERT INTO ducklake_files_scheduled_for_deletion (data_file_id, path, path_is_relative, \
              schedule_start) VALUES (?, ?, ?, '{}')",
             now()
@@ -747,14 +747,14 @@ async fn end_files(
 /// specification's timestamp literal), with the table directory it
 /// hangs under: `(file id, dataset, table, relative path)`.
 pub(crate) async fn scheduled(db: &Db, before: &str) -> Result<Vec<(i64, String, String, String)>> {
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(db.sql(&format!(
         "SELECT f.data_file_id, s.schema_name, t.table_name, f.path \
          FROM ducklake_files_scheduled_for_deletion f \
          JOIN ducklake_data_file d ON d.data_file_id = f.data_file_id \
          JOIN ducklake_table t ON t.table_id = d.table_id \
          JOIN ducklake_schema s ON s.schema_id = t.schema_id \
          WHERE f.schedule_start <= '{before}'"
-    ))
+    )))
     .fetch_all(db.pool())
     .await?;
     rows.iter()
@@ -764,12 +764,10 @@ pub(crate) async fn scheduled(db: &Db, before: &str) -> Result<Vec<(i64, String,
 
 /// The file is gone from the store: its schedule row goes too.
 pub(crate) async fn unschedule(db: &Db, file_id: i64) -> Result<()> {
-    sqlx::query(
-        &db.sql("DELETE FROM ducklake_files_scheduled_for_deletion WHERE data_file_id = ?"),
-    )
-    .bind(file_id)
-    .execute(db.pool())
-    .await?;
+    sqlx::query(db.sql("DELETE FROM ducklake_files_scheduled_for_deletion WHERE data_file_id = ?"))
+        .bind(file_id)
+        .execute(db.pool())
+        .await?;
     Ok(())
 }
 
@@ -787,7 +785,7 @@ async fn set_tags(
 ) -> Result<()> {
     for (key, value) in tags {
         end_tag(db, tx, snapshot, table_id, key).await?;
-        sqlx::query(&db.sql(
+        sqlx::query(db.sql(
             "INSERT INTO ducklake_tag (object_id, begin_snapshot, end_snapshot, \"key\", \"value\") \
              VALUES (?, ?, NULL, ?, ?)",
         ))
@@ -809,7 +807,7 @@ async fn end_tag(
     object_id: i64,
     key: &str,
 ) -> Result<()> {
-    sqlx::query(&db.sql(
+    sqlx::query(db.sql(
         "UPDATE ducklake_tag SET end_snapshot = ? WHERE object_id = ? AND \"key\" = ? \
          AND end_snapshot IS NULL",
     ))
@@ -852,7 +850,7 @@ async fn set_exprs(
 /// The live table's live tags, by key; empty for a table that is not
 /// there.
 pub(crate) async fn tags(db: &Db, dataset: &str, table: &str) -> Result<HashMap<String, String>> {
-    let rows = sqlx::query(&db.sql(
+    let rows = sqlx::query(db.sql(
         "SELECT g.\"key\", g.\"value\" FROM ducklake_tag g \
          JOIN ducklake_table t ON t.table_id = g.object_id \
          JOIN ducklake_schema s ON s.schema_id = t.schema_id \
@@ -888,7 +886,7 @@ pub struct ViewRow {
 
 /// The live view's id in the dataset, or none.
 async fn view_id(db: &Db, tx: &mut Tx, dataset: &str, view: &str) -> Result<Option<i64>> {
-    let row = sqlx::query(&db.sql(
+    let row = sqlx::query(db.sql(
         "SELECT v.view_id FROM ducklake_view v JOIN ducklake_schema s ON s.schema_id = v.schema_id \
          WHERE s.schema_name = ? AND v.view_name = ? AND s.end_snapshot IS NULL AND v.end_snapshot IS NULL",
     ))
@@ -966,7 +964,7 @@ pub(crate) async fn put_view(
                     "UPDATE ducklake_tag SET end_snapshot = ? WHERE object_id = ? AND end_snapshot IS NULL",
                     "UPDATE ducklake_view SET end_snapshot = ? WHERE view_id = ? AND end_snapshot IS NULL",
                 ] {
-                    sqlx::query(&db.sql(statement))
+                    sqlx::query(db.sql(statement))
                         .bind(snapshot.id)
                         .bind(old)
                         .execute(&mut **tx)
@@ -977,7 +975,7 @@ pub(crate) async fn put_view(
             // `column_aliases` is a reader's quoted list of the view's
             // column names; a view without aliases carries the empty
             // list, `''` — a reader parses the list and refuses a null.
-            sqlx::query(&db.sql(&format!(
+            sqlx::query(db.sql(&format!(
                 "INSERT INTO ducklake_view (view_id, view_uuid, begin_snapshot, end_snapshot, \
                  schema_id, view_name, dialect, \"sql\", column_aliases) \
                  VALUES (?, '{}', ?, NULL, ?, ?, ?, ?, '')",
@@ -992,7 +990,7 @@ pub(crate) async fn put_view(
             .execute(&mut **tx)
             .await?;
             if let Some(tag) = &tag {
-                sqlx::query(&db.sql(
+                sqlx::query(db.sql(
                     "INSERT INTO ducklake_tag (object_id, begin_snapshot, end_snapshot, \"key\", \"value\") \
                      VALUES (?, ?, NULL, ?, ?)",
                 ))
@@ -1027,7 +1025,7 @@ pub(crate) async fn end_view(db: &Db, dataset: &str, name: &str) -> Result<bool>
                 "UPDATE ducklake_tag SET end_snapshot = ? WHERE object_id = ? AND end_snapshot IS NULL",
                 "UPDATE ducklake_view SET end_snapshot = ? WHERE view_id = ? AND end_snapshot IS NULL",
             ] {
-                sqlx::query(&db.sql(statement))
+                sqlx::query(db.sql(statement))
                     .bind(snapshot.id)
                     .bind(id)
                     .execute(&mut **tx)
@@ -1040,7 +1038,7 @@ pub(crate) async fn end_view(db: &Db, dataset: &str, name: &str) -> Result<bool>
 }
 
 pub(crate) async fn view_exists(db: &Db, dataset: &str, name: &str) -> Result<bool> {
-    let n: i64 = sqlx::query_scalar(&db.sql(
+    let n: i64 = sqlx::query_scalar(db.sql(
         "SELECT count(*) FROM ducklake_view v JOIN ducklake_schema s ON s.schema_id = v.schema_id \
          WHERE s.schema_name = ? AND v.view_name = ? AND s.end_snapshot IS NULL AND v.end_snapshot IS NULL",
     ))
@@ -1053,7 +1051,7 @@ pub(crate) async fn view_exists(db: &Db, dataset: &str, name: &str) -> Result<bo
 
 /// Every live view of the dataset, by name.
 pub(crate) async fn views(db: &Db, dataset: &str) -> Result<Vec<ViewRow>> {
-    let rows = sqlx::query(&db.sql(
+    let rows = sqlx::query(db.sql(
         "SELECT v.view_name, v.dialect, v.\"sql\", g.\"value\" FROM ducklake_view v \
          JOIN ducklake_schema s ON s.schema_id = v.schema_id \
          LEFT JOIN ducklake_tag g ON g.object_id = v.view_id AND g.\"key\" = ? \
@@ -1081,7 +1079,7 @@ pub(crate) async fn views(db: &Db, dataset: &str) -> Result<Vec<ViewRow>> {
 // -- columns, version by version -------------------------------------------
 
 async fn live_columns(db: &Db, tx: &mut Tx, table_id: i64) -> Result<Vec<ColumnRow>> {
-    let rows = sqlx::query(&db.sql(
+    let rows = sqlx::query(db.sql(
         "SELECT column_id, parent_column, column_order, column_name, column_type, \
          CAST(CAST(nulls_allowed AS INTEGER) AS BIGINT), begin_snapshot FROM ducklake_column \
          WHERE table_id = ? AND end_snapshot IS NULL ORDER BY column_order",
@@ -1107,7 +1105,7 @@ async fn live_columns(db: &Db, tx: &mut Tx, table_id: i64) -> Result<Vec<ColumnR
 /// The table's live derivations, by column name: its tag as the last
 /// create or replace wrote it; empty where none knew any.
 async fn live_exprs(db: &Db, tx: &mut Tx, table_id: i64) -> Result<HashMap<String, String>> {
-    let row = sqlx::query(&db.sql(
+    let row = sqlx::query(db.sql(
         "SELECT \"value\" FROM ducklake_tag \
          WHERE object_id = ? AND \"key\" = ? AND end_snapshot IS NULL",
     ))
@@ -1166,7 +1164,7 @@ async fn evolve_columns(
                     && tags.get(field.name()) == want =>
             {
                 for (column_id, at) in renumber(row, field, &by_parent, &mut order) {
-                    sqlx::query(&db.sql(
+                    sqlx::query(db.sql(
                         "UPDATE ducklake_column SET column_order = ? \
                          WHERE table_id = ? AND column_id = ? AND end_snapshot IS NULL",
                     ))
@@ -1308,7 +1306,7 @@ async fn end_column(
         .collect::<Vec<_>>()
         .join(", ");
     for table in ["ducklake_column", "ducklake_column_tag"] {
-        sqlx::query(&db.sql(&format!(
+        sqlx::query(db.sql(&format!(
             "UPDATE {table} SET end_snapshot = ? WHERE table_id = ? AND column_id IN ({list}) \
              AND end_snapshot IS NULL"
         )))
@@ -1369,7 +1367,7 @@ async fn insert_field(
     let mut rows = Vec::new();
     flatten(snapshot, field, top, None, order, &mut rows)?;
     for row in rows {
-        sqlx::query(&db.sql(
+        sqlx::query(db.sql(
             "INSERT INTO ducklake_column (column_id, begin_snapshot, end_snapshot, table_id, \
              column_order, column_name, column_type, initial_default, default_value, nulls_allowed, \
              parent_column, default_value_type, default_value_dialect) \
