@@ -62,7 +62,7 @@
 
   <section class="tile">
     <header><span class="eyebrow">The plan · {{ metric }}</span>
-      <code class="chip" title="Every plan declared on this metric — a QUERY aspect with x-kind plan and x-plan-of naming it, grounded by SQL over the landed budget table, one aspect per edition — period by period at the plan's own grain: the planned number, the actual where the period has begun, the variance (actual minus plan) where the period is complete, and where the forecast covers the rest its median with the 80% band and how often such a band held. Below or above: the band does not hold the plan, and the next read's plan goal asks for the judgment.">plan_points()</code></header>
+      <code class="chip" title="Every plan declared on this metric — a QUERY aspect with x-kind plan and x-plan-of naming it, grounded by SQL over the landed budget table, one aspect per edition — period by period at the plan's own grain: the planned number, the actual where the period has begun, the variance (actual minus plan) where the period is complete, and where the forecast covers the rest its median with the 80% band and how often such a band held. Below or above: the band does not hold the plan, and the next read's plan goal asks for the judgment. A year row of a plan whose rows cover part of the year says how much, and takes no band.">plan_points()</code></header>
     <gl-rows frame="frames/plan" empty="no plan is declared on this metric — a budget lands as a table and is glossed as a plan aspect, one per edition; the next read's plan goal hands the form">
       <template>
         <div class="rrow" style="grid-template-columns:9rem 6rem 7rem 7rem 7rem 13rem 1fr">

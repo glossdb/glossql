@@ -1732,6 +1732,7 @@ async fn write_fact(
             body: other.body.clone(),
             rank: if other.actor_kind == "human" { 0 } else { 1 },
             plan_of: slot.plan_of.clone(),
+            covers: slot.covers,
         };
         let now = Box::pin(build_metric(shared, &surface, slot, None)).await;
         let before = Box::pin(build_metric(shared, &surface, &before, None)).await;
@@ -4218,9 +4219,10 @@ pub(crate) async fn metric_series_batch(
 /// (`crate::plan_world`): per grain the plan's total cells and the
 /// metric's at that grain where the metric is as fine or finer, and
 /// the metric's origin — the last period of its own series at its own
-/// resolution, the data's edge. Two grains stand: the plan's own
-/// resolution, and the year where the resolution is finer — a budget
-/// booked by the month means something at the year.
+/// resolution, the data's edge. Two grains stand: the plan's own —
+/// its resolution, or the grain its rows are booked against where the
+/// declaration says so (`x-covers`: the adopted budget on the January
+/// row covers the year) — and the year where that is finer.
 pub(crate) struct PlanSeries {
     pub plan: String,
     pub metric: String,
@@ -4266,9 +4268,13 @@ pub(crate) async fn plan_series(shared: &Arc<Shared>) -> Result<Vec<PlanSeries>,
                 .await;
             origin = last_period(shared, &own.cells).await?;
         }
+        // The plan's own grain: its rows' resolution, or the coarser
+        // grain they are booked against. A word finer than the rows
+        // changes nothing.
+        let own = slot.covers.map_or(resolution, |c| c.max(resolution));
         let mut grains = Vec::new();
-        for grain in [resolution, Resolution::Year] {
-            if grain == Resolution::Year && resolution == Resolution::Year && !grains.is_empty() {
+        for grain in [own, Resolution::Year] {
+            if grain == Resolution::Year && own == Resolution::Year && !grains.is_empty() {
                 break;
             }
             let plan = surface

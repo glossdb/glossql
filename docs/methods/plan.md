@@ -20,7 +20,7 @@ grounding schema:
 DECLARE ASPECT revised_budget WITH $${
   "title": "Revised budget",
   "description": "The adopted budget with the council's amendments, as booked",
-  "x-kind": "plan", "x-plan-of": "expense", "x-unit": "USD"
+  "x-kind": "plan", "x-plan-of": "expense", "x-covers": "year", "x-unit": "USD"
 }$$ AS QUERY ON DATASET;
 
 GLOSS revised_budget ON brla AS $${
@@ -34,6 +34,15 @@ The tie is checked when the plan is declared: `x-plan-of` must name a
 declared QUERY aspect that is not itself a plan, a plan is a QUERY
 aspect, and `x-plan-of` rides `x-kind: plan` and nothing else. The
 declaration is refused otherwise, with the road out.
+
+A row covers its own period: a monthly schedule plans each month it
+names, and the plan covers the months it has rows for. Where a row's
+value is booked against a coarser period, the declaration says so:
+`x-covers` names the grain, `year` or `quarter`. Baton Rouge books the
+adopted budget on the January row and each amendment on the row of its
+month, so its budget carries `"x-covers": "year"` and reads at the
+year; a month's cell is what was booked that month. A word that is no
+grain is refused at `DECLARE`.
 
 An edition of a plan is an aspect of its own: the adopted budget and
 the amended budget both stand, each with its own grounding, its own
@@ -73,6 +82,15 @@ row says where the plan stands: `landed`, `inside`, `below` or `above`
 the band, `open` or `ahead` where no band covers it
 ([reads](../reference/reads.md)).
 
+The year row of a plan finer than the year says how much of the year
+its rows cover, `covers`: `9 of 12 months` where a schedule runs to
+September, NULL where the rows cover the year whole. Where they cover
+part of it, the plan's number and the actual are over the covered
+months, the row is `landed` with its variance once those months are
+complete and `partial` while they are not, and no band is read: the
+forecast totals a year to go, never part of one. A plan booked against
+the year, `x-covers: year`, reads at the year alone.
+
 ```sql
 SELECT plan, label, value, actual, expected, low, high, stands
 FROM plan_points() WHERE grain = 'year' ORDER BY plan, period
@@ -104,7 +122,9 @@ in January and an amendment in May, means nothing month by month and
 something at the year, and the year to go is the total the forecast
 asks for a month or a quarter metric. A plan on a week or a day metric
 has no year to go; its year rows stand open, and the goal has no gap
-to judge.
+to judge. A plan whose rows cover part of a year stands `partial` at
+the year, and the goal has no gap there either: its own months hold
+their bands.
 
 ## Grain
 
@@ -114,7 +134,8 @@ date column as it stands, and the cube buckets it as it buckets any
 flow. Where a budget is booked in the month it was authorized, the
 adoption in January and an amendment in May, the plan's month cells
 are what the ledger booked that month, and the year is where the plan
-means something; the read asks the year. A phased budget, a twelfth a
+means something; the declaration says so, `x-covers: year`, and the
+read serves the year. A phased budget, a twelfth a
 month or a seasonal curve, is a planner's own table, read at month
 grain. The engine spreads nothing.
 
@@ -152,8 +173,10 @@ the actual to date plus the total to go, and on a stock to the band
 for the last period of the metric's own grain inside it: a year-end
 headcount against December's forecast, with nothing added, where the
 horizon reaches it. A ratio at a coarser grain has no band: a year's
-margin is neither a sum nor a last level. Where the table says no
-band, `plan_points()` still serves the row with the actual and the
+margin is neither a sum nor a last level. A plan at a coarser grain
+compares only where its rows cover the period whole; where they cover
+part of it, the row carries `covers` and no band. Where the table says
+no band, `plan_points()` still serves the row with the actual and the
 variance, and `stands` says `open` or `ahead`. The planning goal reads
 the year rows, so it finds a gap on a flow at month or quarter grain
 and on a stock whose year end the forecast reaches. A margin target is

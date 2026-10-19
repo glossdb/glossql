@@ -1460,8 +1460,9 @@ async fn the_plan_stands_beside_its_metric() {
     // A plan declared on dso over the same ledger (fixture 27): the
     // pulse lists no plan as a metric; the plan frame serves it period
     // by period at its own grain and at the year — two months landed
-    // with their variance, the year open with the actual to date and
-    // no forecast behind it; the trend carries its cells as the plan
+    // with their variance, and the year landed on those two of its
+    // twelve months, which the row says, with no band read over part
+    // of a year; the trend carries its cells as the plan
     // world at the viewer's grain beside the reading and the rival.
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
@@ -1487,7 +1488,10 @@ async fn the_plan_stands_beside_its_metric() {
     let plan = get(&app, "/perf/app/docket/frames/plan?metric=dso").await;
     assert_eq!(plan.status(), StatusCode::OK);
     let text = body_text(plan).await;
-    assert!(text.contains("landed") && text.contains("open"), "{text}");
+    assert!(
+        text.contains("landed") && text.contains("landed, covers 2 of 12 months"),
+        "{text}"
+    );
     assert!(text.contains("-12.5") && text.contains("2026"), "{text}");
     let plan = get(&app, "/perf/app/docket/frames/plan?metric=dso").await;
     assert_eq!(row_count(plan).await, 3, "two months and the year");

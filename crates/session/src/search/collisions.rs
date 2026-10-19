@@ -165,6 +165,12 @@ pub(crate) struct QuerySlot {
     /// and the walk, the forecast and the collision pass pass it over.
     /// None for a metric.
     pub plan_of: Option<String>,
+    /// The grain a plan's rows are booked against, where its
+    /// declaration says so (`x-covers`): the adopted budget on the
+    /// January row covers the year, and the plan reads at that grain.
+    /// None for a metric, and for a plan whose rows cover their own
+    /// periods.
+    pub covers: Option<crate::period::Resolution>,
 }
 
 impl QuerySlot {
@@ -211,15 +217,19 @@ pub(crate) async fn current_query_slots(
         .filter(|a| a.kind == "query")
         .map(|a| a.name.as_str())
         .collect();
-    // The plan aspects and the metric each names, from the declaration.
-    let plans: HashMap<&str, String> = rctx
+    // The plan aspects, the metric each names and the grain its rows
+    // are booked against, from the declaration.
+    let plans: HashMap<&str, (String, Option<crate::period::Resolution>)> = rctx
         .aspects
         .iter()
         .filter(|a| a.kind == "query")
         .filter_map(|a| {
             let schema: Value = serde_json::from_str(&a.schema).ok()?;
             let of = crate::plan_world::plan_of(&schema)?;
-            Some((a.name.as_str(), of.to_string()))
+            Some((
+                a.name.as_str(),
+                (of.to_string(), crate::plan_world::covers(&schema)),
+            ))
         })
         .collect();
     let scope = glossql_glossary::Scope::Dataset;
@@ -229,13 +239,16 @@ pub(crate) async fn current_query_slots(
             .into_iter()
             .filter(|r| query_aspects.contains(r.aspect.as_str()))
             .filter_map(|r| {
-                let plan_of = plans.get(r.aspect.as_str()).cloned();
+                let (plan_of, covers) = plans
+                    .get(r.aspect.as_str())
+                    .map_or((None, None), |(of, covers)| (Some(of.clone()), *covers));
                 r.value.map(|body| QuerySlot {
                     subject: r.subject,
                     aspect: r.aspect,
                     body,
                     rank: r.rank.unwrap_or(1),
                     plan_of,
+                    covers,
                 })
             })
             .collect();

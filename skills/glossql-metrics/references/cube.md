@@ -91,7 +91,10 @@ revised_budget WITH $${"title": "Revised budget", "x-kind": "plan",
 "x-plan-of": "expense"}$$ AS QUERY ON DATASET;` then `GLOSS
 revised_budget ON fin AS $${"sql": "SELECT month, revised AS value FROM
 budget"}$$;`. The declaration is refused where `x-plan-of` names no
-declared metric, or another plan. One aspect per edition: the adopted
+declared metric, or another plan. A row covers its own period; where
+a row's value is booked against the year — the adopted budget on the
+January row — the declaration adds `x-covers: year` and the plan
+reads at the year. One aspect per edition: the adopted
 budget and the amended one both stand.
 
 - `metric_series(world => 'plan', plan => 'revised_budget')` serves the
@@ -112,7 +115,10 @@ budget and the amended one both stand.
   the variance where it is complete, and the forecast's median with
   its 80% band where it covers the rest — at the year, the actual to
   date plus the year to go. `stands` says where the plan lies:
-  `landed`, `inside`, `below` or `above` the band, `open` or `ahead`.
+  `landed`, `inside`, `below` or `above` the band, `open` or `ahead`,
+  and `partial` where the plan's rows cover part of the year — the
+  year row then carries `covers` (`9 of 12 months`), its number and
+  its actual over the covered months, and no band.
   A band at a coarser grain exists on a flow where the forecast asks a
   total to go, and on a stock as the band of the period's last month
   — a year-end headcount against December's forecast; a ratio's plan
