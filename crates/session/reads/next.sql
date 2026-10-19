@@ -617,7 +617,7 @@ WHERE NOT EXISTS (SELECT 1 FROM axes WHERE applicable)
 UNION ALL
 SELECT 'plan', 2, 'next', 'DECLARE ASPECT plan',
        'declare the first plan',
-       'no plan is declared on ' || m.metrics || ': a plan is a QUERY aspect with x-kind plan and x-plan-of naming the metric it plans, grounded by SQL over the landed budget table, one aspect per edition; which metrics the budget covers, and its name, are the human''s',
+       'no plan is declared on ' || m.metrics || ': a plan is a QUERY aspect with x-kind plan and x-plan-of naming the metric it plans, grounded by SQL over the landed budget table, one aspect per edition, x-covers year where a row is booked against the year; which metrics the budget covers, and its name, are the human''s',
        $f$DECLARE ASPECT <name> WITH $${"title": "<Budget>", "x-kind": "plan", "x-plan-of": "<metric>"}$$ AS QUERY ON DATASET;$f$,
        $f$GLOSS <name> ON $f$ || ds.dataset || $f$ AS $${"sql": "SELECT <date column> AS date, <planned value> AS value FROM <budget table>", "behavior": "flow"}$$;$f$
 FROM applicable m CROSS JOIN ds

@@ -112,12 +112,18 @@ if wanted. An edition is an aspect: the adopted budget and the amended
 budget both stand, and a re-gloss of either corrects that edition's
 SQL. A budget file of many lines is read as the ledger is: one plan
 aspect per line and edition, each grounding a filter on its line.
+A row here is a booking against the year — the adopted figure in
+January, an amendment in its month — and the declaration says so:
+`x-covers: year`, the grain a row's value covers; the plan then reads
+at the year. A plan whose rows cover their own periods, a monthly
+schedule, carries no word, and its year row says how much of the year
+the rows cover.
 
 ```glossql
 DECLARE ASPECT revised_budget WITH $${
   "title": "Revised budget",
   "description": "The adopted budget with the Metropolitan Council's amendments, as booked",
-  "x-kind": "plan", "x-plan-of": "expense", "x-unit": "USD"
+  "x-kind": "plan", "x-plan-of": "expense", "x-covers": "year", "x-unit": "USD"
 }$$ AS QUERY ON DATASET;
 
 GLOSS revised_budget ON brla AS $${
@@ -133,7 +139,7 @@ GLOSS revised_budget ON brla AS $${
 DECLARE ASPECT original_budget WITH $${
   "title": "Original budget",
   "description": "The budget the Metropolitan Council adopted",
-  "x-kind": "plan", "x-plan-of": "expense", "x-unit": "USD"
+  "x-kind": "plan", "x-plan-of": "expense", "x-covers": "year", "x-unit": "USD"
 }$$ AS QUERY ON DATASET;
 
 GLOSS original_budget ON brla AS $${
@@ -178,7 +184,9 @@ buckets any flow, and the plan's cells mean something at year grain.
 At month grain they are what the ledger booked that month — the
 adoption in January, an amendment in May — and a variance against
 them would be a variance against bookkeeping. The reads in §3 ask the
-year. A phased budget (a twelfth per month, a seasonal curve) is a
+year, and `x-covers: year` on the declaration says the rows are booked
+against it, so `plan_points()` serves the plan at the year alone. A
+phased budget (a twelfth per month, a seasonal curve) is a
 planner's own table — the generator's budget is monthly and reads at
 month grain — never the engine's spread. `metric_series(world =>
 'plan')` serves the plan at its own resolution and at any coarser
@@ -266,6 +274,13 @@ about what the read does:
   the plan's body for the human to rule. A plan's table is no edge of
   the actuals: the edge of a metric's head is the latest period the
   metrics' frames serve (`Surface::data_edge`), a plan's its own.
+- `plan_points()` judges a year row only where the plan's rows cover
+  the year whole: a plan finer than the year carries `covers` (`9 of
+  12 months`) where they do not, with its number and its actual over
+  the covered periods and no band (`plan_world.rs`, `coverage`,
+  `judge_part`); a plan declared `x-covers` reads at that grain
+  (`crates/session/src/cube.rs`, `plan_series`), and the word is
+  checked at `DECLARE` beside the tie.
 - The evaluation side: the generator writes a budget table per corpus
   from its own levers, a planned value per metric and month, with a
   truth file; the eval runs a plan lane beside the forecast lane. The

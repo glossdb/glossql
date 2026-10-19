@@ -175,6 +175,14 @@ async fn a_plan_declares_on_a_declared_metric_or_is_refused() {
             r##"DECLARE ASPECT bad WITH $${"x-kind": "measure", "x-plan-of": "expense"}$$ AS QUERY ON DATASET;"##,
             "`x-plan-of` rides `x-kind: plan`",
         ),
+        (
+            r##"DECLARE ASPECT bad WITH $${"x-kind": "measure", "x-covers": "year"}$$ AS QUERY ON DATASET;"##,
+            "`x-covers` rides `x-kind: plan`",
+        ),
+        (
+            r##"DECLARE ASPECT bad WITH $${"x-kind": "plan", "x-plan-of": "expense", "x-covers": "month"}$$ AS QUERY ON DATASET;"##,
+            "`x-covers` names the grain a row's value is booked against, `year` or `quarter` — \"month\" is neither",
+        ),
     ] {
         let e = refused(&session, decl).await;
         assert!(
@@ -696,4 +704,171 @@ GLOSS cut ON fin AS $${"levers": [{"column": "spend.amount",
     )
     .await;
     assert!(asked.contains("| plan-2025 |"), "{asked}");
+}
+
+/// The planning fixture with two more plans on the spend: a schedule,
+/// 125 a month from 2024-04 to 2025-09 — nine months of each calendar
+/// year — and a budget booked against the year on the row of the month
+/// it was authorized: 1440 on 2024-01, 1500 on 2025-01 and an
+/// amendment of 60 on 2025-05, declared `x-covers: year`.
+async fn coverage_session(stub: Arc<crate::forecast::Flat>) -> Session {
+    let session = planning_session(stub).await;
+    session
+        .execute(
+            r##"DECLARE ASPECT schedule WITH $${
+  "title": "Service schedule", "x-kind": "plan", "x-plan-of": "expense"
+}$$ AS QUERY ON DATASET;
+GLOSS schedule ON fin AS $${"sql": "SELECT month, planned AS value FROM timetable"}$$;
+DECLARE ASPECT booked_budget WITH $${
+  "title": "Booked budget", "x-kind": "plan", "x-plan-of": "expense", "x-covers": "year"
+}$$ AS QUERY ON DATASET;
+GLOSS booked_budget ON fin AS $${"sql": "SELECT month, booked AS value FROM bookings"}$$;"##,
+        )
+        .await
+        .expect("the two plans land");
+    let timetable = Arc::new(Schema::new(vec![
+        Field::new("month", DataType::Date32, false),
+        Field::new("planned", DataType::Float64, false),
+    ]));
+    let months: Vec<i32> = (3..21)
+        .map(|i| day(2024 + i / 12, (i % 12 + 1) as u32, 1))
+        .collect();
+    let batch = RecordBatch::try_new(
+        Arc::clone(&timetable),
+        vec![
+            Arc::new(Date32Array::from(months)),
+            Arc::new(Float64Array::from(vec![125.0; 18])),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "timetable", timetable, batch).await;
+    let bookings = Arc::new(Schema::new(vec![
+        Field::new("month", DataType::Date32, false),
+        Field::new("booked", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&bookings),
+        vec![
+            Arc::new(Date32Array::from(vec![
+                day(2024, 1, 1),
+                day(2025, 1, 1),
+                day(2025, 5, 1),
+            ])),
+            Arc::new(Float64Array::from(vec![1440.0, 1500.0, 60.0])),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "bookings", bookings, batch).await;
+    session
+        .execute(
+            "SELECT judge_time() FROM timetable.month; SELECT judge_time() FROM bookings.month;",
+        )
+        .await
+        .expect("the cadences are judged");
+    session
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_plan_covering_part_of_a_year_is_judged_on_the_part_and_a_booked_one_on_the_year() {
+    let stub = Arc::new(crate::forecast::Flat::default());
+    let session = coverage_session(Arc::clone(&stub)).await;
+
+    // The schedule covers nine months of each year. 2024's nine are
+    // complete: the row is landed on the actual over April to December
+    // (963 against 1125), never on the whole year's 1266. 2025's have
+    // begun and not ended: partial, the actual to date over the
+    // covered months, no band. The monthly budget covers its years
+    // whole and says nothing.
+    let points = rows(
+        &session,
+        "SELECT plan, grain, label, value, actual, variance, stands, covers \
+         FROM plan_points() WHERE grain = 'year' ORDER BY plan, period;",
+    )
+    .await;
+    let y2024 = line(&points, "| schedule         | year  | 2024");
+    assert!(
+        y2024.contains("| 1125.0 | 963.0 ")
+            && y2024.contains("| -162.0 ")
+            && y2024.contains("| landed  | 9 of 12 months |"),
+        "{points}"
+    );
+    let y2025 = line(&points, "| schedule         | year  | 2025");
+    assert!(
+        y2025.contains("| 1125.0 | 687.0 ") && y2025.contains("| partial | 9 of 12 months |"),
+        "{points}"
+    );
+    let whole = line(&points, "| revised_budget   | year  | 2025");
+    assert!(
+        whole.contains("| open    |") && !whole.contains(" of 12 "),
+        "{points}"
+    );
+    // The booked budget reads at the year: 1440 for 2024, 1500 plus
+    // the amendment for 2025, and no month row — a month's cell is
+    // what was booked that month.
+    let b2024 = line(&points, "| booked_budget    | year  | 2024");
+    assert!(
+        b2024.contains("| 1440.0 | 1266.0 | -174.0") && b2024.contains("| landed "),
+        "{points}"
+    );
+    let b2025 = line(&points, "| booked_budget    | year  | 2025");
+    assert!(
+        b2025.contains("| 1560.0 | 687.0 ") && b2025.contains("| open "),
+        "{points}"
+    );
+    let shape = rows(
+        &session,
+        "SELECT plan, count(*) AS n, count(*) FILTER (WHERE grain = 'month') AS months \
+         FROM plan_points() WHERE plan IN ('schedule', 'booked_budget') GROUP BY plan ORDER BY plan;",
+    )
+    .await;
+    assert!(
+        line(&shape, "booked_budget").contains("| 2  | 0 ")
+            && line(&shape, "schedule").contains("| 20 | 18 "),
+        "{shape}"
+    );
+
+    // With the forecast: the booked year lies above the band on the
+    // actual to date plus the year to go, as the yearly budget of the
+    // same number does, and is a gap; the schedule's 2025 keeps no
+    // band and is none. Its months ahead hold their own bands.
+    session
+        .execute(crate::forecast::forecast_kit())
+        .await
+        .expect("the measurement is declared");
+    session
+        .execute("SELECT metric_forecast() FROM fin;")
+        .await
+        .expect("the forecast lands");
+    let points = rows(
+        &session,
+        "SELECT plan, grain, label, value, actual, round(low, 2) AS low, round(high, 2) AS high, stands, covers \
+         FROM plan_points() WHERE label IN ('2025', '2025-07') ORDER BY plan, grain, period;",
+    )
+    .await;
+    let booked = line(&points, "| booked_budget    | year  | 2025");
+    assert!(
+        booked.contains("| 1560.0 | 687.0  | 1332.84 | 1445.16 | above   |"),
+        "{points}"
+    );
+    let part = line(&points, "| schedule         | year  | 2025");
+    assert!(
+        part.contains("| 1125.0 | 687.0  |         |         | partial | 9 of 12 months |"),
+        "{points}"
+    );
+    let july = line(&points, "| schedule         | month | 2025-07");
+    assert!(
+        july.contains("| 125.0  |        | 107.64  | 126.36  | inside  |"),
+        "{points}"
+    );
+    let gaps = rows(
+        &session,
+        "SELECT plan, label FROM plan_points() WHERE grain = 'year' AND stands IN ('below', 'above') ORDER BY plan;",
+    )
+    .await;
+    assert!(
+        gaps.contains("| annual_budget |")
+            && gaps.contains("| booked_budget |")
+            && !gaps.contains("schedule"),
+        "{gaps}"
+    );
 }

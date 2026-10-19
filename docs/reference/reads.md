@@ -460,8 +460,10 @@ Requires a bound dataset.
 
 Every served plan against the actual and the forecast ([the plan
 world](../methods/plan.md)), one row per plan and period at the plan's
-own resolution and, where that is finer, at the year — a budget booked
-by the month means something at the year: `plan`, `metric` (the metric
+own grain — its rows' resolution, or the grain they are booked against
+where the declaration says so, `x-covers` — and, where that is finer,
+at the year — a budget booked by the month means something at the
+year: `plan`, `metric` (the metric
 it plans), `grain`, `period` (a typed timestamp, the bucket's start),
 `label` (the period as text at its grain: `2026`, `2026-Q3`, `2026-07`,
 `2026-07-13`), `value` (the plan's cell), `actual` (the actual world's
@@ -473,12 +475,17 @@ at a coarser grain, for a flow the actual to date plus the total that
 runs to the period's end, where the forecast asked one, for a stock
 the band of the last period of the metric's own resolution inside it,
 where the horizon reaches it), `stands` (`landed`: the
-period is complete and its actual stands; `inside`, `below`, `above`:
-where the plan lies against the band; `open`: begun, and no band
-covers the rest; `ahead`: not begun, no band), `held_80` and
-`held_from` (how often such a band held and whose count, by
-`forecast_points()`'s rule), `origin` (the forecast's, where one was
-read). A plan finer than its metric compares to nothing. Computed at
+periods the plan covers are complete and the actual stands; `inside`,
+`below`, `above`: where the plan lies against the band; `partial`:
+begun, and the plan's rows cover part of the period, so no band is
+read; `open`: begun, and no band covers the rest; `ahead`: not begun,
+no band), `covers` (on the year row of a plan whose rows cover part of
+the year, how much they cover — `9 of 12 months`; NULL where they
+cover it whole), `held_80` and `held_from` (how often such a band held
+and whose count, by `forecast_points()`'s rule), `origin` (the
+forecast's, where one was read). Where the rows cover part of the
+year, the plan's number and the actual are over the periods the rows
+cover. A plan finer than its metric compares to nothing. Computed at
 read from the cube and the forecast record, nothing recorded. The
 next read's plan goal reads the year rows; the docket's plan tile
 reads them all. Requires a bound dataset.

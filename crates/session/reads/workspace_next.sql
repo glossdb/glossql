@@ -194,7 +194,7 @@ CROSS JOIN (VALUES
   ('validations', 'GLOSS the expectation on a FACT aspect, DECLARE FUNCTION the check that RETURNS it, DECLARE WITNESS with a DETECTOR banding them — ATTEST() serves the verdicts; a reconciliation run by hand becomes a standing check'),
   ('scenarios', 'DECLARE ASPECT ... AS FACT with x-kind scenario, GLOSS its levers — a factor per period on columns glossed lever, with the basis; metric_series(world => ''scenario'', scenario => ''<name>'') and scenario_points() serve it'),
   ('samples', 'DECLARE ASPECT ... AS QUERY with x-kind sample, GLOSS one SELECT holding known-good history and the suspects together — misfit.<name>() then ranks the rows'),
-  ('plans', 'DECLARE ASPECT ... AS QUERY with x-kind plan and x-plan-of the metric it plans, GLOSS its SQL over the landed budget table — one aspect per edition; metric_series(world => ''plan'', plan => ''<name>'') serves the plan world and plan_points() every plan against the actual and the forecast'),
+  ('plans', 'DECLARE ASPECT ... AS QUERY with x-kind plan and x-plan-of the metric it plans, GLOSS its SQL over the landed budget table — one aspect per edition, x-covers year where a row is booked against the year; metric_series(world => ''plan'', plan => ''<name>'') serves the plan world and plan_points() every plan against the actual and the forecast'),
   ('rulings', 'a human rules a disclosed assumption; the agent owes the re-record that folds it in'),
   ('apps', 'GLOSS app, app_page, app_frame, app_spec — one gloss per part, so a surface is written like anything else')
 ) AS s(surface, how)

@@ -7,7 +7,8 @@
 -- the period's end. `plan_points()` is the read; the wording, the
 -- rounding and the chip's class are this frame's. Below or above: the
 -- band does not hold the plan, which is what the next read's plan goal
--- asks a judgment on.
+-- asks a judgment on. A year row of a plan whose rows cover part of
+-- the year says how much, and takes no band.
 SELECT plan, grain, label, period,
        arrow_cast(CAST(round(value, 1) AS VARCHAR), 'Utf8') AS planned,
        arrow_cast(coalesce(CAST(round(actual, 1) AS VARCHAR), '—'), 'Utf8') AS actual,
@@ -23,7 +24,7 @@ SELECT plan, grain, label, period,
          WHEN 'inside' THEN 'inside the band'
          WHEN 'below' THEN 'below the band'
          WHEN 'above' THEN 'above the band'
-         ELSE stands END, 'Utf8') AS stands,
+         ELSE stands END || coalesce(', covers ' || covers, ''), 'Utf8') AS stands,
        CASE stands WHEN 'below' THEN 'warn' WHEN 'above' THEN 'warn' ELSE 'ok' END AS scls,
        arrow_cast(coalesce(
          CAST(CAST(round(held_80 * 100) AS INT) AS VARCHAR) || '% of such bands held (' || held_from || ')',

@@ -145,7 +145,11 @@ three.
   stands, done on the ruling. `workspace_next` carries `plans`; the
   docket's metric page carries the plan tile (`frames/plan.sql`) and
   the plan world on the trend. A stock's coarse row takes the band of
-  the period's last bucket at the metric's grain (#125). The data's
+  the period's last bucket at the metric's grain (#125). A year row is
+  judged only where the plan's rows cover the year whole: `covers`
+  says how much where they do not, and no band is read; a plan booked
+  against the year declares `x-covers: year` and reads there (#164,
+  `plan_world.rs`: `coverage`, `judge_part`). The data's
   edge is the latest period
   the metrics' frames serve, measured on the frames (#118, #120,
   `Surface::edges`, `Surface::data_edge`): a plan's table and a
