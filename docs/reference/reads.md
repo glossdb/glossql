@@ -213,7 +213,9 @@ serves its cells at its own resolution over its own rung. With one
 cells at the asked grain over that grain's rung — a plan over its
 head, the same grounding, verb and axes — so a day metric's months
 span the month rung; a metric coarser than the asked grain serves no
-rows. Without a world, the actual world: what the groundings compute
+rows. A rung of `n` periods serves `n` whole buckets, the edge's
+bucket the last: the window cuts on the bucket, never on a cell's own
+date. Without a world, the actual world: what the groundings compute
 from the data. `world => 'forecast'` serves the newest
 `metric_forecast` run per metric as cells — one row per step, the
 median as `value`, `dimension` and `member` `''`, `num` and `den` NULL
