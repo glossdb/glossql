@@ -196,7 +196,9 @@ latest date (one per entity — which is why a stock frame serves one
 row per entity per period), a ratio divides its summed halves — so
 mark your stocks and serve a ratio's halves; both hold at every grain
 and for the rival too. A day metric asked at the month therefore
-spans the month rung, not its own day rung.
+spans the month rung, not its own day rung. A rung of `n` periods is
+`n` whole buckets, the edge's bucket the last: the window cuts on the
+bucket, never on a day inside the bucket before it.
 
 A flow's empty period is a zero cell in its total, from its first
 period to the data's edge — the latest period any metric's grounding

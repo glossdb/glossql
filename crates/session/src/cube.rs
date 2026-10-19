@@ -3356,12 +3356,15 @@ async fn derive(
     })
 }
 
-/// The plan behind [`derive`]: the head's cells after `since`, each
-/// verb's arm folded into its bucket at the grain — a flow sums, a
-/// ratio re-divides its summed halves, a stock takes the bucket's
-/// latest floor cell — the arms united, NULL values and periods
-/// dropped, named for the metric and the actual world, in the order a
-/// head lands.
+/// The plan behind [`derive`]: the head's cells whose bucket at the
+/// grain is after `since` — the cut is on the bucket, never on the
+/// cell's own date, so a rung of `n` periods is `n` whole buckets
+/// ending at the edge's, and the floor cells of the bucket at `since`
+/// are left out whole — each verb's arm folded into its bucket at the
+/// grain — a flow sums, a ratio re-divides its summed halves, a stock
+/// takes the bucket's latest floor cell — the arms united, NULL values
+/// and periods dropped, named for the metric and the actual world, in
+/// the order a head lands.
 fn derive_plan(
     cells: &RecordBatch,
     metric: &str,
@@ -3370,7 +3373,7 @@ fn derive_plan(
 ) -> Result<LogicalPlan, DataFusionError> {
     let mut base = scan_cells("h", cells)?;
     if let Some(since) = since {
-        base = base.filter(col("period").gt(period::scalar(since)))?;
+        base = base.filter(period::bucket_expr(col("period"), grain).gt(period::scalar(since)))?;
     }
     let base = base.build()?;
     let arm =
