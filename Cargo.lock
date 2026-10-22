@@ -2530,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-apps"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow-ipc",
  "arrow-json",
@@ -2554,7 +2554,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-catalog"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2573,7 +2573,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-glossary"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "futures",
@@ -2588,7 +2588,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-import"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "adbc_core",
  "adbc_driver_manager",
@@ -2607,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-parser"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "datafusion-common",
  "datafusion-sql",
@@ -2617,7 +2617,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-scripts"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow-ipc",
  "arrow-json",
@@ -2639,7 +2639,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-serverd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow-ipc",
  "arrow-json",
@@ -2677,7 +2677,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-session"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow-json",
  "async-trait",
@@ -4961,9 +4961,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -5689,7 +5689,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -6340,9 +6340,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]
