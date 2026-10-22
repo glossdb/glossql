@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/parser", "crates/glossary", "crates/session", "crates/catalog", "crates/import", "crates/scripts", "crates/apps", "crates/serverd"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 # The minor rust-toolchain.toml pins; a crate built alone says so.
 rust-version = "1.98"

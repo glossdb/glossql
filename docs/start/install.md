@@ -68,7 +68,7 @@ docker run --rm -p 8080:8080 \
   -e AZURE_STORAGE_ACCOUNT_NAME=account -e AZURE_STORAGE_ACCOUNT_KEY=… \
   -e GLOSSQL_FORECAST_URL=https://… -e GLOSSQL_FORECAST_TOKEN=… \
   -e GLOSSQL_MISFIT_URL=https://… -e GLOSSQL_MISFIT_TOKEN=… \
-  ghcr.io/glossdb/glossql:0.2.0
+  ghcr.io/glossdb/glossql:0.3.0
 ```
 
 The image sizes the server for a box with 8 GiB of memory and an
