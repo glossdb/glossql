@@ -66,3 +66,9 @@ nowhere else.
   once, in the org's package settings, and cannot be made private
   again. Until then `docker pull` answers "denied". `glossdb/glossql`
   is public.
+- The bump PR can fail `cargo deny check` on an advisory published
+  since the last green run on `main`: the tree did not move, the
+  advisory database did. The answer is a lock move to the fixed
+  release, `cargo update -p <crate>@<version>`, in the bump PR —
+  never a new entry in `deny.toml`'s ignore list for a fix that is a
+  patch release away.
