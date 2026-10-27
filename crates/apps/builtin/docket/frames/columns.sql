@@ -3,8 +3,10 @@
 -- (the engine's type where none is judged), its behaviour and unit
 -- where it has them, and what it means. Roles and meanings are the
 -- collapsed record: a human's entry outranks the agent's, the newest
--- of each wins. The format's own metadata tables beside each landed
--- one stay out. One row per table, so the page reads as a dictionary.
+-- of each wins. Landed tables alone: the served reads are views in
+-- the schema surface too, and the Metrics tab is theirs; the format's
+-- own metadata tables beside each landed one stay out as well. One
+-- row per table, so the page reads as a dictionary.
 WITH g AS (
   SELECT g.subject, g.aspect, g.body,
          row_number() OVER (PARTITION BY g.subject, g.aspect
@@ -30,6 +32,7 @@ cols AS (
   LEFT JOIN cur u ON u.aspect = 'unit' AND u.subject = c.table_name || '.' || c.column_name
   LEFT JOIN cur b ON b.aspect = 'behavior' AND b.subject = c.table_name || '.' || c.column_name
   WHERE c.table_name NOT LIKE '%$%'
+    AND c.table_name IN (SELECT i.table_name FROM imports i JOIN current_dataset d2 ON d2.dataset = i.dataset)
 ),
 folded AS (
   SELECT table_name, count(*) AS n,
