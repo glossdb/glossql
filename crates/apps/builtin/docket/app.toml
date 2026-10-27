@@ -6,5 +6,6 @@ pages = [
   { name = "metrics", title = "Metrics" },
   { name = "quality", title = "Quality" },
   { name = "lineage", title = "Lineage" },
+  { name = "explore", title = "Explore" },
   { name = "export", title = "Export" },
 ]

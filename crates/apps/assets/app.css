@@ -661,3 +661,16 @@ gl-graph svg { display: block; font-family: var(--mono); }
 
 gl-window { display: block; margin: 0.4rem 0 0.8rem; }
 .remeasure { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
+
+/* The Explore tab: a table's columns folded as lines, and the pane. */
+.dict { white-space: pre-line; font-family: var(--mono); font-size: var(--step); color: var(--muted); }
+gl-query { display: block; }
+gl-query textarea {
+  width: 100%; box-sizing: border-box; min-height: 6rem; resize: vertical;
+  font-family: var(--mono); font-size: var(--step); line-height: 1.5;
+  color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 0;
+  padding: 0.6rem 0.8rem; margin: 0.2rem 0 0.5rem;
+}
+gl-query textarea:focus { outline: none; border-color: var(--open-dim); }
+gl-query .wgroup { display: flex; gap: 0.5rem; align-items: baseline; margin-bottom: 0.6rem; }
+gl-query a.wbtn { text-decoration: none; }

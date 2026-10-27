@@ -803,6 +803,8 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         ("assumptions", "record"),
         ("pulse", "record"),
         ("views", "record"),
+        ("columns", "record"),
+        ("conventions", "record"),
         ("axes", "record"),
         ("remeasure", "record"),
         ("metric", "record"),
@@ -2216,4 +2218,31 @@ async fn every_documented_tile_is_shipped() {
             "{script} defines no element"
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_explore_tab_lists_the_columns_and_carries_the_pane() {
+    // The dictionary: one row per landed table with its columns folded
+    // as lines, each with its judged role or the engine's type; the
+    // conventions of the sources the recipes read; and the query pane,
+    // an element that posts a read to the query door — the page names
+    // the dataset the pane reads against.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    let page = text(get(&app, "/perf/app/docket/p/explore").await).await;
+    assert!(page.contains("<gl-query dataset=\"perf\""), "{page}");
+    assert!(page.contains("frames/columns"), "{page}");
+
+    let columns = get(&app, "/perf/app/docket/frames/columns").await;
+    assert_eq!(columns.status(), StatusCode::OK);
+    let columns = body_text(columns).await;
+    assert!(columns.contains("ledger\n"), "the landed table:\n{columns}");
+    assert!(
+        columns.contains("month  \u{b7}  ") && columns.contains("value  \u{b7}  "),
+        "every column of it as a line:\n{columns}"
+    );
+
+    let conventions = get(&app, "/perf/app/docket/frames/conventions").await;
+    assert_eq!(conventions.status(), StatusCode::OK);
 }

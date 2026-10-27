@@ -1,0 +1,50 @@
+{% extends "shell.html" %}
+{% import "modules/tiles.html" as tiles %}
+
+{% block main %}
+{# The Explore tab: the dataset as a reader meets it. Every landed
+   table with what one row is and each column's judged role and
+   meaning; the conventions of the systems that wrote the extracts;
+   and a pane to run a read of one's own against the query door. All
+   of it is reads the server already serves; nothing here is a write. #}
+<div class="tiles">
+  <div class="half">
+  <section class="tile">
+    <header><span class="eyebrow">Tables and their columns</span>
+      <code class="chip" title="Every landed table of this dataset with what one row is (the entity entry), then each column: its judged role, or the engine's type where none is judged; its behaviour and unit where it has them; and its meaning. The record's collapsed reading: a human's entry outranks the agent's.">information_schema · glossary</code></header>
+    <p class="hint">What one row is, then each column with its role, its unit and behaviour where it has them, and what it means.</p>
+    <gl-rows frame="frames/columns" empty="nothing has landed here yet — a table lands through a recipe, DECLARE RECIPE over the agent door">
+      <template>
+        <div class="rrow" style="grid-template-columns:1fr">
+          <span class="r-subj">{name} <span class="r-meta">{rows} rows · {columns} columns</span><br><span class="r-meta">{entity}</span></span>
+          <span class="r-what dict">{lines}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+  </div>
+
+  <div class="half">
+  <section class="tile">
+    <header><span class="eyebrow">Source conventions</span>
+      <code class="chip" title="What an onboarding learned about each system that wrote an extract this dataset reads: identifier forms, units, date formats, status codes. The conventions entry on the source, one row per key.">conventions</code></header>
+    <gl-rows frame="frames/conventions" empty="no source carries a conventions entry yet">
+      <template>
+        <div class="rrow" style="grid-template-columns:4rem 9rem minmax(0,1fr)">
+          <span class="r-subj">{source}</span>
+          <span class="r-meta">{key}</span>
+          <span class="r-what">{value}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Try a read</span>
+      <code class="chip" title="One read against the query door, /{{ dataset }}/query: the rows stream back as Arrow and render here; csv and arrow save what came back. The pane runs reads alone; a statement that writes is the agent door's.">/{{ dataset }}/query</code></header>
+    <p class="hint">One SELECT over the tables and the reads above. Run with the button or ⌘↩.</p>
+    <gl-query dataset="{{ dataset }}" rows="50"></gl-query>
+  </section>
+  </div>
+</div>
+{% endblock main %}

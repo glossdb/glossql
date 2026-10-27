@@ -122,6 +122,12 @@ The other tiles:
   links over the page URL (`grain`, `span`); it reads the metric's
   resolution from a `metric_axes()` frame and offers the grains from
   there up.
+- `<gl-query dataset="<dataset>" rows="50">` — a read of the viewer's
+  own: a text area, a run button, the rows as a table, and the result
+  to save as csv or as the Arrow stream the door sent. It posts to the
+  query door, `/<dataset>/query`, and runs reads alone — SELECT, WITH,
+  DESCRIBE, SHOW, EXPLAIN — saying so for anything else; the door's
+  refusal comes back as its text. It touches no frame and no store.
 - `<gl-graph nodes="frames/x" edges="frames/y" empty="…">` — column
   lineage over two frames: nodes one row per column (`node`, `kind`
   as `table` or `metric`, `col`, `ord`, `role`), edges one row per
@@ -148,10 +154,12 @@ example, and the dataset's own page (`/<dataset>/app` opens it): what
 stands open for a human to judge, what has been settled, what waits
 on an act, the metric surfaces with the views and the facts listed
 apart from them, how well the data is held (the landing account, the
-standing checks, the column coverage), the column lineage, and every
-table and read as a file. Pages
+standing checks folded per witness, the column coverage), the column
+lineage, the Explore tab (every table with its columns' roles and
+meanings, the source conventions, and a pane for a read of one's
+own), and every table and read as a file. Pages
 `index.html`, `metrics.html`, `quality.html`, `lineage.html`,
-`export.html`; frames
+`explore.html`, `export.html`; frames
 over the shipped reads, the cube's two reads, `forecast_points()`,
 `plan_points()`, `metric_sources()` and `imports`; one spec. Every built-in frame executes under the test
 suite.
