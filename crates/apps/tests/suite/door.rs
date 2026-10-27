@@ -620,6 +620,7 @@ async fn seed_model_shapes(plane: &Arc<Plane>) {
             r#"USE perf;
                DECLARE ASPECT dso WITH $${{"title": "DSO", "x-kind": "metric"}}$$ AS QUERY ON DATASET;
                DECLARE ASPECT payables WITH $${{"title": "Outstanding payables", "x-kind": "fact"}}$$ AS QUERY ON DATASET;
+               DECLARE ASPECT cleaned WITH $${{"title": "Cleaned ledger", "x-kind": "relation"}}$$ AS QUERY ON DATASET;
                DECLARE ASPECT definitions WITH $${{"type": "object"}}$$ AS FACT ON DATASET;
                DECLARE ASPECT formulas WITH $${{"type": "object"}}$$ AS FACT ON DATASET;
                DECLARE ASPECT temporal_profile WITH $${{"type": "object",
@@ -643,6 +644,7 @@ async fn seed_model_shapes(plane: &Arc<Plane>) {
                    {{"dimension": "grain", "key": "grain-preserving", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}}
                  ]}}$$;
                GLOSS payables ON perf AS $${{"sql": "SELECT sum(value) AS value FROM ledger"}}$$;
+               GLOSS cleaned ON perf AS $${{"sql": "SELECT month, value AS amount, cohort FROM ledger WHERE value IS NOT NULL"}}$$;
                GLOSS formulas ON perf AS $${{"formulas": {{"dso": "ar[end of w] / revenue[w] * days[w]"}}}}$$;
                GLOSS definitions ON perf AS $${{"definitions": {{"dso": {{
                  "meaning": "receivables outstanding expressed in days of revenue",
@@ -800,6 +802,7 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         ("owed", "record"),
         ("assumptions", "record"),
         ("pulse", "record"),
+        ("views", "record"),
         ("axes", "record"),
         ("remeasure", "record"),
         ("metric", "record"),
@@ -1293,11 +1296,21 @@ async fn the_metrics_faces_serve_the_cube() {
 
     let pulse = get(&app, "/perf/app/docket/frames/pulse").await;
     assert_eq!(pulse.status(), StatusCode::OK);
-    assert_eq!(
-        row_count(pulse).await,
-        1,
-        "two declared surfaces, the series and the fact — the pulse lists the series"
+    let pulse = body_text(pulse).await;
+    assert!(pulse.contains("dso\n"), "{pulse}");
+    assert!(
+        !pulse.contains("cleaned\n") && !pulse.contains("payables\n"),
+        "three declared surfaces, the series, the fact and the relation — the pulse lists the series:\n{pulse}"
     );
+
+    // The views list: the relation with its link carrying the kind,
+    // and neither the series nor the fact.
+    let views = get(&app, "/perf/app/docket/frames/views").await;
+    assert_eq!(views.status(), StatusCode::OK);
+    let views = body_text(views).await;
+    assert!(views.contains("cleaned\n"), "{views}");
+    assert!(views.contains("?metric=cleaned&kind=relation\n"), "{views}");
+    assert!(!views.contains("dso\n") && !views.contains("payables\n"), "{views}");
 
     let latest = get(&app, "/perf/app/docket/frames/latest").await;
     assert_eq!(latest.status(), StatusCode::OK);
@@ -1788,8 +1801,8 @@ async fn the_root_lists_every_dataset_at_a_glance() {
     assert!(root.contains("app door test"), "the purpose:\n{root}");
     assert!(root.contains("1 table · 3 rows"), "the landing:\n{root}");
     assert!(
-        root.contains("2 metrics served"),
-        "dso and payables:\n{root}"
+        root.contains("3 metrics served"),
+        "dso, payables and the cleaned relation:\n{root}"
     );
     assert!(
         root.contains("1 question waits on you"),
@@ -2119,8 +2132,8 @@ async fn the_lineage_page_draws_the_record() {
     );
     assert_eq!(
         edges.iter().filter(|e| e.2 == "reads").count(),
-        3,
-        "{edges:?}"
+        6,
+        "the series and the relation each read three columns:\n{edges:?}"
     );
 }
 

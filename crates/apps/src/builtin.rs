@@ -65,6 +65,7 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         docket!("frames/slices.sql"),
         docket!("frames/tables.sql"),
         docket!("frames/trend.sql"),
+        docket!("frames/views.sql"),
         docket!("specs/series.vl.json"),
     ],
 }];
