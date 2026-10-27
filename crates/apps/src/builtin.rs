@@ -41,6 +41,7 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         docket!("export.html"),
         docket!("frames/assumptions.sql"),
         docket!("frames/axes.sql"),
+        docket!("frames/breach.sql"),
         docket!("frames/census.sql"),
         docket!("frames/casts.sql"),
         docket!("frames/checks.sql"),

@@ -18,8 +18,24 @@
          chip="aspects") }}
     {{ tiles::value(frame="frames/front", field="corridor", label="Corridor",
          format="text", chip="ATTEST()",
-         note="The dataset-wide band verdict from the bands witness. 'not run' is honest absence, not green.") }}
+         note="The dataset-wide band verdict from the bands witness: the newest complete point of every watched metric against the corridor its own history predicted. 'not run' is honest absence, not green.") }}
   </div>
+
+  {# Behind the corridor's word: each metric whose newest complete
+     point landed outside its corridor, with the actual, the corridor
+     and the side, linked to its page. A green corridor serves no row
+     and the block is empty. #}
+  <gl-rows frame="frames/breach" empty="">
+    <template>
+      <a class="rrow" href="{link}" style="grid-template-columns:minmax(10rem,14rem) 6rem 8rem minmax(10rem,1fr) 5rem">
+        <span class="r-subj">{title}<br><span class="r-meta">{metric}</span></span>
+        <span class="r-meta">{period}</span>
+        <span class="r-num">{actual}</span>
+        <span class="r-meta">the corridor: {corridor}</span>
+        <code class="chip warn">{side}</code>
+      </a>
+    </template>
+  </gl-rows>
 
   <section class="tile">
     <header><span class="eyebrow">Waiting on your judgment</span>
