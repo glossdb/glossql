@@ -10,7 +10,7 @@ reference, a harmonisation setup layered on it at image build time.
 
 | Element | Risk | What it touches | When | Issue |
 |---|---|---|---|---|
-| The demo corpus: ERP, warehouse, transport and production extracts, three markets, about 24 monthly snapshots, planted faults, a truth file | Low: a generator, no server code | glosstest | First; two days | |
+| The demo corpus: ERP, warehouse, transport and production extracts, three markets, about 48 monthly snapshots, planted faults, a truth file | Low: a generator, no server code | glosstest | First; two days | |
 | The session script: the statements the demo session writes, rehearsed from ChatGPT and Claude until they run clean, then replayed as the demo's basis; the live part is the interactions on top | Medium: whether the agent maps and defines well from the prompts | nothing in the tree; a file beside the corpus | With the corpus; one to two days | |
 | The service-level and ledger pages: an authored app over the shipped reads | Low | app parts as glosses, no Rust | After the session runs; one to two days | |
 | Two goals in the agent's step list, map and serve, ahead of metrics | Low | `crates/session/reads/next.sql` | A feature branch beside the demo; one day | |
