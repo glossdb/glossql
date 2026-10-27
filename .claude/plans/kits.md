@@ -2,19 +2,22 @@
 
 Two things. A demo of harmonisation: four systems of record, one
 product and one site record across them, checks on every load,
-tables shaped for a planning tool, every decision on record. And
-configuration out of the Rust code: the KPI setup as the open
-reference, a harmonisation setup layered on it at image build time.
+tables shaped for a planning tool, every decision on record; its
+corpus, basis and app live in the demo repo beside this one, and the
+docket changes it needs are rows here. And configuration out of the
+Rust code: the KPI setup as the open reference, a harmonisation setup
+layered on it at image build time.
 
 ## The table
 
 | Element | Risk | What it touches | When | Issue |
 |---|---|---|---|---|
-| The demo corpus: ERP, warehouse, transport and production extracts, three markets, about 48 monthly snapshots, planted faults, a truth file | Low: a generator, no server code | glosstest | First; two days | |
-| The session script: the statements the demo session writes, rehearsed from ChatGPT and Claude until they run clean, then replayed as the demo's basis; the live part is the interactions on top | Medium: whether the agent maps and defines well from the prompts | nothing in the tree; a file beside the corpus | With the corpus; one to two days | |
-| The service-level and ledger pages: an authored app over the shipped reads | Low | app parts as glosses, no Rust | After the session runs; one to two days | |
 | Two goals in the agent's step list, map and serve, ahead of metrics | Low | `crates/session/reads/next.sql` | A feature branch beside the demo; one day | |
 | A line on every result naming the docket page to open | Low | `crates/serverd/src/window.rs` | If time allows; half a day | |
+| The docket's metrics tab lists views apart from the metrics | Low | `crates/apps/builtin/docket/frames/pulse.sql`, `metrics.html` | With the demo; half a day | #175 |
+| The quality tab's checks list collapses per witness | Low | `frames/checks.sql`, `quality.html` | With the demo; half a day | #176 |
+| The corridor tile names the metric and the month behind a red | Low | `frames/front.sql`, `index.html` | With the demo; half a day | #177 |
+| The Explore tab: tables with columns and meanings, the source conventions, a query pane | Medium: one new element over the query door | `crates/apps/builtin/docket/`, `crates/apps/assets` | With the demo; two days | #178 |
 | Kits out of the Rust code: the walk, the arrays, the step list split, the docket move | Medium: a build script over five lists | `crates/scripts/src/library.rs`, `crates/session/src/library.rs`, `crates/apps/src/builtin.rs`, `crates/serverd/src/skills.rs`, `crates/serverd/build.rs` | After the demo; three to four days | |
 
 ## The demo, step by step, on today's binary
@@ -128,22 +131,3 @@ market.
 The indicators as metrics in the demo; the two goals on a feature
 branch beside it; whether to open the second kit after the demo, and
 the names above.
-
-## Issue, drafted
-
-### A harmonisation corpus: four source systems, one product list
-
-- **What it buys.** A corpus with declared truth for the map and
-  define steps: the same products and sites across four systems with
-  their own identifier forms and units, three markets, monthly
-  snapshots, planted faults (a leading-zero mismatch, a composite
-  reference, a pallets-as-cases slice, a date in a second format, a
-  jump in on-hand stock) and a truth file naming each.
-- **What stands.** glosstest ships generators with truth files and
-  levers (`../glosstest/docs/operating-model.md`); every corpus so
-  far is one system. The import crate lands CSV and Parquet
-  (`crates/import/src/lib.rs:93`).
-- **Done when.** The corpus lands in a workspace through recipes; the
-  orphan rate, the derivation check and the cast account find each
-  planted fault; the truth file names them; the demo session runs
-  over it end to end.
