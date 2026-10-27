@@ -1222,10 +1222,16 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
             String::from_utf8_lossy(&body)
         );
     }
+    let checks = body_text(checks).await;
     assert_eq!(
-        row_count(checks).await,
+        checks.matches("dso_w").count(),
         1,
-        "one detector verdict, and the meaning voice is not a check"
+        "one witness row for the detector, and the meaning voice is not a check:\n{checks}"
+    );
+    assert!(checks.contains("1 orange"), "the witness row counts its verdicts by band:\n{checks}");
+    assert!(
+        checks.contains("perf · dso"),
+        "a verdict that is not green follows its witness as a row of its own:\n{checks}"
     );
 }
 

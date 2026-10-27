@@ -52,12 +52,12 @@
 
   <section class="tile">
     <header><span class="eyebrow">Standing checks</span>
-      <code class="chip" title="Each row is a witness's live verdict: the expectation is the witness's own declaration, measured and band come from ATTEST(). A new import invalidates the measurement, so the next read recomputes.">ATTEST()</code></header>
+      <code class="chip" title="One row per witness with a detector: what it checks, its detector and threshold, its verdicts counted by band, its worst band as the chip. Every verdict that is not green follows as a row of its own. Measured and band come from ATTEST(); a new import invalidates the measurement, so the next read recomputes.">ATTEST()</code></header>
     <div class="scroll">
     <gl-rows frame="frames/checks" empty="no witness carries a detector yet — nothing is checked">
       <template>
-        <div class="rrow" style="grid-template-columns:10rem 1fr 10rem 6rem 5rem">
-          <span class="r-subj">{checked}</span>
+        <div class="rrow" style="grid-template-columns:10rem 1fr 12rem 12rem 5rem">
+          <span class="{ccls}">{checked}</span>
           <span class="r-what">{what}</span>
           <span class="r-meta">{expectation}</span>
           <span class="r-num">{measured}</span>
