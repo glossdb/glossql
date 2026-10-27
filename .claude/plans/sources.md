@@ -123,4 +123,10 @@ leaves this file.
   candidates: on the relationship truth, does it rank the true edges
   above the coincidences, against today's ranking. Untuned first. If
   it does not clearly beat the baselines, it gets no place. It blocks
-  nothing in either plan.
+  nothing in either plan. The ranker to try first is the contrastive
+  language model (https://github.com/Contrastive-LM/CLM): a frozen
+  encoder with trained heads that scores candidates by dot product,
+  one pass per new text; the training signal is glossval's record of
+  every door call of every scored session. If it wins, it becomes a
+  service point, `GLOSSQL_RANK_URL`, refused by name when unset, on
+  the kernel service's GPU.

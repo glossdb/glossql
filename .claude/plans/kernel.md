@@ -7,17 +7,23 @@ sits where it sits, and what is not done and why not now.
 
 This file is the shared frame: the project lead's position, the
 terms, the tests behind the columns, what is not done and why not,
-and the decisions that are the lead's. The work is in two plans
+and the decisions that are the lead's. The work is in four plans
 beside it:
 
-- `futures.md` — the service integration and the futures. The
-  general service call and the what-if's retirement first, then the
-  forecast as a measurement, a world on the cube, levers and
-  scenarios, the planning goal, and the cube's widening after.
 - `sources.md` — what comes in: workbooks, documents, search, and
   the ranking experiments. It touches the import crate and one scalar
-  function, and shares only the general service call's seam with the
-  futures plan, so it runs beside it.
+  function on the general service call's seam, which stands.
+- `kits.md` — the harmonisation demo on today's binary, and kits as
+  build-time overlays with a harmonisation kit over the KPI kit. The
+  demo touches no Rust; the overlays open the hard side of the table
+  at build time only, after the demo.
+- `clients.md` — the trial's road: a workspace reachable at its own
+  name from Claude and ChatGPT, the registration, the file in. Build
+  order is risk order. It touches serverd and the apps crate and
+  names what glossdeploy builds.
+- `chat.md` — how a result reaches a person inside the chat and how
+  a ruling gets back: two roads, one measure. It touches the door's
+  result and the docket.
 
 Read a plan when picking the next piece of kernel work. A plan links
 its issues and shrinks: a row that becomes an issue links the issue;
@@ -72,8 +78,9 @@ The project lead's position, in short.
   "For the other repos", and an issue here when it is a unit of work.
   Those repos carry their notes, experiments and records; none carries
   a plan of its own for kernel work.
-- **The futures are core.** The kernel holds one world today, the
-  actuals. Planning needs four. The decision tree is the comparison
+- **The futures are core.** The kernel holds four worlds: the
+  actuals, the plan, the forecast and the scenario
+  (`docs/methods/forecast.md`, `scenario.md`, `plan.md`). The decision tree is the comparison
   of scenarios by their forecasts. The search is the engine's own
   arithmetic through the groundings; the estimate of what a lever
   does where no definition reaches is the service's. Both halves
@@ -90,9 +97,9 @@ The project lead's position, in short.
   read gains a goal; how it is built does not change.
 - **No abstraction before it works.** Routes as data and plugins wait
   until the planning goal runs on the eval.
-- The order: the service integration first, in the futures plan. The
-  sources plan runs beside it. The architecture docs change once the
-  plan grounding's form is decided.
+- The order: the harmonisation demo first, in the kits plan; the
+  sources plan runs beside it. The recommendations read waits on
+  glossval's planning task (#174).
 
 ## The tests behind the columns
 
@@ -102,14 +109,12 @@ The project lead's position, in short.
 - **Hard**: the core changes shape first. Bootstrap takes more than
   one pack; the read, page and docket lists open; the next read takes
   arms from outside; somebody other than the core declares a shape.
-- **The phase 1 gate**, for the sources plan and the futures plan's
-  first rows: nothing needs a second pack, a change to how the next
+- **The phase 1 gate**, for the sources plan: nothing needs a second pack, a change to how the next
   read is built, or the cube change. An item that needs one of them
   is not phase 1 work.
-- **The phase 2 gate**, for the futures: nothing needs a second pack,
-  routes as data, or a change to how the next read is built. It does
-  need a world on the cube reads and the forecast as a measurement,
-  and both are rows. An item that needs more is not phase 2 work.
+- **The phase 2 gate**, for work over the worlds (#174): nothing
+  needs a second pack, routes as data, or a change to how the next
+  read is built. An item that needs more is not phase 2 work.
 - **The kits are core content.** The cube admits a time axis by
   `temporal_profile` and a dimension by `dimension_relevance`; the
   library conditions on the kit's `role`; the next read and the docket
