@@ -169,9 +169,14 @@ a sentence from the record's fields; a breached corridor with its
 picture and the axis that moved most; then the standing checks, each
 opening to its evidence, what the functions measured in words, each
 table's newest load in one line, and what the vocabulary still owes
-by name), Glossary (what every metric and view means, every table
-with its columns' roles and meanings, the source conventions) and
-Lineage. The second hands the data over: Export (every table and read
+by name), Glossary (the vocabulary first — every declared aspect
+with what it holds, where it is owed, who may speak it and how many
+owed subjects carry a value, in three groups by kind — then the
+terms, every table with its columns, the joins with their coherence
+and the sources with their conventions; a page per table, column and
+aspect holds every slot with its voice and standing, what the
+functions measured, the joins and the landing, a person's word marked
+once with the who and when on hover) and Lineage. The second hands the data over: Export (every table and read
 as a file) and Query (a pane for a read of one's own, the SQL riding
 the page URL so a read is a link). Pages `index.html`, `metrics.html`,
 `quality.html`, `glossary.html`, `lineage.html`, `export.html`,

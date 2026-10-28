@@ -324,6 +324,60 @@ code { font-family: var(--mono); font-size: 0.95em; }
 .finding .rrow.f-move { padding: 0.5rem 0; }
 .finding gl-chart { display: block; margin-top: 0.9rem; }
 
+/* ---- the glossary's marks and rails ------------------------------- */
+
+/* A voice mark: who holds a value, said once and quietly. Nothing
+   for the agent's unchallenged word — that is the ordinary case; a
+   person's word, a contested slot and a stale one each get a word.
+   The who and the when ride the hover. */
+.v {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0 0.3rem;
+  border-radius: 2px;
+  margin-left: 0.4rem;
+  vertical-align: 0.1em;
+  white-space: nowrap;
+}
+.v-ruled { color: var(--settled); border: 1px solid rgba(109, 189, 141, 0.4); }
+.v-open { color: var(--open); border: 1px solid var(--open-dim); }
+.v-stale { color: var(--faint); border: 1px solid var(--rule); }
+.v-none { display: none; }
+.v[title] { cursor: help; }
+
+/* The vocabulary's rail: per aspect, the share of owed subjects
+   spoken on — ink on the raised ground, since a count is not a
+   verdict; settled green only when every owed slot is filled. */
+.rail-h {
+  display: block;
+  height: 4px;
+  width: 100%;
+  max-width: 8rem;
+  background: var(--raised);
+  border-radius: 1px;
+  margin-top: 0.45rem;
+  overflow: hidden;
+}
+.rail-h i { display: block; height: 100%; background: var(--muted); }
+.rail-h.full i { background: var(--settled); }
+
+/* A group's line inside a band, our own words: sans, faint. */
+.grp { font-family: var(--sans); font-size: 0.82rem; color: var(--faint); padding: 1rem 0 0.2rem; }
+.rrow.sub { padding: 0.55rem 0; }
+
+/* A subject page's head: the way back, then the name and what it is
+   in one line, authored language at reading size. */
+.nav-sub { font-family: var(--mono); font-size: var(--step); color: var(--faint); margin: 1.5rem 0 0; }
+.nav-sub a { color: var(--muted); border-bottom: 1px solid var(--rule); }
+.nav-sub a:hover { color: var(--ink); }
+.page-h { font-family: var(--sans); font-size: 1.05rem; font-weight: 500; margin: 0.4rem 0 0; color: var(--ink); }
+.page-h code { font-family: var(--mono); font-size: 1rem; font-weight: 600; }
+.page-h .r-what { font-size: inherit; }
+.dict a { color: var(--ink); }
+.dict a:hover { text-decoration: underline; }
+
 /* ---- the confidence gutter ---------------------------------------- */
 
 /* One rail per matter, filled to the confidence its author holds:

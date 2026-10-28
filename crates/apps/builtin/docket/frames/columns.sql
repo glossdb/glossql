@@ -1,20 +1,22 @@
--- The Explore tab's left column: every landed table with what one row
--- is, then its columns folded as lines — the column, its judged role
--- (the engine's type where none is judged), its behaviour and unit
--- where it has them, and what it means. Roles and meanings are the
--- collapsed record: a human's entry outranks the agent's, the newest
--- of each wins. Landed tables alone: the served reads are views in
--- the schema surface too, and the Metrics tab is theirs; the format's
--- own metadata tables beside each landed one stay out as well. One
--- row per table, so the page reads as a dictionary.
+-- The Glossary's tables: every landed table with what one row is, its
+-- grain and its time axis from the entity entry, then its columns
+-- folded as lines — the column, its judged role with the axis
+-- verdict beside a dimension (the engine's type where no role is
+-- judged), its behaviour and unit where it has them, and what it
+-- means. Roles and meanings are the collapsed record: a person's
+-- entry outranks the agent's, the newest of each wins. Landed tables
+-- alone: the served reads are views in the schema surface too, and
+-- the Metrics tab is theirs; the format's own metadata tables beside
+-- each landed one stay out as well. One row per table, so the page
+-- reads as a dictionary; the name opens the table's page.
 WITH g AS (
   SELECT g.subject, g.aspect, g.body,
          row_number() OVER (PARTITION BY g.subject, g.aspect
            ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END, g.written_at DESC) AS rn
   FROM glossary g JOIN current_dataset d ON d.dataset = g.dataset
-  WHERE g.aspect IN ('role', 'meaning', 'unit', 'behavior', 'entity')
+  WHERE g.aspect IN ('role', 'meaning', 'unit', 'behavior', 'entity', 'dimension')
 ),
-cur AS (SELECT subject, aspect, json_get_str(body, 'value') AS value FROM g WHERE rn = 1),
+cur AS (SELECT subject, aspect, body, json_get_str(body, 'value') AS value FROM g WHERE rn = 1),
 cols AS (
   SELECT c.table_name, c.column_name, c.ordinal_position,
          CASE
@@ -24,10 +26,11 @@ cols AS (
            WHEN c.data_type LIKE 'Timestamp%' THEN 'timestamp'
            WHEN c.data_type = 'Boolean' THEN 'flag'
            ELSE lower(c.data_type) END AS typed,
-         r.value AS role, m.value AS meaning, u.value AS unit, b.value AS behavior
+         r.value AS role, x.value AS axis, m.value AS meaning, u.value AS unit, b.value AS behavior
   FROM information_schema.columns c
   JOIN current_dataset d ON d.dataset = c.table_schema
   LEFT JOIN cur r ON r.aspect = 'role' AND r.subject = c.table_name || '.' || c.column_name
+  LEFT JOIN cur x ON x.aspect = 'dimension' AND x.subject = c.table_name || '.' || c.column_name
   LEFT JOIN cur m ON m.aspect = 'meaning' AND m.subject = c.table_name || '.' || c.column_name
   LEFT JOIN cur u ON u.aspect = 'unit' AND u.subject = c.table_name || '.' || c.column_name
   LEFT JOIN cur b ON b.aspect = 'behavior' AND b.subject = c.table_name || '.' || c.column_name
@@ -37,7 +40,7 @@ cols AS (
 folded AS (
   SELECT table_name, count(*) AS n,
          array_to_string(array_agg(
-           column_name || '  ·  ' || coalesce(role, typed)
+           column_name || '  ·  ' || coalesce(role, typed) || coalesce(', ' || axis, '')
              || coalesce('  ·  ' || behavior, '') || coalesce('  ·  ' || unit, '')
              || coalesce('  —  ' || meaning, '')
            ORDER BY ordinal_position), chr(10)) AS lines
@@ -51,7 +54,11 @@ SELECT arrow_cast(f.table_name, 'Utf8') AS name,
        f.n AS columns,
        coalesce(CAST(i.landed_rows AS BIGINT), 0) AS rows,
        arrow_cast(coalesce(e.value, ''), 'Utf8') AS entity,
-       arrow_cast(f.lines, 'Utf8') AS lines
+       arrow_cast(concat_ws(' · ',
+         'one row per ' || regexp_replace(replace(replace(replace(CAST(json_get(e.body, 'grain') AS VARCHAR), '"', ''), '[', ''), ']', ''), ',[[:space:]]*', ', ', 'g'),
+         'time axis ' || json_get_str(e.body, 'time_axis')), 'Utf8') AS shape,
+       arrow_cast(f.lines, 'Utf8') AS lines,
+       arrow_cast('?table=' || f.table_name, 'Utf8') AS link
 FROM folded f
 LEFT JOIN cur e ON e.aspect = 'entity' AND e.subject = f.table_name
 LEFT JOIN latest l ON l.table_name = f.table_name

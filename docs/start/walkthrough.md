@@ -258,8 +258,9 @@ page. Its tabs come in two groups. Questions (what is open to judge,
 what is settled, what waits on an act), Metrics (the surfaces, the
 views and the facts, one metric's story and slices), Quality (what is
 wrong and why, worst first; then the checks, what the functions
-measured, each load, and what is still unsaid), Glossary (what every
-word means) and Lineage (the tables along their key edges and the
+measured, each load, and what is still unsaid), Glossary (the
+vocabulary, the terms, every table, join and source, and a page per
+table, column and aspect) and Lineage (the tables along their key edges and the
 columns each metric reads) show what the record says; Export (every
 table and read as a file) and Query (a read of one's own) hand the
 data over. The ruling form on Questions is the same write the
