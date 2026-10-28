@@ -761,7 +761,7 @@ async fn every_builtin_frame_executes_and_serves_classic_types() {
             };
             // Extra params are ignored by frames that bind none of them.
             let uri = format!(
-                "/perf/app/{}/frames/{stem}?metric=dso&subject=ledger&dim=region&grain=month&span=24",
+                "/perf/app/{}/frames/{stem}?metric=dso&subject=ledger&dim=region&grain=month&span=24&check=none",
                 builtin.name
             );
             let response = get(&app, &uri).await;
@@ -817,6 +817,11 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         ("conventions", "record"),
         ("definitions", "record"),
         ("relations", "record"),
+        ("checks", "record"),
+        ("check", "record"),
+        ("check_slots", "record"),
+        ("check_rates", "record"),
+        ("check_verdicts", "record"),
         ("axes", "record"),
         ("remeasure", "record"),
         ("metric", "record"),
@@ -830,7 +835,7 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         let response = get(
             &app,
             &format!(
-                "/perf/app/docket/frames/{frame}?metric=dso&subject=ledger&dim=region&grain=month&span=24"
+                "/perf/app/docket/frames/{frame}?metric=dso&subject=ledger&dim=region&grain=month&span=24&check=none"
             ),
         )
         .await;
@@ -1246,15 +1251,79 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
     }
     let checks = body_text(checks).await;
     assert_eq!(
-        checks.matches("dso_w").count(),
+        checks.matches("dso_w\n").count(),
         1,
         "one witness row for the detector, and the meaning voice is not a check:\n{checks}"
     );
     assert!(checks.contains("1 orange"), "the witness row counts its verdicts by band:\n{checks}");
     assert!(
-        checks.contains("perf · dso"),
-        "a verdict that is not green follows its witness as a row of its own:\n{checks}"
+        checks.contains("?check=dso_w&kind=verdicts\n"),
+        "the row opens the check, with the detector's kind:\n{checks}"
     );
+    assert!(
+        checks.contains("Does probe_check pass on dso?"),
+        "a detector of the workspace's own is asked by name:\n{checks}"
+    );
+
+    // The check's page: the declaration and the verdict as one row,
+    // then the evidence — every verdict, for a detector the page has
+    // no shape for.
+    let page = text(get(&app, "/perf/app/docket/p/quality?check=dso_w&kind=verdicts").await).await;
+    assert!(page.contains("frames/check\""), "{page}");
+    assert!(page.contains("frames/check_verdicts"), "{page}");
+    assert!(
+        page.contains("aria-current=\"page\" href=\"/perf/app/docket/p/quality\">Quality</a>"),
+        "opening a check stays on the tab:\n{page}"
+    );
+    let check = body_text(get(&app, "/perf/app/docket/frames/check?check=dso_w").await).await;
+    assert!(check.contains("probe_check\n"), "{check}");
+    assert!(check.contains("0.9\n"), "the threshold:\n{check}");
+    assert!(check.contains("1 verdict: 1 orange\n"), "{check}");
+    let verdicts = body_text(get(&app, "/perf/app/docket/frames/check_verdicts?check=dso_w").await).await;
+    assert!(verdicts.contains("perf\n"), "the subject:\n{verdicts}");
+    assert!(verdicts.contains("orange\n"), "{verdicts}");
+    assert!(verdicts.contains("0.42\n"), "the score:\n{verdicts}");
+
+    // A voice check: the shipped detector over a slot two actors
+    // disagree on. The evidence lists that column with both voices,
+    // the human's first; the agreeing columns are counted, not listed.
+    agent
+        .execute(&format!(
+            r#"USE perf;
+               DECLARE FUNCTION slot_entropy FOR GLOBAL AS $${}$$;
+               DECLARE WITNESS value_w ON meaning BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
+               GLOSS meaning ON ledger.month AS $${{"value": "the month"}}$$;"#,
+            include_str!("../../../scripts/functions/slot_entropy.sql")
+        ))
+        .await
+        .unwrap();
+    plane
+        .channel(
+            Actor {
+                kind: ActorKind::Human,
+                id: "ada".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .execute(r#"USE perf; GLOSS meaning ON ledger.value AS $${"value": "the cash"}$$;"#)
+        .await
+        .unwrap();
+    let checks = body_text(get(&app, "/perf/app/docket/frames/checks").await).await;
+    assert!(
+        checks.contains("?check=value_w&kind=voices\n"),
+        "a voice check opens to its voices:\n{checks}"
+    );
+    let slots = body_text(get(&app, "/perf/app/docket/frames/check_slots?check=value_w").await).await;
+    assert!(slots.contains("ledger.value\n"), "the column whose voices differ:\n{slots}");
+    assert!(
+        slots.contains("human: the cash · agent: the money\n"),
+        "both voices, the human's first:\n{slots}"
+    );
+    assert!(!slots.contains("ledger.month"), "an agreeing column is not listed:\n{slots}");
+    let points = get(&app, "/perf/app/docket/frames/check_points?check=value_w").await;
+    assert_eq!(row_count(points).await, 0, "a voice check has no corridor points");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1297,18 +1366,17 @@ async fn the_quality_page_accounts_for_each_landing() {
         "the dirty table's cells:\n{landing}"
     );
 
-    let casts = body_text(get(&app, "/perf/app/docket/frames/casts").await).await;
-    assert!(casts.contains("dirty.v\n"), "{casts}");
-    assert!(casts.contains("x ×2\n"), "{casts}");
+    // The cast failures fold under their table: the column, the count,
+    // the values the cast could not read.
     assert!(
-        !casts.contains("ledger"),
-        "every ledger cast held:\n{casts}"
+        landing.contains("v  \u{b7}  2 nulled  \u{b7}  x \u{d7}2"),
+        "dirty's one failing cast, as a line under the row:\n{landing}"
     );
 
     let census = body_text(get(&app, "/perf/app/docket/frames/census").await).await;
     assert!(
-        census.starts_with("not run\n2\n"),
-        "the corridor unwalked, two tables landed:\n{census}"
+        census.starts_with("not run\nnone declared\n2\n"),
+        "the corridor unwalked, no check declared, two cells nulled:\n{census}"
     );
 }
 

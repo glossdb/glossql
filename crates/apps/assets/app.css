@@ -521,6 +521,22 @@ details.contest[open] summary { color: var(--muted); }
 /* Full lists scroll instead of truncating — depth over dismissal. */
 .scroll { max-height: 30rem; overflow-y: auto; scrollbar-width: thin; }
 
+/* A header row over a band's rows, where bare numbers need names. */
+.rrow.rhead { padding: 0.5rem 0 0.35rem; border-bottom: 1px solid var(--rule); }
+.rrow.rhead > * { font-family: var(--mono); font-size: var(--step); color: var(--faint); letter-spacing: 0.04em; }
+
+/* The checks' band bar: one witness's verdicts counted by band, each
+   count a share of the bar. Green is settled and red is breached, the
+   two verdict hues; yellow and orange are the amber at two strengths —
+   a verdict asking for a look, which is what amber means here. */
+.bands { display: flex; height: 5px; margin-top: 0.55rem; background: var(--raised); border-radius: 1px; overflow: hidden; }
+.bands i { display: block; height: 100%; flex-basis: 0; }
+.b-green { background: var(--settled); }
+.b-yellow { background: var(--open); opacity: 0.45; }
+.b-orange { background: var(--open); }
+.b-red { background: var(--breach); }
+.b-error { background: var(--faint); }
+
 /* ---- loading and errors ------------------------------------------- */
 
 [aria-busy="true"] {

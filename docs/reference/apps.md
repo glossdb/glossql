@@ -160,8 +160,9 @@ groups of tabs. The first shows what the record says: Questions (what
 stands open for a human to judge, what has been settled, what waits
 on an act), Metrics (the surfaces, with the views and the facts listed
 apart from them), Quality (the corridor and what is behind a red, the
-landing account, the standing checks folded per witness, the column
-coverage), Glossary (what every metric and view means, every table
+standing checks folded per witness and each opening to its evidence,
+the landing account with the cells the casts nulled under each table,
+the column coverage), Glossary (what every metric and view means, every table
 with its columns' roles and meanings, the source conventions) and
 Lineage. The second hands the data over: Export (every table and read
 as a file) and Query (a pane for a read of one's own, the SQL riding
