@@ -803,6 +803,8 @@ gl-graph svg { display: block; font-family: var(--mono); }
   cursor: pointer;
 }
 .wbtn:hover { color: var(--muted); border-color: var(--muted); }
+.wbtn:disabled { opacity: 0.4; cursor: default; }
+.wbtn:disabled:hover { color: var(--faint); border-color: var(--rule); }
 .wbtn.on { color: var(--open); border-color: var(--open-dim); }
 
 gl-window { display: block; margin: 0.4rem 0 0.8rem; }
@@ -821,3 +823,5 @@ gl-query textarea {
 gl-query textarea:focus { outline: none; border-color: var(--open-dim); }
 gl-query .wgroup { display: flex; gap: 0.5rem; align-items: baseline; margin-bottom: 0.6rem; }
 gl-query a.wbtn { text-decoration: none; }
+/* The footer's steps sit on the footer's own line, after the range. */
+gl-query .table-foot .wbtn { margin-left: 0.4rem; }

@@ -12,7 +12,11 @@
 // `sql` attribute on the element does the same for a page that
 // knows its read, a view's page over its own rows. A header click
 // sorts what came back, in the browser, and the footer says so; the
-// engine sorts the whole relation when the read says ORDER BY.
+// engine sorts the whole relation when the read says ORDER BY. The
+// rows page in the browser in steps of `rows`, the footer carrying
+// the range and the way to the next page — every row the door
+// answered is held, so a page is a redraw and never a second read,
+// and the downloads keep the whole result.
 (function () {
   'use strict';
 
@@ -152,6 +156,7 @@
         foot.className = 'table-foot';
         const sort = { col: -1, dir: 1 };
         const cap = this._cap;
+        let page = 0;
         const draw = () => {
           const order = rows.slice();
           if (sort.col >= 0) {
@@ -166,13 +171,17 @@
             th.addEventListener('click', () => {
               if (sort.col === c) sort.dir = -sort.dir;
               else { sort.col = c; sort.dir = 1; }
+              page = 0;
               draw();
             });
             head.appendChild(th);
           });
           const body = el.createTBody();
-          const shown = Math.min(order.length, cap);
-          for (let i = 0; i < shown; i++) {
+          const pages = Math.max(1, Math.ceil(order.length / cap));
+          if (page >= pages) page = pages - 1;
+          const from = page * cap;
+          const to = Math.min(order.length, from + cap);
+          for (let i = from; i < to; i++) {
             const tr = body.insertRow();
             for (let c = 0; c < names.length; c++) {
               const td = tr.insertCell();
@@ -181,11 +190,34 @@
               if (typeof value === 'number' || typeof value === 'bigint') td.className = 'num';
             }
           }
-          foot.textContent =
-            rows.length.toLocaleString() +
-            ' rows' +
-            (rows.length > shown ? ', showing first ' + shown : '') +
+          // The footer: the range on the page over the total, the
+          // sort where one stands, and a step either way while there
+          // is somewhere to step.
+          foot.replaceChildren();
+          const said = document.createElement('span');
+          said.textContent =
+            (order.length > cap
+              ? 'rows ' + (from + 1).toLocaleString() + ' to ' + to.toLocaleString() +
+                ' of ' + order.length.toLocaleString()
+              : order.length.toLocaleString() + ' rows') +
             (sort.col >= 0 ? ', sorted by ' + names[sort.col] + ' in the browser' : '');
+          foot.append(said);
+          if (pages > 1) {
+            const step = (label, delta, able) => {
+              const b = document.createElement('button');
+              b.type = 'button';
+              b.className = 'wbtn';
+              b.textContent = label;
+              b.disabled = !able;
+              b.addEventListener('click', () => {
+                page += delta;
+                draw();
+              });
+              foot.append(' ', b);
+            };
+            step('previous', -1, page > 0);
+            step('next', 1, page < pages - 1);
+          }
         };
         draw();
         out.replaceChildren(el, foot);

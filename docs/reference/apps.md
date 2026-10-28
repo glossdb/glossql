@@ -134,7 +134,11 @@ The other tiles:
   that read on load, so a read is a link, and a `sql` attribute on
   the element does the same for a page that knows its read. A header
   click sorts what came back, in the browser, and the footer says so.
-  It touches no frame and no store.
+  The rows page in steps of `rows`, in the browser: every row the
+  door answered is held, the footer carries the page's range over the
+  total with a step either way, a sort starts over from the first
+  page, and the downloads keep the whole result. It touches no frame
+  and no store.
 - `<gl-graph nodes="frames/x" edges="frames/y" empty="…">` — column
   lineage over two frames: nodes one row per column (`node`, `kind`
   as `table` or `metric`, `col`, `ord`, `role`), edges one row per
