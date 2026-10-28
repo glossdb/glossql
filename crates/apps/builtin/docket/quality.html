@@ -98,48 +98,66 @@
 </div>
 
 {% else %}
-{# ---- how well the data is held ------------------------------------ #}
-{# The corridor and what is behind a red; the standing checks, one row
-   per witness, each opening to its evidence; what each landing took
-   in, dropped and nulled, with the cells its casts could not read
-   under it; how much of the vocabulary is judged. Everything here is
-   measured — a witness's live verdict, the landing's own account, the
-   glossary's own counts — never assumed. #}
+{# ---- what is wrong, then the instruments --------------------------- #}
+{# Findings first: what is wrong right now, worst first, each a
+   sentence from the record's fields with the numbers behind it, what
+   reads the subject and where it came from — a witness's verdict that
+   is not green, a load whose casts refused cells, a defect a function
+   measured. A breached corridor shows its months against the
+   corridor and where the move is. Then the instruments, in words: the
+   standing checks, what the functions measured, each table's newest
+   load, and what the vocabulary still owes by name. Everything here
+   is measured — a witness's live verdict, the landing's own account,
+   the measurement's own body — never assumed, and nothing is a count
+   standing in for a sentence. #}
 <div class="tiles">
-  <div class="counts">
-    {{ tiles::value(frame="frames/census", field="corridor", label="Corridor",
-         format="text", chip="ATTEST()",
-         note="The dataset-wide band verdict from the bands witness: the newest complete point of every watched metric against the corridor its own history predicted. 'not run' is honest absence, not green.") }}
-    {{ tiles::value(frame="frames/census", field="checks", label="Standing checks",
-         format="text", chip="witnesses",
-         note="Every witness with a detector, and how many of them hold a verdict that is not green. The list below has each.") }}
-    {{ tiles::value(frame="frames/census", field="nulled", label="Cells nulled", chip="imports",
-         note="Cells the casts could not read in the newest landing of each table, summed. The landing account names the columns and the values.") }}
-    {{ tiles::value(frame="frames/census", field="judged", label="Columns judged", format="text",
-         chip="GLOSSARY()", note="Columns with any claim on them, over every column the dataset holds.") }}
-  </div>
+  <section class="tile">
+    <header><span class="eyebrow">Findings</span>
+      <code class="chip" title="A check's verdict that is not green (ATTEST), a load's refused cells (imports), a defect a function measured (the measurement aspects): worst first, a verdict's band as the chip, the rest without a hue — a measurement proposes and never judges. A breached corridor comes first with its picture and its movers. Nothing wrong serves no finding, and the page says so.">ATTEST() · imports · measurements</code></header>
+    <p class="hint">What is wrong right now, worst first. Each finding says what was seen, what reads it and where it comes from.</p>
 
-  {# Behind the corridor's word: each metric whose newest complete
-     point landed outside its corridor, with the actual, the corridor
-     and the side, linked to its page. A green corridor serves no row
-     and the block is empty; the corridor check's page lists every
-     metric's point. #}
-  <gl-rows frame="frames/breach" empty="">
-    <template>
-      <a class="rrow" href="{link}" style="grid-template-columns:minmax(10rem,14rem) 6rem 8rem minmax(10rem,1fr) 5rem">
-        <span class="r-subj">{title}<br><span class="r-meta">{metric}</span></span>
-        <span class="r-meta">{period}</span>
-        <span class="r-num">{actual}</span>
-        <span class="r-meta">the corridor: {corridor}</span>
-        <code class="chip warn">{side}</code>
-      </a>
-    </template>
-  </gl-rows>
+    {# A breached corridor: the metric whose newest complete point
+       landed outside. The picture and the movers are the metric's own
+       frames, keyed by its name through the row's field. #}
+    <gl-rows frame="frames/breaches" empty="">
+      <template>
+        <article class="finding f-red">
+          <div class="f-head"><code class="chip {bcls}">{band}</code><h2>{headline}</h2></div>
+          <p class="f-why">The month closed at <code>{actual}</code>. From its own history the metric was expected between <code>{lo}</code> and <code>{hi}</code>; the point sits {side} that, displacement <code>{displacement}</code>. {others}</p>
+          <gl-chart frame="frames/corridor?metric={metric}" spec="specs/corridor.vl.json" empty=""></gl-chart>
+          <p class="f-meta">the band is the corridor the walk predicted for each month from the months before it, the 10th to the 90th percentile; the line is the actual</p>
+          <p class="f-sub">Where the move is · the previous month to this one, by each axis the metric is sliced by</p>
+          <gl-rows frame="frames/movers?metric={metric}" empty="the metric is sliced by no axis, so the move has no parts">
+            <template>
+              <div class="rrow f-move" style="grid-template-columns:8rem 7rem 12rem 7rem minmax(0,1fr)">
+                <span class="r-meta">{axis}</span>
+                <span class="r-subj">{member}</span>
+                <span class="r-meta">{before} → {after}</span>
+                <span class="r-num">{sign}{moved}</span>
+                <span class="r-meta">{rest} {rest_sign}{rest_moved}</span>
+              </div>
+            </template>
+          </gl-rows>
+          <p class="f-meta">{meta} · {at}{stale} · <a href="{link_check}">the check</a> · <a href="{link_metric}">{title}, sliced by {axis}</a></p>
+        </article>
+      </template>
+    </gl-rows>
+
+    <gl-rows frame="frames/findings" empty="Beyond the corridor, nothing stands out: every check green, every cell read, every join resolving, every identity holding.">
+      <template>
+        <article class="finding">
+          <div class="f-head"><code class="chip {bcls}">{chip}</code><h2>{headline}</h2></div>
+          <p class="f-why">{why} {reads}</p>
+          <p class="f-meta">{meta} · <a href="{link}">{link_text}</a></p>
+        </article>
+      </template>
+    </gl-rows>
+  </section>
 
   <section class="tile">
-    <header><span class="eyebrow">Standing checks</span>
+    <header><span class="eyebrow">The checks</span>
       <code class="chip" title="One row per witness with a detector: what it asks, its detector and threshold, its verdicts counted by band — the bar is the counts as shares — and its worst band as the chip. A row opens the check: its declaration, its verdict and the evidence behind it. Measured and band come from ATTEST(); a new import invalidates the measurement, so the next read recomputes.">witnesses · ATTEST()</code></header>
-    <p class="hint">What each check asks, and how its verdicts fell. Open a row for what the check saw.</p>
+    <p class="hint">What stands guard, and how each check's verdicts fell. Open a row for what the check saw.</p>
     <gl-rows frame="frames/checks" empty="no witness carries a detector yet — nothing is checked; the next read's checks goal hands the statement">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:9rem minmax(0,1fr) 10rem 10rem 5rem">
@@ -154,43 +172,59 @@
   </section>
 
   <section class="tile">
-    <header><span class="eyebrow">Landing account</span>
-      <code class="chip" title="The newest landing of each table: what each source scan held (a join's scans listed, never summed), what landed, what the recipe dropped, the cells its casts nulled, and when; under the row, each column whose cast nulled a cell, how many, and the values it could not read, most frequent first (the landing keeps eight). A landing that could not account for its casts says so.">imports</code></header>
+    <header><span class="eyebrow">What the functions measured</span>
+      <code class="chip" title="Every measurement aspect a function landed, with what it found in words from its own body, how many subjects it reached and when. A measurement proposes and never judges: a defect here is a finding above, a verdict only through a witness. The aspects nobody has run fold under the list.">GLOSSARY(all =&gt; true) · kind = measurement</code></header>
+    <p class="hint">The evidence the functions landed, aspect by aspect.</p>
+    <gl-rows frame="frames/measured" empty="no function has measured anything here yet — the next read's checks goal hands the statement">
+      <template>
+        <div class="rrow" style="grid-template-columns:12rem minmax(0,1fr) 9rem">
+          <span class="r-subj">{aspect}<br><span class="r-meta">{subjects}</span></span>
+          <span class="r-what">{found}</span>
+          <span class="r-meta">{at}</span>
+        </div>
+      </template>
+    </gl-rows>
+    <details class="fold"><summary>not yet measured</summary>
+      <gl-rows frame="frames/unmeasured" empty="every declared measurement has run on something">
+        <template>
+          <div class="rrow" style="grid-template-columns:12rem minmax(0,1fr)">
+            <span class="r-subj">{aspect}</span>
+            <span class="r-meta">{owed}</span>
+          </div>
+        </template>
+      </gl-rows>
+    </details>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">The loads</span>
+      <code class="chip" title="The newest landing of each table: what the recipe read (a join's scans listed, never summed), what landed and when, the rows a filtering recipe dropped (a join's shape cannot count them, and says nothing), and the cells its casts refused with the values they could not read, most frequent first (the landing keeps eight). A landing that could not account for its casts says so. The table opens its page on the Glossary tab.">imports</code></header>
+    <p class="hint">Each table's newest landing in one line: what was read, what landed, when, and what the casts refused.</p>
     <gl-rows frame="frames/landing" empty="nothing has landed here yet — a table lands through a recipe, DECLARE RECIPE over the agent door">
       <template>
-        <div class="rrow" style="grid-template-columns:minmax(9rem,1fr) minmax(10rem,1fr) 6rem 6rem 6rem 9rem">
-          <span class="r-subj">{name}<br><span class="r-meta">{casts}</span></span>
-          <span class="r-meta">{scanned}</span>
+        <div class="rrow" style="grid-template-columns:9rem minmax(0,1fr) 6rem 9rem minmax(0,1.4fr)">
+          <span class="r-subj"><a href="{link}">{name}</a><br><span class="r-meta">{casts}</span></span>
+          <span class="r-meta">{read}</span>
           <span class="r-num">{landed}<br><span class="r-meta">landed</span></span>
-          <span class="r-num">{dropped}{dropped_dash}<br><span class="r-meta">{dropped_label}</span></span>
-          <span class="r-num {ncls}">{nulled}{dash}<br><span class="r-meta">{nulled_label}</span></span>
-          <span class="r-meta">{landed_at}</span>
-          <span class="r-what dict" style="grid-column:1 / -1">{failures}</span>
+          <span class="r-meta">{at}<br>{dropped}</span>
+          <span class="r-what dict">{refused}</span>
         </div>
       </template>
     </gl-rows>
   </section>
 
   <section class="tile">
-    <header><span class="eyebrow">Column coverage</span>
-      <code class="chip" title="Denominators from the model's own rules: behavior and unit are owed only where role = measure. A table with no measures shows a dash — not applicable, not a gap.">GLOSSARY(all =&gt; true)</code></header>
-    <div class="scroll">
-    <div class="rrow rhead" style="grid-template-columns:12rem 4rem 6rem 7rem 7rem 5rem">
-      <span>table</span><span>columns</span><span>named</span><span>behaviour</span><span>unit</span><span>axes</span>
-    </div>
-    <gl-rows frame="frames/coverage" empty="no column claims yet">
+    <header><span class="eyebrow">Not yet said</span>
+      <code class="chip" title="Every slot a witnessed fact aspect is owed on — the aspect's grain and condition name the subject — that no voice has filled: by aspect, the names under their tables. The row opens the aspect on the Glossary tab.">GLOSSARY() · state = unassessed</code></header>
+    <p class="hint">What the vocabulary still owes, by name. A row opens the aspect on the Glossary tab.</p>
+    <gl-rows frame="frames/unsaid" empty="every owed slot is spoken — nothing is unsaid">
       <template>
-        <div class="rrow" style="grid-template-columns:12rem 4rem 6rem 7rem 7rem 5rem">
-          <span class="r-subj">{t}</span>
-          <span class="r-num">{cols}</span>
-          <span class="r-num">{meaning}</span>
-          <span class="r-num {bcls}">{btxt}</span>
-          <span class="r-num {ucls}">{utxt}</span>
-          <span class="r-num">{dims}</span>
-        </div>
+        <a class="rrow" href="{link}" style="grid-template-columns:9rem minmax(0,1fr)">
+          <span class="r-subj">{aspect}<br><span class="r-meta">{owed} owed</span></span>
+          <span class="dict">{names}</span>
+        </a>
       </template>
     </gl-rows>
-    </div>
   </section>
 </div>
 {% endif %}

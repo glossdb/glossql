@@ -22,6 +22,9 @@ layered on it at image build time.
 | The quality tab's checks open to their evidence: the corridor's points, a voice check's differing columns | Medium: two evidence shapes behind one page param | `frames/checks.sql`, `quality.html`, new frames over `band_points()` and `glossary` | With the demo; two days | #180 |
 | A view's page shows what it serves and its rows through the pane; the pane takes its SQL from the page | Low | `metrics.html`, `crates/apps/assets/gl-query.js` | With the demo; one day | #181 |
 | A stopped surface folds under a closed line on Metrics and Export | Low | `frames/pulse.sql`, `views.sql`, `facts.sql`, `reads.sql` | With the demo; half a day | #182 |
+| The quality tab opens with findings: a sentence per verdict, refusal and measured defect, the breached corridor with its picture and movers; then the checks, the measurements, the loads, the unsaid | Medium: seven frames over reads that exist | `crates/apps/builtin/docket/quality.html`, `frames/findings.sql`, `breaches.sql`, `movers.sql`, `corridor.sql`, `measured.sql`, `landing.sql`, `unsaid.sql` | With the demo; two days | #184 |
+| The glossary tab shows the vocabulary by aspect, the terms, the tables, joins and sources, and a page per table, column and aspect | Medium: three subject pages on one template | `glossary.html`, new frames over `aspects`, `witnesses`, `GLOSSARY()` | With the demo; two days | #185 |
+| The query pane pages through what a read returned | Low | `crates/apps/assets/gl-query.js` | With the demo; half a day | #186 |
 | Kits out of the Rust code: the walk, the arrays, the step list split, the docket move | Medium: a build script over five lists | `crates/scripts/src/library.rs`, `crates/session/src/library.rs`, `crates/apps/src/builtin.rs`, `crates/serverd/src/skills.rs`, `crates/serverd/build.rs` | After the demo; three to four days | |
 
 ## The demo, step by step, on today's binary

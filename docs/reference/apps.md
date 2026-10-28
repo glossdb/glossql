@@ -163,10 +163,13 @@ stands open for a human to judge, what has been settled, what waits
 on an act), Metrics (the surfaces, with the views and the facts listed
 apart from them and what their authors stopped folded under each
 list; a view's page shows the columns it serves, the tables it reads
-and its rows), Quality (the corridor and what is behind a red, the
-standing checks folded per witness and each opening to its evidence,
-the landing account with the cells the casts nulled under each table,
-the column coverage), Glossary (what every metric and view means, every table
+and its rows), Quality (the findings, worst first — a verdict that is
+not green, a load's refused cells, a defect a function measured, each
+a sentence from the record's fields; a breached corridor with its
+picture and the axis that moved most; then the standing checks, each
+opening to its evidence, what the functions measured in words, each
+table's newest load in one line, and what the vocabulary still owes
+by name), Glossary (what every metric and view means, every table
 with its columns' roles and meanings, the source conventions) and
 Lineage. The second hands the data over: Export (every table and read
 as a file) and Query (a pane for a read of one's own, the SQL riding
@@ -174,5 +177,5 @@ the page URL so a read is a link). Pages `index.html`, `metrics.html`,
 `quality.html`, `glossary.html`, `lineage.html`, `export.html`,
 `query.html`; frames over the shipped reads, the cube's two reads,
 `forecast_points()`, `plan_points()`, `metric_sources()` and
-`imports`; one spec. Every built-in frame executes under the test
+`imports`; two specs. Every built-in frame executes under the test
 suite.

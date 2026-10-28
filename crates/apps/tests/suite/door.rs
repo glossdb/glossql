@@ -1329,9 +1329,11 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_quality_page_accounts_for_each_landing() {
-    // The landing account is the import's own: what each scan held,
-    // what landed, what the casts nulled — and per column, the values
-    // a cast could not read, most frequent first.
+    // The loads are the import's own: what each scan held, what landed
+    // and when, and per column the cells a cast refused with the values
+    // it could not read, most frequent first. A refusal is a finding
+    // too, in a sentence from the same fields; what the vocabulary
+    // still owes is listed by name.
     let (app, plane, dir) = workspace().await;
     std::fs::write(dir.path().join("dirty.csv"), "v\n1\nx\nx\n2\n").unwrap();
     plane
@@ -1347,37 +1349,169 @@ async fn the_quality_page_accounts_for_each_landing() {
         .execute(
             "USE perf;\n\
              DECLARE RECIPE dirty ON perf FROM erp AS $$\
-               SELECT try_cast(v AS DOUBLE) AS v FROM read_csv('dirty.csv')$$;",
+               SELECT try_cast(v AS DOUBLE) AS v FROM read_csv('dirty.csv')$$;\n\
+             DECLARE ASPECT meaning WITH $${\"type\": \"object\"}$$ AS FACT ON COLUMN;\n\
+             DECLARE WITNESS meaning_w ON meaning BY (AGENT, HUMAN);\n\
+             GLOSS meaning ON dirty.v AS $${\"value\": \"a number, when it is one\"}$$;",
         )
         .await
         .unwrap();
 
     let page = text(get(&app, "/perf/app/docket/p/quality").await).await;
-    assert!(page.contains("Landing account"), "{page}");
+    assert!(page.contains("Findings"), "{page}");
+    assert!(page.contains("The loads"), "{page}");
+    assert!(page.contains("frames/breaches"), "{page}");
+    assert!(page.contains("frames/findings"), "{page}");
+    assert!(page.contains("frames/unsaid"), "{page}");
+    assert!(!page.contains("frames/census"), "the counts are gone:\n{page}");
     assert!(
         page.contains("aria-current=\"page\" href=\"/perf/app/docket/p/quality\">Quality</a>"),
         "{page}"
     );
 
     let landing = body_text(get(&app, "/perf/app/docket/frames/landing").await).await;
-    assert!(landing.contains("scanned ledger.csv 3\n"), "{landing}");
-    assert!(landing.contains("scanned dirty.csv 4\n"), "{landing}");
-    assert!(
-        landing.contains("nulled\n"),
-        "the dirty table's cells:\n{landing}"
-    );
-
-    // The cast failures fold under their table: the column, the count,
+    assert!(landing.contains("ledger.csv (3 rows)\n"), "{landing}");
+    assert!(landing.contains("dirty.csv (4 rows)\n"), "{landing}");
+    // The refused cells fold under their table: how many, the column,
     // the values the cast could not read.
     assert!(
-        landing.contains("v  \u{b7}  2 nulled  \u{b7}  x \u{d7}2"),
-        "dirty's one failing cast, as a line under the row:\n{landing}"
+        landing.contains("2 cells of v refused: x \u{d7}2\n"),
+        "dirty's one refusing cast, as a line under the row:\n{landing}"
+    );
+    assert!(
+        landing.contains("/perf/app/docket/p/glossary?table=dirty\n"),
+        "the table opens its page:\n{landing}"
+    );
+    assert!(!landing.contains("not counted"), "{landing}");
+
+    // The refusal is a finding: a sentence from the landing's fields,
+    // the column's meaning beside it, no hue of its own.
+    let findings = body_text(get(&app, "/perf/app/docket/frames/findings").await).await;
+    assert!(findings.contains("landing\n"), "{findings}");
+    assert!(
+        findings.contains("2 cells of dirty.v could not be read.\n"),
+        "{findings}"
+    );
+    assert!(
+        findings.contains("read dirty.csv (4 rows) and landed 4 rows; the cast of v refused 2 and landed them empty. The values it refused, most frequent first: x \u{d7}2. The record says of the column: a number, when it is one.\n"),
+        "{findings}"
     );
 
-    let census = body_text(get(&app, "/perf/app/docket/frames/census").await).await;
+    // What the vocabulary owes, by name: the witnessed meaning on every
+    // column nobody has described, under its table.
+    let unsaid = body_text(get(&app, "/perf/app/docket/frames/unsaid").await).await;
+    assert!(unsaid.contains("meaning\n"), "{unsaid}");
     assert!(
-        census.starts_with("not run\nnone declared\n2\n"),
-        "the corridor unwalked, no check declared, two cells nulled:\n{census}"
+        unsaid.contains("ledger: cohort, month, value\n"),
+        "the names under their table:\n{unsaid}"
+    );
+    assert!(!unsaid.contains("dirty"), "a described column is not owed:\n{unsaid}");
+    assert!(
+        unsaid.contains("/perf/app/docket/p/glossary?aspect=meaning\n"),
+        "{unsaid}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_findings_open_with_a_breached_corridor_and_where_the_move_is() {
+    // A corridor breach is the first finding: the metric's newest
+    // complete month outside the corridor its own history predicted,
+    // as a sentence, with the bands witness's verdict, the picture's
+    // frame, and per axis the member that moved most between the
+    // previous month and this one — the cube's own cells. The walk is
+    // planted as a measurement body, since no service answers here.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    let agent = plane
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    agent
+        .execute(&format!(
+            r#"USE perf;
+               DECLARE ASPECT metric_bands WITH $${{"type": "object", "required": ["applicable"],
+                 "properties": {{"applicable": {{"type": "boolean"}}, "metrics": {{"type": "array"}}}}}}$$
+                 AS MEASUREMENT ON DATASET;
+               DECLARE FUNCTION planted_walk FOR GLOBAL AS $$
+                 SELECT true AS applicable, [named_struct(
+                   'metric', 'dso', 'applicable', true, 'grain', 'month', 'aggregation', 'sum',
+                   'trained_on', 2, 'axis', 'month', 'axis_judged', true, 'served_by', 'planted 0',
+                   'points', [
+                     named_struct('period', '2026-01', 'actual', 12.5, 'p05', 10.0, 'p10', 11.0,
+                                  'p50', 12.0, 'p90', 13.0, 'p95', 14.0, 'pit', 0.6, 'partial', false),
+                     named_struct('period', '2026-02', 'actual', 4.0, 'p05', 10.0, 'p10', 11.0,
+                                  'p50', 12.0, 'p90', 13.0, 'p95', 14.0, 'pit', 0.005, 'partial', false)])] AS metrics$$
+                 RETURNS metric_bands;
+               DECLARE FUNCTION band_breach FOR GLOBAL AS $${}$$;
+               DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;
+               SELECT planted_walk() FROM perf;"#,
+            include_str!("../../../scripts/functions/band_breach.sql")
+        ))
+        .await
+        .unwrap();
+
+    let breaches = body_text(get(&app, "/perf/app/docket/frames/breaches").await).await;
+    assert!(
+        breaches.contains("DSO fell out of its corridor in February 2026.\n"),
+        "the sentence:\n{breaches}"
+    );
+    assert!(breaches.contains("below\n"), "{breaches}");
+    assert!(breaches.contains("0.99\n"), "the displacement:\n{breaches}");
+    assert!(breaches.contains("red\n"), "the bands witness's verdict:\n{breaches}");
+    assert!(
+        breaches.contains("bands_w \u{b7} band_breach @ 0.98 on metric_bands\n"),
+        "{breaches}"
+    );
+    assert!(breaches.contains("?check=bands_w&kind=corridor\n"), "{breaches}");
+    assert!(
+        breaches.contains("/perf/app/docket/p/metrics?metric=dso&dim=cohort\n"),
+        "the link opens the metric sliced by the axis that moved most:\n{breaches}"
+    );
+
+    // The picture's rows: every walked point, the outside one marked.
+    let corridor = body_text(get(&app, "/perf/app/docket/frames/corridor?metric=dso").await).await;
+    assert!(corridor.contains("DSO\n"), "{corridor}");
+    assert!(corridor.ends_with("false\ntrue\n"), "the newest point is outside:\n{corridor}");
+
+    // Where the move is: on the one axis, the member that moved most,
+    // the move signed, the rest's net beside it — a member absent in
+    // one month counts as zero there.
+    let movers = body_text(get(&app, "/perf/app/docket/frames/movers?metric=dso").await).await;
+    assert!(
+        movers.starts_with("cohort\na\n10.5\n4.0\n\u{2212}\n6.5\nthe other one\n\u{2212}\n2.0\n"),
+        "{movers}"
+    );
+
+    // The corridor check's row links the same way.
+    let points = body_text(get(&app, "/perf/app/docket/frames/check_points?check=bands_w").await).await;
+    assert!(
+        points.contains("/perf/app/docket/p/metrics?metric=dso&dim=cohort\n"),
+        "{points}"
+    );
+
+    // The tab draws the finding with the chart and the movers nested
+    // under it, keyed by the row's metric.
+    let page = text(get(&app, "/perf/app/docket/p/quality").await).await;
+    assert!(page.contains("frames/corridor?metric={metric}"), "{page}");
+    assert!(page.contains("frames/movers?metric={metric}"), "{page}");
+
+    // What the functions measured, in words from their bodies: the
+    // planted walk beside the judged time axis and the judged
+    // dimension the workspace carries.
+    let measured = body_text(get(&app, "/perf/app/docket/frames/measured").await).await;
+    assert!(measured.contains("temporal_profile\n"), "{measured}");
+    assert!(measured.contains("ledger.month: month.\n"), "{measured}");
+    assert!(measured.contains("dimension_relevance\n"), "{measured}");
+    assert!(measured.contains("Relevance from 0.8 to 0.8.\n"), "{measured}");
+    assert!(
+        measured.contains("1 of 1 metrics walked at month grain, trained on up to 2 months, served by planted 0.\n"),
+        "{measured}"
     );
 }
 
