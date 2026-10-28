@@ -17,7 +17,7 @@ SELECT arrow_cast(r.aspect, 'Utf8') AS subj,
                        ELSE 'awaiting the fold-in' END, 'Utf8') AS state,
        CASE WHEN r.folded_in THEN 'ok' ELSE 'warn' END AS scls,
        arrow_cast(substr(r.written_at, 1, 10), 'Utf8') AS at,
-       arrow_cast('/app/docket/p/metrics?metric=' || r.aspect, 'Utf8') AS link
+       arrow_cast('/' || d.dataset || '/app/docket/p/metrics?metric=' || r.aspect, 'Utf8') AS link
 FROM ruling_entries r
 JOIN current_dataset d ON d.dataset = r.dataset
 ORDER BY r.written_at DESC, subj

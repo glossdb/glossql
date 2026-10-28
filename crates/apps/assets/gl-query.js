@@ -6,7 +6,9 @@
 // statement for the agent door. The door's own refusal, a scan it
 // cannot plan, an expression that fails, comes back as its text.
 // Nothing here touches the store: a read of one's own is never a
-// frame, so a ruling's evictions leave it alone.
+// frame, so a ruling's evictions leave it alone. The read rides the
+// page URL as `sql`: a page opened with one runs it on load, so a
+// read is a link — the Query tab's relation list is such links.
 (function () {
   'use strict';
 
@@ -80,6 +82,11 @@
       area.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') go();
       });
+      const given = new URLSearchParams(document.location.search).get('sql');
+      if (given) {
+        area.value = given;
+        go();
+      }
     }
 
     async run(sql, out, csv, arrow) {

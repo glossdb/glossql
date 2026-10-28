@@ -28,7 +28,8 @@ SELECT o.conf,
        arrow_cast(o.subject, 'Utf8') AS subj_id,
        arrow_cast(o.aspect, 'Utf8') AS asp_id,
        arrow_cast(o.key, 'Utf8') AS key_id,
-       arrow_cast('/app/docket/p/metrics?metric=' || o.aspect, 'Utf8') AS link
+       -- The link carries the dataset: the app is mounted under it.
+       arrow_cast('/' || d.dataset || '/app/docket/p/metrics?metric=' || o.aspect, 'Utf8') AS link
 FROM open_questions o
 JOIN current_dataset d ON d.dataset = o.dataset
 ORDER BY o.conf ASC, subj, asp

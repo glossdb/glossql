@@ -1,12 +1,13 @@
--- The quality counts, one row: the tables standing (the newest
--- landing of each), the rows their recipes dropped at landing, the
--- checks whose band is red, and how many of the dataset's columns
--- carry any claim — a column of the dataset, so an app's parts,
--- dotted the same way, never count. `dropped_rows_count` is the
--- landing's own count, NULL where the recipe's shape could not say —
--- a NULL adds nothing here and the landing account says so. The
--- format's metadata tables beside each table (`<table>$history` and
--- kin) never count as columns.
+-- The quality counts, one row: the corridor verdict, dataset-wide
+-- from the bands witness ('not run' is honest absence, not green);
+-- the tables standing (the newest landing of each); the rows their
+-- recipes dropped at landing; the checks whose band is red; and how
+-- many of the dataset's columns carry any claim — a column of the
+-- dataset, so an app's parts, dotted the same way, never count.
+-- `dropped_rows_count` is the landing's own count, NULL where the
+-- recipe's shape could not say — a NULL adds nothing here and the
+-- landing account says so. The format's metadata tables beside each
+-- table (`<table>$history` and kin) never count as columns.
 WITH latest AS (
   SELECT i.table_name, max(i.imported_at) AS imported_at
   FROM imports i JOIN current_dataset d ON d.dataset = i.dataset
@@ -29,6 +30,9 @@ judged AS (
     ON c.table_schema = d.dataset AND c.table_name || '.' || c.column_name = g.subject
   WHERE g.kind = 'fact')
 SELECT
+  arrow_cast(coalesce(
+    (SELECT max(band) FROM ATTEST() WHERE aspect = 'metric_bands'),
+    'not run'), 'Utf8') AS corridor,
   (SELECT count(*) FROM latest) AS tables,
   (SELECT coalesce(sum(CAST(dropped_rows_count AS BIGINT)), 0) FROM newest) AS dropped,
   (SELECT count(*) FROM ATTEST() WHERE band = 'red') AS red,

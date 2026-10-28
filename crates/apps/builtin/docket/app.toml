@@ -1,11 +1,16 @@
 title = "Docket"
 # no dataset line, ever: the URL binds it (/<dataset>/app/docket), so one
-# app serves every dataset and the bar's picker switches between them
+# app serves every dataset and the bar's picker switches between them.
+# Two groups of pages, and the bar draws a hairline where the group
+# changes: the pages that show what the record says — the questions,
+# the metrics, the quality, the words, the lineage — then the two that
+# hand the data over.
 pages = [
-  { name = "index", title = "Open" },
-  { name = "metrics", title = "Metrics" },
-  { name = "quality", title = "Quality" },
-  { name = "lineage", title = "Lineage" },
-  { name = "explore", title = "Explore" },
-  { name = "export", title = "Export" },
+  { name = "index", title = "Questions", group = "record" },
+  { name = "metrics", title = "Metrics", group = "record" },
+  { name = "quality", title = "Quality", group = "record" },
+  { name = "glossary", title = "Glossary", group = "record" },
+  { name = "lineage", title = "Lineage", group = "record" },
+  { name = "export", title = "Export", group = "data" },
+  { name = "query", title = "Query", group = "data" },
 ]

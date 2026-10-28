@@ -19,8 +19,9 @@ SELECT arrow_cast(coalesce(json_get_str(a.schema, 'title'), n.metric), 'Utf8') A
        arrow_cast(CASE WHEN abs(n.p90) < 10 THEN CAST(round(n.p10 * 1000) / 1000 AS VARCHAR) || ' to ' || CAST(round(n.p90 * 1000) / 1000 AS VARCHAR)
                        ELSE CAST(CAST(round(n.p10) AS BIGINT) AS VARCHAR) || ' to ' || CAST(CAST(round(n.p90) AS BIGINT) AS VARCHAR) END, 'Utf8') AS corridor,
        arrow_cast(CASE WHEN n.pit >= 0.5 THEN 'above' ELSE 'below' END, 'Utf8') AS side,
-       arrow_cast('/app/docket/p/metrics?metric=' || n.metric, 'Utf8') AS link
+       arrow_cast('/' || d.dataset || '/app/docket/p/metrics?metric=' || n.metric, 'Utf8') AS link
 FROM newest n
+CROSS JOIN current_dataset d
 LEFT JOIN aspects a ON a.name = n.metric
 WHERE n.recency = 1 AND n.displacement >= 0.95
 ORDER BY n.displacement DESC, metric

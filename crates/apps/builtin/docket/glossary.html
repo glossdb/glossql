@@ -2,12 +2,30 @@
 {% import "modules/tiles.html" as tiles %}
 
 {% block main %}
-{# The Explore tab: the dataset as a reader meets it. Every landed
-   table with what one row is and each column's judged role and
-   meaning; the conventions of the systems that wrote the extracts;
-   and a pane to run a read of one's own against the query door. All
-   of it is reads the server already serves; nothing here is a write. #}
+{# The Glossary: the dataset's words. What every metric, view and fact
+   means, in the company's agreed words; every landed table with what
+   one row is and each column's judged role and meaning; and the
+   conventions of the systems that wrote the extracts. All of it is
+   the record read collapsed — a human's entry outranks the agent's.
+   Nothing here is a write, and nothing here is data: the Query tab
+   reads the rows. #}
 <div class="tiles">
+  <section class="tile">
+    <header><span class="eyebrow">Definitions</span>
+      <code class="chip" title="Every metric, view and fact of the dataset with its agreed meaning and unit — the definitions registry, as metric_surfaces serves it. A surface without an entry says so; a stopped one carries its author's text.">definitions · metric_surfaces</code></header>
+    <p class="hint">What each number and each view means, in the words agreed for it. A row opens its page.</p>
+    <gl-rows frame="frames/definitions" empty="no metric, view or fact is declared yet — a definition is written when a read is grounded">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:minmax(10rem,14rem) 4rem minmax(0,1fr) 7rem">
+          <span class="r-subj">{title}<br><span class="r-meta">{name}</span></span>
+          <span class="r-meta">{kind}</span>
+          <span class="r-what">{meaning}</span>
+          <span class="r-meta">{unit}</span>
+        </a>
+      </template>
+    </gl-rows>
+  </section>
+
   <div class="half">
   <section class="tile">
     <header><span class="eyebrow">Tables and their columns</span>
@@ -37,13 +55,6 @@
         </div>
       </template>
     </gl-rows>
-  </section>
-
-  <section class="tile">
-    <header><span class="eyebrow">Try a read</span>
-      <code class="chip" title="One read against the query door, /{{ dataset }}/query: the rows stream back as Arrow and render here; csv and arrow save what came back. The pane runs reads alone; a statement that writes is the agent door's.">/{{ dataset }}/query</code></header>
-    <p class="hint">One SELECT over the tables and the reads above. Run with the button or ⌘↩.</p>
-    <gl-query dataset="{{ dataset }}" rows="50"></gl-query>
   </section>
   </div>
 </div>

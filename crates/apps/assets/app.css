@@ -140,6 +140,10 @@ a { color: inherit; text-decoration: none; }
 }
 .tabs a:hover { color: var(--ink); }
 .tabs a.current { color: var(--ink); border-bottom-color: var(--open); }
+/* A hairline between two groups of pages, where the manifest's group
+   changes: the pages that show what the record says, then the ones
+   that hand the data over. Structure, not decoration. */
+.tabs .sep { width: 1px; margin: 0.9rem 0.6rem; background: var(--rule); }
 
 /* The request indicator: a hairline of amber under the bar. */
 .load-bar {
@@ -662,7 +666,8 @@ gl-graph svg { display: block; font-family: var(--mono); }
 gl-window { display: block; margin: 0.4rem 0 0.8rem; }
 .remeasure { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
 
-/* The Explore tab: a table's columns folded as lines, and the pane. */
+/* The Glossary's dictionary: a table's columns folded as lines; and
+   the query pane, the Query tab's and a view's page's. */
 .dict { white-space: pre-line; font-family: var(--mono); font-size: var(--step); color: var(--muted); }
 gl-query { display: block; }
 gl-query textarea {

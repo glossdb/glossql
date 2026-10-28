@@ -1,11 +1,11 @@
--- The front counts: the metrics the tab lists, open questions across all of
--- them — the queue itself, `open_questions`, so this number and the
--- docket's cannot drift apart — and the corridor verdict, dataset-wide
--- from the bands witness. 'not run' is honest absence, not green.
+-- The Questions counts: what stands open for a human, straight from
+-- `open_questions` — the same rows the door asks as forms, so this
+-- number and the forms cannot drift apart; the rulings that stand,
+-- from `ruling_entries`; and what waits on an act, from `owed`. All
+-- three scope to the bound dataset. The corridor is the quality tab's.
 SELECT
-  (SELECT count(*) FROM metric_surfaces WHERE kind NOT IN ('relation', 'fact', 'plan')) AS surfaces,
   (SELECT count(*) FROM open_questions q
    JOIN current_dataset d ON d.dataset = q.dataset) AS open,
-  arrow_cast(coalesce(
-    (SELECT max(band) FROM ATTEST() WHERE aspect = 'metric_bands'),
-    'not run'), 'Utf8') AS corridor
+  (SELECT count(*) FROM ruling_entries r
+   JOIN current_dataset d ON d.dataset = r.dataset) AS ruled,
+  (SELECT count(*) FROM owed) AS waiting

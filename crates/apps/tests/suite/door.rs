@@ -208,11 +208,12 @@ async fn a_manifest_orders_the_tabs() {
         .await
         .unwrap();
 
-    // The manifest's order and wording.
+    // The manifest's order and wording; no groups, so no hairline.
     let two = text(get(&app, "/perf/app/two").await).await;
     let later = two.find(">Later</a>").unwrap();
     let first = two.find(">First</a>").unwrap();
     assert!(later < first, "{two}");
+    assert!(!two.contains("class=\"sep\""), "{two}");
 
     // No manifest: index first, then by name, titled by file name.
     let bare = text(get(&app, "/perf/app/bare/p/zed").await).await;
@@ -239,13 +240,22 @@ async fn pages_render_and_frames_stream() {
         docket.contains("<option value=\"/perf/app/board\">Perf</option>"),
         "the picker lists the app:\n{docket}"
     );
-    let open = docket.find("href=\"/perf/app/docket\">Open</a>").unwrap();
+    let open = docket.find("href=\"/perf/app/docket\">Questions</a>").unwrap();
     let export = docket
         .find(
             "class=\"current\" aria-current=\"page\" href=\"/perf/app/docket/p/export\">Export</a>",
         )
         .unwrap();
     assert!(open < export, "{docket}");
+    // The manifest's groups: one hairline, right before the first page
+    // of the data group.
+    assert_eq!(docket.matches("class=\"sep\"").count(), 1, "{docket}");
+    assert!(
+        docket.contains(
+            "</a><span class=\"sep\" aria-hidden=\"true\"></span><a class=\"current\" aria-current=\"page\" href=\"/perf/app/docket/p/export\">Export</a>"
+        ),
+        "{docket}"
+    );
 
     // The page renders through shell + macros, carrying the app root;
     // one page, so no tabs.
@@ -805,6 +815,8 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         ("views", "record"),
         ("columns", "record"),
         ("conventions", "record"),
+        ("definitions", "record"),
+        ("relations", "record"),
         ("axes", "record"),
         ("remeasure", "record"),
         ("metric", "record"),
@@ -1112,6 +1124,10 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
         "the ruling closes its question"
     );
     let settled = body_text(get(&app, "/perf/app/docket/frames/settled").await).await;
+    assert!(
+        settled.contains("/perf/app/docket/p/metrics?metric=dso\n"),
+        "the link carries the dataset the app is mounted under:\n{settled}"
+    );
     assert!(settled.contains("per order, not per line"), "{settled}");
     assert!(settled.contains("corrected"), "{settled}");
 
@@ -1177,6 +1193,10 @@ async fn an_unclear_ruling_closes_the_question_without_taking_a_side() {
         0
     );
     let settled = body_text(get(&app, "/perf/app/docket/frames/settled").await).await;
+    assert!(
+        settled.contains("/perf/app/docket/p/metrics?metric=dso\n"),
+        "the link carries the dataset the app is mounted under:\n{settled}"
+    );
     assert!(settled.contains("unclear"), "{settled}");
     assert!(settled.contains("which lines?"), "{settled}");
 }
@@ -1286,7 +1306,10 @@ async fn the_quality_page_accounts_for_each_landing() {
     );
 
     let census = body_text(get(&app, "/perf/app/docket/frames/census").await).await;
-    assert!(census.starts_with("2\n"), "two tables landed:\n{census}");
+    assert!(
+        census.starts_with("not run\n2\n"),
+        "the corridor unwalked, two tables landed:\n{census}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2221,18 +2244,62 @@ async fn every_documented_tile_is_shipped() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_explore_tab_lists_the_columns_and_carries_the_pane() {
-    // The dictionary: one row per landed table with its columns folded
-    // as lines, each with its judged role or the engine's type; the
-    // conventions of the sources the recipes read; and the query pane,
-    // an element that posts a read to the query door — the page names
-    // the dataset the pane reads against.
+async fn the_glossary_tab_lists_the_words_and_the_query_tab_carries_the_pane() {
+    // The Glossary: the definitions — every metric, view and fact with
+    // its agreed meaning, kind and unit, linked to its page under the
+    // dataset; the dictionary, one row per landed table with its
+    // columns folded as lines, each with its judged role or the
+    // engine's type; the conventions of the sources the recipes read.
+    // No pane: the Query tab carries it, with the relations to pick
+    // from, each a link that puts the read in the page URL.
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let page = text(get(&app, "/perf/app/docket/p/explore").await).await;
-    assert!(page.contains("<gl-query dataset=\"perf\""), "{page}");
+    let page = text(get(&app, "/perf/app/docket/p/glossary").await).await;
+    assert!(page.contains("frames/definitions"), "{page}");
     assert!(page.contains("frames/columns"), "{page}");
+    assert!(page.contains("frames/conventions"), "{page}");
+    assert!(!page.contains("<gl-query"), "the pane is the Query tab's:\n{page}");
+
+    let definitions = get(&app, "/perf/app/docket/frames/definitions").await;
+    assert_eq!(definitions.status(), StatusCode::OK);
+    let definitions = body_text(definitions).await;
+    // The frame's text reads column by column: the names in the
+    // frame's order — metrics, then views, then facts — then the kinds.
+    assert!(
+        definitions.contains("dso\ncleaned\npayables\n"),
+        "the metric, the view, the fact:\n{definitions}"
+    );
+    assert!(
+        definitions.contains("metric\nview\nfact\n"),
+        "each named by its kind:\n{definitions}"
+    );
+    assert!(
+        definitions.contains("/perf/app/docket/p/metrics?metric=cleaned&kind=relation\n"),
+        "a view's page, under the dataset:\n{definitions}"
+    );
+    assert!(!definitions.contains("\nplan\n"), "a plan is no definition:\n{definitions}");
+
+    let query = text(get(&app, "/perf/app/docket/p/query").await).await;
+    assert!(query.contains("<gl-query dataset=\"perf\""), "{query}");
+    assert!(query.contains("frames/relations"), "{query}");
+    let relations = get(&app, "/perf/app/docket/frames/relations").await;
+    assert_eq!(relations.status(), StatusCode::OK);
+    let relations = body_text(relations).await;
+    // Column by column again: the tables first, then the views, then
+    // the metrics; the fact serves no rows to browse and is listed too.
+    assert!(
+        relations.contains("ledger\ncleaned\ndso\n"),
+        "the landed table, the view, the metric:\n{relations}"
+    );
+    assert!(
+        relations.contains("table\nview\n"),
+        "each named by its kind:\n{relations}"
+    );
+    assert!(
+        relations.contains("?sql=SELECT * FROM ledger LIMIT 50\n"),
+        "the pick is a read in the URL:\n{relations}"
+    );
 
     let columns = get(&app, "/perf/app/docket/frames/columns").await;
     assert_eq!(columns.status(), StatusCode::OK);

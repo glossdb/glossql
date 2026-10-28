@@ -41,11 +41,12 @@
     <select class="pick" aria-label="app" data-nav>
       {% for a in apps %}<option value="/{{ dataset }}/app/{{ a.name }}"{% if app and a.name == app.name %} selected{% endif %}>{{ a.title }}</option>{% endfor %}
     </select>
-    {# The app's pages, as the manifest lists them. A one-page app has
-       nothing to switch between, so it shows no tabs. #}
+    {# The app's pages, as the manifest lists them, a hairline where
+       the manifest's group changes. A one-page app has nothing to
+       switch between, so it shows no tabs. #}
     {% if app and pages | length > 1 %}
     <nav class="tabs" aria-label="pages">
-      {% for p in pages %}<a{% if p.name == page %} class="current" aria-current="page"{% endif %} href="/{{ dataset }}/app/{{ app.name }}{% if p.name != 'index' %}/p/{{ p.name }}{% endif %}{% if draft %}?draft{% endif %}">{{ p.title }}</a>{% endfor %}
+      {% for p in pages %}{% if p.sep %}<span class="sep" aria-hidden="true"></span>{% endif %}<a{% if p.name == page %} class="current" aria-current="page"{% endif %} href="/{{ dataset }}/app/{{ app.name }}{% if p.name != 'index' %}/p/{{ p.name }}{% endif %}{% if draft %}?draft{% endif %}">{{ p.title }}</a>{% endfor %}
     </nav>
     {% endif %}
   </div>
