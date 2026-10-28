@@ -131,8 +131,10 @@ The other tiles:
   query door, `/<dataset>/query`, and runs reads alone — SELECT, WITH,
   DESCRIBE, SHOW, EXPLAIN — saying so for anything else; the door's
   refusal comes back as its text. A page opened with `?sql=` runs
-  that read on load, so a read is a link. It touches no frame and no
-  store.
+  that read on load, so a read is a link, and a `sql` attribute on
+  the element does the same for a page that knows its read. A header
+  click sorts what came back, in the browser, and the footer says so.
+  It touches no frame and no store.
 - `<gl-graph nodes="frames/x" edges="frames/y" empty="…">` — column
   lineage over two frames: nodes one row per column (`node`, `kind`
   as `table` or `metric`, `col`, `ord`, `role`), edges one row per
@@ -159,7 +161,8 @@ example, and the dataset's own page (`/<dataset>/app` opens it). Two
 groups of tabs. The first shows what the record says: Questions (what
 stands open for a human to judge, what has been settled, what waits
 on an act), Metrics (the surfaces, with the views and the facts listed
-apart from them), Quality (the corridor and what is behind a red, the
+apart from them; a view's page shows the columns it serves, the
+tables it reads and its rows), Quality (the corridor and what is behind a red, the
 standing checks folded per witness and each opening to its evidence,
 the landing account with the cells the casts nulled under each table,
 the column coverage), Glossary (what every metric and view means, every table

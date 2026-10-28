@@ -467,8 +467,8 @@ gl-chart { display: block; min-height: 5rem; margin-top: 1rem; }
 gl-chart canvas, gl-chart svg { max-width: 100%; }
 
 gl-table { display: block; overflow-x: auto; }
-gl-table table { border-collapse: collapse; width: 100%; }
-gl-table th {
+gl-table table, gl-query table { border-collapse: collapse; width: 100%; }
+gl-table th, gl-query th {
   text-align: left;
   font-size: var(--step);
   font-weight: 500;
@@ -478,14 +478,16 @@ gl-table th {
   border-bottom: 1px solid var(--rule);
   padding: 0.6rem 0.8rem 0.6rem 0;
 }
-gl-table td {
+gl-query th { cursor: pointer; }
+gl-query th:hover { color: var(--muted); }
+gl-table td, gl-query td {
   color: var(--muted);
   border-bottom: 1px solid var(--rule-soft);
   padding: 0.62rem 0.8rem 0.62rem 0;
   white-space: nowrap;
 }
-gl-table td.num { text-align: right; color: var(--ink); }
-gl-table tr:hover td { background: var(--panel); }
+gl-table td.num, gl-query td.num { text-align: right; color: var(--ink); }
+gl-table tr:hover td, gl-query tr:hover td { background: var(--panel); }
 .table-foot { color: var(--faint); font-size: var(--step); margin: 0.7rem 0 0; }
 
 /* ---- statements and disclosure ------------------------------------ */

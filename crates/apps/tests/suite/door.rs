@@ -817,6 +817,7 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         ("conventions", "record"),
         ("definitions", "record"),
         ("relations", "record"),
+        ("view_fields", "record"),
         ("checks", "record"),
         ("check", "record"),
         ("check_slots", "record"),
@@ -2309,6 +2310,38 @@ async fn every_documented_tile_is_shipped() {
             "{script} defines no element"
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_views_page_serves_its_columns_and_its_rows() {
+    // A view is rows, not a series: its page lists every column the
+    // catalog holds under its name with the role and the column each
+    // descends from, names the tables it reads, and carries the pane
+    // prefilled with a read over it. A metric's page carries no pane.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    let page = text(get(&app, "/perf/app/docket/p/metrics?metric=cleaned&kind=relation").await).await;
+    assert!(page.contains("frames/view_fields"), "{page}");
+    assert!(page.contains("frames/view_tables"), "{page}");
+    assert!(
+        page.contains("<gl-query dataset=\"perf\" rows=\"50\" sql=\"SELECT * FROM cleaned LIMIT 50\">"),
+        "the pane, prefilled:\n{page}"
+    );
+    let metric = text(get(&app, "/perf/app/docket/p/metrics?metric=dso").await).await;
+    assert!(!metric.contains("<gl-query"), "a metric's page carries no pane:\n{metric}");
+
+    let fields = body_text(get(&app, "/perf/app/docket/frames/view_fields?metric=cleaned").await).await;
+    assert!(
+        fields.contains("month\namount\ncohort\n"),
+        "every served column in the view's order:\n{fields}"
+    );
+    assert!(
+        fields.contains("ledger.value\n"),
+        "the column a renamed field descends from:\n{fields}"
+    );
+    let tables = body_text(get(&app, "/perf/app/docket/frames/view_tables?metric=cleaned").await).await;
+    assert_eq!(tables, "ledger\n", "the one table the view reads");
 }
 
 #[tokio::test(flavor = "multi_thread")]

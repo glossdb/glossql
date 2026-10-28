@@ -8,7 +8,11 @@
 // Nothing here touches the store: a read of one's own is never a
 // frame, so a ruling's evictions leave it alone. The read rides the
 // page URL as `sql`: a page opened with one runs it on load, so a
-// read is a link — the Query tab's relation list is such links.
+// read is a link — the Query tab's relation list is such links; a
+// `sql` attribute on the element does the same for a page that
+// knows its read, a view's page over its own rows. A header click
+// sorts what came back, in the browser, and the footer says so; the
+// engine sorts the whole relation when the read says ORDER BY.
 (function () {
   'use strict';
 
@@ -27,6 +31,16 @@
         : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
     }
     return String(value);
+  }
+
+  // Nulls last; numbers as numbers, dates as instants, the rest as
+  // text in the viewer's collation.
+  function compare(a, b) {
+    if (a == null) return b == null ? 0 : 1;
+    if (b == null) return -1;
+    if (typeof a === 'number' || typeof a === 'bigint') return Number(a) - Number(b);
+    if (a instanceof Date) return a.getTime() - b.getTime();
+    return String(a).localeCompare(String(b));
   }
 
   function csvField(value) {
@@ -82,7 +96,8 @@
       area.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') go();
       });
-      const given = new URLSearchParams(document.location.search).get('sql');
+      const given =
+        this.getAttribute('sql') || new URLSearchParams(document.location.search).get('sql');
       if (given) {
         area.value = given;
         go();
@@ -125,29 +140,54 @@
         const t = Arrow.tableFromIPC(new Uint8Array(buf));
         const names = t.schema.fields.map((f) => f.name);
         const conv = t.schema.fields.map((f) => glStore.converter(f.type));
-        const el = document.createElement('table');
-        const head = el.createTHead().insertRow();
-        for (const name of names) {
-          const th = document.createElement('th');
-          th.textContent = name;
-          head.appendChild(th);
-        }
-        const body = el.createTBody();
-        const shown = Math.min(t.numRows, this._cap);
-        for (let i = 0; i < shown; i++) {
+        // Every row that came back, converted once; a sort reorders
+        // these and the table is drawn again from the top.
+        const rows = new Array(t.numRows);
+        for (let i = 0; i < t.numRows; i++) {
           const row = t.get(i);
-          const tr = body.insertRow();
-          for (let c = 0; c < names.length; c++) {
-            const td = tr.insertCell();
-            const value = conv[c](row[names[c]]);
-            td.textContent = cell(value);
-            if (typeof value === 'number' || typeof value === 'bigint') td.className = 'num';
-          }
+          rows[i] = names.map((n, c) => conv[c](row[n]));
         }
+        const el = document.createElement('table');
         const foot = document.createElement('p');
         foot.className = 'table-foot';
-        foot.textContent =
-          t.numRows.toLocaleString() + ' rows' + (t.numRows > shown ? ', showing first ' + shown : '');
+        const sort = { col: -1, dir: 1 };
+        const cap = this._cap;
+        const draw = () => {
+          const order = rows.slice();
+          if (sort.col >= 0) {
+            order.sort((a, b) => compare(a[sort.col], b[sort.col]) * sort.dir);
+          }
+          el.replaceChildren();
+          const head = el.createTHead().insertRow();
+          names.forEach((name, c) => {
+            const th = document.createElement('th');
+            th.textContent = name + (sort.col === c ? (sort.dir > 0 ? ' ↑' : ' ↓') : '');
+            th.title = 'sort what came back by ' + name;
+            th.addEventListener('click', () => {
+              if (sort.col === c) sort.dir = -sort.dir;
+              else { sort.col = c; sort.dir = 1; }
+              draw();
+            });
+            head.appendChild(th);
+          });
+          const body = el.createTBody();
+          const shown = Math.min(order.length, cap);
+          for (let i = 0; i < shown; i++) {
+            const tr = body.insertRow();
+            for (let c = 0; c < names.length; c++) {
+              const td = tr.insertCell();
+              const value = order[i][c];
+              td.textContent = cell(value);
+              if (typeof value === 'number' || typeof value === 'bigint') td.className = 'num';
+            }
+          }
+          foot.textContent =
+            rows.length.toLocaleString() +
+            ' rows' +
+            (rows.length > shown ? ', showing first ' + shown : '') +
+            (sort.col >= 0 ? ', sorted by ' + names[sort.col] + ' in the browser' : '');
+        };
+        draw();
         out.replaceChildren(el, foot);
         csv.href = URL.createObjectURL(new Blob([csvOf(t)], { type: 'text/csv' }));
         csv.hidden = false;

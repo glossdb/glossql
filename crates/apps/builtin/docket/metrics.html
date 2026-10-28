@@ -13,7 +13,9 @@
    is the way back to the list. A fact's link carries `kind=fact` and
    a view's `kind=relation`, and the page draws either without the
    series tiles — there is no window, no story and no slice over one
-   number or over rows. #}
+   number or over rows. A view's page shows what a view is instead:
+   the columns it serves with their roles, the tables it reads, and
+   its rows through the pane, before its assumptions and its SQL. #}
 <div class="tiles">
   {# The re-measure banner: every write moves the pin, and a function
      voice landed at an earlier pin is served and marked — the numbers
@@ -93,6 +95,32 @@
         </div>
       </template>
     </gl-rows>
+  </section>
+  {% endif %}
+
+  {% if kind == "relation" %}
+  <section class="tile">
+    <header><span class="eyebrow">What it serves · {{ metric }}</span>
+      <code class="chip" title="Every column of the view as the catalog holds it, with the judged role of the column it descends from and that column, by the provenance walk the cube runs. A field computed from several columns names them all; one no column reaches shows the engine's type.">information_schema · metric_sources()</code></header>
+    <gl-rows frame="frames/view_tables" empty="">
+      <template><p class="hint">Built from {tables}.</p></template>
+    </gl-rows>
+    <gl-rows frame="frames/view_fields" empty="no view named {{ metric }} stands in the catalog — a stopped grounding serves no columns">
+      <template>
+        <div class="rrow" style="grid-template-columns:minmax(9rem,14rem) 10rem minmax(0,1fr)">
+          <span class="r-subj">{field}</span>
+          <span class="r-meta">{role}</span>
+          <span class="r-meta">{sources}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">The rows · {{ metric }}</span>
+      <code class="chip" title="The first fifty rows as the view serves them now, through the query door. Change the read and run it again: the engine filters and sorts the whole relation; a header sorts what came back.">/{{ dataset }}/query</code></header>
+    <p class="hint">The first fifty rows as the view serves them now. Change the read and run it again; a header sorts what came back.</p>
+    <gl-query dataset="{{ dataset }}" rows="50" sql="SELECT * FROM {{ metric }} LIMIT 50"></gl-query>
   </section>
   {% endif %}
 
