@@ -520,6 +520,24 @@ details.contest summary {
 details.contest summary:hover { color: var(--ink); }
 details.contest[open] summary { color: var(--muted); }
 
+/* A fold under a list: what its author stopped, closed by default —
+   out of the way, never gone. The summary reads like a disclosure's. */
+details.fold { margin-top: 0.6rem; }
+details.fold summary {
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  list-style: none;
+  padding: 0.3rem 0;
+}
+details.fold summary::before { content: '▸ '; }
+details.fold[open] summary::before { content: '▾ '; }
+details.fold summary:hover { color: var(--ink); }
+details.fold[open] summary { color: var(--muted); }
+
 /* Full lists scroll instead of truncating — depth over dismissal. */
 .scroll { max-height: 30rem; overflow-y: auto; scrollbar-width: thin; }
 

@@ -6,7 +6,9 @@
 -- where its judgment stands, by the pulse's chip rule so the two
 -- lists cannot disagree. The link carries the kind: the metric page
 -- draws a relation without the series tiles, with its SQL and its
--- assumptions. The export tab serves every view as a file.
+-- assumptions. The export tab serves every view as a file. `$stopped`
+-- picks the served views (0) or the stopped ones (1), which carry
+-- the author's reason in place of a meaning and fold under the list.
 WITH asked AS (
   SELECT q.aspect, count(*) AS n FROM open_questions q
   JOIN current_dataset d ON d.dataset = q.dataset GROUP BY q.aspect
@@ -17,7 +19,8 @@ ruled AS (
 )
 SELECT s.title,
        s.name,
-       arrow_cast(coalesce(nullif(s.meaning, ''), 'no definitions entry yet'), 'Utf8') AS meaning,
+       arrow_cast(CASE WHEN s.stopped <> '' THEN 'stopped: ' || s.stopped
+                       ELSE coalesce(nullif(s.meaning, ''), 'no definitions entry yet') END, 'Utf8') AS meaning,
        arrow_cast(CASE
          WHEN s.stopped <> '' THEN 'stopped'
          WHEN coalesce(q.n, 0) > 0 THEN CAST(q.n AS VARCHAR) || ' open'
@@ -35,4 +38,5 @@ FROM metric_surfaces s
 LEFT JOIN asked q ON q.aspect = s.name
 LEFT JOIN ruled r ON r.aspect = s.name
 WHERE s.kind = 'relation'
+  AND (s.stopped <> '') = (coalesce($stopped, '0') = '1')
 ORDER BY name

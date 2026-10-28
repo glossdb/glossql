@@ -232,7 +232,7 @@
   <section class="tile">
     <header><span class="eyebrow">Metric surfaces</span>
       <code class="chip" title="Every declared QUERY aspect with where its judgment stands, and the cube's reason where it charts nothing — the record — and, joined by the metric's name, the cube's newest period, the move into it and the admitted axes — the data. Two frames: a ruling refreshes the first and leaves the cube alone.">metric_surfaces · metric_axes() · metric_series()</code></header>
-    <gl-rows frame="frames/pulse" join="frames/latest" on="name" empty="no metric surfaces declared yet">
+    <gl-rows frame="frames/pulse?stopped=0" join="frames/latest" on="name" empty="no metric surfaces declared yet">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:11rem 7rem 5rem 1fr 11rem">
           <span class="r-subj">{title}<br><span class="r-meta">{name} <em>{mkind}</em></span></span>
@@ -243,12 +243,28 @@
         </a>
       </template>
     </gl-rows>
+    {# A grounding its author stopped serves no number and stays on
+       record with the reason — retired, superseded, or waiting on
+       data the author named. Folded, closed by default: out of the
+       way, never gone. #}
+    <details class="fold">
+      <summary>stopped</summary>
+      <gl-rows frame="frames/pulse?stopped=1" empty="none stopped — a grounding its author stops stands here with the reason">
+        <template>
+          <a class="rrow" href="{link}" style="grid-template-columns:11rem 1fr 11rem">
+            <span class="r-subj">{title}<br><span class="r-meta">{name} <em>{mkind}</em></span></span>
+            <span class="r-meta">{axes}</span>
+            <code class="chip {scls}">{status}</code>
+          </a>
+        </template>
+      </gl-rows>
+    </details>
   </section>
 
   <section class="tile">
     <header><span class="eyebrow">Views</span>
       <code class="chip" title="Every derived relation of the dataset — governed SQL the metrics compose from, declared x-kind relation. A view serves rows, not a series, so it carries no number here; a ruling on its definition propagates to every metric built on it. The export tab serves each as a file.">metric_surfaces</code></header>
-    <gl-rows frame="frames/views" empty="no view is declared — a derived relation is a QUERY aspect with x-kind relation, grounded by SQL the metrics compose from">
+    <gl-rows frame="frames/views?stopped=0" empty="no view is declared — a derived relation is a QUERY aspect with x-kind relation, grounded by SQL the metrics compose from">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:11rem 1fr 11rem">
           <span class="r-subj">{title}<br><span class="r-meta">{name}</span></span>
@@ -257,12 +273,24 @@
         </a>
       </template>
     </gl-rows>
+    <details class="fold">
+      <summary>stopped</summary>
+      <gl-rows frame="frames/views?stopped=1" empty="none stopped — a view its author stops stands here with the reason">
+        <template>
+          <a class="rrow" href="{link}" style="grid-template-columns:11rem 1fr 11rem">
+            <span class="r-subj">{title}<br><span class="r-meta">{name}</span></span>
+            <span class="r-what">{meaning}</span>
+            <code class="chip {scls}">{status}</code>
+          </a>
+        </template>
+      </gl-rows>
+    </details>
   </section>
 
   <section class="tile">
     <header><span class="eyebrow">Facts</span>
       <code class="chip" title="Every declared fact — a QUERY aspect with x-kind fact — with the one number its grounding serves and the newest landing of the tables it reads. No period and no move: a fact has no as-of definition of its own, so the data's date is the one that stands.">metric_surfaces · fact_values()</code></header>
-    <gl-rows frame="frames/facts" empty="no current fact is declared — a value with no as-of definition is glossed with x-kind fact, and the cube leaves it whole">
+    <gl-rows frame="frames/facts?stopped=0" empty="no current fact is declared — a value with no as-of definition is glossed with x-kind fact, and the cube leaves it whole">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:11rem 1fr 9rem 11rem 11rem">
           <span class="r-subj">{title}<br><span class="r-meta">{name}</span></span>
@@ -273,6 +301,18 @@
         </a>
       </template>
     </gl-rows>
+    <details class="fold">
+      <summary>stopped</summary>
+      <gl-rows frame="frames/facts?stopped=1" empty="none stopped — a fact its author stops stands here with the reason">
+        <template>
+          <a class="rrow" href="{link}" style="grid-template-columns:11rem 1fr 11rem">
+            <span class="r-subj">{title}<br><span class="r-meta">{name}</span></span>
+            <span class="r-what">{meaning}</span>
+            <code class="chip {scls}">{status}</code>
+          </a>
+        </template>
+      </gl-rows>
+    </details>
   </section>
 </div>
 {% endif %}

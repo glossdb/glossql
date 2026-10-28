@@ -161,8 +161,9 @@ example, and the dataset's own page (`/<dataset>/app` opens it). Two
 groups of tabs. The first shows what the record says: Questions (what
 stands open for a human to judge, what has been settled, what waits
 on an act), Metrics (the surfaces, with the views and the facts listed
-apart from them; a view's page shows the columns it serves, the
-tables it reads and its rows), Quality (the corridor and what is behind a red, the
+apart from them and what their authors stopped folded under each
+list; a view's page shows the columns it serves, the tables it reads
+and its rows), Quality (the corridor and what is behind a red, the
 standing checks folded per witness and each opening to its evidence,
 the landing account with the cells the casts nulled under each table,
 the column coverage), Glossary (what every metric and view means, every table

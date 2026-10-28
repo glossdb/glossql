@@ -761,7 +761,7 @@ async fn every_builtin_frame_executes_and_serves_classic_types() {
             };
             // Extra params are ignored by frames that bind none of them.
             let uri = format!(
-                "/perf/app/{}/frames/{stem}?metric=dso&subject=ledger&dim=region&grain=month&span=24&check=none",
+                "/perf/app/{}/frames/{stem}?metric=dso&subject=ledger&dim=region&grain=month&span=24&check=none&stopped=0",
                 builtin.name
             );
             let response = get(&app, &uri).await;
@@ -836,7 +836,7 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         let response = get(
             &app,
             &format!(
-                "/perf/app/docket/frames/{frame}?metric=dso&subject=ledger&dim=region&grain=month&span=24&check=none"
+                "/perf/app/docket/frames/{frame}?metric=dso&subject=ledger&dim=region&grain=month&span=24&check=none&stopped=0"
             ),
         )
         .await;
@@ -1394,7 +1394,7 @@ async fn the_metrics_faces_serve_the_cube() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let pulse = get(&app, "/perf/app/docket/frames/pulse").await;
+    let pulse = get(&app, "/perf/app/docket/frames/pulse?stopped=0").await;
     assert_eq!(pulse.status(), StatusCode::OK);
     let pulse = body_text(pulse).await;
     assert!(pulse.contains("dso\n"), "{pulse}");
@@ -1405,7 +1405,7 @@ async fn the_metrics_faces_serve_the_cube() {
 
     // The views list: the relation with its link carrying the kind,
     // and neither the series nor the fact.
-    let views = get(&app, "/perf/app/docket/frames/views").await;
+    let views = get(&app, "/perf/app/docket/frames/views?stopped=0").await;
     assert_eq!(views.status(), StatusCode::OK);
     let views = body_text(views).await;
     assert!(views.contains("cleaned\n"), "{views}");
@@ -1422,7 +1422,7 @@ async fn the_metrics_faces_serve_the_cube() {
 
     // The facts list: the fact with its one value, as of the landing
     // of the table its grounding reads, linked with its kind.
-    let facts = get(&app, "/perf/app/docket/frames/facts").await;
+    let facts = get(&app, "/perf/app/docket/frames/facts?stopped=0").await;
     assert_eq!(facts.status(), StatusCode::OK);
     let facts = body_text(facts).await;
     assert!(facts.contains("payables\n"), "{facts}");
@@ -1596,7 +1596,7 @@ async fn the_plan_stands_beside_its_metric() {
         )
         .await
         .unwrap();
-    let pulse = get(&app, "/perf/app/docket/frames/pulse").await;
+    let pulse = get(&app, "/perf/app/docket/frames/pulse?stopped=0").await;
     assert_eq!(row_count(pulse).await, 1, "the plan is no metric surface");
     let plan = get(&app, "/perf/app/docket/frames/plan?metric=dso").await;
     assert_eq!(plan.status(), StatusCode::OK);
@@ -1684,7 +1684,7 @@ async fn the_list_serves_a_workspace_without_a_fact() {
         1,
         "the one series' newest period, and no fact row"
     );
-    let facts = get(&app, "/perf/app/docket/frames/facts").await;
+    let facts = get(&app, "/perf/app/docket/frames/facts?stopped=0").await;
     assert_eq!(facts.status(), StatusCode::OK);
     assert_eq!(row_count(facts).await, 0, "no fact declared, no fact row");
     let fact = get(&app, "/perf/app/docket/frames/fact?metric=dso").await;
@@ -1693,7 +1693,7 @@ async fn the_list_serves_a_workspace_without_a_fact() {
     let fact = get(&app, "/perf/app/docket/frames/fact?metric=undated").await;
     assert_eq!(row_count(fact).await, 0, "an undeclared kind is not a fact");
 
-    let pulse = get(&app, "/perf/app/docket/frames/pulse").await;
+    let pulse = get(&app, "/perf/app/docket/frames/pulse?stopped=0").await;
     assert_eq!(pulse.status(), StatusCode::OK);
     let pulse = body_text(pulse).await;
     assert!(
@@ -1962,7 +1962,7 @@ async fn the_export_tab_lists_tables_and_reads() {
 
     // The served reads as their relations, with the definition's
     // meaning beside them, the kind as the chip, and the files.
-    let reads = body_text(get(&app, "/perf/app/docket/frames/reads").await).await;
+    let reads = body_text(get(&app, "/perf/app/docket/frames/reads?stopped=0").await).await;
     assert!(reads.contains("read.dso()\n"), "{reads}");
     assert!(reads.contains("receivables outstanding"), "{reads}");
     assert!(reads.contains("metric\n"), "{reads}");
@@ -2310,6 +2310,53 @@ async fn every_documented_tile_is_shipped() {
             "{script} defines no element"
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_surface_folds_under_the_lists() {
+    // A grounding its author stopped serves no number and no file;
+    // it stays on record with the reason. The lists serve the
+    // served surfaces, and the fold under each the stopped ones —
+    // the same frame, `stopped` picking the side.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    plane
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .execute(
+            r#"USE perf;
+               DECLARE ASPECT old_dso WITH $${"title": "Old DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+               GLOSS old_dso ON perf AS $${"stopped": "superseded by dso, which reads the cohort"}$$;"#,
+        )
+        .await
+        .unwrap();
+
+    let served = body_text(get(&app, "/perf/app/docket/frames/pulse?stopped=0").await).await;
+    assert!(served.contains("dso\n"), "{served}");
+    assert!(!served.contains("old_dso"), "a stopped metric is not between the served:\n{served}");
+    let stopped = body_text(get(&app, "/perf/app/docket/frames/pulse?stopped=1").await).await;
+    assert!(stopped.contains("old_dso\n"), "{stopped}");
+    assert!(
+        stopped.contains("stopped: superseded by dso, which reads the cohort\n"),
+        "the author's reason in place of the axes:\n{stopped}"
+    );
+    assert!(!stopped.contains("\ndso\n"), "the served metric is not in the fold:\n{stopped}");
+
+    let reads = body_text(get(&app, "/perf/app/docket/frames/reads?stopped=1").await).await;
+    assert!(reads.contains("read.old_dso()\n"), "{reads}");
+    assert!(!reads.contains("read.dso()"), "{reads}");
+    let page = text(get(&app, "/perf/app/docket/p/metrics").await).await;
+    assert!(
+        page.contains("<details class=\"fold\">") && page.contains("frames/pulse?stopped=1"),
+        "the fold under the list:\n{page}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
