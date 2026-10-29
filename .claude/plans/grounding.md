@@ -57,7 +57,7 @@ owner, and the corpus decides first.
   the store for a schema that is an aspect's `WITH` schema already; the
   flavor rides `x-kind`, as ruled.
 - **What the openness admits.** A second kit declares grounding keys of
-  its own: the harmonisation kit's service levels (`kits.md`, step 5)
+  its own: the harmonisation demo's service levels, in the demo repo,
   carry no stock or flow; a window kit carries a window. A host without
   the cube admits a grounding with no reader key. An agent without any
   kit glosses a metric under the contract alone, which is right: nobody
