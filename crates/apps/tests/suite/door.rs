@@ -240,7 +240,9 @@ async fn pages_render_and_frames_stream() {
         docket.contains("<option value=\"/perf/app/board\">Perf</option>"),
         "the picker lists the app:\n{docket}"
     );
-    let open = docket.find("href=\"/perf/app/docket\">Questions</a>").unwrap();
+    let open = docket
+        .find("href=\"/perf/app/docket\">Questions</a>")
+        .unwrap();
     let export = docket
         .find(
             "class=\"current\" aria-current=\"page\" href=\"/perf/app/docket/p/export\">Export</a>",
@@ -1270,7 +1272,10 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
         1,
         "one witness row for the detector, and the meaning voice is not a check:\n{checks}"
     );
-    assert!(checks.contains("1 orange"), "the witness row counts its verdicts by band:\n{checks}");
+    assert!(
+        checks.contains("1 orange"),
+        "the witness row counts its verdicts by band:\n{checks}"
+    );
     assert!(
         checks.contains("?check=dso_w&kind=verdicts\n"),
         "the row opens the check, with the detector's kind:\n{checks}"
@@ -1294,7 +1299,8 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
     assert!(check.contains("probe_check\n"), "{check}");
     assert!(check.contains("0.9\n"), "the threshold:\n{check}");
     assert!(check.contains("1 verdict: 1 orange\n"), "{check}");
-    let verdicts = body_text(get(&app, "/perf/app/docket/frames/check_verdicts?check=dso_w").await).await;
+    let verdicts =
+        body_text(get(&app, "/perf/app/docket/frames/check_verdicts?check=dso_w").await).await;
     assert!(verdicts.contains("perf\n"), "the subject:\n{verdicts}");
     assert!(verdicts.contains("orange\n"), "{verdicts}");
     assert!(verdicts.contains("0.42\n"), "the score:\n{verdicts}");
@@ -1330,15 +1336,26 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
         checks.contains("?check=value_w&kind=voices\n"),
         "a voice check opens to its voices:\n{checks}"
     );
-    let slots = body_text(get(&app, "/perf/app/docket/frames/check_slots?check=value_w").await).await;
-    assert!(slots.contains("ledger.value\n"), "the column whose voices differ:\n{slots}");
+    let slots =
+        body_text(get(&app, "/perf/app/docket/frames/check_slots?check=value_w").await).await;
+    assert!(
+        slots.contains("ledger.value\n"),
+        "the column whose voices differ:\n{slots}"
+    );
     assert!(
         slots.contains("human: the cash · agent: the money\n"),
         "both voices, the human's first:\n{slots}"
     );
-    assert!(!slots.contains("ledger.month"), "an agreeing column is not listed:\n{slots}");
+    assert!(
+        !slots.contains("ledger.month"),
+        "an agreeing column is not listed:\n{slots}"
+    );
     let points = get(&app, "/perf/app/docket/frames/check_points?check=value_w").await;
-    assert_eq!(row_count(points).await, 0, "a voice check has no corridor points");
+    assert_eq!(
+        row_count(points).await,
+        0,
+        "a voice check has no corridor points"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1377,7 +1394,10 @@ async fn the_quality_page_accounts_for_each_landing() {
     assert!(page.contains("frames/breaches"), "{page}");
     assert!(page.contains("frames/findings"), "{page}");
     assert!(page.contains("frames/unsaid"), "{page}");
-    assert!(!page.contains("frames/census"), "the counts are gone:\n{page}");
+    assert!(
+        !page.contains("frames/census"),
+        "the counts are gone:\n{page}"
+    );
     assert!(
         page.contains("aria-current=\"page\" href=\"/perf/app/docket/p/quality\">Quality</a>"),
         "{page}"
@@ -1419,7 +1439,10 @@ async fn the_quality_page_accounts_for_each_landing() {
         unsaid.contains("ledger: cohort, month, value\n"),
         "the names under their table:\n{unsaid}"
     );
-    assert!(!unsaid.contains("dirty"), "a described column is not owed:\n{unsaid}");
+    assert!(
+        !unsaid.contains("dirty"),
+        "a described column is not owed:\n{unsaid}"
+    );
     assert!(
         unsaid.contains("/perf/app/docket/p/glossary?aspect=meaning\n"),
         "{unsaid}"
@@ -1477,12 +1500,18 @@ async fn the_findings_open_with_a_breached_corridor_and_where_the_move_is() {
     );
     assert!(breaches.contains("below\n"), "{breaches}");
     assert!(breaches.contains("0.99\n"), "the displacement:\n{breaches}");
-    assert!(breaches.contains("red\n"), "the bands witness's verdict:\n{breaches}");
+    assert!(
+        breaches.contains("red\n"),
+        "the bands witness's verdict:\n{breaches}"
+    );
     assert!(
         breaches.contains("bands_w \u{b7} band_breach @ 0.98 on metric_bands\n"),
         "{breaches}"
     );
-    assert!(breaches.contains("?check=bands_w&kind=corridor\n"), "{breaches}");
+    assert!(
+        breaches.contains("?check=bands_w&kind=corridor\n"),
+        "{breaches}"
+    );
     assert!(
         breaches.contains("/perf/app/docket/p/metrics?metric=dso&dim=cohort\n"),
         "the link opens the metric sliced by the axis that moved most:\n{breaches}"
@@ -1491,7 +1520,10 @@ async fn the_findings_open_with_a_breached_corridor_and_where_the_move_is() {
     // The picture's rows: every walked point, the outside one marked.
     let corridor = body_text(get(&app, "/perf/app/docket/frames/corridor?metric=dso").await).await;
     assert!(corridor.contains("DSO\n"), "{corridor}");
-    assert!(corridor.ends_with("false\ntrue\n"), "the newest point is outside:\n{corridor}");
+    assert!(
+        corridor.ends_with("false\ntrue\n"),
+        "the newest point is outside:\n{corridor}"
+    );
 
     // Where the move is: on the one axis, the member that moved most,
     // the move signed, the rest's net beside it — a member absent in
@@ -1503,7 +1535,8 @@ async fn the_findings_open_with_a_breached_corridor_and_where_the_move_is() {
     );
 
     // The corridor check's row links the same way.
-    let points = body_text(get(&app, "/perf/app/docket/frames/check_points?check=bands_w").await).await;
+    let points =
+        body_text(get(&app, "/perf/app/docket/frames/check_points?check=bands_w").await).await;
     assert!(
         points.contains("/perf/app/docket/p/metrics?metric=dso&dim=cohort\n"),
         "{points}"
@@ -1522,7 +1555,10 @@ async fn the_findings_open_with_a_breached_corridor_and_where_the_move_is() {
     assert!(measured.contains("temporal_profile\n"), "{measured}");
     assert!(measured.contains("ledger.month: month.\n"), "{measured}");
     assert!(measured.contains("dimension_relevance\n"), "{measured}");
-    assert!(measured.contains("Relevance from 0.8 to 0.8.\n"), "{measured}");
+    assert!(
+        measured.contains("Relevance from 0.8 to 0.8.\n"),
+        "{measured}"
+    );
     assert!(
         measured.contains("1 of 1 metrics walked at month grain, trained on up to 2 months, served by planted 0.\n"),
         "{measured}"
@@ -1558,7 +1594,10 @@ async fn the_metrics_faces_serve_the_cube() {
     let views = body_text(views).await;
     assert!(views.contains("cleaned\n"), "{views}");
     assert!(views.contains("?metric=cleaned&kind=relation\n"), "{views}");
-    assert!(!views.contains("dso\n") && !views.contains("payables\n"), "{views}");
+    assert!(
+        !views.contains("dso\n") && !views.contains("payables\n"),
+        "{views}"
+    );
 
     let latest = get(&app, "/perf/app/docket/frames/latest").await;
     assert_eq!(latest.status(), StatusCode::OK);
@@ -2488,14 +2527,20 @@ async fn a_stopped_surface_folds_under_the_lists() {
 
     let served = body_text(get(&app, "/perf/app/docket/frames/pulse?stopped=0").await).await;
     assert!(served.contains("dso\n"), "{served}");
-    assert!(!served.contains("old_dso"), "a stopped metric is not between the served:\n{served}");
+    assert!(
+        !served.contains("old_dso"),
+        "a stopped metric is not between the served:\n{served}"
+    );
     let stopped = body_text(get(&app, "/perf/app/docket/frames/pulse?stopped=1").await).await;
     assert!(stopped.contains("old_dso\n"), "{stopped}");
     assert!(
         stopped.contains("stopped: superseded by dso, which reads the cohort\n"),
         "the author's reason in place of the axes:\n{stopped}"
     );
-    assert!(!stopped.contains("\ndso\n"), "the served metric is not in the fold:\n{stopped}");
+    assert!(
+        !stopped.contains("\ndso\n"),
+        "the served metric is not in the fold:\n{stopped}"
+    );
 
     let reads = body_text(get(&app, "/perf/app/docket/frames/reads?stopped=1").await).await;
     assert!(reads.contains("read.old_dso()\n"), "{reads}");
@@ -2516,17 +2561,30 @@ async fn a_views_page_serves_its_columns_and_its_rows() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let page = text(get(&app, "/perf/app/docket/p/metrics?metric=cleaned&kind=relation").await).await;
+    let page = text(
+        get(
+            &app,
+            "/perf/app/docket/p/metrics?metric=cleaned&kind=relation",
+        )
+        .await,
+    )
+    .await;
     assert!(page.contains("frames/view_fields"), "{page}");
     assert!(page.contains("frames/view_tables"), "{page}");
     assert!(
-        page.contains("<gl-query dataset=\"perf\" rows=\"50\" sql=\"SELECT * FROM cleaned LIMIT 50\">"),
+        page.contains(
+            "<gl-query dataset=\"perf\" rows=\"50\" sql=\"SELECT * FROM cleaned LIMIT 50\">"
+        ),
         "the pane, prefilled:\n{page}"
     );
     let metric = text(get(&app, "/perf/app/docket/p/metrics?metric=dso").await).await;
-    assert!(!metric.contains("<gl-query"), "a metric's page carries no pane:\n{metric}");
+    assert!(
+        !metric.contains("<gl-query"),
+        "a metric's page carries no pane:\n{metric}"
+    );
 
-    let fields = body_text(get(&app, "/perf/app/docket/frames/view_fields?metric=cleaned").await).await;
+    let fields =
+        body_text(get(&app, "/perf/app/docket/frames/view_fields?metric=cleaned").await).await;
     assert!(
         fields.contains("month\namount\ncohort\n"),
         "every served column in the view's order:\n{fields}"
@@ -2535,7 +2593,8 @@ async fn a_views_page_serves_its_columns_and_its_rows() {
         fields.contains("ledger.value\n"),
         "the column a renamed field descends from:\n{fields}"
     );
-    let tables = body_text(get(&app, "/perf/app/docket/frames/view_tables?metric=cleaned").await).await;
+    let tables =
+        body_text(get(&app, "/perf/app/docket/frames/view_tables?metric=cleaned").await).await;
     assert_eq!(tables, "ledger\n", "the one table the view reads");
 }
 
@@ -2603,7 +2662,10 @@ async fn the_glossary_tab_lists_the_words_and_the_query_tab_carries_the_pane() {
     ] {
         assert!(page.contains(frame), "{frame} on the tab:\n{page}");
     }
-    assert!(!page.contains("<gl-query"), "the pane is the Query tab's:\n{page}");
+    assert!(
+        !page.contains("<gl-query"),
+        "the pane is the Query tab's:\n{page}"
+    );
 
     // The vocabulary, by kind: a fact aspect with its enum, its grain,
     // the owed subjects spoken on and its speakers; a grounding; a
@@ -2612,29 +2674,47 @@ async fn the_glossary_tab_lists_the_words_and_the_query_tab_carries_the_pane() {
     let facts = body_text(get(&app, "/perf/app/docket/frames/vocabulary?kind=fact").await).await;
     assert!(facts.contains("role\n"), "{facts}");
     assert!(
-        facts.contains("one of key \u{b7} measure \u{b7} dimension \u{b7} timestamp \u{b7} attribute\n"),
+        facts.contains(
+            "one of key \u{b7} measure \u{b7} dimension \u{b7} timestamp \u{b7} attribute\n"
+        ),
         "what the aspect holds, from its schema:\n{facts}"
     );
     assert!(facts.contains("on a column\n"), "{facts}");
-    assert!(facts.contains("1 of 3\n"), "the owed columns spoken on:\n{facts}");
+    assert!(
+        facts.contains("1 of 3\n"),
+        "the owed columns spoken on:\n{facts}"
+    );
     assert!(facts.contains("agent, a person\n"), "{facts}");
     assert!(facts.contains("?aspect=role\n"), "{facts}");
-    assert!(!facts.contains("app_frame"), "the app's own fold apart:\n{facts}");
+    assert!(
+        !facts.contains("app_frame"),
+        "the app's own fold apart:\n{facts}"
+    );
     let own = body_text(get(&app, "/perf/app/docket/frames/vocabulary?kind=own").await).await;
     assert!(own.contains("app_frame\n"), "{own}");
     let queries = body_text(get(&app, "/perf/app/docket/frames/vocabulary?kind=query").await).await;
     assert!(queries.contains("dso\n"), "{queries}");
     assert!(queries.contains("on the dataset\n"), "{queries}");
-    let measurements = body_text(get(&app, "/perf/app/docket/frames/vocabulary?kind=measurement").await).await;
-    assert!(measurements.contains("temporal_profile\n"), "{measurements}");
-    assert!(measurements.contains("judge_time\n"), "the function that lands it:\n{measurements}");
+    let measurements =
+        body_text(get(&app, "/perf/app/docket/frames/vocabulary?kind=measurement").await).await;
+    assert!(
+        measurements.contains("temporal_profile\n"),
+        "{measurements}"
+    );
+    assert!(
+        measurements.contains("judge_time\n"),
+        "the function that lands it:\n{measurements}"
+    );
 
     // The terms: the surfaces first by alphabet with the column's term
     // among them; the person's word wins and is marked, the when on
     // hover.
     let terms = body_text(get(&app, "/perf/app/docket/frames/terms").await).await;
     assert!(terms.contains("Booked value\n"), "{terms}");
-    assert!(terms.contains("the cash\n"), "the person's word over the agent's:\n{terms}");
+    assert!(
+        terms.contains("the cash\n"),
+        "the person's word over the agent's:\n{terms}"
+    );
     assert!(!terms.contains("the money\n"), "{terms}");
     assert!(terms.contains("ruled\n"), "{terms}");
     assert!(terms.contains("v-ruled\n"), "{terms}");
@@ -2682,8 +2762,14 @@ async fn the_glossary_tab_lists_the_words_and_the_query_tab_carries_the_pane() {
     let conventions = get(&app, "/perf/app/docket/frames/conventions").await;
     assert_eq!(conventions.status(), StatusCode::OK);
     let conventions = body_text(conventions).await;
-    assert!(conventions.contains("erp\n"), "the recipe's source is listed:\n{conventions}");
-    assert!(conventions.contains("no conventions entry yet\n"), "{conventions}");
+    assert!(
+        conventions.contains("erp\n"),
+        "the recipe's source is listed:\n{conventions}"
+    );
+    assert!(
+        conventions.contains("no conventions entry yet\n"),
+        "{conventions}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2745,34 +2831,86 @@ async fn a_table_a_column_and_an_aspect_each_have_a_page() {
         head.contains("a fact table \u{b7} one row per month, cohort \u{b7} time axis month\n"),
         "the entity's shape:\n{head}"
     );
-    assert!(head.contains("read by DSO, Outstanding payables, Cleaned ledger\n") || head.contains("read by "), "{head}");
-    let cols = body_text(get(&app, "/perf/app/docket/frames/table_columns?table=ledger").await).await;
-    assert!(cols.starts_with("month\ncohort\nvalue\n"), "the columns in order:\n{cols}");
-    assert!(cols.contains("time axis\n"), "the entity's axis on its column:\n{cols}");
-    assert!(cols.contains("the cash\n"), "the person's meaning wins:\n{cols}");
-    assert!(cols.contains("not yet said\n"), "an owed meaning nobody filled:\n{cols}");
+    assert!(
+        head.contains("read by DSO, Outstanding payables, Cleaned ledger\n")
+            || head.contains("read by "),
+        "{head}"
+    );
+    let cols =
+        body_text(get(&app, "/perf/app/docket/frames/table_columns?table=ledger").await).await;
+    assert!(
+        cols.starts_with("month\ncohort\nvalue\n"),
+        "the columns in order:\n{cols}"
+    );
+    assert!(
+        cols.contains("time axis\n"),
+        "the entity's axis on its column:\n{cols}"
+    );
+    assert!(
+        cols.contains("the cash\n"),
+        "the person's meaning wins:\n{cols}"
+    );
+    assert!(
+        cols.contains("not yet said\n"),
+        "an owed meaning nobody filled:\n{cols}"
+    );
     assert!(cols.contains("ruled\n"), "{cols}");
     assert!(cols.contains("month\n"), "{cols}");
     assert!(cols.contains("?column=ledger.value\n"), "{cols}");
-    let landing = body_text(get(&app, "/perf/app/docket/frames/table_landing?table=ledger").await).await;
-    assert!(landing.starts_with("read\nlanded\nthe recipe\n"), "{landing}");
-    assert!(landing.contains("ledger.csv, 3 rows, from the source erp\n"), "{landing}");
-    assert!(landing.contains("3 rows on "), "{landing}");
-    assert!(landing.contains("read_csv('ledger.csv')"), "the recipe's SQL:\n{landing}");
-    let what = body_text(get(&app, "/perf/app/docket/frames/table_identities?table=ledger").await).await;
+    let landing =
+        body_text(get(&app, "/perf/app/docket/frames/table_landing?table=ledger").await).await;
     assert!(
-        what.contains("identities not yet searched\n") && what.contains("hierarchies not yet searched\n"),
+        landing.starts_with("read\nlanded\nthe recipe\n"),
+        "{landing}"
+    );
+    assert!(
+        landing.contains("ledger.csv, 3 rows, from the source erp\n"),
+        "{landing}"
+    );
+    assert!(landing.contains("3 rows on "), "{landing}");
+    assert!(
+        landing.contains("read_csv('ledger.csv')"),
+        "the recipe's SQL:\n{landing}"
+    );
+    let what = body_text(
+        get(
+            &app,
+            "/perf/app/docket/frames/table_identities?table=ledger",
+        )
+        .await,
+    )
+    .await;
+    assert!(
+        what.contains("identities not yet searched\n")
+            && what.contains("hierarchies not yet searched\n"),
         "{what}"
     );
 
     // The column's page: every voice, the outranked one on record.
     let page = text(get(&app, "/perf/app/docket/p/glossary?column=ledger.value").await).await;
-    assert!(page.contains("frames/column_slots?column=ledger.value"), "{page}");
-    let head = body_text(get(&app, "/perf/app/docket/frames/column_head?column=ledger.value").await).await;
+    assert!(
+        page.contains("frames/column_slots?column=ledger.value"),
+        "{page}"
+    );
+    let head = body_text(
+        get(
+            &app,
+            "/perf/app/docket/frames/column_head?column=ledger.value",
+        )
+        .await,
+    )
+    .await;
     assert!(head.starts_with("ledger\nvalue\n"), "{head}");
     assert!(head.contains("the cash\n"), "{head}");
     assert!(head.contains("?table=ledger\n"), "{head}");
-    let slots = body_text(get(&app, "/perf/app/docket/frames/column_slots?column=ledger.value").await).await;
+    let slots = body_text(
+        get(
+            &app,
+            "/perf/app/docket/frames/column_slots?column=ledger.value",
+        )
+        .await,
+    )
+    .await;
     assert!(
         slots.starts_with("meaning\nmeaning\n"),
         "both voices on the meaning, the person's first:\n{slots}"
@@ -2780,21 +2918,47 @@ async fn a_table_a_column_and_an_aspect_each_have_a_page() {
     assert!(slots.contains("the cash\nthe money\n"), "{slots}");
     assert!(slots.contains("a person\nthe agent\n"), "{slots}");
     assert!(slots.contains("current\noutranked\n"), "{slots}");
-    assert!(slots.contains("spoken by ada\n"), "the who rides the hover:\n{slots}");
-    assert!(slots.contains("not yet measured\n"), "an owed measurement:\n{slots}");
+    assert!(
+        slots.contains("spoken by ada\n"),
+        "the who rides the hover:\n{slots}"
+    );
+    assert!(
+        slots.contains("not yet measured\n"),
+        "an owed measurement:\n{slots}"
+    );
 
     // The aspect's page: the declaration, then every value and every
     // owed subject by name.
     let page = text(get(&app, "/perf/app/docket/p/glossary?aspect=meaning").await).await;
-    assert!(page.contains("frames/aspect_values?aspect=meaning"), "{page}");
-    let head = body_text(get(&app, "/perf/app/docket/frames/aspect_head?aspect=meaning").await).await;
-    assert!(head.starts_with("meaning\na fact: said by the agent or a person\n"), "{head}");
+    assert!(
+        page.contains("frames/aspect_values?aspect=meaning"),
+        "{page}"
+    );
+    let head =
+        body_text(get(&app, "/perf/app/docket/frames/aspect_head?aspect=meaning").await).await;
+    assert!(
+        head.starts_with("meaning\na fact: said by the agent or a person\n"),
+        "{head}"
+    );
     assert!(head.contains("on a column\n"), "{head}");
-    assert!(head.contains("witness meaning_w by agent, human\n"), "{head}");
-    assert!(head.contains("1 of 3 owed subjects carry a value\n"), "{head}");
-    let values = body_text(get(&app, "/perf/app/docket/frames/aspect_values?aspect=meaning").await).await;
-    assert!(values.starts_with("ledger.value\nledger.cohort\nledger.month\n"), "spoken first, then owed by name:\n{values}");
-    assert!(values.contains("the cash\nnot yet said\nnot yet said\n"), "{values}");
+    assert!(
+        head.contains("witness meaning_w by agent, human\n"),
+        "{head}"
+    );
+    assert!(
+        head.contains("1 of 3 owed subjects carry a value\n"),
+        "{head}"
+    );
+    let values =
+        body_text(get(&app, "/perf/app/docket/frames/aspect_values?aspect=meaning").await).await;
+    assert!(
+        values.starts_with("ledger.value\nledger.cohort\nledger.month\n"),
+        "spoken first, then owed by name:\n{values}"
+    );
+    assert!(
+        values.contains("the cash\nnot yet said\nnot yet said\n"),
+        "{values}"
+    );
     assert!(values.contains("a person\n"), "{values}");
     assert!(values.contains("?column=ledger.cohort\n"), "{values}");
 }
