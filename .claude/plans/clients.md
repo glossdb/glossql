@@ -18,7 +18,6 @@ the trial comes first.
 | The organization check and the extra allowed host | Low | `crates/serverd/src/auth.rs`, `config.rs`, the install page | With the spike; one day | |
 | Registration: a stranger gets a workspace without us | Medium: the order of the sign-up events is unverified; creation takes minutes | glossdeploy: the cockpit, cut down | After the spike; about five days | |
 | The upload page on the human door | Low: the object store and the human writes exist | `crates/apps`, `crates/serverd` | After the spike; one to two days | |
-| The docket's Glossary tab and Query tab | Low | `crates/apps` | Built with the demo; the trial's own pass after it runs end to end | #178, #179 |
 | The shared connector address | Low once the spike stands: the same Worker, routing by the organization in the token instead of the hostname | glossdeploy; a second audience on the agent door | When the directory listing is near | |
 
 ## The spike
@@ -129,4 +128,4 @@ Worker.
   the same Worker routing by the token's organization and a stand-in
   answer while a workspace starts.
 - **glossval**: nothing on this plan. The ranking experiment is
-  `sources.md`'s; the recommendations read is `futures.md`'s.
+  `sources.md`'s; the recommendations read is #174.

@@ -96,5 +96,3 @@ link.
   https://support.claude.com/en/articles/16607400-use-the-built-in-browser-in-claude-cowork
 - Forms per Claude surface:
   https://help.relativity.com/RelativityOne/Content/Relativity/MCP/Anthropic_Claude.htm
-- A mock of the Explore tab and the cards, private:
-  https://claude.ai/artifact/8tprheD84UsUURbuTCU8VG

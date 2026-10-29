@@ -3,10 +3,10 @@
 What comes in: workbooks, documents, search, and the ranking
 experiments. The shared frame, the terms, the gates and the
 decisions are in `kernel.md`. This plan touches the import crate and
-one scalar function. It shares one seam with `futures.md`: the
-general service call. Its table shape lands there; the scalar shape
-lands here with `embed(text)`, its first user.
-It runs beside the futures plan, under the phase 1 gate.
+one scalar function. Its seam is the general service call, one
+table in and one table out, which stands; the scalar shape lands
+here with `embed(text)`, its first user. It runs under the phase 1
+gate.
 
 ## The table
 
@@ -14,7 +14,7 @@ It runs beside the futures plan, under the phase 1 gate.
 |---|---|---|---|---|
 | Spreadsheets as a source, in process; the budget and the driver formulas land as rows | Easy | import crate, SPEC §3 | First | |
 | Documents as a source, a processor service | Easy | import crate, SPEC §3, one service | After workbooks | |
-| Search: embed as a remote scalar function, distance in plain SQL | Easy | scripts, one service; the async scalar seam exists at our pin | After the service call's table shape lands (`futures.md`, first row); the scalar shape lands here | |
+| Search: embed as a remote scalar function, distance in plain SQL | Easy | scripts, one service; the async scalar seam exists at our pin | The table shape stands; the scalar shape lands here | |
 | Ranking and CLM experiments | Easy, outside the tree | nothing here; glossval | Beside it; blocks nothing | |
 | Vector index in parquet | Medium | catalog, an optimizer rule | When the full scan is too slow | |
 

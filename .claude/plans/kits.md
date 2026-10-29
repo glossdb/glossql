@@ -3,10 +3,9 @@
 Two things. A demo of harmonisation: four systems of record, one
 product and one site record across them, checks on every load,
 tables shaped for a planning tool, every decision on record; its
-corpus, basis and app live in the demo repo beside this one, and the
-docket changes it needs are rows here. And configuration out of the
-Rust code: the KPI setup as the open reference, a harmonisation setup
-layered on it at image build time.
+corpus, basis and app live in the demo repo beside this one. And
+configuration out of the Rust code: the KPI setup as the open
+reference, a harmonisation setup layered on it at image build time.
 
 ## The table
 
@@ -14,17 +13,6 @@ layered on it at image build time.
 |---|---|---|---|---|
 | Two goals in the agent's step list, map and serve, ahead of metrics | Low | `crates/session/reads/next.sql` | A feature branch beside the demo; one day | |
 | A line on every result naming the docket page to open | Low | `crates/serverd/src/window.rs` | If time allows; half a day | |
-| The docket's metrics tab lists views apart from the metrics | Low | `crates/apps/builtin/docket/frames/pulse.sql`, `metrics.html` | With the demo; half a day | #175 |
-| The quality tab's checks list collapses per witness | Low | `frames/checks.sql`, `quality.html` | With the demo; half a day | #176 |
-| The corridor tile names the metric and the month behind a red | Low | `frames/front.sql`, `index.html` | With the demo; half a day | #177 |
-| The Explore tab: tables with columns and meanings, the source conventions, a query pane | Medium: one new element over the query door | `crates/apps/builtin/docket/`, `crates/apps/assets` | With the demo; two days | #178 |
-| The docket's tabs as two groups: Questions, Metrics, Quality, Glossary, Lineage; then Export, Query | Low | `crates/apps/builtin/docket/app.toml`, `crates/apps/templates/shell.html`, `crates/apps/src/app.rs` | With the demo; one day | #179 |
-| The quality tab's checks open to their evidence: the corridor's points, a voice check's differing columns | Medium: two evidence shapes behind one page param | `frames/checks.sql`, `quality.html`, new frames over `band_points()` and `glossary` | With the demo; two days | #180 |
-| A view's page shows what it serves and its rows through the pane; the pane takes its SQL from the page | Low | `metrics.html`, `crates/apps/assets/gl-query.js` | With the demo; one day | #181 |
-| A stopped surface folds under a closed line on Metrics and Export | Low | `frames/pulse.sql`, `views.sql`, `facts.sql`, `reads.sql` | With the demo; half a day | #182 |
-| The quality tab opens with findings: a sentence per verdict, refusal and measured defect, the breached corridor with its picture and movers; then the checks, the measurements, the loads, the unsaid | Medium: seven frames over reads that exist | `crates/apps/builtin/docket/quality.html`, `frames/findings.sql`, `breaches.sql`, `movers.sql`, `corridor.sql`, `measured.sql`, `landing.sql`, `unsaid.sql` | With the demo; two days | #184 |
-| The glossary tab shows the vocabulary by aspect, the terms, the tables, joins and sources, and a page per table, column and aspect | Medium: three subject pages on one template | `glossary.html`, new frames over `aspects`, `witnesses`, `GLOSSARY()` | With the demo; two days | #185 |
-| The query pane pages through what a read returned | Low | `crates/apps/assets/gl-query.js` | With the demo; half a day | #186 |
 | Kits out of the Rust code: the walk, the arrays, the step list split, the docket move | Medium: a build script over five lists | `crates/scripts/src/library.rs`, `crates/session/src/library.rs`, `crates/apps/src/builtin.rs`, `crates/serverd/src/skills.rs`, `crates/serverd/build.rs` | After the demo; three to four days | |
 
 ## The demo, step by step, on today's binary
@@ -135,6 +123,5 @@ market.
 
 ## Decisions that are the lead's
 
-The indicators as metrics in the demo; the two goals on a feature
-branch beside it; whether to open the second kit after the demo, and
-the names above.
+The two goals on a feature branch; whether to open the second kit,
+and the names above.
