@@ -43,10 +43,13 @@ page, frame, and spec names are flat segments — ASCII alphanumerics,
 **A manifest may list its pages.** `"pages": [{"name": "index",
 "title": "Overview"}, {"name": "cash", "title": "Cash"}]` is the
 order and the wording of the bar's tabs; without the list every page
-shows by its file name, `index` first. An app with one page shows no
-tabs — the picker names it. Every page of a glossed app opens with
-the manifest's title, printed by the shell; the built-in's pages are
-its tabs and it prints none.
+shows by its file name, `index` first. A page may carry a `"group"`:
+the bar draws a hairline where the group changes from one page to the
+next, so an app can set the pages that show what the record says
+apart from the ones that hand the data over; pages without a group
+draw none. An app with one page shows no tabs — the picker names it.
+Every page of a glossed app opens with the manifest's title, printed
+by the shell; the built-in's pages are its tabs and it prints none.
 
 ## Frames
 
@@ -122,6 +125,20 @@ The other tiles:
   links over the page URL (`grain`, `span`); it reads the metric's
   resolution from a `metric_axes()` frame and offers the grains from
   there up.
+- `<gl-query dataset="<dataset>" rows="50">` — a read of the viewer's
+  own: a text area, a run button, the rows as a table, and the result
+  to save as csv or as the Arrow stream the door sent. It posts to the
+  query door, `/<dataset>/query`, and runs reads alone — SELECT, WITH,
+  DESCRIBE, SHOW, EXPLAIN — saying so for anything else; the door's
+  refusal comes back as its text. A page opened with `?sql=` runs
+  that read on load, so a read is a link, and a `sql` attribute on
+  the element does the same for a page that knows its read. A header
+  click sorts what came back, in the browser, and the footer says so.
+  The rows page in steps of `rows`, in the browser: every row the
+  door answered is held, the footer carries the page's range over the
+  total with a step either way, a sort starts over from the first
+  page, and the downloads keep the whole result. It touches no frame
+  and no store.
 - `<gl-graph nodes="frames/x" edges="frames/y" empty="…">` — column
   lineage over two frames: nodes one row per column (`node`, `kind`
   as `table` or `metric`, `col`, `ord`, `role`), edges one row per
@@ -144,13 +161,30 @@ connected tile refetches in place; instruments keep their DOM.
 ## The built-in docket
 
 `crates/apps/builtin/docket/` — the reference app and the standing
-example, and the dataset's own page (`/<dataset>/app` opens it): what
+example, and the dataset's own page (`/<dataset>/app` opens it). Two
+groups of tabs. The first shows what the record says: Questions (what
 stands open for a human to judge, what has been settled, what waits
-on an act, the metric surfaces, how well the data is held (the
-landing account, the standing checks, the column coverage), the
-column lineage, and every table and read as a file. Pages
-`index.html`, `metrics.html`, `quality.html`, `lineage.html`,
-`export.html`; frames
-over the shipped reads, the cube's two reads, `forecast_points()`,
-`plan_points()`, `metric_sources()` and `imports`; one spec. Every built-in frame executes under the test
+on an act), Metrics (the surfaces, with the views and the facts listed
+apart from them and what their authors stopped folded under each
+list; a view's page shows the columns it serves, the tables it reads
+and its rows), Quality (the findings, worst first — a verdict that is
+not green, a load's refused cells, a defect a function measured, each
+a sentence from the record's fields; a breached corridor with its
+picture and the axis that moved most; then the standing checks, each
+opening to its evidence, what the functions measured in words, each
+table's newest load in one line, and what the vocabulary still owes
+by name), Glossary (the vocabulary first — every declared aspect
+with what it holds, where it is owed, who may speak it and how many
+owed subjects carry a value, in three groups by kind — then the
+terms, every table with its columns, the joins with their coherence
+and the sources with their conventions; a page per table, column and
+aspect holds every slot with its voice and standing, what the
+functions measured, the joins and the landing, a person's word marked
+once with the who and when on hover) and Lineage. The second hands the data over: Export (every table and read
+as a file) and Query (a pane for a read of one's own, the SQL riding
+the page URL so a read is a link). Pages `index.html`, `metrics.html`,
+`quality.html`, `glossary.html`, `lineage.html`, `export.html`,
+`query.html`; frames over the shipped reads, the cube's two reads,
+`forecast_points()`, `plan_points()`, `metric_sources()` and
+`imports`; two specs. Every built-in frame executes under the test
 suite.

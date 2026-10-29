@@ -7,7 +7,9 @@
 -- number, the read's reason takes its place. Status and colour follow
 -- the pulse's rule, so the two lists cannot disagree. The link
 -- carries the kind: the metric page draws a fact without the series
--- tiles.
+-- tiles. `$stopped` picks the served facts (0) or the stopped ones
+-- (1), which carry the author's reason in place of a meaning and
+-- fold under the list.
 WITH asked AS (
   SELECT q.aspect, count(*) AS n FROM open_questions q
   JOIN current_dataset d ON d.dataset = q.dataset GROUP BY q.aspect
@@ -33,7 +35,7 @@ asof AS (
 SELECT s.name,
        s.title,
        s.unit,
-       s.meaning,
+       arrow_cast(CASE WHEN s.stopped <> '' THEN 'stopped: ' || s.stopped ELSE s.meaning END, 'Utf8') AS meaning,
        f.value,
        arrow_cast(coalesce(f.reason, ''), 'Utf8') AS note,
        arrow_cast(coalesce('as of ' || replace(substr(a.at, 1, 16), 'T', ' '), ''), 'Utf8') AS asof,
@@ -56,4 +58,5 @@ LEFT JOIN asof a ON a.metric = s.name
 LEFT JOIN asked q ON q.aspect = s.name
 LEFT JOIN ruled r ON r.aspect = s.name
 WHERE s.kind = 'fact'
+  AND (s.stopped <> '') = (coalesce($stopped, '0') = '1')
 ORDER BY s.name

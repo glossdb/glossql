@@ -28,6 +28,19 @@ ignore = [
   # paste is a proc-macro that runs at build time, under
   # datafusion-functions-json and faer's gemm; unmaintained, not unsound.
   { id = "RUSTSEC-2024-0436", reason = "paste is a build-time proc-macro under the engine's JSON functions and faer" },
+  # crypto-bigint 0.5 under jsonwebtoken's p256 and p384 0.13: timing
+  # variability in operations meant to be constant-time. The server
+  # verifies with the issuer's public keys and never signs. Closes when
+  # jsonwebtoken moves to p256 0.14.
+  { id = "RUSTSEC-2026-0387", reason = "crypto-bigint rides jsonwebtoken's p256 0.13; the server verifies with public keys and never signs" },
+  # zstd 0.13 and zstd-safe 7 under arrow-ipc 59, the version datafusion
+  # 55 pins: a reused context, the seekable API and a failed legacy frame.
+  # The only IPC the server decodes is the deployment's own service's
+  # answer, one fresh decoder per buffer. Closes when arrow 60 reaches
+  # datafusion.
+  { id = "RUSTSEC-2026-0391", reason = "zstd rides arrow-ipc 59, pinned by the engine; the IPC decoded is the deployment's own service's answer" },
+  { id = "RUSTSEC-2026-0398", reason = "zstd-safe rides arrow-ipc 59, pinned by the engine; the seekable API is never called" },
+  { id = "RUSTSEC-2026-0403", reason = "zstd-safe rides arrow-ipc 59, pinned by the engine; the IPC decoded is the deployment's own service's answer" },
 ]
 
 [licenses]

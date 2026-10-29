@@ -4,6 +4,8 @@
 -- chip says kind and standing in one word: what the read is while it
 -- serves (the skill's `x-kind`, a grounding without one is a metric),
 -- else why it does not. A read that serves no file hides its links.
+-- `$stopped` picks the served reads (0) or the stopped ones (1),
+-- which fold under the list with the author's reason.
 SELECT s.name,
        arrow_cast('read.' || s.name || '()', 'Utf8') AS read,
        s.title,
@@ -19,6 +21,7 @@ SELECT s.name,
        arrow_cast('/' || d.dataset || '/app/export/read.' || s.name || '.csv', 'Utf8') AS csv,
        arrow_cast('/' || d.dataset || '/app/export/read.' || s.name || '.parquet', 'Utf8') AS parquet
 FROM metric_surfaces s CROSS JOIN current_dataset d
+WHERE (s.stopped <> '') = (coalesce($stopped, '0') = '1')
 ORDER BY CASE
     WHEN s.stopped <> '' THEN 4
     WHEN NOT s.grounded THEN 3

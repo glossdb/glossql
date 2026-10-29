@@ -1,7 +1,12 @@
 -- The pulse: every metric surface that is a series with its
 -- validation chip — the declared facts have their own list,
--- `frames/facts`, with no period and no move, and a plan is no
--- metric: it stands on its metric's page, `frames/plan`. The rows are
+-- `frames/facts`, with no period and no move; the derived relations
+-- have theirs, `frames/views`, with no number at all; and a plan is
+-- no metric: it stands on its metric's page, `frames/plan`. `$stopped`
+-- picks the served surfaces (0) or the ones their author stopped
+-- (1): a stopped grounding serves no number and carries the author's
+-- reason in place of the axes, and the page folds those under the
+-- list, so a retired metric stays out of the way and on record. The rows are
 -- `metric_surfaces` — the record; the numbers beside them (latest
 -- period, the move into it, the admitted axes) are `frames/latest`, a
 -- data frame the page joins to these rows by `name`, the metric's
@@ -35,6 +40,7 @@ SELECT s.title,
        arrow_cast('—', 'Utf8') AS latest,
        arrow_cast('', 'Utf8') AS delta,
        arrow_cast(CASE
+         WHEN s.stopped <> '' THEN 'stopped: ' || s.stopped
          WHEN x.applicable IS FALSE THEN split_part(x.reason, ':', 1)
          ELSE 'no axes admitted' END, 'Utf8') AS axes,
        arrow_cast(CASE
@@ -54,5 +60,6 @@ FROM metric_surfaces s
 LEFT JOIN asked q ON q.aspect = s.name
 LEFT JOIN ruled r ON r.aspect = s.name
 LEFT JOIN metric_axes() x ON x.metric = s.name
-WHERE s.kind NOT IN ('fact', 'plan')
+WHERE s.kind NOT IN ('fact', 'plan', 'relation')
+  AND (s.stopped <> '') = (coalesce($stopped, '0') = '1')
 ORDER BY name

@@ -12,13 +12,25 @@ use std::collections::BTreeMap;
 
 use crate::builtin::{self, BuiltinApp};
 
+/// One tab of the bar: the page's name, the title the bar prints, and
+/// the group the manifest puts it in. The bar draws a hairline where
+/// the group changes from one page to the next — the pages that show
+/// what the record says, then the ones that hand the data over; pages
+/// without a group draw none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tab {
+    pub name: String,
+    pub title: String,
+    pub group: String,
+}
+
 #[derive(Debug)]
 pub struct AppDef {
     pub name: String,
     pub title: String,
-    /// The app's pages as the bar lists them: `(name, title)` in the
-    /// manifest's order, else every page by its file name, index first.
-    pub pages: Vec<(String, String)>,
+    /// The app's pages as the bar lists them, in the manifest's order,
+    /// else every page by its file name, index first.
+    pub pages: Vec<Tab>,
     source: Source,
 }
 
@@ -42,12 +54,12 @@ pub fn safe_segment(name: &str) -> bool {
 }
 
 /// What a manifest says: the title the picker prints, and the pages
-/// the bar shows as tabs, in the author's order. A `dataset` key is
-/// accepted and ignored — the URL binds.
+/// the bar shows as tabs, in the author's order, each with its group.
+/// A `dataset` key is accepted and ignored — the URL binds.
 #[derive(Default)]
 struct Manifest {
     title: Option<String>,
-    pages: Vec<(String, String)>,
+    pages: Vec<Tab>,
 }
 
 /// The built-in's manifest is TOML (`app.toml` beside its pages).
@@ -72,10 +84,15 @@ fn manifest(value: &serde_json::Value) -> Manifest {
             pages
                 .iter()
                 .filter_map(|p| {
-                    Some((
-                        p.get("name")?.as_str()?.to_string(),
-                        p.get("title")?.as_str()?.to_string(),
-                    ))
+                    Some(Tab {
+                        name: p.get("name")?.as_str()?.to_string(),
+                        title: p.get("title")?.as_str()?.to_string(),
+                        group: p
+                            .get("group")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                    })
                 })
                 .collect()
         })
@@ -90,14 +107,21 @@ fn manifest(value: &serde_json::Value) -> Manifest {
 }
 
 /// The pages a manifest did not list: every page by its file name,
-/// `index` first, the rest in name order.
-fn pages_by_name<'a>(files: impl Iterator<Item = &'a str>) -> Vec<(String, String)> {
+/// `index` first, the rest in name order, no groups.
+fn pages_by_name<'a>(files: impl Iterator<Item = &'a str>) -> Vec<Tab> {
     let mut names: Vec<String> = files
         .filter(|p| p.ends_with(".html") && !p.contains('/'))
         .map(|p| p.trim_end_matches(".html").to_string())
         .collect();
     names.sort_by_key(|n| (n != "index", n.clone()));
-    names.into_iter().map(|n| (n.clone(), n)).collect()
+    names
+        .into_iter()
+        .map(|n| Tab {
+            title: n.clone(),
+            name: n,
+            group: String::new(),
+        })
+        .collect()
 }
 
 impl AppDef {

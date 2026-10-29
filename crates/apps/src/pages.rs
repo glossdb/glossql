@@ -206,10 +206,20 @@ async fn page_response(
         .into_iter()
         .try_for_each(|(name, text)| tera.add_raw_template(&format!("pages/{name}"), &text))
         .map(|()| tera);
+    // `sep` is the hairline before a tab: the group changed from the
+    // page before it. Computed here so the template stays a loop.
     let pages: Vec<Value> = def
         .pages
         .iter()
-        .map(|(name, title)| json!({ "name": name, "title": title }))
+        .enumerate()
+        .map(|(i, tab)| {
+            json!({
+                "name": tab.name,
+                "title": tab.title,
+                "group": tab.group,
+                "sep": i > 0 && def.pages[i - 1].group != tab.group,
+            })
+        })
         .collect();
     let mut ctx = tera::Context::new();
     ctx.insert(

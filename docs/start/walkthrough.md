@@ -254,13 +254,18 @@ SELECT aspect, key, stance, folded_in FROM ruling_entries ORDER BY written_at DE
 ## The docket
 
 Open `http://127.0.0.1:8080/ops/app`: the docket is the dataset's
-page. Its tabs are Open (what is open to judge, what is settled, what
-waits on an act), Metrics (the surfaces, the facts, one metric's
-story and slices), Quality (each landing's account, the checks, the
-column coverage), Lineage (the tables along their key edges and the
-columns each metric reads) and Export (every table and read as a
-file). The ruling form on Open is the same write the question round
-lands; a person who stepped away has a way back into the record.
+page. Its tabs come in two groups. Questions (what is open to judge,
+what is settled, what waits on an act), Metrics (the surfaces, the
+views and the facts, one metric's story and slices), Quality (what is
+wrong and why, worst first; then the checks, what the functions
+measured, each load, and what is still unsaid), Glossary (the
+vocabulary, the terms, every table, join and source, and a page per
+table, column and aspect) and Lineage (the tables along their key edges and the
+columns each metric reads) show what the record says; Export (every
+table and read as a file) and Query (a read of one's own) hand the
+data over. The ruling form on Questions is the same write the
+question round lands; a person who stepped away has a way back into
+the record.
 
 ## Where the workspace stands
 

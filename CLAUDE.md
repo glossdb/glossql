@@ -72,6 +72,13 @@ kernel plan, `.claude/plans/kernel.md`, holds the evaluation behind
 it is, which phase — and is read when picking. It links its issues
 and shrinks as they close; it is never loaded unasked.
 
+A plan file is a table first: element, risk, what it touches, when,
+issue. Build order is risk order. Under 150 lines. It states what
+stands and what is next, never what was rejected and never a date.
+It drafts an issue only for its next row, in the issue form; the
+draft leaves when the issue opens. When the direction moves, the
+plan is rewritten, not patched.
+
 ## Ground rules
 
 - **Code is the work.** A task on the server ends in changed code and

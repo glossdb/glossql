@@ -1,0 +1,110 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "name": "frame"
+  },
+  "height": 170,
+  "encoding": {
+    "x": {
+      "field": "period",
+      "type": "temporal",
+      "axis": {
+        "title": null,
+        "labelAngle": 0,
+        "format": "%b %Y",
+        "tickCount": {"interval": "month", "step": 1}
+      }
+    }
+  },
+  "layer": [
+    {
+      "transform": [
+        {
+          "filter": "isValid(datum.low)"
+        }
+      ],
+      "mark": {
+        "type": "area",
+        "opacity": 0.14,
+        "color": "#dde4eb"
+      },
+      "encoding": {
+        "y": {
+          "field": "low",
+          "type": "quantitative",
+          "axis": {
+            "title": null
+          },
+          "scale": {
+            "zero": false
+          }
+        },
+        "y2": {
+          "field": "high"
+        },
+        "tooltip": null
+      }
+    },
+    {
+      "mark": {
+        "type": "line",
+        "strokeWidth": 1.6,
+        "color": "#dde4eb"
+      },
+      "encoding": {
+        "y": {
+          "field": "value",
+          "type": "quantitative"
+        },
+        "tooltip": null
+      }
+    },
+    {
+      "mark": {
+        "type": "point",
+        "filled": true,
+        "size": 55
+      },
+      "encoding": {
+        "y": {
+          "field": "value",
+          "type": "quantitative"
+        },
+        "color": {
+          "field": "outside",
+          "type": "nominal",
+          "scale": {
+            "domain": [false, true],
+            "range": ["#dde4eb", "#d97561"]
+          },
+          "legend": null
+        },
+        "tooltip": [
+          {
+            "field": "period",
+            "type": "temporal",
+            "format": "%B %Y"
+          },
+          {
+            "field": "value",
+            "type": "quantitative",
+            "format": ",.4~s",
+            "title": "actual"
+          },
+          {
+            "field": "low",
+            "type": "quantitative",
+            "format": ",.4~s",
+            "title": "p10"
+          },
+          {
+            "field": "high",
+            "type": "quantitative",
+            "format": ",.4~s",
+            "title": "p90"
+          }
+        ]
+      }
+    }
+  ]
+}

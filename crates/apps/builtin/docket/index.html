@@ -2,9 +2,12 @@
 {% import "modules/tiles.html" as tiles %}
 
 {% block main %}
-{# The docket: what stands open, what has been settled, what waits on
-   an act. Its one write is the ruling form — the human's own judgment,
-   landed under their own standing; everything else is a read.
+{# The Questions tab, the docket's first page: what stands open for a
+   human to judge, what has been settled, what waits on an act. Its
+   one write is the ruling form — the human's own judgment, landed
+   under their own standing; everything else is a read. The data's
+   health is the Quality tab's, the numbers the Metrics tab's: this
+   page is judgment alone.
 
    Each band is a matter list: the rail on the left says how firmly the
    claim is held, the middle column is language somebody authored, and
@@ -14,11 +17,12 @@
     {{ tiles::value(frame="frames/front", field="open", label="Open questions",
          chip="open_questions",
          note="Judged assumptions the agent still holds below full confidence — conventions and definitions, never statistics. The same rows the door asks as forms.") }}
-    {{ tiles::value(frame="frames/front", field="surfaces", label="Metric surfaces",
-         chip="aspects") }}
-    {{ tiles::value(frame="frames/front", field="corridor", label="Corridor",
-         format="text", chip="ATTEST()",
-         note="The dataset-wide band verdict from the bands witness. 'not run' is honest absence, not green.") }}
+    {{ tiles::value(frame="frames/front", field="ruled", label="Rulings",
+         chip="ruling_entries",
+         note="Every standing ruling in this dataset, in the human's own words.") }}
+    {{ tiles::value(frame="frames/front", field="waiting", label="Waiting on an act",
+         chip="owed",
+         note="What the agent owes: a fold-in after a ruling, a re-measure after a change, an import after an approved recipe change, a contested slot, a function voice from before the last change.") }}
   </div>
 
   <section class="tile">

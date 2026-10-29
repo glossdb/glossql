@@ -2,89 +2,230 @@
 {% import "modules/tiles.html" as tiles %}
 
 {% block main %}
-{# How well the data is held: what each landing took in, dropped and
-   nulled; the standing checks and their bands; how much of the
-   vocabulary is judged. Everything here is measured — the landing's
-   own account, a witness's live verdict, the glossary's own counts —
-   never assumed. #}
+{% set check = state.check | default(value="") %}
+{% set ckind = state.kind | default(value="") %}
+
+{% if check %}
+{# ---- one check: the declaration, the verdict, the evidence -------- #}
+{# Opening a check is going deeper, not somewhere else: the Quality
+   tab stays current and is the way back. The link carried the
+   detector's kind, so the page knows which evidence to draw: the
+   corridor's points, a voice check's differing columns, a
+   validation's rates, or every verdict for a detector of the
+   workspace's own. #}
 <div class="tiles">
-  <div class="counts">
-    {{ tiles::value(frame="frames/census", field="tables", label="Tables landed", chip="imports") }}
-    {{ tiles::value(frame="frames/census", field="dropped", label="Rows dropped", chip="imports",
-         note="Rows the recipes dropped at landing, summed over the newest landing of each table. A landing whose recipe could not count its drops adds nothing here and says so below.") }}
-    {{ tiles::value(frame="frames/census", field="red", label="Red checks", chip="ATTEST()",
-         note="Standing checks whose band is red. The list below carries every band.") }}
-    {{ tiles::value(frame="frames/census", field="judged", label="Columns judged", format="text",
-         chip="GLOSSARY()", note="Columns with any claim on them, over every column the dataset holds.") }}
-  </div>
-
-  <section class="tile">
-    <header><span class="eyebrow">Landing account</span>
-      <code class="chip" title="The newest landing of each table: what each source scan held (a join's scans listed, never summed), what landed, what the recipe dropped, the cells its casts nulled, and when. A landing that could not account for its casts says so.">imports</code></header>
-    <gl-rows frame="frames/landing" empty="nothing has landed here yet — a table lands through a recipe, DECLARE RECIPE over the agent door">
-      <template>
-        <div class="rrow" style="grid-template-columns:minmax(9rem,1fr) minmax(10rem,1fr) 6rem 6rem 6rem 9rem">
-          <span class="r-subj">{name}<br><span class="r-meta">{casts}</span></span>
-          <span class="r-meta">{scanned}</span>
-          <span class="r-num">{landed}<br><span class="r-meta">landed</span></span>
-          <span class="r-num">{dropped}{dropped_dash}<br><span class="r-meta">{dropped_label}</span></span>
-          <span class="r-num {ncls}">{nulled}{dash}<br><span class="r-meta">{nulled_label}</span></span>
-          <span class="r-meta">{landed_at}</span>
+  <gl-rows frame="frames/check" empty="no check named {{ check }} — a check is a witness with a detector">
+    <template>
+      <section class="tile">
+        <header><span class="eyebrow">{witness}</span>
+          <code class="chip {bcls}">{band}</code></header>
+        <div class="rrow" style="grid-template-columns:1fr">
+          <span class="r-what">{asks}</span>
+          <span class="r-meta">{detector} @ {threshold} on {aspect} · speakers: {speakers}</span>
+          <span class="r-meta">{measured} · {score} · {at}{stale}</span>
         </div>
+      </section>
+    </template>
+  </gl-rows>
+
+  {% if ckind == "corridor" %}
+  <section class="tile">
+    <header><span class="eyebrow">Every metric's newest complete month</span>
+      <code class="chip" title="The recorded walk, no re-run: per metric the newest complete point, its actual, the corridor its own history predicted, and the displacement the detector scores. A metric the walk could not walk carries its reason.">band_points()</code></header>
+    <p class="hint">The point the detector scores, per metric: the actual against the corridor its own history predicted, how far out it sits (0 at the median, 0.8 at the corridor's edge, 1 at the extremes) and on which side. Farthest out first. A point the walk withheld, or a metric it could not walk, says why.</p>
+    <gl-rows frame="frames/check_points" empty="the walk has not run — metric_bands lands the corridor, and the next read's bands goal hands the statement">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:minmax(10rem,14rem) 6rem 8rem minmax(10rem,1fr) 6rem 5rem">
+          <span class="r-subj">{title}<br><span class="r-meta">{metric}</span></span>
+          <span class="r-meta">{period}</span>
+          <span class="r-num">{actual}</span>
+          <span class="r-meta">the corridor: {corridor}<br>{note}</span>
+          <span class="r-num">{displacement}<br><span class="r-meta">{side}</span></span>
+          <code class="chip {bcls}">{band}</code>
+        </a>
       </template>
     </gl-rows>
   </section>
-
+  {% elif ckind == "voices" %}
   <section class="tile">
-    <header><span class="eyebrow">Cast failures</span>
-      <code class="chip" title="One row per column whose cast nulled a cell in the newest landing of its table: how many cells, and the values it could not read, most frequent first (the landing keeps eight).">imports</code></header>
-    <gl-rows frame="frames/casts" empty="no cast nulled a cell in the newest landings">
+    <header><span class="eyebrow">Columns whose voices differ</span>
+      <code class="chip" title="The witness's verdicts that are not green, each with every voice on the slot — the glossary's own rows on the subject and aspect — the human's first. The score is the share of extra distinct values across the slots.">ATTEST() · glossary</code></header>
+    <p class="hint">Only the columns whose slots disagree are listed, every voice side by side, the human's first; the agreeing ones are counted above.</p>
+    <gl-rows frame="frames/check_slots" empty="every voice agrees — no column's slots differ">
       <template>
-        <div class="rrow" style="grid-template-columns:minmax(10rem,14rem) 6rem minmax(0,1fr) 9rem">
+        <div class="rrow" style="grid-template-columns:minmax(10rem,16rem) minmax(0,1fr) 5rem 5rem">
           <span class="r-subj">{subject}</span>
-          <span class="r-num r-gap">{failed}<br><span class="r-meta">nulled</span></span>
-          <span class="r-meta">{top}</span>
-          <span class="r-meta">{landed_at}</span>
-        </div>
-      </template>
-    </gl-rows>
-  </section>
-
-  <section class="tile">
-    <header><span class="eyebrow">Standing checks</span>
-      <code class="chip" title="Each row is a witness's live verdict: the expectation is the witness's own declaration, measured and band come from ATTEST(). A new import invalidates the measurement, so the next read recomputes.">ATTEST()</code></header>
-    <div class="scroll">
-    <gl-rows frame="frames/checks" empty="no witness carries a detector yet — nothing is checked">
-      <template>
-        <div class="rrow" style="grid-template-columns:10rem 1fr 10rem 6rem 5rem">
-          <span class="r-subj">{checked}</span>
-          <span class="r-what">{what}</span>
-          <span class="r-meta">{expectation}</span>
-          <span class="r-num">{measured}</span>
+          <span class="r-what">{voices}</span>
+          <span class="r-num">{score}</span>
           <code class="chip {bcls}">{band}</code>
         </div>
       </template>
     </gl-rows>
-    </div>
   </section>
-
+  {% elif ckind == "rate" %}
   <section class="tile">
-    <header><span class="eyebrow">Column coverage</span>
-      <code class="chip" title="Denominators from the model's own rules: behavior and unit are owed only where role = measure. A table with no measures shows a dash — not applicable, not a gap.">GLOSSARY(all =&gt; true)</code></header>
-    <div class="scroll">
-    <gl-rows frame="frames/coverage" empty="no column claims yet">
+    <header><span class="eyebrow">Expectation against measurement</span>
+      <code class="chip" title="Per subject: the authored outcome and tolerance from the human's or the agent's slot, the breach rate from the check function's voice, and the band the detector gave the pair.">ATTEST() · glossary</code></header>
+    <p class="hint">Per subject: the outcome written for it with its tolerance, and the breach rate the check measured. Green at or under the tolerance, red above, yellow while no check has spoken.</p>
+    <gl-rows frame="frames/check_rates" empty="no subject carries this expectation yet">
       <template>
-        <div class="rrow" style="grid-template-columns:12rem 4rem 6rem 5rem 5rem 4rem">
-          <span class="r-subj">{t}</span>
-          <span class="r-num">{cols}</span>
-          <span class="r-num">{meaning} named</span>
-          <span class="r-num {bcls}">{btxt}</span>
-          <span class="r-num {ucls}">{utxt}</span>
-          <span class="r-num">{dims}</span>
+        <div class="rrow" style="grid-template-columns:minmax(10rem,14rem) minmax(0,1fr) 9rem 10rem 5rem">
+          <span class="r-subj">{subject}</span>
+          <span class="r-what">{outcome}</span>
+          <span class="r-meta">{tolerance}</span>
+          <span class="r-meta">{measured}</span>
+          <code class="chip {bcls}">{band}</code>
         </div>
       </template>
     </gl-rows>
-    </div>
+  </section>
+  {% else %}
+  <section class="tile">
+    <header><span class="eyebrow">Every verdict</span>
+      <code class="chip" title="Every verdict of this witness as ATTEST() holds it, the worst first. A detector of the workspace's own leaves no shape the page knows beyond these.">ATTEST()</code></header>
+    <gl-rows frame="frames/check_verdicts" empty="no verdict yet — the detector has not been run on a slot">
+      <template>
+        <div class="rrow" style="grid-template-columns:minmax(10rem,14rem) minmax(0,1fr) 5rem 5rem">
+          <span class="r-subj">{subject}<br><span class="r-meta">{aspect}</span></span>
+          <span class="r-meta">{note}</span>
+          <span class="r-num">{score}</span>
+          <code class="chip {bcls}">{band}</code>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+  {% endif %}
+</div>
+
+{% else %}
+{# ---- what is wrong, then the instruments --------------------------- #}
+{# Findings first: what is wrong right now, worst first, each a
+   sentence from the record's fields with the numbers behind it, what
+   reads the subject and where it came from — a witness's verdict that
+   is not green, a load whose casts refused cells, a defect a function
+   measured. A breached corridor shows its months against the
+   corridor and where the move is. Then the instruments, in words: the
+   standing checks, what the functions measured, each table's newest
+   load, and what the vocabulary still owes by name. Everything here
+   is measured — a witness's live verdict, the landing's own account,
+   the measurement's own body — never assumed, and nothing is a count
+   standing in for a sentence. #}
+<div class="tiles">
+  <section class="tile">
+    <header><span class="eyebrow">Findings</span>
+      <code class="chip" title="A check's verdict that is not green (ATTEST), a load's refused cells (imports), a defect a function measured (the measurement aspects): worst first, a verdict's band as the chip, the rest without a hue — a measurement proposes and never judges. A breached corridor comes first with its picture and its movers. Nothing wrong serves no finding, and the page says so.">ATTEST() · imports · measurements</code></header>
+    <p class="hint">What is wrong right now, worst first. Each finding says what was seen, what reads it and where it comes from.</p>
+
+    {# A breached corridor: the metric whose newest complete point
+       landed outside. The picture and the movers are the metric's own
+       frames, keyed by its name through the row's field. #}
+    <gl-rows frame="frames/breaches" empty="">
+      <template>
+        <article class="finding f-red">
+          <div class="f-head"><code class="chip {bcls}">{band}</code><h2>{headline}</h2></div>
+          <p class="f-why">The month closed at <code>{actual}</code>. From its own history the metric was expected between <code>{lo}</code> and <code>{hi}</code>; the point sits {side} that, displacement <code>{displacement}</code>. {others}</p>
+          <gl-chart frame="frames/corridor?metric={metric}" spec="specs/corridor.vl.json" empty=""></gl-chart>
+          <p class="f-meta">the band is the corridor the walk predicted for each month from the months before it, the 10th to the 90th percentile; the line is the actual</p>
+          <p class="f-sub">Where the move is · the previous month to this one, by each axis the metric is sliced by</p>
+          <gl-rows frame="frames/movers?metric={metric}" empty="the metric is sliced by no axis, so the move has no parts">
+            <template>
+              <div class="rrow f-move" style="grid-template-columns:8rem 7rem 12rem 7rem minmax(0,1fr)">
+                <span class="r-meta">{axis}</span>
+                <span class="r-subj">{member}</span>
+                <span class="r-meta">{before} → {after}</span>
+                <span class="r-num">{sign}{moved}</span>
+                <span class="r-meta">{rest} {rest_sign}{rest_moved}</span>
+              </div>
+            </template>
+          </gl-rows>
+          <p class="f-meta">{meta} · {at}{stale} · <a href="{link_check}">the check</a> · <a href="{link_metric}">{title}, sliced by {axis}</a></p>
+        </article>
+      </template>
+    </gl-rows>
+
+    <gl-rows frame="frames/findings" empty="Beyond the corridor, nothing stands out: every check green, every cell read, every join resolving, every identity holding.">
+      <template>
+        <article class="finding">
+          <div class="f-head"><code class="chip {bcls}">{chip}</code><h2>{headline}</h2></div>
+          <p class="f-why">{why} {reads}</p>
+          <p class="f-meta">{meta} · <a href="{link}">{link_text}</a></p>
+        </article>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">The checks</span>
+      <code class="chip" title="One row per witness with a detector: what it asks, its detector and threshold, its verdicts counted by band — the bar is the counts as shares — and its worst band as the chip. A row opens the check: its declaration, its verdict and the evidence behind it. Measured and band come from ATTEST(); a new import invalidates the measurement, so the next read recomputes.">witnesses · ATTEST()</code></header>
+    <p class="hint">What stands guard, and how each check's verdicts fell. Open a row for what the check saw.</p>
+    <gl-rows frame="frames/checks" empty="no witness carries a detector yet — nothing is checked; the next read's checks goal hands the statement">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:9rem minmax(0,1fr) 10rem 10rem 5rem">
+          <span class="r-subj">{witness}<br><span class="r-meta">{expectation}</span></span>
+          <span class="r-what">{asks}</span>
+          <span class="bands" title="{measured}"><i class="b-green" style="flex-grow:{green}"></i><i class="b-yellow" style="flex-grow:{yellow}"></i><i class="b-orange" style="flex-grow:{orange}"></i><i class="b-red" style="flex-grow:{red}"></i><i class="b-error" style="flex-grow:{errors}"></i></span>
+          <span class="r-meta">{measured}</span>
+          <code class="chip {bcls}">{band}</code>
+        </a>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">What the functions measured</span>
+      <code class="chip" title="Every measurement aspect a function landed, with what it found in words from its own body, how many subjects it reached and when. A measurement proposes and never judges: a defect here is a finding above, a verdict only through a witness. The aspects nobody has run fold under the list.">GLOSSARY(all =&gt; true) · kind = measurement</code></header>
+    <p class="hint">The evidence the functions landed, aspect by aspect.</p>
+    <gl-rows frame="frames/measured" empty="no function has measured anything here yet — the next read's checks goal hands the statement">
+      <template>
+        <div class="rrow" style="grid-template-columns:12rem minmax(0,1fr) 9rem">
+          <span class="r-subj">{aspect}<br><span class="r-meta">{subjects}</span></span>
+          <span class="r-what">{found}</span>
+          <span class="r-meta">{at}</span>
+        </div>
+      </template>
+    </gl-rows>
+    <details class="fold"><summary>not yet measured</summary>
+      <gl-rows frame="frames/unmeasured" empty="every declared measurement has run on something">
+        <template>
+          <div class="rrow" style="grid-template-columns:12rem minmax(0,1fr)">
+            <span class="r-subj">{aspect}</span>
+            <span class="r-meta">{owed}</span>
+          </div>
+        </template>
+      </gl-rows>
+    </details>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">The loads</span>
+      <code class="chip" title="The newest landing of each table: what the recipe read (a join's scans listed, never summed), what landed and when, the rows a filtering recipe dropped (a join's shape cannot count them, and says nothing), and the cells its casts refused with the values they could not read, most frequent first (the landing keeps eight). A landing that could not account for its casts says so. The table opens its page on the Glossary tab.">imports</code></header>
+    <p class="hint">Each table's newest landing in one line: what was read, what landed, when, and what the casts refused.</p>
+    <gl-rows frame="frames/landing" empty="nothing has landed here yet — a table lands through a recipe, DECLARE RECIPE over the agent door">
+      <template>
+        <div class="rrow" style="grid-template-columns:9rem minmax(0,1fr) 6rem 9rem minmax(0,1.4fr)">
+          <span class="r-subj"><a href="{link}">{name}</a><br><span class="r-meta">{casts}</span></span>
+          <span class="r-meta">{read}</span>
+          <span class="r-num">{landed}<br><span class="r-meta">landed</span></span>
+          <span class="r-meta">{at}<br>{dropped}</span>
+          <span class="r-what dict">{refused}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Not yet said</span>
+      <code class="chip" title="Every slot a witnessed fact aspect is owed on — the aspect's grain and condition name the subject — that no voice has filled: by aspect, the names under their tables. The row opens the aspect on the Glossary tab.">GLOSSARY() · state = unassessed</code></header>
+    <p class="hint">What the vocabulary still owes, by name. A row opens the aspect on the Glossary tab.</p>
+    <gl-rows frame="frames/unsaid" empty="every owed slot is spoken — nothing is unsaid">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:9rem minmax(0,1fr)">
+          <span class="r-subj">{aspect}<br><span class="r-meta">{owed} owed</span></span>
+          <span class="dict">{names}</span>
+        </a>
+      </template>
+    </gl-rows>
   </section>
 </div>
+{% endif %}
 {% endblock main %}
