@@ -33,14 +33,19 @@ ignore = [
   # verifies with the issuer's public keys and never signs. Closes when
   # jsonwebtoken moves to p256 0.14.
   { id = "RUSTSEC-2026-0387", reason = "crypto-bigint rides jsonwebtoken's p256 0.13; the server verifies with public keys and never signs" },
-  # zstd 0.13 and zstd-safe 7 under arrow-ipc 59, the version datafusion
-  # 55 pins: a reused context, the seekable API and a failed legacy frame.
-  # The only IPC the server decodes is the deployment's own service's
-  # answer, one fresh decoder per buffer. Closes when arrow 60 reaches
-  # datafusion.
-  { id = "RUSTSEC-2026-0391", reason = "zstd rides arrow-ipc 59, pinned by the engine; the IPC decoded is the deployment's own service's answer" },
-  { id = "RUSTSEC-2026-0398", reason = "zstd-safe rides arrow-ipc 59, pinned by the engine; the seekable API is never called" },
-  { id = "RUSTSEC-2026-0403", reason = "zstd-safe rides arrow-ipc 59, pinned by the engine; the IPC decoded is the deployment's own service's answer" },
+  # zstd 0.13 and zstd-safe 7 under arrow 59 and datafusion 55, the
+  # versions the engine pins; the readers are arrow-ipc, parquet and the
+  # datasource, every one with zstd's default features off. The abandoned
+  # stream needs a stream built on a borrowed context: arrow-ipc and
+  # parquet use the bulk API, the datasource the read-side decoder with a
+  # context of its own. The seekable API is never called and its feature
+  # is off. The legacy frame needs the streaming write-side decoder and
+  # legacy support compiled in; the readers use the bulk API and the
+  # read-side decoder, which the advisory exempts, and legacy is off.
+  # Closes when arrow 60 reaches datafusion.
+  { id = "RUSTSEC-2026-0391", reason = "zstd rides arrow 59 and datafusion 55, pinned by the engine; no reader builds a stream on a borrowed context" },
+  { id = "RUSTSEC-2026-0398", reason = "zstd-safe rides arrow 59 and datafusion 55, pinned by the engine; the seekable API is never called and its feature is off" },
+  { id = "RUSTSEC-2026-0403", reason = "zstd-safe rides arrow 59 and datafusion 55, pinned by the engine; the readers use the bulk API and the read-side decoder, and legacy frames are not compiled in" },
 ]
 
 [licenses]
