@@ -5,6 +5,10 @@ EXT_NAME=gloss
 EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 
 # Include the Makefile from extension-ci-tools
+# The build names itself the DuckDB release the submodule pins, so the released
+# duckdb loads the loadable; the pipeline sets the same from duckdb_version
+OVERRIDE_GIT_DESCRIBE ?= v2.0.0
+
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
 # Lint: the pipeline's format and tidy checks, run here. `make lint-tools`

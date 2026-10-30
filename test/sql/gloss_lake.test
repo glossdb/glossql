@@ -124,6 +124,12 @@ SELECT count(*) FROM fin.segments;
 ----
 6
 
+# DuckDB's own IMPORT DATABASE stays its own under the grammar
+statement error
+IMPORT DATABASE '{TEST_DIR}/nowhere';
+----
+Cannot open file
+
 query TT
 SELECT subject, state FROM GLOSSARY(segments) ORDER BY subject;
 ----

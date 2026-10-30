@@ -63,6 +63,9 @@ string JsonList(const vector<string> &items);
 string JsonList(const Value &list);
 //! The dataset a subject lies in: its first name; a pair path's is its left endpoint's
 string DatasetOf(const string &subject);
+//! The dataset a subject is written and read in: the above, or the USE'd dataset
+//! for a bare source, a workspace row (SPEC §5.1)
+string DatasetOf(ClientContext &context, const string &subject);
 //! Resolves a subject or pair path to its dataset-qualified form
 string ResolveSubject(ClientContext &context, const string &subject);
 //! Double-quotes a name for SQL text

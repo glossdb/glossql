@@ -271,3 +271,120 @@ query I
 SELECT count(*) FROM ATTEST(orders.amount::role);
 ----
 0
+
+# --- a source is a workspace row (SPEC §5.1): its subject is the bare declared name, every dataset's sweep owes and serves it, and a gloss from any dataset supersedes
+
+statement ok
+DECLARE SOURCE erp SET (type: csv, location: '{TEST_DIR}');
+
+statement ok
+DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
+
+statement ok
+DECLARE WITNESS conventions_w ON conventions BY (AGENT, HUMAN);
+
+# owed in the dataset's sweep, as the bare name; a narrowed read keeps to its subject
+query TTT
+SELECT subject, aspect, state FROM GLOSSARY() WHERE aspect = 'conventions';
+----
+erp	conventions	unassessed
+
+query I
+SELECT count(*) FROM GLOSSARY(orders) WHERE aspect = 'conventions';
+----
+0
+
+query TT
+SELECT subject, state FROM GLOSSARY(erp);
+----
+erp	unassessed
+
+# the grain gate: a subject outside the aspect's declared grains is refused, never landed in silence
+
+statement error
+GLOSS conventions ON fin AS $${"fiscal_year_start": "04-01"}$$;
+----
+aspect 'conventions' is declared ON SOURCE; fin is a dataset
+
+statement error
+GLOSS conventions ON orders AS $${"fiscal_year_start": "04-01"}$$;
+----
+aspect 'conventions' is declared ON SOURCE; fin.orders is a table
+
+statement error
+GLOSS note ON erp AS $${"value": "x"}$$;
+----
+aspect 'note' is declared ON TABLE; erp is a source
+
+statement error
+GLOSS role ON orders AS $${"value": "key"}$$;
+----
+aspect 'role' is declared ON COLUMN; fin.orders is a table
+
+query T
+GLOSS conventions ON erp AS $${"fiscal_year_start": "04-01"}$$;
+----
+glossed conventions on erp as agent
+
+# the row records the dataset it was deposited in, and carries no catalog snapshot: a source never goes stale
+query TTT
+SELECT dataset, subject, snapshot_id FROM glossql.glossary WHERE aspect = 'conventions';
+----
+fin	erp	NULL
+
+query TTTT
+SELECT subject, value, band, state FROM GLOSSARY(erp);
+----
+erp	{"fiscal_year_start": "04-01"}	NULL	current
+
+# the next dataset reads the deposit, and its own gloss supersedes it workspace-wide
+statement ok
+DECLARE DATASET ops SET (purpose: 'reads the deposit');
+
+statement ok
+USE ops;
+
+query TTT
+SELECT subject, value, state FROM GLOSSARY() WHERE aspect = 'conventions';
+----
+erp	{"fiscal_year_start": "04-01"}	current
+
+statement ok
+GLOSS conventions ON erp AS $${"fiscal_year_start": "01-01"}$$;
+
+statement ok
+USE fin;
+
+query TT
+SELECT value, state FROM GLOSSARY(erp::conventions);
+----
+{"fiscal_year_start": "01-01"}	current
+
+query TTT
+SELECT actor, body, current FROM GLOSSARY(erp, all => true);
+----
+agent	{"fiscal_year_start": "01-01"}	true
+
+# a grainless aspect on a source name stays dataset-scoped: the dataset that wrote it reads it, another does not
+statement ok
+DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT;
+
+statement ok
+GLOSS remark ON erp AS $${"text": "fin's"}$$;
+
+query TT
+SELECT aspect, state FROM GLOSSARY(erp) ORDER BY aspect;
+----
+conventions	current
+remark	current
+
+statement ok
+USE ops;
+
+query TT
+SELECT aspect, state FROM GLOSSARY(erp) ORDER BY aspect;
+----
+conventions	current
+
+statement ok
+USE fin;

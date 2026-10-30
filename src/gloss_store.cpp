@@ -55,6 +55,19 @@ static bool SchemaExists(ClientContext &context, const string &name) {
 	return catalog.GetSchema(context, Identifier(name), OnEntryNotFound::RETURN_NULL) != nullptr;
 }
 
+//! Whether a name is a declared source, a workspace row (SPEC §5.1); read
+//! through the typed view, which stands once PRAGMA gloss ran
+static bool SourceExists(ClientContext &context, const string &name) {
+	Connection con(*context.db);
+	auto result = con.Query("SELECT count(*) FROM " + QuoteName(LakeName(context)) +
+	                        ".glossql.sources WHERE name = " + QuoteText(name));
+	if (result->HasError()) {
+		return false;
+	}
+	auto chunk = result->Fetch();
+	return chunk && chunk->size() == 1 && chunk->GetValue(0, 0).GetValue<int64_t>() > 0;
+}
+
 static bool TableExists(ClientContext &context, const string &schema, const string &table) {
 	auto entry = Catalog::GetEntry<TableCatalogEntry>(
 	    context, QualifiedName(Identifier(LakeName(context)), Identifier(schema), Identifier(table)),
@@ -62,20 +75,37 @@ static bool TableExists(ClientContext &context, const string &schema, const stri
 	return entry != nullptr;
 }
 
-//! dataset | dataset.table | dataset.table.column, a tuple key allowed at the end
+static bool ColumnExists(ClientContext &context, const string &schema, const string &table, const string &column) {
+	auto entry = Catalog::GetEntry<TableCatalogEntry>(
+	    context, QualifiedName(Identifier(LakeName(context)), Identifier(schema), Identifier(table)),
+	    OnEntryNotFound::RETURN_NULL);
+	// a tuple key names columns of the table, never a table of a dataset
+	return entry && (StringUtil::StartsWith(column, "(") || entry->ColumnExists(Identifier(column)));
+}
+
+//! dataset | source | dataset.table | dataset.table.column, a tuple key allowed
+//! at the end. Resolving a resolved path is a no-op: a three-part path whose
+//! head is a dataset stands, so a subject may pass through twice (an
+//! extraction hands its resolved subject to subject_column)
 static string ResolvePath(ClientContext &context, const string &path) {
 	auto dataset = CurrentDataset(context);
-	auto dot = path.find('.');
-	if (dot == string::npos) {
-		// one name is a dataset, or a table of the USE'd dataset
-		return SchemaExists(context, path) ? path : dataset + "." + path;
+	auto parts = StringUtil::Split(path, '.');
+	if (parts.size() == 1) {
+		// one name is a dataset or a declared source, the workspace's own rows
+		// (SPEC §5.1), else a table of the USE'd dataset
+		return SchemaExists(context, path) || SourceExists(context, path) ? path : dataset + "." + path;
 	}
-	auto head = path.substr(0, dot);
-	// a landed table of the USE'd dataset wins over a dataset of the same name (SPEC §3)
-	if (TableExists(context, dataset, head)) {
+	if (parts.size() >= 3) {
+		return SchemaExists(context, parts[0]) ? path : dataset + "." + path;
+	}
+	// two names: table.column of the USE'd dataset, or dataset.table. A landed
+	// table of the USE'd dataset wins over a dataset of the same name (SPEC §3)
+	// when it holds the column; a dataset holding the table wins otherwise
+	if (TableExists(context, dataset, parts[0]) &&
+	    (ColumnExists(context, dataset, parts[0], parts[1]) || !SchemaExists(context, parts[0]))) {
 		return dataset + "." + path;
 	}
-	if (SchemaExists(context, head)) {
+	if (SchemaExists(context, parts[0])) {
 		return path;
 	}
 	return dataset + "." + path;
@@ -90,6 +120,13 @@ string ResolveSubject(ClientContext &context, const string &subject) {
 		}
 	}
 	return ResolvePath(context, subject);
+}
+
+string DatasetOf(ClientContext &context, const string &subject) {
+	auto head = DatasetOf(subject);
+	// a bare source is written and read in the USE'd dataset: the deposit one
+	// onboarding makes, which every dataset reads (SPEC §5.1)
+	return head != subject || SchemaExists(context, head) ? head : CurrentDataset(context);
 }
 
 //! Parses plain SQL with the stock grammar, so no glossql rule captures it, into one SELECT
@@ -455,6 +492,26 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 	if (aspect.kind == "QUERY" && (parts.size() != 1 || pair)) {
 		throw InvalidInputException("gloss: a QUERY aspect takes the dataset as its subject, not %s", subject);
 	}
+	// the grain gate (SPEC §5.1): the subject's class is one the aspect declared. A
+	// bare name is a source when one is declared by it, a dataset when a schema is,
+	// and either when both are: the declaration says which is meant
+	if (!aspect.grains.empty()) {
+		bool is_source =
+		    !pair && parts.size() == 1 &&
+		    inner.Scalar("SELECT count(*) FROM " + inner.Store("sources") + " WHERE name = " + QuoteText(subject))
+		            .GetValue<int64_t>() > 0;
+		string grain = pair                ? "RELATIONSHIP"
+		               : parts.size() >= 3 ? "COLUMN"
+		               : parts.size() == 2 ? "TABLE"
+		               : is_source         ? "SOURCE"
+		                                   : "DATASET";
+		bool admitted =
+		    HasGrain(aspect, grain) || (is_source && SchemaExists(context, subject) && HasGrain(aspect, "DATASET"));
+		if (!admitted) {
+			throw InvalidInputException("gloss: aspect '%s' is declared ON %s; %s is a %s", aspect_name,
+			                            StringUtil::Join(aspect.grains, ", "), subject, StringUtil::Lower(grain));
+		}
+	}
 	auto lake = " WHERE table_catalog = " + QuoteText(inner.ws.lake);
 	if (!pair && parts.size() == 2 && HasGrain(aspect, "TABLE")) {
 		auto landed = inner.Scalar("SELECT count(*) FROM information_schema.tables" + lake + " AND table_schema = " +
@@ -636,8 +693,9 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 		// the catalog snapshot at write time (SPEC §5.2): a column or table carries it, a dataset or pair path none
 		bool pair = resolved.find(" -> ") != string::npos || resolved.find(" <-> ") != string::npos;
 		auto snapshot = !pair && resolved.find('.') != string::npos ? inner.Snapshot() : Value();
-		values = {QuoteText(DatasetOf(resolved)),   QuoteText(resolved), bind.row[1].ToSQLString(), QuoteText(actor),
-		          ActorIdOf(context).ToSQLString(), QuoteText(body),     snapshot.ToSQLString()};
+		values = {
+		    QuoteText(DatasetOf(context, resolved)), QuoteText(resolved), bind.row[1].ToSQLString(), QuoteText(actor),
+		    ActorIdOf(context).ToSQLString(),        QuoteText(body),     snapshot.ToSQLString()};
 		if (aspect.kind == "QUERY") {
 			Ground(inner, resolved, aspect.name, body);
 		}
@@ -738,23 +796,35 @@ ParserExtension GlossParserExtension() {
 //===--------------------------------------------------------------------===//
 
 struct ReadScope {
-	//! the dataset the scope lies in
+	//! the dataset the read runs in
 	string dataset;
-	//! the rows in scope, over columns dataset and subject
+	//! the scope is that whole dataset: the sweep
+	bool whole = false;
+	//! the rows in scope, over columns dataset, subject and aspect
 	string filter;
 	//! the same over subject alone
 	string subjects;
 	Workspace ws;
 };
 
+//! A source-grain row: its subject names a declared source and its aspect
+//! declares ON SOURCE. Such a row reads and supersedes workspace-wide (SPEC
+//! §5.1); a grainless aspect on a source name stays dataset-scoped
+static string SourceGrainSQL(const Workspace &ws) {
+	return "(subject IN (SELECT name FROM " + ws.Store("sources") + ") AND aspect IN (SELECT name FROM " +
+	       Newest(ws, "aspects") + " WHERE list_contains(from_json(grains, '[\"VARCHAR\"]'), 'SOURCE')))";
+}
+
 static ReadScope ScopeOf(ClientContext &context, Inner &inner, const Value &subject) {
 	auto scope = subject.IsNull() ? CurrentDataset(context) : ResolveSubject(context, subject.ToString());
 	ReadScope result;
-	result.dataset = DatasetOf(scope);
+	result.dataset = DatasetOf(context, scope);
+	result.whole = scope == result.dataset;
 	// a subject serves itself and what lies under it; no subject sweeps the USE'd dataset (SPEC §5.3)
 	result.subjects = "(subject = " + QuoteText(scope) + " OR subject LIKE " + QuoteText(scope + ".%") + ")";
-	result.filter = "dataset = " + QuoteText(result.dataset);
-	if (scope != result.dataset) {
+	// the dataset's own rows, and the source-grain rows every dataset reads
+	result.filter = "(dataset = " + QuoteText(result.dataset) + " OR " + SourceGrainSQL(inner.ws) + ")";
+	if (!result.whole) {
 		result.filter += " AND " + result.subjects;
 	}
 	result.ws = inner.ws;
@@ -1025,8 +1095,9 @@ static string OwedSQL(const vector<WitnessRow> &witnesses, const ReadScope &scop
 	if (parts.empty()) {
 		return "SELECT NULL::VARCHAR AS subject, NULL::VARCHAR AS aspect WHERE false";
 	}
-	return "SELECT DISTINCT subject, aspect FROM (" + StringUtil::Join(parts, " UNION ALL ") + ") WHERE " +
-	       scope.subjects;
+	// a narrowed read keeps to its subject; the dataset's sweep takes every declared source (SPEC §5.1)
+	return "SELECT DISTINCT subject, aspect FROM (" + StringUtil::Join(parts, " UNION ALL ") + ")" +
+	       (scope.whole ? string() : " WHERE " + scope.subjects);
 }
 
 //! The collapsed read: one row per (subject, aspect) — the precedence pick,

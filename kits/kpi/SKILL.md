@@ -1,3 +1,8 @@
+---
+name: gloss-kpi
+description: The KPI kit's vocabulary for a gloss workspace — what each aspect means, the order of a round, the keys a metric's grounding carries. Use after gloss_kit('kits/kpi/kit.sql') when glossing columns, tables, sources and metrics.
+---
+
 # The KPI kit: what it teaches
 
 For an actor working in a DuckDB that has the glossql extension loaded and

@@ -69,7 +69,7 @@ FROM gloss_kit('kits/kpi/kit.sql');           -- vocabulary, grounding schema, f
 | `SELECT f() FROM subject` (extraction) | the same rule shape as plain SQL; a custom terminal matcher marks the end of the statement, and the binder decides: an extraction when `f` is declared, the plain SQL it looks like otherwise |
 | the workspace | an attached DuckLake, one per connection (`SET VARIABLE gloss_workspace` picks among several) |
 | a dataset | a schema of the lake; `USE` is DuckDB's own; unprefixed subjects resolve against the connection's default schema |
-| a source | a directory or URL prefix (file sources, resolved through `file_search_path`) or a database DuckDB has `ATTACH`ed (postgres, mysql, sqlite, duckdb, …); its SET pairs, like a dataset's and a recipe's, land as one JSON `settings`, checked at parse against the schema the statement holds |
+| a source | a directory or URL prefix (file sources, resolved through `file_search_path`) or a database DuckDB has `ATTACH`ed (postgres, mysql, sqlite, duckdb, …); its SET pairs, like a dataset's and a recipe's, land as one JSON `settings`, checked at parse against the schema the statement holds; as a subject it is its bare name, a workspace row every dataset's read owes and serves |
 | a recipe, an import | `CREATE OR REPLACE TABLE … AS` in the lake at the source, one snapshot per landing; a keyed import is `MERGE INTO`; the table's history is the lake's (`AT (VERSION => n)`) |
 | `snapshot_id`, `stale` | a gloss carries the lake's snapshot at write; the read joins the lake's column history and marks the slot stale once its column was retyped or dropped, or its table lost one, or the lineage behind its column moved between the landing that stood at the write and the newest; a function voice is stale once what it read moved |
 | lineage | `gloss_lineage(sql)`: every output column of a SELECT resolved through its bound plan, before any optimizer, down to the base scans, a leaf being `scan.column:type`; a landing records its recipe's lineage per column on the imports row, so the row-to-row diff is the drift record of what a source sends |
@@ -97,11 +97,34 @@ reached by the bare name under `USE` or as `dataset.metric`, which SPEC
 §5 says plans the same way; a lake-wide `read` schema would be a second
 door to it.
 
+## The CLI door
+
+Claude Code, the released `duckdb` and this extension are a door: no
+wrapper, no server. A workspace is a directory holding an opener,
+`gloss.sql`, the lake's catalog `ws.ducklake` and its data `ws/`. A call
+is one `duckdb` process run there, the opener first, the statements on
+stdin:
+
+```sh
+duckdb -unsigned -bail -init gloss.sql <<'SQL'
+USE employees;
+SELECT * FROM GLOSSARY(dept_emp) WHERE state <> 'current';
+SQL
+```
+
+The opener loads the extension, attaches the lake and runs `PRAGMA gloss`
+silently (`skills/gloss/SKILL.md` has it). The CLI renders for a coding
+agent when it finds one in the environment: markdown tables, a hash
+footer, JSON errors on stderr (`.help agent`). `skills/gloss/SKILL.md`
+teaches an agent the door and the language on DuckDB, `kits/kpi/SKILL.md`
+the KPI kit's words; both are linked under `.claude/skills/`, so a Claude
+Code session in this repository has them, and a project of your own
+copies or links the two directories into its `.claude/skills/`.
+
 ## Building
 
 ```sh
 git submodule update --init --depth 1      # duckdb at v2.0.0, extension-ci-tools
-git -C duckdb fetch --depth 1 origin tag v2.0.0   # the tag is the version the extension repository serves
 brew install croaring                       # ducklake's one dependency; the pipeline takes it from vcpkg.json
 GEN=ninja make                              # build/release/duckdb, build/release/extension/gloss/, ducklake beside it
 ./build/release/test/unittest "test/sql/gloss*"
@@ -112,9 +135,9 @@ GEN=ninja make lint                         # the pipeline's format and tidy che
 
 DuckLake is built with the extension, from the commit DuckDB 2.0.0 pins,
 as a loadable in the build's extension repository, where the test runner
-looks. A build directory configured before the tag was fetched calls
-itself a dev version and looks for the wrong key: `OVERRIDE_GIT_DESCRIBE=v2.0.0`
-in front of `make` sets it right.
+looks. The Makefile names the build `v2.0.0`, the release the submodule
+pins, so the released `duckdb` loads the loadable; a build named after a
+commit is refused by it.
 
 The extension is a C++ (ABI `CPP`) extension: it is built per DuckDB
 release, like every grammar-level extension, because the grammar API is C++

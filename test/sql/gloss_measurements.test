@@ -296,3 +296,28 @@ SELECT aspect, actor, current FROM GLOSSARY(orders.amount, all => true) WHERE as
 ----
 min_max	function	false
 note	agent	true
+
+# --- a table named like its dataset: a two-part subject is the table's column when the column exists, the dataset's table otherwise; a resolved subject resolves to itself
+
+statement ok
+CREATE TABLE fin.fin AS SELECT 1 AS id, 2.5 AS amount;
+
+query TTTTT
+SELECT min_max() FROM fin.amount;
+----
+min_max	fin.fin.amount	min_max	{"min":2.5,"max":3.5}	true
+
+query TTTTT
+SELECT min_max() FROM fin.fin.amount;
+----
+min_max	fin.fin.amount	min_max	{"min":2.5,"max":3.5}	false
+
+query T
+SELECT DISTINCT subject FROM GLOSSARY(fin.id);
+----
+fin.fin.id
+
+query T
+SELECT count(*) > 0 FROM GLOSSARY(fin.orders) WHERE subject LIKE 'fin.orders.%';
+----
+true

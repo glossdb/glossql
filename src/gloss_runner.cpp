@@ -838,7 +838,7 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 	state.done = true;
 	auto &inputs = data.bind_data->Cast<RunnerBindData>().inputs;
 	auto subject = ResolveSubject(context, inputs[0].ToString());
-	auto dataset = DatasetOf(subject);
+	auto dataset = DatasetOf(context, subject);
 
 	Inner inner(context);
 	idx_t row = 0;
@@ -909,7 +909,7 @@ static unique_ptr<TableRef> SelectOrExtractBindReplace(ClientContext &context, T
 	bool declared = false;
 	try {
 		Inner inner(context);
-		auto dataset = DatasetOf(ResolveSubject(context, input.inputs[0].ToString()));
+		auto dataset = DatasetOf(context, ResolveSubject(context, input.inputs[0].ToString()));
 		for (auto &call : ListValue::GetChildren(input.inputs[1])) {
 			declared = declared || !inner.FunctionSchema(dataset, call.ToString()).empty();
 		}

@@ -668,9 +668,13 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	rule("GlossEnd <- ';'");
 	changes.push_back(GrammarChange::AddTerminalRuleOverride(
 	    "GlossEnd", [](const PEGKeywordHelper &) { return make_uniq<GlossEndMatcher>(); }));
-	// IMPORT [dataset.]table comes after DuckDB's IMPORT DATABASE, which fails fast on a plain name
-	changes.push_back(GrammarChange::AddRule("GlossImport <- 'IMPORT' Identifier GlossPathTail?", StartImport));
-	changes.push_back(GrammarChange::AddChoice("Statement", "GlossImport"));
+	// IMPORT [dataset.]table, tried before the stock statements like the rest: an
+	// appended choice can be shadowed by another extension's appended choice that
+	// matches the bare keyword (the shell's expression statement takes IMPORT as a
+	// column name and leaves the table unconsumed). The end matcher keeps DuckDB's
+	// IMPORT DATABASE its own: a name followed by anything but the end is not ours
+	// (the rule parser ignores a ! lookahead)
+	statement("GlossImport <- 'IMPORT' Identifier GlossPathTail? GlossEnd", StartImport);
 
 	// Reads, tried before every stock table reference
 	changes.push_back(GrammarChange::AddRule("GlossGlossaryRead <- 'GLOSSARY' Parens(GlossGlossaryArgs?) TableAlias?",
