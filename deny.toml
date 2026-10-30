@@ -14,6 +14,9 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
+# An unmaintained advisory counts for a crate the workspace names and
+# not for one the engine's crates pull in: those ride the engine's pins.
+unmaintained = "workspace"
 ignore = [
   # quick-xml under object_store 0.13, the version datafusion 55 pins:
   # a quadratic attribute check on a start tag, reachable only through
@@ -25,9 +28,6 @@ ignore = [
   # operations, and this server only verifies with the issuer's public
   # keys — it holds no RSA private key.
   { id = "RUSTSEC-2023-0071", reason = "rsa rides jsonwebtoken; the server verifies with public keys and never signs" },
-  # paste is a proc-macro that runs at build time, under
-  # datafusion-functions-json and faer's gemm; unmaintained, not unsound.
-  { id = "RUSTSEC-2024-0436", reason = "paste is a build-time proc-macro under the engine's JSON functions and faer" },
   # crypto-bigint 0.5 under jsonwebtoken's p256 and p384 0.13: timing
   # variability in operations meant to be constant-time. The server
   # verifies with the issuer's public keys and never signs. Closes when
