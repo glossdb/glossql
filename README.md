@@ -121,6 +121,29 @@ the KPI kit's words; both are linked under `.claude/skills/`, so a Claude
 Code session in this repository has them, and a project of your own
 copies or links the two directories into its `.claude/skills/`.
 
+## The MCP door
+
+The workspace behind one tool, on one connection. `examples/mcp/gloss_mcp.py`
+is a stdio MCP server that opens the workspace through the `duckdb`
+package once, running the opener's SQL (its dot commands skipped), and
+keeps that connection for its life. Its one tool, `gloss(statements)`,
+runs each call's statements there and renders what each returns: a
+markdown table with `name:TYPE` headers per read, the outcome line per
+write; a refused statement is the tool error, what landed before it
+above the refusal. `USE`, variables and the actor persist from call to
+call, as in any session. The two skills are its resources
+(`skill://gloss/SKILL.md`, `skill://gloss-kpi/SKILL.md`) and its prompts,
+the opener a resource. Nothing else: no brief, no auth, the lake is the
+state.
+
+```sh
+uv run examples/mcp/gloss_mcp.py /path/to/workspace         # fastmcp and duckdb 2.0.0, pinned in the file
+claude mcp add gloss -- uv run --quiet "$PWD/examples/mcp/gloss_mcp.py" /path/to/workspace
+uv run --with pytest --with fastmcp pytest -q test/python    # the door's integration test, on a workspace it makes
+```
+
+`GLOSS_WORKSPACE` stands in for the argument.
+
 ## Building
 
 ```sh

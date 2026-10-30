@@ -52,6 +52,12 @@ PRAGMA gloss;
   the rest still runs.
 - **`-unsigned`** until the extension is signed by a repository.
 
+Through MCP the door is the tool `gloss(statements)` on one connection
+the server holds open: the same statements, a markdown table per read,
+an outcome line per write, a refusal as the tool's error with what landed
+before it above. There `USE`, variables and the actor persist from call
+to call. Everything below holds unchanged.
+
 ## What comes back
 
 The CLI renders for a coding agent when it finds one in the environment
