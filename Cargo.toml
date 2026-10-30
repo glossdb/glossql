@@ -123,8 +123,10 @@ tower = { version = "0.5", features = ["util"] }
 # discovery document and key set (serverd), and glossthesi behind
 # the model reads (glossql-scripts). rustls names the TLS
 # backend — pure Rust, the same in a container as on a laptop.
-base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# base64's default features add SIMD engines written in unsafe code;
+# the strings here are cookie-sized, so the plain engine does.
+base64 = { version = "0.23", default-features = false, features = ["std"] }
 # Instrumentation. `tracing` is the facade every crate emits through —
 # already in the tree via axum, rmcp and sqlx; the subscriber is
 # installed once, at the process edge (serverd). blake3 keys a call's
