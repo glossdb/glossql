@@ -102,7 +102,7 @@ arrow-ipc = "59.2"
 arrow-json = "59.2"
 axum = "0.8"
 rmcp = { version = "3.1", features = ["transport-streamable-http-server", "elicitation"] }
-jsonschema = { version = "0.58", default-features = false }
+jsonschema = { version = "0.60", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 thiserror = "2"
 insta = "1"
