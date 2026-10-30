@@ -67,13 +67,27 @@ def test_the_door(workspace: Path) -> None:
             # a refusal stops the call, names its place, and carries what landed before it
             with pytest.raises(ToolError) as refused:
                 await gloss("SELECT 1 AS before; USE nowhere; SELECT 2 AS after;")
-            assert "| before:INTEGER |" in str(refused.value)
-            assert 'statement 2 refused: Catalog Error: SET schema: No catalog + schema named "nowhere"' in str(refused.value)
-            assert "after" not in str(refused.value)
+            refusal = str(refused.value)
+            assert "| before:INTEGER |" in refusal
+            assert 'statement 2 refused: Catalog Error: SET schema: No catalog + schema named "nowhere"' in refusal
+            assert "after" not in refusal
 
             # a large result shows its first and last rows and the true count
             out = await gloss("SELECT i FROM range(9) t(i);", max_rows=4)
             assert "| 0 |\n| 1 |\n| … |\n| 7 |\n| 8 |\n9 rows" in out
+
+            # a long cell is cut with the count of what is missing; max_cell 0 serves it whole
+            out = await gloss("SELECT repeat('x', 600) AS long_cell, NULL AS nothing;")
+            assert "| long_cell:VARCHAR | nothing:NULL |" in out
+            assert "| " + "x" * 500 + "…(+100 chars) | NULL |" in out
+            out = await gloss("SELECT repeat('x', 600) AS long_cell;", max_cell=0)
+            assert "| " + "x" * 600 + " |" in out
+
+            # a refusal inside an explicit transaction rolls the whole transaction back
+            with pytest.raises(ToolError):
+                await gloss("BEGIN TRANSACTION; CREATE TEMP TABLE t_tx AS SELECT 1 AS x; USE nowhere;")
+            with pytest.raises(ToolError, match="t_tx does not exist"):
+                await gloss("SELECT x FROM t_tx;")
 
             # the opener is a resource, read with its dot command intact
             opener = await client.read_resource("workspace://gloss.sql")

@@ -54,9 +54,10 @@ PRAGMA gloss;
 
 Through MCP the door is the tool `gloss(statements)` on one connection
 the server holds open: the same statements, a markdown table per read,
-an outcome line per write, a refusal as the tool's error with what landed
-before it above. There `USE`, variables and the actor persist from call
-to call. Everything below holds unchanged.
+an outcome line per write, a refusal as the tool's error, DuckDB's class
+ahead of the `gloss:` message, with what landed before it above. There
+`USE`, variables and the actor persist from call to call. Everything
+below holds unchanged.
 
 ## What comes back
 

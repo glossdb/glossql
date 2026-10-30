@@ -44,24 +44,32 @@ def open_workspace() -> duckdb.DuckDBPyConnection:
     return con
 
 
-def cell(value: object) -> str:
+def header(column: tuple) -> str:
+    """name:TYPE; the NULL type names itself in quotes, which the header drops."""
+    return f"{column[0]}:{str(column[1]).strip(chr(34))}"
+
+
+def cell(value: object, max_cell: int) -> str:
     text = "NULL" if value is None else str(value)
-    return text if len(text) <= CELL else text[:CELL] + "…"
+    if max_cell <= 0 or len(text) <= max_cell:
+        return text
+    return f"{text[:max_cell]}…(+{len(text) - max_cell} chars)"
 
 
-def render(con: duckdb.DuckDBPyConnection, max_rows: int) -> str:
+def render(con: duckdb.DuckDBPyConnection, max_rows: int, max_cell: int) -> str:
     """A result as a markdown table with name:TYPE headers and a row-count footer; a
-    large one as its first and last rows; DuckDB's empty Success result as nothing."""
+    large one as its first and last rows; a long cell cut with the count of what is
+    missing; DuckDB's empty Success result as nothing."""
     description = con.description or []
     rows = con.fetchall()
     if not rows and [d[0] for d in description] == ["Success"]:
         return ""
-    head = "| " + " | ".join(f"{d[0]}:{d[1]}" for d in description) + " |\n|" + "---|" * len(description)
+    head = "| " + " | ".join(header(d) for d in description) + " |\n|" + "---|" * len(description)
     if len(rows) > max_rows > 0:
         shown = rows[: max(max_rows // 2, 1)] + [None] + rows[-max(max_rows // 2, 1) :]
     else:
         shown = rows
-    body = "\n".join("| … |" if r is None else "| " + " | ".join(cell(v) for v in r) + " |" for r in shown)
+    body = "\n".join("| … |" if r is None else "| " + " | ".join(cell(v, max_cell) for v in r) + " |" for r in shown)
     return f"{head}\n{body}\n{len(rows)} rows" if body else f"{head}\n0 rows"
 
 
@@ -81,15 +89,17 @@ mcp = FastMCP(
 
 # one connection, one statement at a time: the tool runs on the server's loop, so calls queue
 @mcp.tool(run_in_thread=False)
-def gloss(statements: str, max_rows: int = 1000) -> str:
+def gloss(statements: str, max_rows: int = 1000, max_cell: int = CELL) -> str:
     """Run glossql statements and plain SQL in the workspace, `;`-separated, on the server's one connection.
 
     The connection lives as long as the server: `USE <dataset>`, variables and the
     actor persist from call to call, and the lake keeps what landed. A read comes
     back as a markdown table with `name:TYPE` headers and a row-count footer, whole
-    up to `max_rows`, else its first and last rows; a write comes back as its
-    outcome line. A refused statement stops the call and is the error, naming its
-    place: what landed before it stayed landed, what came after never ran.
+    up to `max_rows` rows, else its first and last rows; a cell over `max_cell`
+    chars is cut, with the count of what is missing (0: whole); a write comes back
+    as its outcome line. A refused statement stops the call and is the error,
+    naming its place: what landed before it stayed landed, what came after never
+    ran, except inside an explicit transaction, which the refusal rolls back whole.
     """
     out = []
     for index, statement in enumerate(CON.extract_statements(statements), 1):
@@ -101,7 +111,7 @@ def gloss(statements: str, max_rows: int = 1000) -> str:
             except Exception:
                 pass
             raise ToolError("\n".join(out + [f"statement {index} refused: {error}"]).strip()) from None
-        text = render(CON, max_rows)
+        text = render(CON, max_rows, max_cell)
         if text:
             out.append(text)
     return "\n".join(out) or "(no output)"
