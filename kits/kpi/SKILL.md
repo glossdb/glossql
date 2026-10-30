@@ -14,7 +14,7 @@ taught: the tables, the declarations, the glossary.
 ## Load and check
 
 ```sql
-FROM gloss_kit('kits/kpi/kit.sql');     -- one row per statement
+FROM gloss_kit('kits/kpi/kit.sql');     -- one row per statement; the same line in the opener, so every process starts with the kit
 SELECT * FROM glossql.kits;                -- what this workspace runs
 SELECT name, kind, grains FROM glossql.aspects;
 ```

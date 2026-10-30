@@ -43,6 +43,12 @@ $$;
 statement ok
 DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
 
+# an unchanged re-declaration is a no-op
+query T
+DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
+----
+witness behavior_w unchanged: no-op
+
 query TTTTR
 SELECT name, aspect, speakers, detector, threshold FROM glossql.witnesses;
 ----

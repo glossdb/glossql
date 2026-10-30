@@ -24,6 +24,12 @@ PRAGMA gloss;
 statement ok
 DECLARE DATASET fin SET (purpose: 'working-capital analysis over ERP and CRM exports');
 
+# an unchanged re-declaration is a no-op
+query T
+DECLARE DATASET fin SET (purpose: 'working-capital analysis over ERP and CRM exports');
+----
+dataset fin unchanged: no-op
+
 # the SET pairs land as one JSON object, checked against what the statement takes
 query TT
 SELECT name, settings FROM glossql.datasets;
@@ -61,10 +67,14 @@ COPY (SELECT i AS id, 'seg' || (i % 2) AS segment FROM range(4) t(i)) TO '{TEST_
 statement ok
 DECLARE SOURCE crm_export SET (type: csv, location: '{TEST_DIR}');
 
-statement error
-DECLARE SOURCE bad SET (type: excel, location: 'x');
+query T
+DECLARE SOURCE crm_export SET (type: csv, location: '{TEST_DIR}');
 ----
-"excel" is not one of
+source crm_export unchanged: no-op
+
+# the kind is any word: what an extension reads has no fixed list
+statement ok
+DECLARE SOURCE sheets SET (type: excel, location: 'x');
 
 statement error
 DECLARE SOURCE bad SET (location: 'x');
@@ -72,9 +82,10 @@ DECLARE SOURCE bad SET (location: 'x');
 missing required property 'type'
 
 query TTT
-SELECT name, settings->>'type', settings->>'via' FROM glossql.sources;
+SELECT name, settings->>'type', settings->>'via' FROM glossql.sources ORDER BY name;
 ----
 crm_export	csv	NULL
+sheets	excel	NULL
 
 # --- PROBE: the rehearsal, executed at the source, landing nothing
 

@@ -279,3 +279,34 @@ SELECT subject, value, state FROM GLOSSARY(orders::currency);
 ----
 fin.orders.amount	NULL	unassessed
 fin.orders.id	{"value": "none"}	current
+
+# --- WHEN TYPE names the columns' data type: owed on those columns alone; the base type, DECIMAL for DECIMAL(18,2)
+
+statement error
+DECLARE ASPECT precision WITH $${"type": "object"}$$ AS FACT ON TABLE, COLUMN WHEN TYPE = 'DOUBLE';
+----
+WHEN TYPE narrows columns; aspect 'precision' is declared ON ["TABLE","COLUMN"]
+
+statement ok
+DECLARE ASPECT precision WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN TYPE IN ('double', 'DECIMAL');
+
+statement ok
+DECLARE ASPECT identity WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN TYPE = 'bigint';
+
+query TT
+SELECT name, condition FROM glossql.aspects WHERE name IN ('precision', 'identity') ORDER BY name;
+----
+identity	{"type":["BIGINT"]}
+precision	{"type":["DOUBLE","DECIMAL"]}
+
+statement ok
+DECLARE WITNESS precision_w ON precision BY (AGENT, HUMAN);
+
+statement ok
+DECLARE WITNESS identity_w ON identity BY (AGENT, HUMAN);
+
+query TTT
+SELECT subject, aspect, state FROM GLOSSARY(orders) WHERE aspect IN ('precision', 'identity') ORDER BY subject, aspect;
+----
+fin.orders.amount	precision	unassessed
+fin.orders.id	identity	unassessed

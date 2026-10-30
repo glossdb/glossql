@@ -83,6 +83,24 @@ static bool ColumnExists(ClientContext &context, const string &schema, const str
 	return entry && (StringUtil::StartsWith(column, "(") || entry->ColumnExists(Identifier(column)));
 }
 
+//! A landed table and column in the catalog's own spelling, matched as DuckDB
+//! matches names, case-insensitively; a path that names nothing landed stands
+//! as given, for the admission to refuse
+static string Canonical(ClientContext &context, const string &schema, const string &table, const string &column) {
+	auto entry = Catalog::GetEntry<TableCatalogEntry>(
+	    context, QualifiedName(Identifier(LakeName(context)), Identifier(schema), Identifier(table)),
+	    OnEntryNotFound::RETURN_NULL);
+	auto tail = column.empty() ? "" : "." + column;
+	if (!entry) {
+		return schema + "." + table + tail;
+	}
+	auto name = schema + "." + entry->name.GetIdentifierName();
+	if (column.empty() || StringUtil::StartsWith(column, "(") || !entry->ColumnExists(Identifier(column))) {
+		return name + tail;
+	}
+	return name + "." + entry->GetColumn(Identifier(column)).Name().GetIdentifierName();
+}
+
 //! dataset | source | dataset.table | dataset.table.column, a tuple key allowed
 //! at the end. Resolving a resolved path is a no-op: a three-part path whose
 //! head is a dataset stands, so a subject may pass through twice (an
@@ -95,7 +113,11 @@ static string ResolvePath(ClientContext &context, const string &path) {
 		// (SPEC §5.1), else a table of the USE'd dataset
 		return SchemaExists(context, path) || SourceExists(context, path) ? path : dataset + "." + path;
 	}
-	if (parts.size() >= 3) {
+	if (parts.size() == 3) {
+		return SchemaExists(context, parts[0]) ? Canonical(context, parts[0], parts[1], parts[2])
+		                                       : dataset + "." + path;
+	}
+	if (parts.size() > 3) {
 		return SchemaExists(context, parts[0]) ? path : dataset + "." + path;
 	}
 	// two names: table.column of the USE'd dataset, or dataset.table. A landed
@@ -103,10 +125,10 @@ static string ResolvePath(ClientContext &context, const string &path) {
 	// when it holds the column; a dataset holding the table wins otherwise
 	if (TableExists(context, dataset, parts[0]) &&
 	    (ColumnExists(context, dataset, parts[0], parts[1]) || !SchemaExists(context, parts[0]))) {
-		return dataset + "." + path;
+		return Canonical(context, dataset, parts[0], parts[1]);
 	}
 	if (SchemaExists(context, parts[0])) {
-		return path;
+		return Canonical(context, parts[0], parts[1], "");
 	}
 	return dataset + "." + path;
 }
@@ -650,11 +672,19 @@ static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 	}
 	if (!row[4].IsNull()) {
 		auto condition = row[4].ToString();
-		auto sibling = LookupAspect(inner, JsonStringField(condition, "aspect"));
-		auto literal = JsonStringField(condition, "value");
-		auto error = JsonSchemaValueEnumCheck(sibling.schema, literal);
-		if (!error.empty()) {
-			throw InvalidInputException("gloss: WHEN %s = %s: %s", sibling.name, literal, error);
+		if (JsonStringField(condition, "aspect").empty()) {
+			// WHEN TYPE narrows columns by their data type: the grain is COLUMN alone
+			if (JsonList(row[3]) != "[\"COLUMN\"]") {
+				throw InvalidInputException("gloss: WHEN TYPE narrows columns; aspect '%s' is declared ON %s", name,
+				                            JsonList(row[3]));
+			}
+		} else {
+			auto sibling = LookupAspect(inner, JsonStringField(condition, "aspect"));
+			auto literal = JsonStringField(condition, "value");
+			auto error = JsonSchemaValueEnumCheck(sibling.schema, literal);
+			if (!error.empty()) {
+				throw InvalidInputException("gloss: WHEN %s = %s: %s", sibling.name, literal, error);
+			}
 		}
 	}
 	return true;
@@ -681,6 +711,28 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 	if (bind.table == "aspects" && !AdmitAspect(inner, bind.row)) {
 		output.data[0].Append(Value("aspect " + bind.row[0].ToString() + " unchanged: no-op"));
 		return;
+	}
+
+	// identity is content (SPEC §3): an unchanged declaration is a no-op, so a script replays silently
+	if (bind.table == "sources") {
+		auto standing = inner.Row("SELECT settings FROM " + inner.Store("sources") +
+		                          " WHERE name = " + bind.row[0].ToSQLString() + " ORDER BY seq DESC LIMIT 1");
+		if (!standing.empty() && standing[0].ToString() == json(bind.row[1])) {
+			output.data[0].Append(Value("source " + bind.row[0].ToString() + " unchanged: no-op"));
+			return;
+		}
+	}
+	if (bind.table == "relationships") {
+		auto left = subject(bind.row[0]);
+		auto right = subject(bind.row[2]);
+		auto standing = inner.Scalar(
+		    "SELECT count(*) FROM " + inner.Store("relationships") + " WHERE left_side = " + QuoteText(left) +
+		    " AND op = " + bind.row[1].ToSQLString() + " AND right_side = " + QuoteText(right));
+		if (standing.GetValue<int64_t>() > 0) {
+			output.data[0].Append(
+			    Value("relationship " + left + " " + bind.row[1].ToString() + " " + right + " unchanged: no-op"));
+			return;
+		}
 	}
 
 	vector<string> values;
@@ -917,9 +969,11 @@ struct WitnessRow {
 	Value threshold;
 	Value script;
 	vector<string> grains;
-	//! the aspect's WHEN: owed only while the sibling's winning slot carries the value
+	//! the aspect's WHEN: owed only while the sibling's winning slot carries the value,
+	//! or only on columns of the named data types (a JSON list)
 	Value condition_aspect;
 	Value condition_value;
+	Value condition_types;
 };
 
 //! The witnesses as they stand, with their detector's script and their aspect's grains and condition
@@ -929,7 +983,7 @@ static vector<WitnessRow> Witnesses(Inner &inner, const Value &aspect) {
 	    "SELECT w.name, w.aspect, w.detector, w.threshold, (SELECT f.script FROM " + inner.Store("functions") +
 	    " f WHERE f.name = w.detector AND f.returns IS NULL ORDER BY f.seq DESC LIMIT 1) AS script, "
 	    "from_json(a.grains, '[\"VARCHAR\"]'), a.condition::JSON->>'aspect',"
-	    " a.condition::JSON->>'value' FROM " +
+	    " a.condition::JSON->>'value', a.condition::JSON->'type' FROM " +
 	    Newest(inner.ws, "witnesses") + " w LEFT JOIN " + Newest(inner.ws, "aspects") + " a ON a.name = w.aspect" +
 	    (aspect.IsNull() ? string() : " WHERE w.aspect = " + QuoteText(aspect.ToString())) + " ORDER BY w.aspect");
 	while (auto chunk = rows->Fetch()) {
@@ -949,6 +1003,7 @@ static vector<WitnessRow> Witnesses(Inner &inner, const Value &aspect) {
 			}
 			witness.condition_aspect = chunk->GetValue(6, i);
 			witness.condition_value = chunk->GetValue(7, i);
+			witness.condition_types = chunk->GetValue(8, i);
 			result.push_back(std::move(witness));
 		}
 	}
@@ -1089,6 +1144,12 @@ static string OwedSQL(const vector<WitnessRow> &witnesses, const ReadScope &scop
 			        " ORDER BY CASE actor WHEN 'human' THEN 0 ELSE 1 END, written_at DESC) = 1)"
 			        " WHERE body->>'value' = " +
 			        QuoteText(witness.condition_value.ToString()) + ")";
+		} else if (!witness.condition_types.IsNull()) {
+			// owed only on columns of the named types: the base type, DECIMAL for DECIMAL(18,2) (SPEC §5.1)
+			part += " WHERE subject IN (SELECT table_schema || '.' || table_name || '.' || column_name"
+			        " FROM information_schema.columns" +
+			        landed + " AND upper(split_part(data_type, '(', 1)) IN (SELECT unnest(from_json(" +
+			        QuoteText(witness.condition_types.ToString()) + ", '[\"VARCHAR\"]'))))";
 		}
 		parts.push_back(part);
 	}

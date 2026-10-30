@@ -26,7 +26,10 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 REPO = Path(__file__).resolve().parents[2]
-SKILLS = {"gloss": REPO / "skills/gloss/SKILL.md", "gloss-kpi": REPO / "kits/kpi/SKILL.md"}
+SKILLS = {"gloss": REPO / "skills/gloss/SKILL.md"}
+SKILLS.update(
+    {f"gloss-{kit.name}": kit / "SKILL.md" for kit in sorted((REPO / "kits").iterdir()) if (kit / "SKILL.md").is_file()}
+)
 WORKSPACE = Path(sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GLOSS_WORKSPACE", ".")).resolve()
 OPENER = WORKSPACE / "gloss.sql"
 CELL = 500
@@ -81,8 +84,8 @@ mcp = FastMCP(
         "A gloss workspace: DuckDB, a DuckLake and the glossql context language on one connection, "
         "behind one tool, `gloss`, which runs glossql statements and plain SQL. Read "
         "skill://gloss/SKILL.md first (the door, the language, the reads, the store), then "
-        "`SELECT * FROM glossql.datasets;`. skill://gloss-kpi/SKILL.md is the KPI kit's vocabulary, "
-        "for a workspace that loaded the kit."
+        "`SELECT * FROM glossql.datasets;`. The other skill resources are the kits' vocabularies, one per "
+        "kit under kits/, for a workspace that loaded the kit (`SELECT name FROM glossql.kits;`)."
     ),
 )
 
@@ -117,34 +120,23 @@ def gloss(statements: str, max_rows: int = 1000, max_cell: int = CELL) -> str:
     return "\n".join(out) or "(no output)"
 
 
-@mcp.resource("skill://gloss/SKILL.md", mime_type="text/markdown")
-def gloss_skill() -> str:
-    """The door and the language on DuckDB: the call, the statement set, the reads, the store."""
-    return SKILLS["gloss"].read_text()
+def serve_skill(name: str, path: Path) -> None:
+    """A skill as a resource and as a prompt: the door's, and one per kit."""
+    description = path.read_text().split("description:", 1)[1].split("\n", 1)[0].strip()
+    mcp.resource(f"skill://{name}/SKILL.md", mime_type="text/markdown", description=description)(
+        lambda: path.read_text()
+    )
+    mcp.prompt(name=name, description=description)(lambda: path.read_text())
 
 
-@mcp.resource("skill://gloss-kpi/SKILL.md", mime_type="text/markdown")
-def kpi_skill() -> str:
-    """The KPI kit's vocabulary: each aspect, the order of a round, a grounding's keys."""
-    return SKILLS["gloss-kpi"].read_text()
+for skill_name, skill_path in SKILLS.items():
+    serve_skill(skill_name, skill_path)
 
 
 @mcp.resource("workspace://gloss.sql", mime_type="text/plain")
 def opener() -> str:
     """The workspace's opener: the extension it loads and the lake it attaches."""
     return OPENER.read_text()
-
-
-@mcp.prompt(name="gloss")
-def gloss_prompt() -> str:
-    """Work in the gloss workspace: the door skill as the opening message."""
-    return SKILLS["gloss"].read_text()
-
-
-@mcp.prompt(name="gloss-kpi")
-def kpi_prompt() -> str:
-    """Gloss with the KPI kit: its skill as the opening message."""
-    return SKILLS["gloss-kpi"].read_text()
 
 
 if __name__ == "__main__":

@@ -165,10 +165,11 @@ static string SubjectText(PEGTransformer &transformer, ParseResult &parse_result
 // here, at parse
 //===--------------------------------------------------------------------===//
 
-//! DECLARE SOURCE (SPEC §3): the kind, where, and the reference to the engine-held secret
+//! DECLARE SOURCE (SPEC §3): the kind (any word; relational_db is the one the engine acts on), where, and the
+//! reference to the engine-held secret
 static constexpr const char *SOURCE_SETTINGS =
     R"({"type": "object", "required": ["type", "location"], "additionalProperties": false, "properties": {
-    "type": {"enum": ["relational_db", "parquet", "csv", "json"]}, "location": {"type": "string"},
+    "type": {"type": "string"}, "location": {"type": "string"},
     "via": {"type": "string"}}})";
 //! DECLARE DATASET
 static constexpr const char *DATASET_SETTINGS =
@@ -462,14 +463,18 @@ static string GrainText(ParseResult &parse_result) {
 
 //! GlossDeclareAspect <- 'DECLARE' 'ASPECT' Identifier 'WITH' StringLiteral 'AS' GlossAspectKind
 //!                         GlossGrainClause?
-//! GlossGrainClause <- 'ON' List(GlossGrain) GlossWhen? ; GlossWhen <- 'WHEN' Identifier '=' StringLiteral
+//! GlossGrainClause <- 'ON' List(GlossGrain) GlossWhen? ; GlossWhen <- 'WHEN' GlossWhenBody
+//! GlossWhenBody <- GlossWhenType / GlossWhenAspect ; GlossWhenAspect <- Identifier '=' StringLiteral
+//! GlossWhenType <- 'TYPE' GlossWhenTypes ; GlossWhenTypes <- GlossWhenTypeOne / GlossWhenTypeIn
+//! GlossWhenTypeOne <- '=' StringLiteral ; GlossWhenTypeIn <- 'IN' '(' List(StringLiteral) ')'
 static arena_ptr<TransformResultValue> FinalizeDeclareAspect(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	auto name = Ident(transformer, list.GetChild(2));
 	auto schema = Text(transformer, list.GetChild(4));
 	auto kind = AspectKindText(list.GetChild(6));
 	vector<Value> grains;
-	// the WHEN as JSON: the sibling aspect and the literal its winning slot carries
+	// the WHEN as JSON: the sibling aspect and the literal its winning slot carries, or the
+	// columns' data types, upper-cased as DuckDB names them
 	Value condition(LogicalType::VARCHAR);
 	auto &grain_clause = list.Child<OptionalParseResult>(7);
 	if (grain_clause.HasResult()) {
@@ -479,9 +484,24 @@ static arena_ptr<TransformResultValue> FinalizeDeclareAspect(PEGTransformer &tra
 		}
 		auto &when = clause.Child<OptionalParseResult>(2);
 		if (when.HasResult()) {
-			auto &clause_when = when.GetResult().Cast<ListParseResult>();
-			condition = Value("{\"aspect\":" + JsonString(Ident(transformer, clause_when.GetChild(1))) +
-			                  ",\"value\":" + JsonString(Text(transformer, clause_when.GetChild(3))) + "}");
+			auto &body = GetChoice(when.GetResult().Cast<ListParseResult>().GetChild(1));
+			if (IsRule(body, "GlossWhenType")) {
+				auto &types = GetChoice(body.Cast<ListParseResult>().GetChild(1));
+				vector<string> names;
+				if (IsRule(types, "GlossWhenTypeOne")) {
+					names.push_back(
+					    JsonString(StringUtil::Upper(Text(transformer, types.Cast<ListParseResult>().GetChild(1)))));
+				} else {
+					for (auto &item : ListItems(types.Cast<ListParseResult>().GetChild(2))) {
+						names.push_back(JsonString(StringUtil::Upper(Text(transformer, item.get()))));
+					}
+				}
+				condition = Value("{\"type\":[" + StringUtil::Join(names, ",") + "]}");
+			} else {
+				auto &clause_when = body.Cast<ListParseResult>();
+				condition = Value("{\"aspect\":" + JsonString(Ident(transformer, clause_when.GetChild(0))) +
+				                  ",\"value\":" + JsonString(Text(transformer, clause_when.GetChild(2))) + "}");
+			}
 		}
 	}
 	if (kind == "QUERY" && !grains.empty()) {
@@ -645,7 +665,13 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	rule("GlossKindFact <- 'FACT'");
 	rule("GlossKindQuery <- 'QUERY'");
 	rule("GlossGrainClause <- 'ON' List(GlossGrain) GlossWhen?");
-	rule("GlossWhen <- 'WHEN' Identifier '=' StringLiteral");
+	rule("GlossWhen <- 'WHEN' GlossWhenBody");
+	rule("GlossWhenBody <- GlossWhenType / GlossWhenAspect");
+	rule("GlossWhenType <- 'TYPE' GlossWhenTypes");
+	rule("GlossWhenTypes <- GlossWhenTypeOne / GlossWhenTypeIn");
+	rule("GlossWhenTypeOne <- '=' StringLiteral");
+	rule("GlossWhenTypeIn <- 'IN' '(' List(StringLiteral) ')'");
+	rule("GlossWhenAspect <- Identifier '=' StringLiteral");
 	rule("GlossGrain <- GlossGrainDataset / GlossGrainTable / GlossGrainColumn / GlossGrainRelationship / "
 	     "GlossGrainSource");
 	rule("GlossGrainDataset <- 'DATASET'");

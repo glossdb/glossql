@@ -180,6 +180,11 @@ main.orders.customer_id -> main.customers.id is not a declared relationship
 statement ok
 DECLARE RELATIONSHIP orders.customer_id -> customers.id;
 
+query T
+DECLARE RELATIONSHIP orders.customer_id -> customers.id;
+----
+relationship main.orders.customer_id -> main.customers.id unchanged: no-op
+
 statement ok
 DECLARE RELATIONSHIP invoices.order_id <-> orders.id;
 

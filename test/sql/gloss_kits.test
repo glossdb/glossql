@@ -52,6 +52,17 @@ SELECT count(*) FROM glossql.aspects;
 ----
 11
 
+# a kit run again, as the opener does at start-up, is silent: every declaration unchanged, no new kits row
+query I
+SELECT count(*) FROM (FROM gloss_kit('kits/kpi/kit.sql')) WHERE outcome <> 'ok' AND outcome NOT LIKE '%unchanged: no-op';
+----
+0
+
+query I
+SELECT count(*) FROM glossql.kits;
+----
+1
+
 # a failing statement stops the load; the ones before it stand
 statement error
 FROM gloss_kit('kits/nothing/kit.sql');
@@ -179,3 +190,18 @@ query II
 SELECT total, "distinct" FROM glossql.column_profile('fin.orders.id');
 ----
 4	4
+
+# --- a subject names a landed column as DuckDB matches names: case-insensitively, in the catalog's spelling
+
+statement ok
+CREATE TABLE fin.cased AS SELECT 1 AS "OrderId", 2.5 AS amount;
+
+query T
+GLOSS meaning ON cased.orderid AS $${"value": "the order"}$$;
+----
+glossed meaning on fin.cased.OrderId as agent
+
+query TT
+SELECT subject, state FROM GLOSSARY(cased) WHERE aspect = 'meaning' AND subject LIKE '%.OrderId';
+----
+fin.cased.OrderId	current

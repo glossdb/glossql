@@ -37,12 +37,15 @@ def test_the_door(workspace: Path) -> None:
         config = {"mcpServers": {"gloss": {"command": "uv", "args": ["run", "--quiet", str(DOOR), str(workspace)]}}}
         async with Client(config) as client:
             assert [t.name for t in await client.list_tools()] == ["gloss"]
+            kits = sorted(d.name for d in (REPO / "kits").iterdir() if (d / "SKILL.md").is_file())
             assert {str(r.uri) for r in await client.list_resources()} == {
                 "skill://gloss/SKILL.md",
-                "skill://gloss-kpi/SKILL.md",
+                *(f"skill://gloss-{kit}/SKILL.md" for kit in kits),
                 "workspace://gloss.sql",
             }
-            assert [p.name for p in await client.list_prompts()] == ["gloss", "gloss-kpi"]
+            assert sorted(p.name for p in await client.list_prompts()) == sorted(
+                ["gloss", *(f"gloss-{kit}" for kit in kits)]
+            )
 
             async def gloss(statements: str, **arguments) -> str:
                 result = await client.call_tool("gloss", {"statements": statements, **arguments})

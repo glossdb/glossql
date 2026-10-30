@@ -318,8 +318,15 @@ static void DatasetExec(ClientContext &context, TableFunctionInput &data, DataCh
 	auto &inputs = data.bind_data->Cast<RunnerBindData>().inputs;
 	auto name = inputs[0].ToString();
 
-	// the schema is the lake's and the row the store's: two catalogs, two commits
+	// the schema is the lake's and the row the store's: two catalogs, two commits;
+	// an unchanged re-declaration is a no-op (SPEC §3)
 	Inner inner(context);
+	auto standing = inner.Row("SELECT settings FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(name) +
+	                          " ORDER BY seq DESC LIMIT 1");
+	if (!standing.empty() && standing[0].ToString() == inputs[1].ToString()) {
+		Outcome(output, "dataset " + name + " unchanged: no-op");
+		return;
+	}
 	inner.Run("CREATE SCHEMA IF NOT EXISTS " + QuoteName(inner.ws.lake) + "." + QuoteName(name));
 	inner.Run("INSERT INTO " + inner.Store("datasets") + " VALUES (" + inner.Seq("datasets") + ", " + QuoteText(name) +
 	          ", " + inputs[1].ToSQLString() + ", now())");
@@ -596,6 +603,14 @@ string ReplacePlaceholder(const string &sql, const string &name, const string &r
 	return result;
 }
 
+//! Two store values as the same declaration: both NULL, or the same text
+static bool SameValue(const Value &before, const Value &after) {
+	if (before.IsNull() || after.IsNull()) {
+		return before.IsNull() == after.IsNull();
+	}
+	return before.ToString() == after.ToString();
+}
+
 static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<RunnerState>();
 	if (state.done) {
@@ -609,6 +624,14 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 	auto &returns = inputs[3];
 
 	Inner inner(context);
+	// identity is content (SPEC §3): an unchanged re-declaration is a no-op, so a kit replays silently
+	auto standing = inner.Row("SELECT scope, script, returns FROM " + inner.Store("functions") +
+	                          " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
+	if (!standing.empty() && standing[0].ToString() == scope && standing[1].ToString() == script &&
+	    SameValue(standing[2], returns)) {
+		Outcome(output, "function " + name + " unchanged: no-op");
+		return;
+	}
 	auto schema = scope == "GLOBAL" ? string("glossql") : scope;
 	if (scope != "GLOBAL") {
 		auto declared =
@@ -649,6 +672,15 @@ static void WitnessExec(ClientContext &context, TableFunctionInput &data, DataCh
 	auto &threshold = inputs[4];
 
 	Inner inner(context);
+	auto declared = inner.Row("SELECT aspect, speakers, detector, threshold FROM " + inner.Store("witnesses") +
+	                          " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
+	if (!declared.empty() && declared[0].ToString() == aspect && declared[1].ToString() == JsonList(inputs[2]) &&
+	    SameValue(declared[2], detector) &&
+	    (declared[3].IsNull() || threshold.IsNull() ? declared[3].IsNull() == threshold.IsNull()
+	                                                : declared[3].GetValue<double>() == threshold.GetValue<double>())) {
+		Outcome(output, "witness " + name + " unchanged: no-op");
+		return;
+	}
 	auto standing = inner.Row("SELECT kind, schema::JSON->>'x-kind' FROM " + inner.Store("aspects") +
 	                          " WHERE name = " + QuoteText(aspect) + " ORDER BY seq DESC LIMIT 1");
 	if (standing.empty()) {
@@ -970,7 +1002,9 @@ static TableFunction SubjectColumnFunction() {
 // URL once httpfs is loaded), run statement by statement on a second
 // connection under the glossql grammar, one row per statement. Each statement
 // commits on its own, as it does from a script; a failing statement stops the
-// load and the ones before it stand
+// load and the ones before it stand. A kit run again, as the opener does at
+// every start-up, is silent: its unchanged declarations are no-ops and no kits
+// row lands; its LOAD lines are what bring an extension into the process
 //===--------------------------------------------------------------------===//
 
 struct KitState : public GlobalTableFunctionState {
@@ -1060,8 +1094,15 @@ static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk 
 			}
 			state.rows.emplace_back(head, outcome);
 		}
-		inner.Run("INSERT INTO " + inner.Store("kits") + " VALUES (" + inner.Seq("kits") + ", " +
-		          QuoteText(KitName(path)) + ", " + QuoteText(path) + ", " + to_string(state.rows.size()) + ", now())");
+		bool landed = false;
+		for (auto &row : state.rows) {
+			landed = landed || (row.second != "ok" && !StringUtil::EndsWith(row.second, ": no-op"));
+		}
+		if (landed) {
+			inner.Run("INSERT INTO " + inner.Store("kits") + " VALUES (" + inner.Seq("kits") + ", " +
+			          QuoteText(KitName(path)) + ", " + QuoteText(path) + ", " + to_string(state.rows.size()) +
+			          ", now())");
+		}
 	}
 	idx_t count = 0;
 	while (state.offset < state.rows.size() && count < STANDARD_VECTOR_SIZE) {

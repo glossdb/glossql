@@ -42,6 +42,12 @@ DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max"
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 
+# an unchanged re-declaration is a no-op
+query T
+DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
+----
+function min_max unchanged: no-op
+
 query TTTT
 SELECT name, scope, returns, script LIKE '%subject_column($subject)%' FROM glossql.functions;
 ----

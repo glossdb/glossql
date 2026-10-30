@@ -27,8 +27,8 @@ SELECT * FROM GLOSSARY(dept_emp) WHERE state <> 'current';
 SQL
 ```
 
-The opener loads the extension, attaches the lake, activates the grammar
-and makes the store where missing, silently:
+The opener loads the extension, attaches the lake, activates the grammar,
+makes the store where missing and replays the workspace's kits, silently:
 
 ```sql
 .startup_text none
@@ -37,6 +37,7 @@ ATTACH 'ducklake:ws.ducklake' AS ws (DATA_PATH 'ws/');
 USE ws;
 .output /dev/null
 PRAGMA gloss;
+FROM gloss_kit('/path/to/kits/kpi/kit.sql');            -- every kit the workspace runs
 .output
 ```
 
@@ -51,6 +52,10 @@ PRAGMA gloss;
   landed before it stays landed; what came after never ran. Without it
   the rest still runs.
 - **`-unsigned`** until the extension is signed by a repository.
+- **The kits replay at start-up.** A DuckDB extension is loaded per
+  process, so a kit that needs one installs and loads it in its first
+  lines, and the opener's replay is what loads it next time. A kit run
+  again is silent: unchanged declarations are no-ops, no kits row lands.
 
 Through MCP the door is the tool `gloss(statements)` on one connection
 the server holds open: the same statements, a markdown table per read,
@@ -93,12 +98,12 @@ disagreement to resolve by re-glossing with grounds, not to overwrite.
 |---|---|
 | `USE fin;` | bind the statements after it in this call to a dataset (a schema of the lake); DuckDB's own `USE` |
 | `DECLARE DATASET fin SET (purpose: '…');` | create a dataset: a schema plus a row; `purpose` is required |
-| `DECLARE SOURCE erp SET (type: parquet, location: '/root');` | register a source: `type` (`parquet`, `csv`, `json`, or a database kind), `location` (a directory, a URL prefix, or an attached database's name), `via` optional; relative file paths in a recipe resolve under the location |
+| `DECLARE SOURCE erp SET (type: parquet, location: '/root');` | register a source: `type` (a word for the kind: `parquet`, `csv`, `json`, `shapefile`, …, or `relational_db` for an attached database), `location` (a directory, a URL prefix, or an attached database's name), `via` optional; relative file paths in a recipe resolve under the location for DuckDB's own readers |
 | `PROBE erp AS $$SELECT … LIMIT 5$$;` | run recipe-shaped SQL at the source, landing nothing: the rehearsal |
 | `DECLARE RECIPE orders ON fin FROM erp [SET (key: id)] AS $$sql$$;` | land the table the SQL produces, now, as `fin.orders`; a key (`id`, or `'a, b'`) makes every later import merge by it; an unchanged re-declaration is a no-op |
 | `IMPORT orders;` | run the recipe again over the source as it stands now: a new snapshot of the lake |
 | `DECLARE RELATIONSHIP dept_emp.emp_no -> employees.emp_no;` | declare a join edge (`<->` both ways; `a.(x, y) -> b.(x, y)` composite) between landed columns |
-| `DECLARE ASPECT name WITH $$json-schema$$ AS FACT\|MEASUREMENT\|QUERY [ON TABLE, COLUMN, DATASET, SOURCE, RELATIONSHIP [WHEN aspect = 'value']];` | add a word; the schema is checked on every body; `ON` is the grain, `WHEN` narrows what is owed to subjects whose sibling aspect says so |
+| `DECLARE ASPECT name WITH $$json-schema$$ AS FACT\|MEASUREMENT\|QUERY [ON TABLE, COLUMN, DATASET, SOURCE, RELATIONSHIP [WHEN aspect = 'value' \| WHEN TYPE = 'T' \| WHEN TYPE IN ('T', 'U')]];` | add a word; the schema is checked on every body; `ON` is the grain, `WHEN` narrows what is owed: to subjects whose sibling aspect says so, or to columns of a data type (the base type, `DECIMAL` for `DECIMAL(18,2)`; `ON COLUMN` alone) |
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot; a QUERY aspect is glossed on the dataset (`GLOSS revenue ON fin AS …`) and then serves as the view `fin.revenue` |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context, one row per subject and aspect |
 | `SELECT … FROM GLOSSARY(subject, all => true);` | every slot, raw |
@@ -106,7 +111,7 @@ disagreement to resolve by re-glossing with grounds, not to overwrite.
 | `DECLARE FUNCTION f FOR fin\|GLOBAL AS $$sql$$ [RETURNS aspect];` | a measurement (`RETURNS`: a table macro over `subject_column($subject)`) or a detector (no `RETURNS`: runs at read over the witness's `slots` with `$threshold`) |
 | `SELECT f() FROM orders.amount;` | extract: compute and land the measurement, or serve the landed row while what it read is unchanged (`computed` says which) |
 | `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication |
-| `FROM gloss_kit('path-or-url');` | run a kit's declarations, one row each; once per workspace |
+| `FROM gloss_kit('path-or-url');` | run a kit's declarations, one row each: once to adopt it, then from the opener at every start-up, silently when unchanged |
 | `FROM gloss_lineage($$sql$$);` | every output column of a SELECT down to the base scans, `(column, derivation, complete)` |
 
 A body rides `$$…$$` as written: plain double quotes inside, nothing
