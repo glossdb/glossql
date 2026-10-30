@@ -6,7 +6,7 @@ grounding, plus a **grounding schema a kit declares**, which the engine
 validates every QUERY gloss against. The cube's three keys, `behavior`,
 `grain` and `axes`, become the KPI kit's: declared once in its script,
 taught by its skill, enforced by the engine. The change surfaced while
-building the DuckDB extension beside this repo (`../duckgloss`), a host
+building the DuckDB extension beside this repo (`../gloss`), a host
 with the grammar and the store and no cube; the extension runs this form
 and its suites hold the cases. It is a proposal: the language has one
 owner, and the corpus decides first.
