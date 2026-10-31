@@ -966,19 +966,16 @@ static string SourceGrainSQL(const Workspace &ws) {
 	       Newest(ws, "aspects") + " WHERE list_contains(from_json(grains, '[\"VARCHAR\"]'), 'SOURCE')))";
 }
 
-static ReadScope ScopeOf(ClientContext &context, Inner &inner, const Value &subject) {
+//! A read's scope, resolved from the catalog alone: the dataset, whether the
+//! read sweeps it, and the subject filter a narrowed read applies. The rows'
+//! filter and the workspace come with WholeOf, where a connection is at hand
+static ReadScope ScopeOf(ClientContext &context, const Value &subject) {
 	auto scope = subject.IsNull() ? CurrentDataset(context) : ResolveSubject(context, subject.ToString());
 	ReadScope result;
 	result.dataset = DatasetOf(context, scope);
 	result.whole = scope == result.dataset;
 	// a subject serves itself and what lies under it; no subject sweeps the USE'd dataset (SPEC §5.3)
 	result.subjects = "(subject = " + QuoteText(scope) + " OR subject LIKE " + QuoteText(scope + ".%") + ")";
-	// the dataset's own rows, and the source-grain rows every dataset reads
-	result.filter = "(dataset = " + QuoteText(result.dataset) + " OR " + SourceGrainSQL(inner.ws) + ")";
-	if (!result.whole) {
-		result.filter += " AND " + result.subjects;
-	}
-	result.ws = inner.ws;
 	return result;
 }
 
@@ -1443,10 +1440,11 @@ struct CachedRead : public ObjectCacheEntry {
 	}
 };
 
-//! A connection computing a read (ClientContextState): a gloss read bound
-//! meanwhile is the shape of a dataset view gloss_columns binds, never a read
-//! run, and binds as an empty relation of the read's columns — a fill never
-//! recurses
+//! The fill mark on the second connection (ClientContextState) while it
+//! computes a read: a gloss read bound meanwhile is the shape of a dataset
+//! view gloss_columns binds, never a read run, and binds as an empty relation
+//! of the read's columns — a fill never recurses. A read bind opens one
+//! connection, for the version check and the fill, closed with the bind
 struct ReadFill : public ClientContextState {
 	bool filling = false;
 
@@ -1471,11 +1469,13 @@ static string StoreVersionSQL(const Workspace &ws) {
 }
 
 //! The whole dataset a scope lies in: what a cache entry holds, and what a
-//! detector judges over, whatever the read's subject
-static ReadScope WholeOf(const ReadScope &scope) {
+//! detector judges over, whatever the read's subject — the dataset's own
+//! rows, and the source-grain rows every dataset reads
+static ReadScope WholeOf(const ReadScope &scope, const Workspace &ws) {
 	auto whole = scope;
 	whole.whole = true;
-	whole.filter = "(dataset = " + QuoteText(scope.dataset) + " OR " + SourceGrainSQL(scope.ws) + ")";
+	whole.ws = ws;
+	whole.filter = "(dataset = " + QuoteText(scope.dataset) + " OR " + SourceGrainSQL(ws) + ")";
 	return whole;
 }
 
@@ -1541,7 +1541,7 @@ struct CachedScanState : public GlobalTableFunctionState {
 static unique_ptr<FunctionData> CachedBind(ClientContext &context, TableFunctionBindInput &input,
                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
 	Inner inner(context);
-	auto whole = WholeOf(ScopeOf(context, inner, input.inputs[1]));
+	auto whole = WholeOf(ScopeOf(context, input.inputs[1]), inner.ws);
 	auto result = make_uniq<CachedBindData>();
 	result->read = Cached(context, inner, input.inputs[0].ToString(), whole);
 	return_types = result->read->types;
@@ -1595,8 +1595,7 @@ static unique_ptr<TableRef> GlossGlossaryBindReplace(ClientContext &context, Tab
 	if (ReadFill::Of(context).filling) {
 		return Shape(all ? RAW_SHAPE : COLLAPSED_SHAPE);
 	}
-	Inner inner(context);
-	auto scope = ScopeOf(context, inner, input.inputs[0]);
+	auto scope = ScopeOf(context, input.inputs[0]);
 	return make_uniq<SubqueryRef>(ParseSelect(Narrowed(all ? "raw" : "collapsed", scope, input.inputs[1],
 	                                                   all ? "subject, aspect, actor" : "subject, aspect")));
 }
@@ -1612,8 +1611,7 @@ static unique_ptr<TableRef> GlossAttestBindReplace(ClientContext &context, Table
 	if (ReadFill::Of(context).filling) {
 		return Shape(ATTEST_SHAPE);
 	}
-	Inner inner(context);
-	auto scope = ScopeOf(context, inner, input.inputs[0]);
+	auto scope = ScopeOf(context, input.inputs[0]);
 	return make_uniq<SubqueryRef>(ParseSelect(Narrowed("attest", scope, input.inputs[1], "subject, aspect, witness")));
 }
 
