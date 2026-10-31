@@ -140,6 +140,7 @@ SELECT period::DATE, value FROM glossql.metric_series() WHERE dimension = '' ORD
 
 # --- what feeds the metric, through the view's lineage
 
+# a field descends from the columns its derivation names; the summed value is computed, no column is its own
 query TTTT
 SELECT metric, field, source, table_name FROM glossql.metric_sources('spend') ORDER BY field NULLS FIRST;
 ----
@@ -147,7 +148,6 @@ spend	NULL	NULL	ledger
 spend	fund	ledger.fund	ledger
 spend	object	ledger.object	ledger
 spend	period	ledger.booked	ledger
-spend	value	ledger.amount	ledger
 
 # --- a stock: the period's last level, summed over what stands at that instant
 
@@ -293,3 +293,18 @@ query I
 SELECT count(*) FROM glossql.metric_series() WHERE metric = 'win_rate';
 ----
 0
+
+# --- a list over every metric skips what needs a claim nobody made, and says so in the fact row
+
+statement ok
+GLOSS behavior ON headcount.value AS $${"value": "none"}$$;
+
+query I
+SELECT count(DISTINCT metric) FROM glossql.metric_series(unclaimed := 'skip');
+----
+1
+
+statement error
+SELECT count(*) FROM glossql.metric_series();
+----
+the behaviour on fin.headcount.value is none, so its rows do not combine

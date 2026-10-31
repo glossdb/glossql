@@ -206,17 +206,18 @@ ORDER BY metric;
 -- The no-claim rule: where rows have to be combined — a coarser grain than
 -- the floor, or several rows in one period — and no behaviour stands on
 -- the value column, the read refuses and names the gloss. It defaults
--- nothing.
+-- nothing. A list over every metric asks unclaimed := 'skip' instead:
+-- such a metric serves no cell, and its fact row says what it owes.
 --===------------------------------------------------------------------===--
 
-CREATE OR REPLACE MACRO glossql.metric_series(grain := NULL) AS TABLE
+CREATE OR REPLACE MACRO glossql.metric_series(grain := NULL, unclaimed := 'refuse') AS TABLE
 WITH asked AS MATERIALIZED (
   SELECT m.*, coalesce(grain, m.floor) AS at_grain
   FROM glossql.metric_axes() m
   WHERE m.applicable AND (grain IS NULL OR glossql.grain_rank(grain) >= glossql.grain_rank(m.floor))),
 cells AS (
   SELECT * FROM dataset_cells(current_schema(), true) WHERE "table" IN (SELECT metric FROM asked)),
-rows_ AS MATERIALIZED (
+all_rows AS MATERIALIZED (
   SELECT c."table" AS metric, c.rn,
          max(CASE WHEN c."column" = a.period_column THEN TRY_CAST(c.val AS TIMESTAMP) END) AS instant,
          max(CASE WHEN c."column" = a.value_column THEN TRY_CAST(c.val AS DOUBLE) END) AS value,
@@ -225,20 +226,28 @@ rows_ AS MATERIALIZED (
          list({'dimension': c."column", 'member': coalesce(c.val, 'NULL')}) FILTER (WHERE list_contains(a.dims, c."column")) AS members
   FROM cells c JOIN asked a ON a.metric = c."table"
   GROUP BY c."table", c.rn),
+-- a value column with no behaviour, a contested one, or one said not to
+-- combine (none) cannot be combined over rows
 combining AS (
-  SELECT a.metric, a.value_column, a.behavior_state,
+  SELECT a.metric, a.value_column, a.behavior, a.behavior_state,
          glossql.grain_rank(a.at_grain) > glossql.grain_rank(a.floor) AS coarser,
          count(*) > count(DISTINCT r.instant) AS shared
-  FROM asked a JOIN rows_ r USING (metric)
-  WHERE a.behavior IS NULL
-  GROUP BY a.metric, a.value_column, a.behavior_state, a.at_grain, a.floor),
+  FROM asked a JOIN all_rows r USING (metric)
+  WHERE a.behavior IS NULL OR a.behavior = 'none'
+  GROUP BY a.metric, a.value_column, a.behavior, a.behavior_state, a.at_grain, a.floor),
 refused AS (
-  SELECT CASE WHEN count(*) > 0 THEN error(string_agg(
+  SELECT CASE WHEN count(*) > 0 AND unclaimed = 'refuse' THEN error(string_agg(
            CASE WHEN behavior_state = 'contested' THEN 'the behaviour on ' || current_schema() || '.' || metric || '.' || value_column || ' is contested'
+                WHEN behavior = 'none' THEN 'the behaviour on ' || current_schema() || '.' || metric || '.' || value_column || ' is none, so its rows do not combine'
                 ELSE 'no behaviour stands on ' || current_schema() || '.' || metric || '.' || value_column END
            || CASE WHEN coarser THEN ', and ' || metric || ' is asked at a coarser grain than its floor' ELSE ', and ' || metric || ' serves several rows in one period' END
            || ': gloss it — GLOSS behavior ON ' || current_schema() || '.' || metric || '.' || value_column || ' AS $${"value": "<flow|stock|ratio>"}$$', '; ')) END AS refusal
   FROM combining WHERE coarser OR shared),
+-- the metrics served: every asked one but those that need a claim nobody made
+rows_ AS (
+  SELECT r.* FROM all_rows r, refused
+  WHERE refused.refusal IS NULL
+    AND r.metric NOT IN (SELECT metric FROM combining WHERE coarser OR shared)),
 bucketed AS (
   SELECT r.metric, r.instant, date_trunc(a.at_grain, r.instant) AS period, r.value, r.num, r.den, r.members,
          coalesce(a.behavior, 'none') AS behavior, a.at_grain, a.rung,
@@ -283,8 +292,7 @@ member_cells AS (
   FROM long l JOIN weights wt USING (metric, dimension, member)
   GROUP BY l.metric, l.dimension, CASE WHEN wt.rank <= 23 THEN l.member ELSE 'other' END, l.period, l.behavior)
 SELECT metric, 'actual' AS world, dimension, member, period, value, num, den, behavior
-FROM (SELECT * FROM total UNION ALL SELECT * FROM filled UNION ALL SELECT * FROM member_cells), refused
-WHERE refused.refusal IS NULL
+FROM (SELECT * FROM total UNION ALL SELECT * FROM filled UNION ALL SELECT * FROM member_cells)
 ORDER BY metric, dimension, member, period;
 
 --===------------------------------------------------------------------===--
@@ -324,15 +332,20 @@ WITH metrics AS (
 lineage AS (
   SELECT l.view AS metric, l."column" AS field, l.derivation, l.complete
   FROM gloss_views_lineage(current_schema()) l WHERE l.view IN (SELECT metric FROM metrics)),
+-- a field descends from the columns its derivation names; an aggregate
+-- descends from no column — it is computed over them
 fields AS (
-  SELECT metric, field, unnest(regexp_extract_all(derivation, '([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*):', 1)) AS path
+  SELECT metric, field, unnest(regexp_extract_all(derivation, '([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*):', 1)) AS path,
+         regexp_matches(derivation, '^(sum|count|avg|mean|min|max|median|mode|stddev|stddev_pop|stddev_samp|var_pop|var_samp|variance|string_agg|list|array_agg|arg_min|arg_max|first|last|any_value|bool_and|bool_or|quantile|quantile_cont|quantile_disc|approx_count_distinct|product)\(') AS aggregate
   FROM lineage WHERE field IS NOT NULL),
+tables AS (
+  SELECT DISTINCT metric, split_part(path, '.', 2) AS table_name FROM fields),
 sources AS (
   SELECT DISTINCT metric, field, split_part(path, '.', 2) || '.' || split_part(path, '.', 3) AS source, split_part(path, '.', 2) AS table_name
-  FROM fields)
+  FROM fields WHERE NOT aggregate)
 SELECT metric, field, source, table_name, NULL::VARCHAR AS reason FROM sources
 UNION ALL
-SELECT DISTINCT metric, NULL, NULL, table_name, NULL FROM sources
+SELECT metric, NULL, NULL, table_name, NULL FROM tables
 UNION ALL
 SELECT metric, NULL, NULL, NULL, 'the grounding does not plan' FROM lineage WHERE field IS NULL
 ORDER BY metric, table_name NULLS LAST, field NULLS FIRST;
