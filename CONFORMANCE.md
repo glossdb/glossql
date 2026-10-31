@@ -26,7 +26,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | `DROP TABLE` refuses while the table holds data or glosses | outside | host DDL is DuckDB's; a wrapper's allowlist |
 | the substrate SQL allowlist | outside | a wrapper's |
 | `DECLARE DATASET`, `USE`, path resolution | holds | a dataset is a schema of the workspace's lake; `USE ws.fin`, or `USE ws` then `USE fin`, is DuckDB's; a landed table wins over a same-named dataset |
-| derived views closed | softened | views are DuckDB's and count as tables |
+| derived views closed | softened | views are DuckDB's and count as tables: a view and its columns are subjects, glossed, measured and owed like a table and its columns; its definition is the shape its glosses age by and a leg of what is measured over it |
 
 ## §4 Subjects and relationships
 
@@ -46,12 +46,12 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | identical re-declaration no-op; change under glosses refused | holds | |
 | every body JSON, dollar-quoted | holds | |
 | the standard grounding schema is fixed | proposed | the grounding contract (`sql` or `stopped`, `assumptions`) plus the kit's grounding schema, an aspect flavored `x-kind: grounding`; `../glossql/.claude/plans/grounding.md` |
-| a grounding is a view; a stop ends it; a landed table's name refused | holds | `CREATE OR REPLACE VIEW` in the dataset's schema |
+| a grounding is a view; a stop ends it; a landed table's name refused | holds | `CREATE OR REPLACE VIEW` in the dataset's schema; the same sql glossed again keeps the view and its version, so the glosses and measurements on its columns stand |
 | `read.<metric>()` | softened | the view is reached by its bare name under `USE` or as `FROM dataset.metric`, which §5 says plans the same way; no `read` schema, since a schema is lake-wide and metrics are per dataset, and it would be a second door to the one view |
 | supersession key (subject, aspect, actor kind) | holds | the newest slot per key serves |
 | two QUERY glosses of one aspect on different tables coexist | softened | the subject of a QUERY gloss is the dataset, as §5.2 also says; one serving view per metric |
 | `DELETE FROM glossary` | holds | `glossql.glossary` is a table |
-| `snapshot_id`, `stale` | holds | every glossary row carries the lake's snapshot at write, NULL for a dataset subject or a pair path; staleness is a join against `ducklake_column`, never a guess |
+| `snapshot_id`, `stale` | holds | every glossary row carries the lake's snapshot at write, NULL for a dataset subject or a pair path; staleness is a join against `ducklake_column`, and against `ducklake_view` for a view or its column, never a guess |
 | `GLOSSARY()` collapsed and raw; `unassessed`, `contested`, `current` | holds | `gloss_glossary()` plans a subquery over the store |
 | `stale` | holds | served and marked: a gloss against its subject's shape, a function voice against what it read |
 

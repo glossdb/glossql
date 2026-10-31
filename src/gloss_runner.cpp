@@ -33,15 +33,20 @@
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/planner/planner.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/main/client_data.hpp"
+#include <functional>
 #include <set>
 #include <map>
 
@@ -795,9 +800,46 @@ static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads)
 	}
 }
 
-//! The reads of a call, enumerated from its bound plan: views expand to their
-//! tables, subject_column() to the subject's, before any optimizer touches it
-static string ReadsOf(Inner &inner, const string &call) {
+//! The views a relation stands on: itself when it is a view, and the views its
+//! query reads, through views over views — legs the plan does not name, since
+//! it expands a view to its tables. A name resolves as the binder resolves it,
+//! an unqualified one in the view's own schema
+static void ViewsOf(ClientContext &context, const Workspace &ws, const string &schema, const string &table,
+                    std::set<string> &views) {
+	auto entry = RelationEntry(context, schema, table);
+	if (!entry || entry->type != CatalogType::VIEW_ENTRY ||
+	    !views.insert(schema + "." + entry->name.GetIdentifierName()).second) {
+		return;
+	}
+	auto query = entry->Cast<ViewCatalogEntry>().GetQuery().Copy();
+	std::function<void(unique_ptr<ParsedExpression> &)> expressions;
+	std::function<void(TableRef &)> refs = [&](TableRef &ref) {
+		if (ref.type != TableReferenceType::BASE_TABLE) {
+			return;
+		}
+		auto &name = ref.Cast<BaseTableRef>().GetQualifiedName();
+		auto catalog = name.Catalog().GetIdentifierName();
+		if (!catalog.empty() && catalog != ws.lake) {
+			return;
+		}
+		auto in = name.Schema().empty() ? schema : name.Schema().GetIdentifierName();
+		ViewsOf(context, ws, in, name.Name().GetIdentifierName(), views);
+	};
+	expressions = [&](unique_ptr<ParsedExpression> &child) {
+		if (child->GetExpressionClass() == ExpressionClass::SUBQUERY) {
+			auto &subquery = child->Cast<SubqueryExpression>();
+			ParsedExpressionIterator::EnumerateQueryNodeChildren(*subquery.Subquery()->node, expressions, refs);
+		}
+		ParsedExpressionIterator::EnumerateChildren(*child, expressions);
+	};
+	ParsedExpressionIterator::EnumerateQueryNodeChildren(*query->Cast<SelectStatement>().node, expressions, refs);
+}
+
+//! The reads of a call on a subject, enumerated from its bound plan: views
+//! expand to their tables, subject_column() to the subject's, before any
+//! optimizer touches it; the views the subject stands on are named beside,
+//! their definitions being legs too
+static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 	Reads reads;
 	auto &context = *inner.con.context;
 	unique_ptr<SQLStatement> statement = ParseSelect("SELECT * FROM " + call);
@@ -805,6 +847,12 @@ static string ReadsOf(Inner &inner, const string &call) {
 		Planner planner(context);
 		planner.CreatePlan(std::move(statement));
 		CollectReads(*planner.plan, inner.ws, reads);
+		auto parts = StringUtil::Split(subject, '.');
+		if (parts.size() >= 2 && subject.find(" -> ") == string::npos && subject.find(" <-> ") == string::npos) {
+			std::set<string> views;
+			ViewsOf(context, inner.ws, parts[0], parts[1], views);
+			reads.names.insert(views.begin(), views.end());
+		}
 	});
 	return reads.Text();
 }
@@ -900,7 +948,7 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 			continue;
 		}
 		auto invocation = inner.Table(schema, name) + "(" + QuoteText(subject) + ")";
-		auto reads = ReadsOf(inner, invocation);
+		auto reads = ReadsOf(inner, invocation, subject);
 		auto value = ValueOf(inner, invocation);
 		if (value.IsNull()) {
 			value = Value("null");
@@ -1024,11 +1072,11 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	auto scope = " WHERE table_catalog = " + QuoteText(lake) + " AND table_schema = " + QuoteText(parts[0]);
 	auto filter = parts.size() == 2 ? " AND table_name = " + QuoteText(parts[1]) : string();
 	auto kinds = views ? "('BASE TABLE', 'VIEW')" : "('BASE TABLE')";
-	auto listed = inner.Scalar(
-	    "SELECT list(struct_pack(t := table_name, c := column_name, ty := data_type) ORDER BY table_name, ordinal_position)"
-	    " FROM information_schema.columns" +
-	    scope + " AND table_name IN (SELECT table_name FROM information_schema.tables" + scope + " AND table_type IN " +
-	    kinds + ")" + filter);
+	auto listed = inner.Scalar("SELECT list(struct_pack(t := table_name, c := column_name, ty := data_type) ORDER BY "
+	                           "table_name, ordinal_position)"
+	                           " FROM information_schema.columns" +
+	                           scope + " AND table_name IN (SELECT table_name FROM information_schema.tables" + scope +
+	                           " AND table_type IN " + kinds + ")" + filter);
 	const string empty = "SELECT NULL::VARCHAR AS \"table\", NULL::VARCHAR AS \"column\", NULL::BIGINT AS ci,"
 	                     " NULL::VARCHAR AS column_type, NULL::BIGINT AS rn, NULL::VARCHAR AS val WHERE false";
 	if (listed.IsNull()) {

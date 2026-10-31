@@ -68,6 +68,10 @@ string DatasetOf(const string &subject);
 string DatasetOf(ClientContext &context, const string &subject);
 //! Resolves a subject or pair path to its dataset-qualified form
 string ResolveSubject(ClientContext &context, const string &subject);
+//! A relation of the lake by name, a landed table or a view (SPEC §3: a view
+//! counts as a table, so its columns are subjects like a table's); null when
+//! neither stands
+optional_ptr<CatalogEntry> RelationEntry(ClientContext &context, const string &schema, const string &table);
 //! Double-quotes a name for SQL text
 string QuoteName(const string &name);
 //! Single-quotes a string for SQL text
@@ -136,9 +140,10 @@ struct Workspace {
 
 //! The legs a measurement can read, each at its version now: (name, version) —
 //! every live table of the lake as <schema>.<table> at the last snapshot that
-//! wrote, altered or dropped it, every store relation but measurements as
-//! glossql.<relation> at its highest seq ('-' while empty). A measurement's pin
-//! is these parts joined, sorted, name:version; gloss_store.cpp
+//! wrote, altered or dropped it, every live view but the store's own as
+//! <schema>.<view> at the snapshot that defined it, every store relation but
+//! measurements as glossql.<relation> at its highest seq ('-' while empty). A
+//! measurement's pin is these parts joined, sorted, name:version; gloss_store.cpp
 string LegsSQL(const Workspace &ws);
 //! Whether the measurement row `row` (pin, reads, dataset, function, computed_at)
 //! still stands, as a SQL boolean over a CTE named legs (LegsSQL): the legs its

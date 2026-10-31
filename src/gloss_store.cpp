@@ -15,7 +15,9 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/pragma_function.hpp"
@@ -68,37 +70,69 @@ static bool SourceExists(ClientContext &context, const string &name) {
 	return chunk && chunk->size() == 1 && chunk->GetValue(0, 0).GetValue<int64_t>() > 0;
 }
 
+//! A relation of the lake by name, a landed table or a view — a grounding's
+//! (SPEC §5.2) or DuckDB's own — since a view counts as a table (SPEC §3) and
+//! its columns are subjects like a table's; null when neither stands
+optional_ptr<CatalogEntry> RelationEntry(ClientContext &context, const string &schema, const string &table) {
+	EntryLookupInfo lookup(CatalogType::TABLE_ENTRY,
+	                       QualifiedName(Identifier(LakeName(context)), Identifier(schema), Identifier(table)));
+	return Catalog::GetEntry(context, lookup, OnEntryNotFound::RETURN_NULL);
+}
+
+//! A relation's columns as the catalog spells them: a table's own; a view's
+//! aliases over the names its query binds to, the view bound here if it was not
+static vector<string> RelationColumns(ClientContext &context, CatalogEntry &entry) {
+	vector<string> names;
+	if (entry.type == CatalogType::VIEW_ENTRY) {
+		auto &view = entry.Cast<ViewCatalogEntry>();
+		view.BindView(context);
+		auto bound = view.GetColumnInfo();
+		for (idx_t i = 0; bound && i < bound->names.size(); i++) {
+			names.push_back((i < view.aliases.size() ? view.aliases[i] : bound->names[i]).GetIdentifierName());
+		}
+		return names;
+	}
+	for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
+		names.push_back(column.Name().GetIdentifierName());
+	}
+	return names;
+}
+
+//! The column of a relation that a spelling names, matched as DuckDB matches
+//! names, case-insensitively; empty when none does
+static string ColumnOf(ClientContext &context, CatalogEntry &entry, const string &column) {
+	for (auto &name : RelationColumns(context, entry)) {
+		if (StringUtil::CIEquals(name, column)) {
+			return name;
+		}
+	}
+	return string();
+}
+
 static bool TableExists(ClientContext &context, const string &schema, const string &table) {
-	auto entry = Catalog::GetEntry<TableCatalogEntry>(
-	    context, QualifiedName(Identifier(LakeName(context)), Identifier(schema), Identifier(table)),
-	    OnEntryNotFound::RETURN_NULL);
-	return entry != nullptr;
+	return RelationEntry(context, schema, table) != nullptr;
 }
 
 static bool ColumnExists(ClientContext &context, const string &schema, const string &table, const string &column) {
-	auto entry = Catalog::GetEntry<TableCatalogEntry>(
-	    context, QualifiedName(Identifier(LakeName(context)), Identifier(schema), Identifier(table)),
-	    OnEntryNotFound::RETURN_NULL);
+	auto entry = RelationEntry(context, schema, table);
 	// a tuple key names columns of the table, never a table of a dataset
-	return entry && (StringUtil::StartsWith(column, "(") || entry->ColumnExists(Identifier(column)));
+	return entry && (StringUtil::StartsWith(column, "(") || !ColumnOf(context, *entry, column).empty());
 }
 
-//! A landed table and column in the catalog's own spelling, matched as DuckDB
-//! matches names, case-insensitively; a path that names nothing landed stands
-//! as given, for the admission to refuse
+//! A landed table or a view and its column in the catalog's own spelling; a
+//! path that names nothing landed stands as given, for the admission to refuse
 static string Canonical(ClientContext &context, const string &schema, const string &table, const string &column) {
-	auto entry = Catalog::GetEntry<TableCatalogEntry>(
-	    context, QualifiedName(Identifier(LakeName(context)), Identifier(schema), Identifier(table)),
-	    OnEntryNotFound::RETURN_NULL);
+	auto entry = RelationEntry(context, schema, table);
 	auto tail = column.empty() ? "" : "." + column;
 	if (!entry) {
 		return schema + "." + table + tail;
 	}
 	auto name = schema + "." + entry->name.GetIdentifierName();
-	if (column.empty() || StringUtil::StartsWith(column, "(") || !entry->ColumnExists(Identifier(column))) {
+	if (column.empty() || StringUtil::StartsWith(column, "(")) {
 		return name + tail;
 	}
-	return name + "." + entry->GetColumn(Identifier(column)).Name().GetIdentifierName();
+	auto canonical = ColumnOf(context, *entry, column);
+	return canonical.empty() ? name + tail : name + "." + canonical;
 }
 
 //! dataset | source | dataset.table | dataset.table.column, a tuple key allowed
@@ -258,6 +292,13 @@ string LegsSQL(const Workspace &ws) {
 	             changes + " c WHERE list_contains(c.ids, t.table_id::VARCHAR)), 0))::VARCHAR AS version FROM " +
 	             ws.Meta("table") + " t JOIN " + ws.Meta("schema") +
 	             " s ON s.schema_id = t.schema_id AND s.end_snapshot IS NULL WHERE t.end_snapshot IS NULL";
+	// a view's version is the snapshot that made or replaced it: a grounding's
+	// re-gloss with other sql is a new definition, and what was measured over
+	// the view's columns moves with it. The store's own views are no leg
+	sql += " UNION ALL SELECT s.schema_name || '.' || v.view_name, v.begin_snapshot::VARCHAR FROM " + ws.Meta("view") +
+	       " v JOIN " + ws.Meta("schema") +
+	       " s ON s.schema_id = v.schema_id AND s.end_snapshot IS NULL WHERE v.end_snapshot IS NULL"
+	       " AND s.schema_name <> 'glossql'";
 	for (auto &relation : STORE_RELATIONS) {
 		if (string(relation.name) == "measurements") {
 			continue; // an output, never an input
@@ -623,6 +664,17 @@ static void Ground(Inner &inner, const string &dataset, const string &metric, co
 		inner.Run("DROP VIEW IF EXISTS " + inner.Table(dataset, metric));
 		return;
 	}
+	// the same sql again — an assumption or an axis re-glossed — keeps the view
+	// and its version: the glosses and measurements on its columns stand
+	auto standing = inner.Scalar("SELECT json_extract_string(body, '$.sql') FROM " + inner.Store("glossary") +
+	                             " WHERE dataset = " + QuoteText(dataset) + " AND subject = " + QuoteText(dataset) +
+	                             " AND aspect = " + QuoteText(metric) + " ORDER BY seq DESC LIMIT 1");
+	auto stands = inner.Scalar("SELECT count(*) FROM information_schema.tables WHERE table_catalog = " +
+	                           QuoteText(inner.ws.lake) + " AND table_schema = " + QuoteText(dataset) +
+	                           " AND table_name = " + QuoteText(metric) + " AND table_type = 'VIEW'");
+	if (!standing.IsNull() && standing.ToString() == sql && stands.GetValue<int64_t>() > 0) {
+		return;
+	}
 	inner.Run("CREATE OR REPLACE VIEW " + inner.Table(dataset, metric) + " AS " + sql);
 }
 
@@ -897,6 +949,13 @@ static string ColumnsSQL(const Workspace &ws) {
 	       ws.Meta("schema") + " s ON s.schema_id = t.schema_id WHERE c.parent_column IS NULL";
 }
 
+//! The lake's view history: one row per definition, by schema and view name,
+//! live from begin_snapshot to end_snapshot, the end exclusive
+static string ViewsSQL(const Workspace &ws) {
+	return "SELECT s.schema_name, v.view_name, v.begin_snapshot, v.end_snapshot FROM " + ws.Meta("view") + " v JOIN " +
+	       ws.Meta("schema") + " s ON s.schema_id = v.schema_id";
+}
+
 //! The landings, for the re-derivation rule: each with the lineage it recorded
 static string LandingsSQL(const Workspace &ws) {
 	return "SELECT dataset, table_name, lineage, snapshot_id, seq FROM " + ws.Store("imports");
@@ -906,8 +965,9 @@ static string LandingsSQL(const Workspace &ws) {
 //! at (SPEC §5.2, §3): a column retyped or dropped, a table one of whose
 //! columns was, or a column re-derived, the lineage behind it in the newest
 //! landing differing from the one in the landing that stood at the write;
-//! rows arriving under the same shape and derivation do not age it. Dataset
-//! subjects and pair paths never do
+//! rows arriving under the same shape and derivation do not age it. A view, or
+//! a column of one, changed when the definition that stood at the write was
+//! replaced or dropped. Dataset subjects and pair paths never do
 static string StaleSQL() {
 	string at = " WHERE schema_name = split_part(g.subject, '.', 1) AND table_name = split_part(g.subject, '.', 2)";
 	string column = at + " AND column_name = split_part(g.subject, '.', 3)";
@@ -932,6 +992,12 @@ static string StaleSQL() {
 	auto derivation = [](const string &lineage, const string &key) {
 		return "json_extract_string(" + lineage + ", '$.\"' || " + key + " || '\"')";
 	};
+	// a view's shape is its definition: stale once the one that stood at the write is no longer the live one
+	string view_at = " FROM views v WHERE v.schema_name = split_part(g.subject, '.', 1)"
+	                 " AND v.view_name = split_part(g.subject, '.', 2) AND v.begin_snapshot <= g.snapshot_id";
+	string view_stale = "(EXISTS (SELECT 1" + view_at +
+	                    " AND (v.end_snapshot IS NULL OR v.end_snapshot > g.snapshot_id)) AND NOT EXISTS (SELECT 1" +
+	                    view_at + " AND v.end_snapshot IS NULL))";
 	string landed_twice = then_lineage + " IS NOT NULL AND " + now_lineage + " IS NOT NULL";
 	string column_rederived = "(" + landed_twice + " AND " + derivation(then_lineage, "split_part(g.subject, '.', 3)") +
 	                          " IS DISTINCT FROM " + derivation(now_lineage, "split_part(g.subject, '.', 3)") + ")";
@@ -940,17 +1006,18 @@ static string StaleSQL() {
 	                         derivation(now_lineage, "k") + "))";
 	return "CASE WHEN g.snapshot_id IS NULL OR g.subject LIKE '% -> %' OR g.subject LIKE '% <-> %' THEN false"
 	       " WHEN len(string_split(g.subject, '.')) = 3 THEN (" +
-	       column_stale + ") OR " + column_rederived + " WHEN len(string_split(g.subject, '.')) = 2 THEN " +
-	       table_stale + " OR " + table_rederived + " ELSE false END";
+	       column_stale + ") OR " + column_rederived + " OR " + view_stale +
+	       " WHEN len(string_split(g.subject, '.')) = 2 THEN " + table_stale + " OR " + table_rederived + " OR " +
+	       view_stale + " ELSE false END";
 }
 
 //! Every slot in scope, newest per speaker: the glossary's agent and human
 //! rows, and the function voices the measurements hold; each with its
 //! staleness
 static string SlotsSQL(const ReadScope &scope, const string &aspect_filter) {
-	return "(WITH cols AS (" + ColumnsSQL(scope.ws) + "), landings AS (" + LandingsSQL(scope.ws) +
-	       ") SELECT subject, aspect, actor_kind AS actor, body::JSON AS body, written_at, " + StaleSQL() +
-	       " AS stale FROM " + scope.ws.Store("glossary") + " g WHERE " + scope.filter + aspect_filter +
+	return "(WITH cols AS (" + ColumnsSQL(scope.ws) + "), views AS (" + ViewsSQL(scope.ws) + "), landings AS (" +
+	       LandingsSQL(scope.ws) + ") SELECT subject, aspect, actor_kind AS actor, body::JSON AS body, written_at, " +
+	       StaleSQL() + " AS stale FROM " + scope.ws.Store("glossary") + " g WHERE " + scope.filter + aspect_filter +
 	       " QUALIFY row_number() OVER (PARTITION BY subject, aspect, actor_kind ORDER BY seq DESC) = 1)"
 	       " UNION ALL "
 	       "(WITH legs AS (" +
