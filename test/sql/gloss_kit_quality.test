@@ -35,7 +35,7 @@ query TTI
 SELECT name, location, statements FROM glossql.kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	20
-quality	kits/quality/kit.sql	15
+quality	kits/quality/kit.sql	17
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
 
@@ -179,6 +179,15 @@ SELECT applicable, reason FROM hierarchy_candidates('fin.empty');
 ----
 false	empty table
 
+statement ok
+SELECT detect_hierarchies() FROM fin.empty;
+
+query TTT
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason'), json_type(value, '$.candidates')
+FROM GLOSSARY(fin.empty::hierarchy_candidates);
+----
+false	empty table	NULL
+
 # --- derivation_candidates: a product with two violations, a clean sum
 
 statement ok
@@ -252,6 +261,76 @@ query TT
 SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.groundings') FROM GLOSSARY(fin::grounding_collisions);
 ----
 true	4
+
+# --- the temporal profile: cadence, completeness and gaps on four shapes of a date column
+
+statement ok
+CREATE TABLE fin.daily AS SELECT * FROM (VALUES (DATE '2024-01-01'), (DATE '2024-01-02'), (DATE '2024-01-03'), (DATE '2024-01-04'), (DATE '2024-01-05'), (DATE '2024-01-11'), (DATE '2024-01-12'), (DATE '2024-01-13'), (DATE '2024-01-14'), (DATE '2024-01-15')) t(d);
+
+statement ok
+SELECT temporal() FROM fin.daily.d;
+
+query TTTTTTTTT
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.min'), json_extract_string(value, '$.max'),
+       json_extract_string(value, '$.span_days'), json_extract_string(value, '$.granularity'), json_extract_string(value, '$.confidence'),
+       json_extract_string(value, '$.completeness.actual') || '/' || json_extract_string(value, '$.completeness.expected'),
+       json_extract_string(value, '$.gaps.count') || ':' || json_extract_string(value, '$.gaps.largest_days'),
+       json_extract_string(value, '$.gaps.sample[0].severity') || ':' || json_extract_string(value, '$.gaps.sample[0].missing_periods')
+FROM GLOSSARY(fin.daily.d::temporal_profile);
+----
+true	2024-01-01	2024-01-15	14.0	day	0.5	10/15	1:6.0	moderate:5
+
+statement ok
+CREATE TABLE fin.monthly AS SELECT * FROM (VALUES (DATE '2023-11-01'), (DATE '2023-12-01'), (DATE '2023-12-01'), (DATE '2024-01-01'), (DATE '2024-02-01')) t(d);
+
+statement ok
+SELECT temporal() FROM fin.monthly.d;
+
+query TTTT
+SELECT json_extract_string(value, '$.granularity'), json_extract_string(value, '$.confidence')::DOUBLE > 0.99,
+       json_extract_string(value, '$.completeness.actual') || '/' || json_extract_string(value, '$.completeness.expected'),
+       json_extract_string(value, '$.gaps.count')
+FROM GLOSSARY(fin.monthly.d::temporal_profile);
+----
+month	true	4/4	0
+
+statement ok
+CREATE TABLE fin.irregular AS SELECT * FROM (VALUES (DATE '2024-01-01'), (DATE '2024-01-02'), (DATE '2024-01-12'), (DATE '2024-02-26')) t(d);
+
+statement ok
+SELECT temporal() FROM fin.irregular.d;
+
+query TTTT
+SELECT json_extract_string(value, '$.granularity'), json_extract_string(value, '$.confidence'),
+       json_type(value, '$.completeness'), json_extract_string(value, '$.gaps.sample[0].severity') || ':' || json_extract_string(value, '$.gaps.sample[0].missing_periods')
+FROM GLOSSARY(fin.irregular.d::temporal_profile);
+----
+irregular	0.3	NULL	minor:3
+
+statement ok
+CREATE TABLE fin.single AS SELECT * FROM (VALUES (DATE '2024-03-31'), (DATE '2024-03-31'), (DATE '2024-03-31')) t(d);
+
+statement ok
+SELECT temporal() FROM fin.single.d;
+
+query TTTTT
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.granularity'), json_extract_string(value, '$.confidence'),
+       json_extract_string(value, '$.span_days'), json_extract_string(value, '$.gaps.count')
+FROM GLOSSARY(fin.single.d::temporal_profile);
+----
+true	unknown	0.0	0.0	0
+
+statement ok
+CREATE TABLE fin.amounts AS SELECT * FROM (VALUES (1.5::DOUBLE), (2.5::DOUBLE)) t(d);
+
+statement ok
+SELECT temporal() FROM fin.amounts.d;
+
+query TT
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') LIKE '%DOUBLE%typing in the recipe'
+FROM GLOSSARY(fin.amounts.d::temporal_profile);
+----
+false	true
 
 # the kit run again is silent
 query I

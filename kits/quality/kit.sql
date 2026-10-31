@@ -11,7 +11,8 @@
 -- side by side, a join on val matches values across columns, within one
 -- stored type. Nothing outside SQL names a column. Each screen's measurement
 -- function reads the screen, keeps what crosses its line, and lands the
--- aspect; the thresholds are the function's, the counts the screen's.
+-- aspect; the thresholds are the function's, the counts the screen's. A
+-- key a screen did not reach is null, and the schemas say so.
 
 --===------------------------------------------------------------------===--
 -- hierarchy_candidates(table): functional dependencies between a table's
@@ -375,8 +376,8 @@ ORDER BY seq;
 
 DECLARE ASPECT hierarchy_candidates WITH $${
   "type": "object", "required": ["applicable"],
-  "properties": {"applicable": {"type": "boolean"}, "rows": {"type": "integer"},
-                 "candidates": {"type": "array", "items": {"type": "object",
+  "properties": {"applicable": {"type": "boolean"}, "rows": {"type": ["integer", "null"]},
+                 "candidates": {"type": ["array", "null"], "items": {"type": "object",
                    "properties": {"from": {"type": "string"}, "to": {"type": "string"},
                                   "g3": {"type": "number"}, "lambda": {"type": "number"},
                                   "kind": {"type": "string", "enum": ["edge", "alias"]}}}}}
@@ -426,7 +427,7 @@ $$ RETURNS relationship_candidates;
 DECLARE ASPECT relationship_coherence WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"},
-                 "relationships": {"type": "array", "items": {"type": "object",
+                 "relationships": {"type": ["array", "null"], "items": {"type": "object",
                    "properties": {"relationship": {"type": "string"}, "filled": {"type": "integer"},
                                   "orphans": {"type": "integer"}, "orphan_rate": {"type": "number"},
                                   "temporal": {"type": "array", "items": {"type": "object",
@@ -452,8 +453,8 @@ $$ RETURNS relationship_coherence;
 
 DECLARE ASPECT derivation_candidates WITH $${
   "type": "object", "required": ["applicable"],
-  "properties": {"applicable": {"type": "boolean"}, "rows": {"type": "integer"}, "truncated": {"type": "boolean"},
-                 "candidates": {"type": "array", "items": {"type": "object",
+  "properties": {"applicable": {"type": "boolean"}, "rows": {"type": ["integer", "null"]}, "truncated": {"type": ["boolean", "null"]},
+                 "candidates": {"type": ["array", "null"], "items": {"type": "object",
                    "properties": {"target": {"type": "string"}, "form": {"type": "string", "enum": ["product", "sum"]},
                                   "operands": {"type": "array", "items": {"type": "string"}},
                                   "support": {"type": "integer"}, "violations": {"type": "integer"},
@@ -486,3 +487,111 @@ DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$
                        ORDER BY seq) FILTER (WHERE kind IS NOT NULL), []) AS collisions
   FROM grounding_collisions($subject)
 $$ RETURNS grounding_collisions;
+
+--===------------------------------------------------------------------===--
+-- The temporal profile: a date column's window, cadence, completeness and
+-- gaps, as the cube and the forecast read them. Cadence is the nearest
+-- named grain to the median gap between distinct instants; completeness
+-- counts calendar buckets over the column's own window; a gap is a stretch
+-- beyond twice the median, the twenty largest sampled. A point in time
+-- bounds a window; a number or a text does not, and says so.
+--===------------------------------------------------------------------===--
+
+DECLARE ASPECT temporal_profile WITH $${
+  "type": "object", "required": ["applicable"],
+  "properties": {"applicable": {"type": "boolean"},
+                 "granularity": {"type": ["string", "null"]},
+                 "confidence": {"type": ["number", "null"]},
+                 "completeness": {"type": ["object", "null"]}, "gaps": {"type": ["object", "null"]}}
+}$$ AS MEASUREMENT ON COLUMN WHEN role = 'timestamp';
+
+DECLARE FUNCTION temporal FOR GLOBAL AS $$
+  WITH bounds AS (
+    SELECT count(v) AS present, min(v) AS min_v, max(v) AS max_v, typeof(min(v)) AS ty
+    FROM subject_column($subject)),
+  w AS (
+    SELECT present, ty, (ty = 'DATE' OR ty LIKE 'TIMESTAMP%') AS temporal,
+           min_v::VARCHAR AS min_s, max_v::VARCHAR AS max_s,
+           epoch(TRY_CAST(max_v AS TIMESTAMP)) - epoch(TRY_CAST(min_v AS TIMESTAMP)) AS span_seconds
+    FROM bounds),
+  ordered_ts AS (
+    SELECT DISTINCT TRY_CAST(v AS TIMESTAMP) AS t FROM subject_column($subject) WHERE v IS NOT NULL),
+  gap AS (
+    SELECT t AS gap_start, lead(t) OVER (ORDER BY t) AS gap_end,
+           (epoch(lead(t) OVER (ORDER BY t)) - epoch(t))::DOUBLE AS gap_seconds
+    FROM ordered_ts),
+  g AS (SELECT median(gap_seconds) AS med, min(gap_seconds) AS lo, max(gap_seconds) AS hi
+        FROM gap WHERE gap_seconds IS NOT NULL),
+  grain AS (
+    SELECT med, lo, hi,
+      CASE WHEN med IS NULL THEN 'unknown'
+           WHEN abs(med - 1.0) < 0.5 THEN 'second'
+           WHEN abs(med - 60.0) < 5.0 THEN 'minute'
+           WHEN abs(med - 3600.0) < 300.0 THEN 'hour'
+           WHEN abs(med - 86400.0) < 3600.0 THEN 'day'
+           WHEN abs(med - 604800.0) < 86400.0 THEN 'week'
+           WHEN abs(med - 2592000.0) < 259200.0 THEN 'month'
+           WHEN abs(med - 7776000.0) < 777600.0 THEN 'quarter'
+           WHEN abs(med - 31536000.0) < 3153600.0 THEN 'year'
+           ELSE 'irregular' END AS granularity
+    FROM g),
+  conf AS (
+    SELECT granularity, med,
+      CASE WHEN med IS NULL THEN 0.0
+           WHEN granularity = 'irregular' THEN 0.3
+           WHEN lo > 0.0 AND hi > 0.0 AND med > 0.0 THEN 1.0 - least((hi - lo) / med / 10.0, 0.5)
+           ELSE 0.7 END AS confidence
+    FROM grain),
+  big AS (
+    SELECT gap_start, gap_end, gap_seconds, med FROM gap CROSS JOIN g
+    WHERE med IS NOT NULL AND med > 0.0 AND gap_seconds > med * 2.0),
+  sig AS (SELECT count(*) AS n, max(gap_seconds) / 86400.0 AS largest_days FROM big),
+  largest AS (SELECT gap_start, gap_end, gap_seconds, med FROM big ORDER BY gap_seconds DESC, gap_start LIMIT 20),
+  samp AS (
+    SELECT list({
+      'start': gap_start::VARCHAR, 'end': gap_end::VARCHAR, 'days': gap_seconds / 86400.0,
+      'missing_periods': floor(gap_seconds / med)::BIGINT - 1,
+      'severity': CASE WHEN gap_seconds > med * 10.0 THEN 'severe'
+                       WHEN gap_seconds > med * 5.0 THEN 'moderate' ELSE 'minor' END
+    } ORDER BY gap_seconds DESC, gap_start) AS sample
+    FROM largest),
+  comp AS (
+    SELECT min(t) AS lo_t, max(t) AS hi_t,
+           count(DISTINCT epoch(t)) AS a_second,
+           count(DISTINCT floor(epoch(t) / 60.0)) AS a_minute,
+           count(DISTINCT floor(epoch(t) / 3600.0)) AS a_hour,
+           count(DISTINCT floor(epoch(t) / 86400.0)) AS a_day,
+           count(DISTINCT floor((epoch(t) + 259200) / 604800.0)) AS a_week,
+           count(DISTINCT year(t) * 12 + month(t)) AS a_month,
+           count(DISTINCT year(t) * 4 + quarter(t)) AS a_quarter,
+           count(DISTINCT year(t)) AS a_year
+    FROM ordered_ts WHERE t IS NOT NULL),
+  expect AS (
+    SELECT
+      CASE granularity
+        WHEN 'year' THEN (year(hi_t) - year(lo_t) + 1)::BIGINT
+        WHEN 'quarter' THEN ((year(hi_t) - year(lo_t)) * 4 + quarter(hi_t) - quarter(lo_t) + 1)::BIGINT
+        WHEN 'month' THEN ((year(hi_t) - year(lo_t)) * 12 + month(hi_t) - month(lo_t) + 1)::BIGINT
+        WHEN 'week' THEN (floor((epoch(hi_t) + 259200) / 604800.0) - floor((epoch(lo_t) + 259200) / 604800.0) + 1)::BIGINT
+        WHEN 'day' THEN (floor(epoch(hi_t) / 86400.0) - floor(epoch(lo_t) / 86400.0) + 1)::BIGINT
+        WHEN 'hour' THEN (floor(epoch(hi_t) / 3600.0) - floor(epoch(lo_t) / 3600.0) + 1)::BIGINT
+        WHEN 'minute' THEN (floor(epoch(hi_t) / 60.0) - floor(epoch(lo_t) / 60.0) + 1)::BIGINT
+        WHEN 'second' THEN (epoch(hi_t) - epoch(lo_t) + 1)::BIGINT END AS expected,
+      CASE granularity
+        WHEN 'year' THEN a_year WHEN 'quarter' THEN a_quarter WHEN 'month' THEN a_month WHEN 'week' THEN a_week
+        WHEN 'day' THEN a_day WHEN 'hour' THEN a_hour WHEN 'minute' THEN a_minute WHEN 'second' THEN a_second END AS actual
+    FROM comp CROSS JOIN grain)
+  SELECT
+    (w.temporal AND w.present > 0) AS applicable,
+    CASE WHEN NOT w.temporal THEN 'column type is ' || w.ty || ', not DATE/TIMESTAMP — a date landed as text needs typing in the recipe'
+         WHEN w.present = 0 THEN 'no non-null values — nothing bounds a window' END AS reason,
+    CASE WHEN w.temporal AND w.present > 0 THEN w.min_s END AS min,
+    CASE WHEN w.temporal AND w.present > 0 THEN w.max_s END AS max,
+    CASE WHEN w.temporal AND w.present > 0 THEN w.span_seconds / 86400.0 END AS span_days,
+    CASE WHEN w.temporal AND w.present > 0 THEN c.granularity END AS granularity,
+    CASE WHEN w.temporal AND w.present > 0 THEN c.confidence END AS confidence,
+    CASE WHEN w.temporal AND w.present > 0 THEN {'count': sig.n, 'largest_days': sig.largest_days, 'sample': samp.sample} END AS gaps,
+    CASE WHEN w.temporal AND w.present > 0 AND c.granularity NOT IN ('unknown', 'irregular')
+         THEN {'expected': e.expected, 'actual': e.actual, 'ratio': e.actual::DOUBLE / e.expected::DOUBLE} END AS completeness
+  FROM w CROSS JOIN conf c CROSS JOIN sig CROSS JOIN samp CROSS JOIN expect e
+$$ RETURNS temporal_profile;
