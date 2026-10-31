@@ -25,7 +25,7 @@ SELECT name, kind, grains FROM glossql.aspects;
 |---|---|---|---|
 | `meaning` | table, column, relationship | `value`: a sentence; `term`: the business term | what it is |
 | `role` | column | `value`: `key`, `measure`, `dimension`, `timestamp`, `attribute` | what kind of column; the first claim, the others wait on it |
-| `behavior` | measure columns | `value`: `stock`, `flow`, `none`; `grounds` | how the number adds over time; `none`: examined, does not apply |
+| `behavior` | measure columns | `value`: `stock`, `flow`, `ratio`, `none`; `numerator` and `denominator` for a ratio; `grounds` | how the number combines over periods and members; `none`: examined, does not apply |
 | `unit` | measure columns | `value`: the unit; `source_column`: where a row's unit sits | what the number counts |
 | `dimension` | dimension columns | `value`: `primary`, `supporting`, `none`; `grounds` | whether reports slice by it |
 | `entity` | table | `value`: what one row is; `role`; `grain`; `time_axis`; `identity_columns` | the identity every aggregate stands on |
@@ -57,32 +57,39 @@ value withheld, the verdict `red` above 0.7. `meaning`, `entity` and
 ## Metrics
 
 A metric is a QUERY aspect, declared thin and grounded by a gloss on the
-dataset. The grounding is served as a view under the metric's name.
+dataset. The grounding is served as a view under the metric's name, and
+the view is a table of the dataset: its columns take this kit's words
+like a landed table's columns do, and that is where a reader of the
+numbers finds what it needs — never in the body.
 
 ```sql
 DECLARE ASPECT revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS QUERY;
 GLOSS revenue ON fin AS $${
-  "sql": "SELECT customer, sum(amount) AS revenue FROM fin.orders GROUP BY customer",
-  "behavior": "flow", "grain": ["customer"], "axes": ["customer"],
+  "sql": "SELECT month AS period, customer, sum(amount) AS value FROM fin.orders GROUP BY ALL",
   "assumptions": [{"dimension": "scope", "assumption": "amounts are net of tax",
                    "basis": "column_stats", "confidence": 0.9}]
 }$$;
+GLOSS role ON revenue.period AS $${"value": "timestamp"}$$;
+GLOSS role ON revenue.value AS $${"value": "measure"}$$;
+GLOSS behavior ON revenue.value AS $${"value": "flow"}$$;
+GLOSS role ON revenue.customer AS $${"value": "dimension"}$$;
 FROM fin.revenue;
 ```
 
-The body's keys, and nothing else, by this kit's grounding schema:
+The body is the engine's contract, and nothing else is read from it:
 
-- `sql` or `stopped`: the engine's contract. `stopped` records that you
-  serve no number, and why: what is missing, where, what closes it.
+- `sql` or `stopped`. `stopped` records that you serve no number, and
+  why: what is missing, where, what closes it.
 - `assumptions`: disclosed, each with its `assumption`; `dimension`,
   `basis` and `confidence` in 0..1 when you have them.
-- `behavior`: `stock` or `flow`. A reader that windows the grounding takes
-  the last value per window for a stock and the sum for a flow. Absent
-  reads as flow.
-- `grain`: the served columns whose combination identifies a row. A
-  reader that aggregates refuses a frame that breaks it.
-- `axes`: the served columns the metric is sliced by, in order; `[]`
-  closes them all, which holds for a ratio or a distinct count.
+
+On the view's columns: `role` says which column is the period and which
+the value; `behavior` on the value says how the number combines — a flow
+sums, a stock keeps the period's last level, a ratio re-divides the
+summed halves the view serves under the names `numerator` and
+`denominator` give; `dimension` on a dimension column says whether the
+series slices by it; `entity` on the view says what one row is and its
+`grain`. The metrics kit reads them (`kits/metrics/SKILL.md`).
 
 Re-glossing supersedes your own slot; a human's slot stands beside it.
 What the company revises, the metric's meaning, unit, owner or source,
@@ -91,6 +98,6 @@ declaration cannot change once anything is glossed on it.
 
 ## What this kit does not do
 
-It records `behavior`, `grain` and `axes` for a reader that windows and
-slices, and ships none: this extension serves the grounding as the view
-it is. Doors, identity and the cube stay outside.
+It records the words and ships no reader of the numbers: the metrics
+kit serves the series over the view and its columns' claims. Doors and
+identity stay outside.

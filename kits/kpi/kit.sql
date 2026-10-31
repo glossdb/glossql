@@ -14,7 +14,12 @@
 -- claims on measures, dimension the claim on dimensions. WHEN narrows what
 -- a column owes to what its role makes meaningful: a role-less column owes
 -- only role, so the backlog counts what is real instead of columns ×
--- vocabulary. `none` is the judged negative: examined, does not apply.
+-- vocabulary. `none` is the judged negative: examined, does not apply. A
+-- metric's view is a table of its dataset, so its columns carry these
+-- words too: how its value combines over periods and members is the
+-- behavior on its value column — a flow sums, a stock keeps its last
+-- level, a ratio re-divides its summed halves, the columns numerator and
+-- denominator name.
 
 DECLARE ASPECT meaning WITH $${
   "type": "object", "required": ["value"],
@@ -29,7 +34,9 @@ DECLARE ASPECT role WITH $${
 
 DECLARE ASPECT behavior WITH $${
   "type": "object", "required": ["value"],
-  "properties": {"value": {"enum": ["stock", "flow", "none"]},
+  "properties": {"value": {"enum": ["stock", "flow", "ratio", "none"]},
+                 "numerator": {"type": "string"},
+                 "denominator": {"type": "string"},
                  "grounds": {"type": "string"}}
 }$$ AS FACT ON COLUMN WHEN role = 'measure';
 
@@ -67,26 +74,6 @@ DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
 
 DECLARE ASPECT definitions WITH $${
   "type": "object", "properties": {"definitions": {"type": "object"}}
-}$$ AS FACT ON DATASET;
-
--- The grounding schema. The engine's contract on a QUERY gloss is sql or
--- stopped, with assumptions disclosed; this kit's readers expect three more
--- keys, and nothing else: behavior, the authored stock marker; grain, the
--- served columns whose combination identifies a row; axes, the served
--- columns the metric is sliced by. Flavored x-kind grounding, the engine
--- validates every QUERY gloss against it after the contract. It is never
--- glossed and no witness judges it.
-
-DECLARE ASPECT kpi_grounding WITH $${
-  "x-kind": "grounding",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "sql": {}, "stopped": {}, "assumptions": {},
-    "behavior": {"enum": ["stock", "flow"]},
-    "grain": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-    "axes": {"type": "array", "items": {"type": "string"}}
-  }
 }$$ AS FACT ON DATASET;
 
 -- The detector: one query over the witness's slots, a (subject, band,

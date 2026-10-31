@@ -35,7 +35,7 @@ CREATE TABLE main.loaded AS FROM gloss_kit('kits/kpi/kit.sql');
 query I
 SELECT count(*) FROM main.loaded;
 ----
-20
+19
 
 query TT
 SELECT statement, outcome FROM main.loaded WHERE statement LIKE 'DECLARE WITNESS role_w%';
@@ -45,12 +45,12 @@ DECLARE WITNESS role_w ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD
 query TTI
 SELECT name, location, statements FROM glossql.kits;
 ----
-kpi	kits/kpi/kit.sql	20
+kpi	kits/kpi/kit.sql	19
 
 query I
 SELECT count(*) FROM glossql.aspects;
 ----
-11
+10
 
 # a kit run again, as the opener does at start-up, is silent: every declaration unchanged, no new kits row
 query I
@@ -119,44 +119,34 @@ dimension	NULL	unassessed
 meaning	NULL	unassessed
 role	NULL	contested
 
-# --- the kit's grounding schema: a metric's body carries the kit's keys and nothing else
+# --- a metric's body is the grounding contract; what a reader needs is glossed on the view's
+# columns, under the kit's words — the kit declares no grounding schema
 
 statement ok
 DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS QUERY;
 
-statement error
-GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders", "window": "7 days"}$$;
-----
-grounding schema kpi_grounding: at $: property 'window' is not allowed
-
-statement error
-GLOSS revenue ON fin AS $${"sql": "SELECT 1", "behavior": "stok"}$$;
-----
-grounding schema kpi_grounding: at $.behavior
-
 statement ok
-GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders", "behavior": "flow", "grain": ["customer"]}$$;
+GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders"}$$;
 
 query R
 SELECT revenue FROM fin.revenue;
 ----
 9.0
 
-# the grounding schema is never glossed, judged by nobody, and never strands a body on the record
-statement error
-GLOSS kpi_grounding ON fin AS $${}$$;
+query T
+GLOSS role ON revenue.revenue AS $${"value": "measure"}$$;
 ----
-never glossed
+glossed role on fin.revenue.revenue as agent
 
 statement error
-DECLARE WITNESS g_w ON kpi_grounding BY (AGENT);
+GLOSS behavior ON revenue.revenue AS $${"value": "stok"}$$;
 ----
-judges nothing
+at $.value
 
-statement error
-DECLARE ASPECT kpi_grounding WITH $${"x-kind": "grounding", "type": "object", "required": ["axes"]}$$ AS FACT ON DATASET;
+query T
+GLOSS behavior ON revenue.revenue AS $${"value": "ratio", "numerator": "won", "denominator": "offered"}$$;
 ----
-would strand the revenue gloss on fin: at $: missing required property 'axes'
+glossed behavior on fin.revenue.revenue as agent
 
 # --- the measurements land through extraction and serve beside the glosses
 

@@ -1110,28 +1110,48 @@ static bool InAttestSchema(const Value &subject, const Value &band, const Value 
 //! slots on the second connection, and its rows serve in the standard attest
 //! schema (SPEC §7.2); a detector that cannot answer, or answers outside the
 //! schema, is the verdict `error`
+//! The slots of a read's scope, every aspect, as the hoisted relation every
+//! part of the read selects from: planned once, where each part once planned
+//! the stale rule's joins again
+static constexpr const char *HOISTED = "slots_all";
+
+//! A witness's slots as a detector reads them, from the hoisted relation
+static string WitnessSlotsSQL(const string &relation, const string &aspect) {
+	return "SELECT subject, aspect, actor AS speaker, body, NOT stale AS current FROM " + relation +
+	       " WHERE aspect = " + QuoteText(aspect);
+}
+
 static string VerdictsSQL(Inner &inner, const vector<WitnessRow> &witnesses, const ReadScope &scope) {
 	vector<string> parts;
+	// the detectors run at bind on the inner connection, over the scope's slots
+	// landed there once as a temporary table
+	bool landed = false;
 	for (auto &witness : witnesses) {
 		if (witness.detector.empty()) {
 			continue;
 		}
-		auto aspect = " AND aspect = " + QuoteText(witness.aspect);
-		auto slots = "SELECT subject, aspect, actor AS speaker, body, NOT stale AS current FROM (" +
-		             SlotsSQL(scope, aspect) + ")";
+		auto slots = WitnessSlotsSQL(HOISTED, witness.aspect);
 		auto head = "'" + witness.aspect + "' AS aspect, '" + witness.name + "' AS witness, ";
 		if (witness.script.IsNull()) {
 			parts.push_back(
 			    ErrorVerdictSQL(head, slots, "detector " + witness.detector + " is not a declared function"));
 			continue;
 		}
+		if (!landed) {
+			auto made = inner.con.Query("CREATE OR REPLACE TEMP TABLE gloss_slots AS " + SlotsSQL(scope, ""));
+			if (made->HasError()) {
+				throw InvalidInputException("gloss: the slots of %s could not be read: %s", scope.dataset,
+				                            FirstLine(made->GetError()));
+			}
+			landed = true;
+		}
 		auto threshold = witness.threshold.IsNull() ? string("NULL") : witness.threshold.ToSQLString();
 		auto script = ReplacePlaceholder(witness.script.ToString(), "threshold", threshold);
 		// the script is a derived table under the slots CTE, so a body that opens
 		// with its own WITH composes
-		auto result =
-		    inner.con.Query("SELECT d.subject::VARCHAR, d.band::VARCHAR, d.score::DOUBLE FROM (WITH slots AS (" +
-			                slots + ") SELECT * FROM (" + script + ") AS q) AS d");
+		auto result = inner.con.Query(
+		    "SELECT d.subject::VARCHAR, d.band::VARCHAR, d.score::DOUBLE FROM (WITH slots AS (" +
+		    WitnessSlotsSQL("gloss_slots", witness.aspect) + ") SELECT * FROM (" + script + ") AS q) AS d");
 		if (result->HasError()) {
 			parts.push_back(ErrorVerdictSQL(head, slots, FirstLine(result->GetError())));
 			continue;
@@ -1205,9 +1225,9 @@ static string OwedSQL(const vector<WitnessRow> &witnesses, const ReadScope &scop
 		auto part = "SELECT subject, aspect FROM (" + StringUtil::Join(owed, " UNION ALL ") + ")";
 		if (!witness.condition_aspect.IsNull()) {
 			// owed only where the sibling's winning slot, human over agent, carries the literal (SPEC §5.1)
-			part += " WHERE subject IN (SELECT subject FROM (SELECT subject, body FROM (" +
-			        SlotsSQL(scope, " AND aspect = " + QuoteText(witness.condition_aspect.ToString())) +
-			        ") WHERE actor IN ('human', 'agent') QUALIFY row_number() OVER (PARTITION BY subject"
+			part += " WHERE subject IN (SELECT subject FROM (SELECT subject, body FROM " + string(HOISTED) +
+			        " WHERE aspect = " + QuoteText(witness.condition_aspect.ToString()) +
+			        " AND actor IN ('human', 'agent') QUALIFY row_number() OVER (PARTITION BY subject"
 			        " ORDER BY CASE actor WHEN 'human' THEN 0 ELSE 1 END, written_at DESC) = 1)"
 			        " WHERE body->>'value' = " +
 			        QuoteText(witness.condition_value.ToString()) + ")";
@@ -1239,7 +1259,8 @@ static string CollapsedSQL(Inner &inner, const vector<WitnessRow> &witnesses, co
 	}
 	// an error is not a judgment (SPEC §7.2): it never withholds, and any other verdict outranks it;
 	// a stale slot is served and marked (SPEC §5.3)
-	return "WITH slots AS (" + SlotsSQL(scope, aspect_filter) +
+	return "WITH " + string(HOISTED) + " AS MATERIALIZED (" + SlotsSQL(scope, "") + "), slots AS (SELECT * FROM " +
+	       string(HOISTED) + " WHERE true" + aspect_filter +
 	       "), picked AS (SELECT subject, aspect, body AS value, stale FROM slots QUALIFY row_number() OVER ("
 	       "PARTITION BY subject, aspect ORDER BY CASE actor WHEN 'human' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END,"
 	       " written_at DESC) = 1), verdicts AS (" +
@@ -1290,7 +1311,8 @@ static unique_ptr<TableRef> GlossAttestBindReplace(ClientContext &context, Table
 	Inner inner(context);
 	auto scope = ScopeOf(context, inner, input.inputs[0]);
 	auto &aspect = input.inputs[1];
-	auto sql = "SELECT " + string(ATTEST_COLUMNS) + " FROM (" + VerdictsSQL(inner, Witnesses(inner, aspect), scope) +
+	auto sql = "WITH " + string(HOISTED) + " AS MATERIALIZED (" + SlotsSQL(scope, "") + ") SELECT " +
+	           string(ATTEST_COLUMNS) + " FROM (" + VerdictsSQL(inner, Witnesses(inner, aspect), scope) +
 	           ") ORDER BY subject, aspect, witness";
 	return make_uniq<SubqueryRef>(ParseSelect(sql));
 }

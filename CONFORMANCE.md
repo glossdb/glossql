@@ -45,7 +45,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | a QUERY aspect's grain is the dataset | holds | a grain clause is refused at parse |
 | identical re-declaration no-op; change under glosses refused | holds | |
 | every body JSON, dollar-quoted | holds | |
-| the standard grounding schema is fixed | proposed | the grounding contract (`sql` or `stopped`, `assumptions`) plus the kit's grounding schema, an aspect flavored `x-kind: grounding`; `../glossql/.claude/plans/grounding.md` |
+| the grounding contract is fixed and open; the claims a reader needs are glosses on the view's columns | holds | the contract (`sql` or `stopped`, `assumptions`) validates every QUERY gloss, then each aspect flavored `x-kind: grounding` a kit declares; the metrics kit reads the period, the measure and its `behavior`, the slices and the row identity off the view's columns (fixture 28) |
 | a grounding is a view; a stop ends it; a landed table's name refused | holds | `CREATE OR REPLACE VIEW` in the dataset's schema; the same sql glossed again keeps the view and its version, so the glosses and measurements on its columns stand |
 | `read.<metric>()` | softened | the view is reached by its bare name under `USE` or as `FROM dataset.metric`, which §5 says plans the same way; no `read` schema, since a schema is lake-wide and metrics are per dataset, and it would be a second door to the one view |
 | supersession key (subject, aspect, actor kind) | holds | the newest slot per key serves |

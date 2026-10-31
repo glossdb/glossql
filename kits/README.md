@@ -8,8 +8,9 @@ said.
 
 | Kit | Brings |
 |---|---|
-| `kpi/` | column and table vocabulary (`meaning`, `role`, `behavior`, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the KPI grounding schema (`behavior`, `grain`, `axes` on a metric's grounding), the `slot_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the witnesses that bind them |
+| `kpi/` | column and table vocabulary (`meaning`, `role`, `behavior` with `ratio` and its halves, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the `slot_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the witnesses that bind them; a metric's view carries the same words on its columns |
 | `quality/` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates` and `grounding_collisions` as table macros, and the five measurements that land them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`); loaded after `kpi/` |
+| `metrics/` | a metric as a view whose columns carry the vocabulary: the `ladder` on a time column (floor, rungs), and the reads over the collapsed slots and the view — `metric_axes()`, the fact row per metric; `metric_series(grain := …)`, the cells, refusing a coarser grain while no behaviour stands on the value column; `fact_values()`; `metric_sources(metric)` through `gloss_lineage`; loaded after `quality/` |
 
 ## Loading
 
@@ -43,13 +44,16 @@ witnesses that name both.
   FACT body against it and every measurement's output against its
   aspect's. Annotations such as `title` or `x-kind` ride beside the
   structure.
-- A grounding schema is an aspect flavored `"x-kind": "grounding"`. The
-  core validates every QUERY gloss against the grounding contract (`sql`
-  or `stopped`, `assumptions`) and then against each such schema. It is
-  never glossed, no witness names it, and re-declaring it is refused while
-  a current QUERY slot would stop matching. One workspace, one grounding
-  vocabulary: a kit layered on another that needs more keys re-declares
-  the schema with the union.
+- The core validates every QUERY gloss against the grounding contract
+  (`sql` or `stopped`, `assumptions`). What a reader of the view's rows
+  needs — the period, the measure and its behaviour, the slices, the row
+  identity — is glossed on the view and its columns under the kit's
+  aspects, never keyed in the body. A kit whose readers need a body key
+  of their own declares a schema for it, an aspect flavored `"x-kind":
+  "grounding"`: the core validates every QUERY gloss against each such
+  schema after the contract; it is never glossed, no witness names it,
+  and re-declaring it is refused while a current QUERY slot would stop
+  matching.
 - A function's body is DuckDB SQL. A measurement (`RETURNS aspect`)
   becomes a table macro in the dataset's schema, or `glossql` for
   `GLOBAL`; `$subject` is its parameter and `subject_column($subject)` the
