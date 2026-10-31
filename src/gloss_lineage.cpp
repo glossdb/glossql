@@ -389,9 +389,89 @@ static void LineageExec(ClientContext &context, TableFunctionInput &data, DataCh
 	output.CheckCardinality(row);
 }
 
+//===--------------------------------------------------------------------===//
+// gloss_views_lineage(dataset): the derivation of each column of every view
+// of a dataset — a grounding's view among them — as gloss_lineage gives one
+// view's; a view that does not plan serves one row naming it, complete
+// false and no column
+//===--------------------------------------------------------------------===//
+
+struct ViewsLineageBindData : public FunctionData {
+	string dataset;
+
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<ViewsLineageBindData>();
+		result->dataset = dataset;
+		return std::move(result);
+	}
+	bool Equals(const FunctionData &other) const override {
+		return dataset == other.Cast<ViewsLineageBindData>().dataset;
+	}
+};
+
+static unique_ptr<FunctionData> ViewsLineageBind(ClientContext &context, TableFunctionBindInput &input,
+                                                 vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto result = make_uniq<ViewsLineageBindData>();
+	result->dataset = input.inputs[0].ToString();
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN};
+	names = {Identifier("view"), Identifier("column"), Identifier("derivation"), Identifier("complete")};
+	return std::move(result);
+}
+
+static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &state = data.global_state->Cast<LineageState>();
+	if (state.done) {
+		return;
+	}
+	state.done = true;
+	auto &dataset = data.bind_data->Cast<ViewsLineageBindData>().dataset;
+	Inner inner(context);
+	vector<string> views;
+	auto listed = inner.con.Query(
+	    "SELECT table_name FROM information_schema.tables WHERE table_catalog = " + QuoteText(inner.ws.lake) +
+	    " AND table_schema = " + QuoteText(dataset) + " AND table_type = 'VIEW' ORDER BY table_name");
+	if (listed->HasError()) {
+		throw InvalidInputException("gloss_views_lineage: %s", listed->GetError());
+	}
+	while (auto chunk = listed->Fetch()) {
+		for (idx_t i = 0; i < chunk->size(); i++) {
+			views.push_back(chunk->GetValue(0, i).ToString());
+		}
+	}
+	idx_t row = 0;
+	for (auto &view : views) {
+		QueryLineage lineage;
+		bool planned = true;
+		try {
+			lineage = LineageOf(*inner.con.context, "SELECT * FROM " + QuoteName(inner.ws.lake) + "." +
+			                                            QuoteName(dataset) + "." + QuoteName(view));
+		} catch (std::exception &) {
+			planned = false;
+		}
+		if (!planned || lineage.columns.empty()) {
+			output.data[0].Append(Value(view));
+			output.data[1].Append(Value());
+			output.data[2].Append(Value());
+			output.data[3].Append(Value::BOOLEAN(false));
+			row++;
+			continue;
+		}
+		for (auto &column : lineage.columns) {
+			output.data[0].Append(Value(view));
+			output.data[1].Append(Value(column.first));
+			output.data[2].Append(Value(column.second));
+			output.data[3].Append(Value::BOOLEAN(lineage.complete));
+			row++;
+		}
+	}
+	output.CheckCardinality(row);
+}
+
 void RegisterGlossLineage(ExtensionLoader &loader) {
 	loader.RegisterFunction(
 	    TableFunction("gloss_lineage", {LogicalType::VARCHAR}, LineageExec, LineageBind, LineageInit));
+	loader.RegisterFunction(
+	    TableFunction("gloss_views_lineage", {LogicalType::VARCHAR}, ViewsLineageExec, ViewsLineageBind, LineageInit));
 }
 
 } // namespace duckdb

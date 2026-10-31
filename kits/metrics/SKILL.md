@@ -61,7 +61,7 @@ SELECT * FROM glossql.metric_series() WHERE metric = 'spend';
 | `metric_axes()` | one row per metric of the bound dataset: `kind` (the aspect's `x-kind`), `stopped`, `applicable` and `reason` (the road out), `period_column`, `value_column`, `numerator`, `denominator`, `cadence`, `floor`, `rung`, `behavior` and `behavior_state`, `dims`, `unadmitted` (served columns with no role) and `owed` (the gloss each wants), `wanted` (the measurement nobody ran), `judged_current` |
 | `metric_series(grain := …)` | the cells: `metric`, `world`, `dimension` (`''` the total), `member`, `period` (the bucket's start), `value`, `num`, `den`, `behavior`; without a grain each metric at its floor, with one each metric at or below it at that grain, a coarser metric serving no rows; a rung of buckets measured back from the edge; a flow's empty periods zero in the total; a dimension wider than 24 members as its top 23 and `other` |
 | `fact_values()` | one row per metric whose aspect carries `x-kind: fact`: `value` where the view is one row with a `value` column, else `reason` |
-| `metric_sources(metric)` | what feeds the metric, through `gloss_lineage` over the view: `field`, `source` (`table.column`), `table_name`; one row per table read beside |
+| `metric_sources(for_metric := …)` | what feeds each metric, or the one named, through the views' lineage: `field`, `source` (`table.column`), `table_name`; one row per table read beside; a view that does not plan serves `reason` |
 
 ## The no-claim rule
 

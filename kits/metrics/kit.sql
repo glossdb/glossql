@@ -61,8 +61,9 @@ CREATE OR REPLACE MACRO glossql.rung_default(g) AS
 -- ladder's, else the cadence), rung (how many buckets the floor serves), behavior
 -- and behavior_state (the collapsed claim on the value column, NULL and
 -- 'none' where nobody spoke, 'contested' where the witness withholds it),
--- dims (the slicing columns, primary first), unadmitted (the served
--- columns no role stands on), owed (the gloss each of those wants),
+-- dims (the slicing columns, primary first), unranked (the dimension
+-- columns no dimension gloss ranks), unadmitted (the served columns no
+-- role stands on), owed (the gloss each of those wants),
 -- wanted (the measurement the row reads and nobody ran), judged_current
 -- (the profile stands at the data's own version).
 --===------------------------------------------------------------------===--
@@ -128,6 +129,12 @@ dims AS (
   LEFT JOIN (SELECT metric, col, value->>'value' AS rank FROM claims WHERE aspect = 'dimension') d USING (metric, col)
   WHERE r.role = 'dimension' AND coalesce(d.rank, '') <> 'none'
   GROUP BY r.metric),
+unranked AS (
+  SELECT r.metric, list(r.col ORDER BY c.pos) AS cols
+  FROM roles r JOIN cols c USING (metric, col)
+  WHERE r.role = 'dimension'
+    AND NOT EXISTS (SELECT 1 FROM claims d WHERE d.aspect = 'dimension' AND d.metric = r.metric AND d.col = r.col)
+  GROUP BY r.metric),
 unadmitted AS (
   SELECT c.metric, list(c.col ORDER BY c.pos) AS cols,
          list('GLOSS role ON ' || ds.dataset || '.' || c.metric || '.' || c.col || ' AS $${"value": "<key|measure|dimension|timestamp|attribute>"}$$;' ORDER BY c.pos) AS acts
@@ -142,7 +149,7 @@ rows_ AS (
          bh.behavior, bh.numerator, bh.denominator, coalesce(bh.behavior_state, 'none') AS behavior_state,
          pr.cadence, coalesce(pr.judged_current, false) AS judged_current,
          coalesce(la.floor, pr.cadence) AS floor, la.windows,
-         coalesce(d.cols, []::VARCHAR[]) AS dims,
+         coalesce(d.cols, []::VARCHAR[]) AS dims, coalesce(ur.cols, []::VARCHAR[]) AS unranked,
          coalesce(u.cols, []::VARCHAR[]) AS unadmitted, coalesce(u.acts, []::VARCHAR[]) AS owed,
          pr.metric IS NOT NULL AS profiled
   FROM chosen ch
@@ -152,6 +159,7 @@ rows_ AS (
   LEFT JOIN profiles pr ON pr.metric = ch.metric AND pr.col = ch.period_column
   LEFT JOIN ladders la ON la.metric = ch.metric AND la.col = ch.period_column
   LEFT JOIN dims d ON d.metric = ch.metric
+  LEFT JOIN unranked ur ON ur.metric = ch.metric
   LEFT JOIN unadmitted u ON u.metric = ch.metric),
 judged AS (
   SELECT *,
@@ -178,7 +186,7 @@ judged AS (
 SELECT metric, kind, stopped, reason IS NULL AS applicable, reason,
        period_column, value_column, numerator, denominator, cadence, floor,
        CASE WHEN floor IS NOT NULL THEN coalesce(json_extract(windows, '$.' || floor)::INTEGER, glossql.rung_default(floor)) END AS rung,
-       behavior, behavior_state, dims, unadmitted, owed, wanted, judged_current
+       behavior, behavior_state, dims, unranked, unadmitted, owed, wanted, judged_current
 FROM judged
 ORDER BY metric;
 
@@ -302,23 +310,178 @@ FROM facts f LEFT JOIN shape s USING (metric)
 ORDER BY f.metric;
 
 --===------------------------------------------------------------------===--
--- metric_sources(metric): what feeds a metric — one row per served field
--- and the landed column it descends from, through gloss_lineage over the
--- view: metric, field, source (table.column), table_name; a computed
--- field with no column behind it has no row; beside those, one row per
--- table the view reads, table_name alone.
+-- metric_sources(for_metric := NULL): what feeds each metric of the bound
+-- dataset, or one — one row per served field and the landed column it
+-- descends from, through the views' lineage: metric, field, source
+-- (table.column), table_name; a computed field with no column behind it
+-- has no row; beside those, one row per table the view reads, table_name
+-- alone; a view that does not plan serves one row with reason.
 --===------------------------------------------------------------------===--
 
-CREATE OR REPLACE MACRO glossql.metric_sources(metric) AS TABLE
-WITH lineage AS (
-  SELECT "column" AS field, derivation FROM gloss_lineage('SELECT * FROM ' || current_schema() || '.' || metric)),
+CREATE OR REPLACE MACRO glossql.metric_sources(for_metric := NULL) AS TABLE
+WITH metrics AS (
+  SELECT m.metric FROM glossql.metric_axes() m WHERE m.stopped IS NULL AND (for_metric IS NULL OR m.metric = for_metric)),
+lineage AS (
+  SELECT l.view AS metric, l."column" AS field, l.derivation, l.complete
+  FROM gloss_views_lineage(current_schema()) l WHERE l.view IN (SELECT metric FROM metrics)),
 fields AS (
-  SELECT field, unnest(regexp_extract_all(derivation, '([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*):', 1)) AS path
-  FROM lineage),
+  SELECT metric, field, unnest(regexp_extract_all(derivation, '([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*):', 1)) AS path
+  FROM lineage WHERE field IS NOT NULL),
 sources AS (
-  SELECT DISTINCT field, split_part(path, '.', 2) || '.' || split_part(path, '.', 3) AS source, split_part(path, '.', 2) AS table_name
+  SELECT DISTINCT metric, field, split_part(path, '.', 2) || '.' || split_part(path, '.', 3) AS source, split_part(path, '.', 2) AS table_name
   FROM fields)
-SELECT metric AS metric, field, source, table_name FROM sources
+SELECT metric, field, source, table_name, NULL::VARCHAR AS reason FROM sources
 UNION ALL
-SELECT DISTINCT metric AS metric, NULL, NULL, table_name FROM sources
-ORDER BY table_name, field NULLS FIRST;
+SELECT DISTINCT metric, NULL, NULL, table_name, NULL FROM sources
+UNION ALL
+SELECT metric, NULL, NULL, NULL, 'the grounding does not plan' FROM lineage WHERE field IS NULL
+ORDER BY metric, table_name NULLS LAST, field NULLS FIRST;
+
+--===------------------------------------------------------------------===--
+-- The two goals this kit answers for a door's next read, each a route:
+-- its steps in order, one arm per step, an arm serving a row when its
+-- condition holds on the record; the lowest step that serves decides the
+-- goal. Columns: surface, step, state (next, blocked, done), act, say,
+-- why, statement (the act as a statement, filled from the record; <…>
+-- marks what only the author can fill), "then".
+--
+-- metrics: every metric the dataset claims is served, or stopped.
+-- slices: every applicable metric slices by its dimension columns.
+--===------------------------------------------------------------------===--
+
+CREATE OR REPLACE MACRO glossql.routes_metrics() AS TABLE
+WITH ds AS (SELECT current_schema() AS dataset WHERE current_schema() IN (SELECT name FROM glossql.datasets)),
+aspects AS (
+  SELECT name, schema FROM (
+    SELECT name, kind, schema, row_number() OVER (PARTITION BY name ORDER BY seq DESC) AS rn
+    FROM glossql.aspects) WHERE rn = 1 AND kind = 'QUERY'),
+declared AS (SELECT name FROM aspects WHERE coalesce(json_extract_string(schema, '$.x-kind'), '') <> 'plan'),
+-- the metrics this dataset claims: a grounding stands here, or its definitions entry names it
+claimed AS (
+  SELECT a.name FROM declared a, ds
+  WHERE EXISTS (SELECT 1 FROM glossql.glossary g WHERE g.dataset = ds.dataset AND g.subject = ds.dataset AND g.aspect = a.name)
+     OR EXISTS (SELECT 1 FROM glossql.glossary d WHERE d.dataset = ds.dataset AND d.subject = ds.dataset AND d.aspect = 'definitions'
+                AND json_extract(d.body, '$.definitions.' || a.name) IS NOT NULL)),
+axes AS (SELECT * FROM glossql.metric_axes() WHERE coalesce(kind, '') <> 'plan'),
+bodies AS (
+  SELECT aspect AS metric, body::VARCHAR AS body FROM (
+    SELECT g.aspect, g.body, row_number() OVER (PARTITION BY g.aspect ORDER BY g.seq DESC) AS rn
+    FROM glossql.glossary g, ds WHERE g.dataset = ds.dataset AND g.subject = ds.dataset AND g.aspect IN (SELECT name FROM aspects)) WHERE rn = 1),
+read_tables AS (SELECT DISTINCT table_name FROM glossql.metric_sources() WHERE table_name IS NOT NULL),
+unread AS (
+  SELECT nullif(string_agg(t.table_name, ', ' ORDER BY t.table_name), '') AS tables
+  FROM information_schema.tables t, ds
+  WHERE t.table_catalog = current_database() AND t.table_schema = ds.dataset AND t.table_type = 'BASE TABLE'
+    AND t.table_name NOT IN (SELECT table_name FROM read_tables))
+
+-- ---- metrics
+SELECT 'metrics' AS surface, 1 AS step, 'next' AS state, 'GLOSS definitions' AS act,
+       'claim ' || a.name || ' for ' || ds.dataset AS say,
+       a.name || ' is declared and no dataset claims it: its definitions entry or its grounding makes it this dataset''s' AS why,
+       'GLOSS definitions ON ' || ds.dataset || ' AS $${"definitions": {"' || a.name || '": {"unit": "<unit>", "meaning": "<what it measures, in the business''s words>"}}}$$;' AS statement,
+       'GLOSS ' || a.name || ' ON ' || ds.dataset || ' AS $${"sql": "<the grounding>"}$$;' AS "then"
+FROM declared a, ds
+WHERE NOT EXISTS (SELECT 1 FROM claimed)
+
+UNION ALL
+SELECT 'metrics', 2, 'next', 'DECLARE ASPECT query',
+       'declare the first concept',
+       'no metric is claimed by this dataset: a declared QUERY aspect is this dataset''s once its definitions entry or its grounding stands; the names are the human''s',
+       '', ''
+FROM ds WHERE NOT EXISTS (SELECT 1 FROM claimed)
+
+UNION ALL
+SELECT 'metrics', 3, 'next', 'GLOSS query',
+       'ground ' || c.name || ', or stop it',
+       c.name || ' is declared and not grounded: a declaration nobody grounds holds this goal — ground it, or stop it with the reason no number is served',
+       'GLOSS ' || c.name || ' ON ' || ds.dataset || ' AS $${' || chr(10)
+         || '  "sql": "SELECT <period column> AS period, <measure> AS value, <slicing columns> FROM <table>",' || chr(10)
+         || '  "assumptions": [{"dimension": "<scope|definition>", "key": "<stable-key>", "assumption": "<the judgment call, and the reading you rejected>", "basis": "<what it rests on>", "confidence": 0.7}]' || chr(10)
+         || '}$$;' || chr(10)
+         || '-- or, where no number should be served: GLOSS ' || c.name || ' ON ' || ds.dataset || ' AS $${"stopped": "<what is missing, and why no number is served>"}$$;',
+       ''
+FROM claimed c, ds
+WHERE NOT EXISTS (SELECT 1 FROM axes a WHERE a.metric = c.name)
+
+-- the period column has no profile: the measurement is the act
+UNION ALL
+SELECT 'metrics', 4, 'next', 'temporal',
+       'profile ' || a.period_column || ' of ' || a.metric,
+       a.reason,
+       'SELECT temporal() FROM ' || ds.dataset || '.' || a.metric || '.' || a.period_column,
+       ''
+FROM axes a, ds
+WHERE NOT a.applicable AND a.stopped IS NULL AND len(a.wanted) > 0
+
+-- the view's columns owe their roles: the period and the value first
+UNION ALL
+SELECT 'metrics', 5, 'next', 'GLOSS role',
+       'gloss the columns of ' || a.metric,
+       a.reason,
+       list_aggregate(a.owed, 'string_agg', chr(10)),
+       ''
+FROM axes a, ds
+WHERE NOT a.applicable AND a.stopped IS NULL AND coalesce(a.kind, '') NOT IN ('fact', 'relation')
+  AND len(a.wanted) = 0 AND len(a.owed) > 0 AND (a.period_column IS NULL OR a.value_column IS NULL)
+
+-- every other reason — two time columns, no cadence: re-record, or say the ladder
+UNION ALL
+SELECT 'metrics', 6, 'next', 'GLOSS query',
+       're-record ' || a.metric || ' — ' || split_part(a.reason, ':', 1),
+       a.reason,
+       'GLOSS ' || a.metric || ' ON ' || ds.dataset || ' AS $$' || coalesce(b.body, '<the standing body>') || '$$;',
+       ''
+FROM axes a LEFT JOIN bodies b ON b.metric = a.metric, ds
+WHERE NOT a.applicable AND a.stopped IS NULL AND coalesce(a.kind, '') NOT IN ('fact', 'relation')
+  AND len(a.wanted) = 0 AND NOT (len(a.owed) > 0 AND (a.period_column IS NULL OR a.value_column IS NULL))
+
+-- served at the floor and nothing said on how it combines: a coarser
+-- grain and a total over members need the claim
+UNION ALL
+SELECT 'metrics', 7, 'next', 'GLOSS behavior',
+       'say how ' || a.metric || ' combines',
+       'no behaviour stands on ' || a.value_column || ' of ' || a.metric || ': a coarser grain than ' || a.floor || ' and a total over its members need it — a flow sums, a stock keeps the period''s last level, a ratio re-divides its summed halves',
+       'GLOSS behavior ON ' || ds.dataset || '.' || a.metric || '.' || a.value_column || ' AS $${"value": "<flow|stock|ratio>", "grounds": "<why, in the business''s words>"}$$;',
+       'SELECT * FROM metric_series(grain := ' || chr(39) || a.floor || chr(39) || ') WHERE metric = ' || chr(39) || a.metric || chr(39)
+FROM axes a, ds
+WHERE a.applicable AND a.behavior IS NULL AND a.behavior_state = 'none'
+
+UNION ALL
+SELECT 'metrics', 8, 'done', '', '',
+       'every metric the dataset claims is served or stopped; the next concept is the human''s to name'
+         || coalesce(' — unread: ' || u.tables, ''),
+       '', ''
+FROM ds CROSS JOIN unread u
+
+-- ---- slices
+UNION ALL
+SELECT 'slices', 1, 'blocked', '', '', 'no applicable metric stands', '', ''
+FROM ds
+WHERE NOT EXISTS (SELECT 1 FROM axes WHERE applicable)
+
+-- a served column with no role: a dimension slices the series, an attribute rides along
+UNION ALL
+SELECT 'slices', 2, 'next', 'GLOSS role',
+       'gloss ' || a.unadmitted[1] || ' on ' || a.metric,
+       a.unadmitted[1] || ' is served by ' || a.metric || ' and carries no role: a dimension slices the series, an attribute rides along',
+       a.owed[1],
+       ''
+FROM axes a, ds
+WHERE a.applicable AND len(a.unadmitted) > 0
+
+-- a dimension column nobody ranked: primary leads, supporting follows, none closes
+UNION ALL
+SELECT 'slices', 3, 'next', 'GLOSS dimension',
+       'rank ' || a.unranked[1] || ' on ' || a.metric,
+       a.unranked[1] || ' slices ' || a.metric || ' and no dimension gloss ranks it: primary leads the slices, supporting follows, none closes it',
+       'GLOSS dimension ON ' || ds.dataset || '.' || a.metric || '.' || a.unranked[1] || ' AS $${"value": "<primary|supporting|none>"}$$;',
+       ''
+FROM axes a, ds
+WHERE a.applicable AND len(a.unranked) > 0
+
+UNION ALL
+SELECT 'slices', 4, 'done', '', '',
+       'every applicable metric slices by its dimension columns, ranked'
+         || coalesce(' — no dimension on: ' || (SELECT string_agg(metric, ', ' ORDER BY metric) FROM axes WHERE applicable AND len(dims) = 0), ''),
+       '', ''
+FROM ds;
