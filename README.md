@@ -65,7 +65,7 @@ FROM gloss_kit('kits/kpi/kit.sql');           -- vocabulary, grounding schema, f
 | glossql | DuckDB |
 |---|---|
 | statements (`DECLARE …`, `GLOSS`, `PROBE`, `IMPORT`) | rules prepended to `Statement`; each transform builds an `ExtensionStatement` whose plan is one table function |
-| `GLOSSARY()`, `ATTEST()` | rules prepended to `InnerTableRef`, transformed into table-function references whose `bind_replace` serves the dataset's rows, kept on the connection and computed again on the second connection when the store or the lake moved (`gloss_cached`), narrowed to the subject and aspect in SQL |
+| `GLOSSARY()`, `ATTEST()` | rules prepended to `InnerTableRef`, transformed into table-function references whose `bind_replace` serves the dataset's rows, kept by the instance in DuckDB's object cache under the store's version and computed again on the second connection when the store or the lake moved (`gloss_cached`), narrowed to the subject and aspect in SQL |
 | `SELECT f() FROM subject` (extraction) | the same rule shape as plain SQL; a custom terminal matcher marks the end of the statement, and the binder decides: an extraction when `f` is declared, the plain SQL it looks like otherwise |
 | the workspace | an attached DuckLake, one per connection (`SET VARIABLE gloss_workspace` picks among several) |
 | a dataset | a schema of the lake; `USE` is DuckDB's own; unprefixed subjects resolve against the connection's default schema |

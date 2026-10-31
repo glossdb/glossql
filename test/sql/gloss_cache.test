@@ -1,5 +1,5 @@
 # name: test/sql/gloss_cache.test
-# description: a connection keeps a dataset's read rows while the store and the lake stand still; a write or a definition on any connection moves them
+# description: the instance keeps a dataset's read rows while the store and the lake stand still; a write or a definition on any connection moves them
 # group: [sql]
 
 require gloss
@@ -103,8 +103,13 @@ fin.orders.amount	current
 fin.orders.id	current
 fin.spend.total	stale
 
-# the kept rows are the read's own: nothing else names them
+# the kept rows are a read's: collapsed, raw or attest
 statement error
-SELECT * FROM gloss_cached('collapsed', 'nowhere');
+SELECT * FROM gloss_cached('verdicts', 'fin');
 ----
-none stands for collapsed|nowhere
+collapsed, raw or attest, not 'verdicts'
+
+query I
+SELECT count(*) FROM gloss_cached('attest', 'fin');
+----
+0

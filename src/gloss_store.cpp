@@ -34,6 +34,7 @@
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
+#include "duckdb/storage/object_cache.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -940,9 +941,9 @@ ParserExtension GlossParserExtension() {
 // (bind_replace), so they compose with any SQL. A dataset's rows — the slots
 // with their staleness, the detectors' verdicts, the collapse — are computed
 // on the second connection from the witnesses and detectors as they stand,
-// once per connection and store version, and kept on the connection; a bind
-// serves them from there, narrowed to its subject and aspect in SQL. The
-// stale rule is planned once per version, not once per bind.
+// once per store version, and kept by the instance; a bind serves them from
+// there, narrowed to its subject and aspect in SQL. The stale rule is planned
+// once per version, not once per bind.
 //===--------------------------------------------------------------------===//
 
 struct ReadScope {
@@ -1416,33 +1417,47 @@ static TableFunctionSet GlossColumnsFunctions() {
 }
 
 //===--------------------------------------------------------------------===//
-// The read cache: one connection's reads, by kind and dataset, each with the
-// store version it was computed at. Per connection (ClientContextState): the
-// rows go when the connection does; a write on any connection moves the
-// version, which every bind compares first.
+// The read cache: the instance's reads, by kind and dataset, each with the
+// store version it was computed at. An entry of DuckDB's object cache, its
+// bytes reserved in the buffer pool: memory_limit counts it, and pressure
+// evicts it, after which a bind computes it again. Every connection shares
+// it; a write on any connection moves the version, which every bind
+// compares first. A dropped dataset's rows stay until evicted.
 //===--------------------------------------------------------------------===//
 
-struct CachedRead {
+//! One read of a dataset as kept: immutable once built, replaced whole
+struct CachedRead : public ObjectCacheEntry {
 	string version;
 	vector<Identifier> names;
 	vector<LogicalType> types;
 	shared_ptr<ColumnDataCollection> rows;
+
+	static string ObjectType() {
+		return "gloss_read";
+	}
+	string GetObjectType() override {
+		return ObjectType();
+	}
+	optional_idx GetEstimatedCacheMemory() const override {
+		return optional_idx(rows ? rows->SizeInBytes() : 0);
+	}
 };
 
-struct ReadCache : public ClientContextState {
-	unordered_map<string, CachedRead> reads;
-	//! this connection is computing a read: a gloss read bound meanwhile is the
-	//! shape of a dataset view gloss_columns binds, never a read run, and binds
-	//! as an empty relation of the read's columns — the fill never recurses
+//! A connection computing a read (ClientContextState): a gloss read bound
+//! meanwhile is the shape of a dataset view gloss_columns binds, never a read
+//! run, and binds as an empty relation of the read's columns — a fill never
+//! recurses
+struct ReadFill : public ClientContextState {
 	bool filling = false;
 
-	static ReadCache &Of(ClientContext &context) {
-		return *context.registered_state->GetOrCreate<ReadCache>("gloss_read_cache");
-	}
-	static string Key(const string &kind, const string &dataset) {
-		return kind + "|" + dataset;
+	static ReadFill &Of(ClientContext &context) {
+		return *context.registered_state->GetOrCreate<ReadFill>("gloss_read_fill");
 	}
 };
+
+static string CacheKey(const string &kind, const string &dataset) {
+	return "gloss_read|" + kind + "|" + dataset;
+}
 
 //! The store's version: the lake's current snapshot and every store relation's
 //! highest seq — everything a read's rows depend on, through the stale rule,
@@ -1464,40 +1479,57 @@ static ReadScope WholeOf(const ReadScope &scope) {
 	return whole;
 }
 
-//! One kind of read over a whole dataset: computed on the inner connection
-//! when the store's version moved since it was, else as kept
-static CachedRead &Cached(ClientContext &context, Inner &inner, const string &kind, const ReadScope &whole,
-                          const std::function<string()> &sql) {
-	auto &read = ReadCache::Of(context).reads[ReadCache::Key(kind, whole.dataset)];
-	ReadCache::Of(*inner.con.context).filling = true;
+//! The SQL of one kind of read over a whole dataset
+static string ReadSQL(Inner &inner, const string &kind, const ReadScope &whole) {
+	if (kind == "raw") {
+		return RawSQL(whole, Value());
+	}
+	if (kind == "collapsed") {
+		return CollapsedSQL(inner, Witnesses(inner, Value()), whole, Value());
+	}
+	if (kind == "attest") {
+		return "WITH " + string(HOISTED) + " AS MATERIALIZED (" + SlotsSQL(whole, "") + ") SELECT " +
+		       string(ATTEST_COLUMNS) + " FROM (" + VerdictsSQL(inner, Witnesses(inner, Value()), whole) + ")";
+	}
+	throw InvalidInputException("gloss_cached serves a read: collapsed, raw or attest, not '%s'", kind);
+}
+
+//! One kind of read over a whole dataset: as kept while the store's version
+//! stands, else computed on the inner connection and kept
+static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const string &kind, const ReadScope &whole) {
+	auto &cache = ObjectCache::GetObjectCache(context);
+	auto key = CacheKey(kind, whole.dataset);
+	ReadFill::Of(*inner.con.context).filling = true;
 	auto version = inner.Scalar(StoreVersionSQL(inner.ws)).ToString();
-	if (read.rows && read.version == version) {
-		return read;
+	auto kept = cache.Get<CachedRead>(key);
+	if (kept && kept->version == version) {
+		return kept;
 	}
-	auto result = inner.Run(sql());
-	auto rows = make_shared_ptr<ColumnDataCollection>(Allocator::DefaultAllocator(), result->GetTypes());
+	auto result = inner.Run(ReadSQL(inner, kind, whole));
+	auto read = make_shared_ptr<CachedRead>();
+	read->rows = make_shared_ptr<ColumnDataCollection>(Allocator::Get(context), result->GetTypes());
 	while (auto chunk = result->Fetch()) {
-		rows->Append(*chunk);
+		read->rows->Append(*chunk);
 	}
-	read.names = result->GetNames();
-	read.types = result->GetTypes();
-	read.rows = std::move(rows);
-	read.version = version;
+	read->names = result->GetNames();
+	read->types = result->GetTypes();
+	read->version = version;
+	cache.Put(key, read);
 	return read;
 }
 
-//! gloss_cached(kind, dataset): the kept rows of a read, scanned; the read's
-//! bind computed them on this connection first
+//! gloss_cached(kind, dataset): a dataset's read as kept, scanned; the reads
+//! narrow it in SQL
 struct CachedBindData : public FunctionData {
-	string key;
+	shared_ptr<CachedRead> read;
 
 	unique_ptr<FunctionData> Copy() const override {
 		auto result = make_uniq<CachedBindData>();
-		result->key = key;
+		result->read = read;
 		return std::move(result);
 	}
 	bool Equals(const FunctionData &other) const override {
-		return key == other.Cast<CachedBindData>().key;
+		return read == other.Cast<CachedBindData>().read;
 	}
 };
 
@@ -1508,23 +1540,18 @@ struct CachedScanState : public GlobalTableFunctionState {
 
 static unique_ptr<FunctionData> CachedBind(ClientContext &context, TableFunctionBindInput &input,
                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
-	auto key = ReadCache::Key(input.inputs[0].ToString(), input.inputs[1].ToString());
-	auto &reads = ReadCache::Of(context).reads;
-	auto entry = reads.find(key);
-	if (entry == reads.end() || !entry->second.rows) {
-		throw InvalidInputException("gloss_cached serves a read this connection computed; none stands for %s", key);
-	}
-	return_types = entry->second.types;
-	names = entry->second.names;
+	Inner inner(context);
+	auto whole = WholeOf(ScopeOf(context, inner, input.inputs[1]));
 	auto result = make_uniq<CachedBindData>();
-	result->key = key;
+	result->read = Cached(context, inner, input.inputs[0].ToString(), whole);
+	return_types = result->read->types;
+	names = result->read->names;
 	return std::move(result);
 }
 
 static unique_ptr<GlobalTableFunctionState> CachedInit(ClientContext &context, TableFunctionInitInput &input) {
-	auto &key = input.bind_data->Cast<CachedBindData>().key;
 	auto state = make_uniq<CachedScanState>();
-	state->rows = ReadCache::Of(context).reads.at(key).rows;
+	state->rows = input.bind_data->Cast<CachedBindData>().read->rows;
 	state->rows->InitializeScan(state->scan);
 	return std::move(state);
 }
@@ -1565,19 +1592,13 @@ static string Narrowed(const string &kind, const ReadScope &scope, const Value &
 
 static unique_ptr<TableRef> GlossGlossaryBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	bool all = input.inputs[2].GetValue<bool>();
-	if (ReadCache::Of(context).filling) {
+	if (ReadFill::Of(context).filling) {
 		return Shape(all ? RAW_SHAPE : COLLAPSED_SHAPE);
 	}
 	Inner inner(context);
 	auto scope = ScopeOf(context, inner, input.inputs[0]);
-	auto &aspect = input.inputs[1];
-	auto whole = WholeOf(scope);
-	auto kind = all ? "raw" : "collapsed";
-	Cached(context, inner, kind, whole, [&]() {
-		return all ? RawSQL(whole, Value()) : CollapsedSQL(inner, Witnesses(inner, Value()), whole, Value());
-	});
-	return make_uniq<SubqueryRef>(
-	    ParseSelect(Narrowed(kind, scope, aspect, all ? "subject, aspect, actor" : "subject, aspect")));
+	return make_uniq<SubqueryRef>(ParseSelect(Narrowed(all ? "raw" : "collapsed", scope, input.inputs[1],
+	                                                   all ? "subject, aspect, actor" : "subject, aspect")));
 }
 
 static TableFunction GlossGlossaryFunction() {
@@ -1588,18 +1609,12 @@ static TableFunction GlossGlossaryFunction() {
 }
 
 static unique_ptr<TableRef> GlossAttestBindReplace(ClientContext &context, TableFunctionBindInput &input) {
-	if (ReadCache::Of(context).filling) {
+	if (ReadFill::Of(context).filling) {
 		return Shape(ATTEST_SHAPE);
 	}
 	Inner inner(context);
 	auto scope = ScopeOf(context, inner, input.inputs[0]);
-	auto &aspect = input.inputs[1];
-	auto whole = WholeOf(scope);
-	Cached(context, inner, "attest", whole, [&]() {
-		return "WITH " + string(HOISTED) + " AS MATERIALIZED (" + SlotsSQL(whole, "") + ") SELECT " +
-		       string(ATTEST_COLUMNS) + " FROM (" + VerdictsSQL(inner, Witnesses(inner, Value()), whole) + ")";
-	});
-	return make_uniq<SubqueryRef>(ParseSelect(Narrowed("attest", scope, aspect, "subject, aspect, witness")));
+	return make_uniq<SubqueryRef>(ParseSelect(Narrowed("attest", scope, input.inputs[1], "subject, aspect, witness")));
 }
 
 static TableFunction GlossAttestFunction() {
