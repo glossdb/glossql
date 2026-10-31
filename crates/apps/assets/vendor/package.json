@@ -3,7 +3,7 @@
   "private": true,
   "description": "The browser libraries vendored beside this file, at their pinned versions. Dependabot watches it; the copy into the tree is the README's step.",
   "dependencies": {
-    "@dagrejs/dagre": "3.1.1",
+    "@dagrejs/dagre": "3.1.3",
     "apache-arrow": "21.2.0",
     "htmx.org": "2.0.11",
     "vega": "6.4.0",
