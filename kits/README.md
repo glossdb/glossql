@@ -9,6 +9,7 @@ said.
 | Kit | Brings |
 |---|---|
 | `kpi/` | column and table vocabulary (`meaning`, `role`, `behavior`, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the KPI grounding schema (`behavior`, `grain`, `axes` on a metric's grounding), the `slot_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the witnesses that bind them |
+| `quality/` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates` and `grounding_collisions` as table macros, and the five measurements that land them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`); loaded after `kpi/` |
 
 ## Loading
 

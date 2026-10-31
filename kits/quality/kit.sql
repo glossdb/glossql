@@ -1,0 +1,488 @@
+-- The quality kit: what the data is like and how it holds together.
+-- Loaded after the KPI kit, whose words its readers condition on. What an
+-- actor must learn about these words is SKILL.md beside this file.
+--
+--   FROM gloss_kit('kits/kpi/kit.sql');
+--   FROM gloss_kit('kits/quality/kit.sql');
+--
+-- The screens are table macros over dataset_cells(subject): every cell of a
+-- dataset's tables, or of one table, as (table, column, ci, column_type, rn,
+-- val). A screen is SQL over that relation: a join on rn puts a row's columns
+-- side by side, a join on val matches values across columns, within one
+-- stored type. Nothing outside SQL names a column. Each screen's measurement
+-- function reads the screen, keeps what crosses its line, and lands the
+-- aspect; the thresholds are the function's, the counts the screen's.
+
+--===------------------------------------------------------------------===--
+-- hierarchy_candidates(table): functional dependencies between a table's
+-- columns, one row per screened direction. Measures stay out by type
+-- (floating and decimal); a column with a distinct value per filled row is
+-- out, since it determines everything; NULL is a category. Per direction:
+-- g3 is the share of rows that break from → to, g3_reverse the other way,
+-- gk_lambda Goodman–Kruskal's lambda for predicting `to` from `from`,
+-- rows_per_value the evidence per from-value. Fewer than two such columns,
+-- or no rows, is served as one row that says why.
+--===------------------------------------------------------------------===--
+CREATE OR REPLACE MACRO hierarchy_candidates(tbl) AS TABLE
+WITH cells AS (SELECT * FROM dataset_cells(tbl)),
+stats AS (
+  SELECT ci, "column", count(*) AS total, count(val) AS filled, count(DISTINCT val) AS distinct_vals,
+         count(DISTINCT val) + (count(*) > count(val))::INTEGER AS groups
+  FROM cells
+  WHERE column_type NOT IN ('DOUBLE', 'FLOAT', 'REAL') AND column_type NOT LIKE 'DECIMAL%'
+  GROUP BY ci, "column"),
+pool AS (SELECT * FROM stats WHERE groups >= 2 AND NOT (filled > 0 AND distinct_vals = filled)),
+n AS (SELECT max(total) AS rows FROM stats),
+reason AS (
+  SELECT CASE WHEN (SELECT count(*) FROM cells) = 0 THEN 'empty table'
+              WHEN (SELECT count(*) FROM pool) < 2 THEN 'fewer than two dimension-like columns' END AS why),
+pairs AS (
+  SELECT a.ci AS fi, b.ci AS ti, a.val AS fv, b.val AS tv, count(*) AS c
+  FROM cells a JOIN cells b ON a.rn = b.rn AND a.ci <> b.ci
+  WHERE a.ci IN (SELECT ci FROM pool) AND b.ci IN (SELECT ci FROM pool)
+  GROUP BY ALL),
+per_from AS (SELECT fi, ti, fv, max(c) AS mx, count(*) AS ng FROM pairs GROUP BY ALL),
+per_to AS (SELECT fi, ti, tv, sum(c) AS n_t FROM pairs GROUP BY ALL),
+dir AS (
+  SELECT f.fi, f.ti, sum(f.mx) AS agree, sum(f.ng) AS pair_groups, t.modal
+  FROM per_from f
+  JOIN (SELECT fi, ti, max(n_t) AS modal FROM per_to GROUP BY fi, ti) t USING (fi, ti)
+  GROUP BY f.fi, f.ti, t.modal),
+served AS (
+  SELECT d.fi, d.ti, pf."column" AS from_col, pt."column" AS to_col,
+         pf.groups AS distinct_from, pt.groups AS distinct_to, d.pair_groups,
+         (n.rows - d.agree) / n.rows::DOUBLE AS g3,
+         (n.rows - r.agree) / n.rows::DOUBLE AS g3_reverse,
+         CASE WHEN n.rows = d.modal THEN 0.0 ELSE (d.agree - d.modal) / (n.rows - d.modal)::DOUBLE END AS gk_lambda,
+         n.rows / pf.groups::DOUBLE AS rows_per_value, n.rows
+  FROM dir d JOIN dir r ON r.fi = d.ti AND r.ti = d.fi
+  JOIN pool pf ON pf.ci = d.fi JOIN pool pt ON pt.ci = d.ti, n)
+SELECT true AS applicable, NULL::VARCHAR AS reason, rows,
+       row_number() OVER (ORDER BY least(fi, ti), greatest(fi, ti), CASE WHEN fi < ti THEN 0 ELSE 1 END) AS seq,
+       from_col, to_col, distinct_from, distinct_to, pair_groups, g3, g3_reverse, gk_lambda, rows_per_value
+FROM served WHERE (SELECT why FROM reason) IS NULL
+UNION ALL
+SELECT false, why, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+FROM reason WHERE why IS NOT NULL
+ORDER BY seq;
+
+--===------------------------------------------------------------------===--
+-- relationship_candidates(dataset): which column of one table keys into
+-- which column of another, by value. Two columns are compared within one
+-- stored type. A target is key-like when nearly every filled row is distinct
+-- (nine in ten) and it has two values or more; a pair is admitted when half
+-- the source's distinct values or more appear in the target. A single
+-- candidate is an admitted pair whose target is key-like. Where a table
+-- pair has no such key, a second column pair on the same two tables may
+-- scope the first: the composite rescue, served with key_columns. One all-
+-- NULL row where nothing is found.
+--===------------------------------------------------------------------===--
+CREATE OR REPLACE MACRO relationship_candidates(ds) AS TABLE
+WITH cells AS (SELECT * FROM dataset_cells(ds)),
+cols AS (
+  SELECT "table", "column", ci, column_type, count(*) AS rows, count(val) AS filled, count(DISTINCT val) AS distinct_vals
+  FROM cells GROUP BY ALL),
+vals AS (SELECT DISTINCT ci, column_type, val FROM cells WHERE val IS NOT NULL),
+m AS (SELECT a.ci AS fi, b.ci AS ki, count(*) AS m FROM vals a JOIN vals b ON a.val = b.val AND a.column_type = b.column_type GROUP BY ALL),
+cs AS (
+  SELECT c.*, (filled > 0 AND distinct_vals >= 2 AND distinct_vals >= 0.9 * filled) AS key_like,
+         (distinct_vals = filled) AS uniq, (column_type = 'DATE' OR column_type LIKE 'TIMESTAMP%') AS temporal
+  FROM cols c),
+admitted AS (
+  SELECT f.ci AS fi, k.ci AS ki, f."table" AS ft, f."column" AS fc, k."table" AS kt, k."column" AS kc,
+         f.distinct_vals AS df, k.distinct_vals AS dk, k.filled AS kfilled, k.rows AS krows,
+         coalesce(m.m, 0) AS matched, coalesce(m.m, 0) / f.distinct_vals::DOUBLE AS overlap,
+         k.key_like AS k_key, f.uniq AS f_uniq, k.uniq AS k_uniq, k.temporal AS k_temporal
+  FROM cs f JOIN cs k ON (f."table" <> k."table" OR f."column" <> k."column") AND f.column_type = k.column_type
+  LEFT JOIN m ON m.fi = f.ci AND m.ki = k.ci
+  WHERE k.distinct_vals >= 2 AND f.distinct_vals > 0 AND coalesce(m.m, 0) / f.distinct_vals::DOUBLE >= 0.5),
+single AS (SELECT * FROM admitted WHERE k_key),
+keyed_tables AS (SELECT DISTINCT least(ft, kt) AS t1, greatest(ft, kt) AS t2 FROM single),
+-- the rescue: an admitted pair with no key-like target, on a table pair no key joins
+anchors AS (
+  SELECT a.* FROM admitted a
+  WHERE NOT k_key AND NOT EXISTS (SELECT 1 FROM keyed_tables k WHERE k.t1 = least(a.ft, a.kt) AND k.t2 = greatest(a.ft, a.kt))),
+scoped AS (
+  SELECT p.fi AS pf, p.ki AS pk, s.fi AS sf, s.ki AS sk, p.ft, p.kt, p.fc AS pfc, p.kc AS pkc, s.fc AS sfc, s.kc AS skc,
+         p.dk AS pdk, s.dk AS sdk, s.overlap AS s_overlap, p.k_temporal, s.k_temporal AS s_temporal
+  FROM anchors p JOIN admitted s ON s.ft = p.ft AND s.kt = p.kt AND s.fc <> p.fc AND s.kc <> p.kc AND NOT s.k_uniq
+  WHERE p.dk * s.dk >= 0.9 * greatest(0, p.kfilled + s.kfilled - p.krows)),
+-- a row's two columns side by side, for every ordered column pair of a table
+duo AS (
+  SELECT a."table", a.ci AS c0, b.ci AS c1, a.rn, a.val AS v0, b.val AS v1
+  FROM cells a JOIN cells b ON a."table" = b."table" AND a.rn = b.rn AND a.ci <> b.ci),
+duo_stats AS (
+  SELECT "table", c0, c1, count(*) FILTER (WHERE v0 IS NOT NULL AND v1 IS NOT NULL) AS filled2,
+         count(DISTINCT (v0, v1)) FILTER (WHERE v0 IS NOT NULL AND v1 IS NOT NULL) AS distinct2
+  FROM duo GROUP BY ALL),
+attempts AS (
+  SELECT s.*, fd.filled2 AS from_filled, fd.distinct2 AS df, td.filled2 AS to_filled, td.distinct2 AS dt
+  FROM scoped s
+  JOIN duo_stats fd ON fd."table" = s.ft AND fd.c0 = s.pf AND fd.c1 = s.sf
+  JOIN duo_stats td ON td."table" = s.kt AND td.c0 = s.pk AND td.c1 = s.sk
+  WHERE td.filled2 > 0 AND s.pdk * s.sdk >= 0.9 * td.filled2
+    AND td.distinct2 >= 2 AND td.distinct2 >= 0.9 * td.filled2
+    AND fd.distinct2 > 0 AND td.distinct2 >= 0.5 * fd.distinct2 AND td.distinct2 > s.sdk),
+crossed AS (
+  SELECT a.pf, a.pk, a.sf, a.sk, count(*) AS matched
+  FROM attempts a
+  JOIN (SELECT DISTINCT "table", c0, c1, v0, v1 FROM duo WHERE v0 IS NOT NULL AND v1 IS NOT NULL) f
+    ON f."table" = a.ft AND f.c0 = a.pf AND f.c1 = a.sf
+  JOIN (SELECT DISTINCT "table", c0, c1, v0, v1 FROM duo WHERE v0 IS NOT NULL AND v1 IS NOT NULL) t
+    ON t."table" = a.kt AND t.c0 = a.pk AND t.c1 = a.sk AND t.v0 = f.v0 AND t.v1 = f.v1
+  GROUP BY ALL),
+rescues AS (
+  SELECT a.*, c.matched, c.matched / a.df::DOUBLE AS overlap,
+         row_number() OVER (PARTITION BY a.pf, a.pk ORDER BY a.s_overlap DESC, a.sf, a.sk) AS pick
+  FROM attempts a JOIN crossed c USING (pf, pk, sf, sk)
+  WHERE c.matched / a.df::DOUBLE >= 0.5),
+rescued AS (
+  SELECT CASE WHEN pdk >= sdk THEN ft || '.' || pfc ELSE ft || '.' || sfc END AS from_col,
+         CASE WHEN pdk >= sdk THEN kt || '.' || pkc ELSE kt || '.' || skc END AS to_col,
+         CASE WHEN df = from_filled THEN 'one-to-one' ELSE 'many-to-one' END AS cardinality,
+         overlap, matched, df - matched AS orphans, df AS from_distinct, dt AS to_distinct,
+         dt = to_filled AS to_unique, CASE WHEN pdk >= sdk THEN k_temporal ELSE s_temporal END AS to_temporal,
+         CASE WHEN pdk >= sdk THEN ft || '.' || sfc ELSE ft || '.' || pfc END AS kc_from,
+         CASE WHEN pdk >= sdk THEN kt || '.' || skc ELSE kt || '.' || pkc END AS kc_to,
+         least(pf, sf) AS o1, greatest(pf, sf) AS o2
+  FROM rescues WHERE pick = 1),
+found AS (
+  SELECT ft || '.' || fc AS from_col, kt || '.' || kc AS to_col,
+         CASE WHEN f_uniq THEN 'one-to-one' ELSE 'many-to-one' END AS cardinality,
+         overlap, matched, df - matched AS orphans, df AS from_distinct, dk AS to_distinct,
+         k_uniq AS to_unique, k_temporal AS to_temporal, NULL::VARCHAR AS kc_from, NULL::VARCHAR AS kc_to,
+         0 AS phase, ki AS o1, fi AS o2
+  FROM single
+  UNION ALL
+  SELECT DISTINCT from_col, to_col, cardinality, overlap, matched, orphans, from_distinct, to_distinct,
+         to_unique, to_temporal, kc_from, kc_to, 1, o1, o2
+  FROM rescued)
+SELECT row_number() OVER (ORDER BY phase, o1, o2, from_col, to_col) AS seq,
+       from_col, to_col, cardinality, overlap, matched, orphans, from_distinct, to_distinct, to_unique, to_temporal, kc_from, kc_to
+FROM found
+UNION ALL
+SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+WHERE NOT EXISTS (SELECT 1 FROM found)
+ORDER BY seq;
+
+--===------------------------------------------------------------------===--
+-- relationship_checks(dataset): whether the declared relationships hold.
+-- Per edge: filled rows, the orphans (child values no parent row carries;
+-- inside one table, child values that reach more than one parent), and
+-- for an edge across two tables the temporal pairs: the first three date
+-- columns of each side, joined on the edge, how often the child's date
+-- precedes the parent's. Legs are one column or a pair; an endpoint is
+-- spelled as the record stores it, dataset.table.column. No declared
+-- relationships is one row that says so.
+--===------------------------------------------------------------------===--
+CREATE OR REPLACE MACRO relationship_checks(ds) AS TABLE
+WITH cells AS (SELECT * FROM dataset_cells(ds)),
+edges AS (
+  SELECT row_number() OVER (ORDER BY seq) - 1 AS seq,
+         left_side || ' ' || op || ' ' || right_side AS relationship,
+         split_part(left_side, '.', 2) AS ct, split_part(right_side, '.', 2) AS pt,
+         CASE WHEN left_side LIKE '%(%' THEN string_split(regexp_extract(left_side, '\((.*)\)', 1), ', ')
+              ELSE [substr(left_side, length(ds) + length(split_part(left_side, '.', 2)) + 3)] END AS cl,
+         CASE WHEN right_side LIKE '%(%' THEN string_split(regexp_extract(right_side, '\((.*)\)', 1), ', ')
+              ELSE [substr(right_side, length(ds) + length(split_part(right_side, '.', 2)) + 3)] END AS pl
+  FROM glossql.relationships WHERE dataset = ds),
+legs AS (SELECT * FROM edges WHERE len(cl) = len(pl) AND len(cl) BETWEEN 1 AND 2),
+-- each side's rows pivoted onto the edge's legs
+child AS (
+  SELECT e.seq, c.rn,
+         max(CASE WHEN c."column" = e.cl[1] THEN c.val END) AS k1,
+         max(CASE WHEN len(e.cl) = 2 AND c."column" = e.cl[2] THEN c.val END) AS k2
+  FROM legs e JOIN cells c ON c."table" = e.ct
+  GROUP BY e.seq, c.rn),
+parent AS (
+  SELECT e.seq, c.rn,
+         max(CASE WHEN c."column" = e.pl[1] THEN c.val END) AS k1,
+         max(CASE WHEN len(e.pl) = 2 AND c."column" = e.pl[2] THEN c.val END) AS k2
+  FROM legs e JOIN cells c ON c."table" = e.pt
+  GROUP BY e.seq, c.rn),
+cfull AS (SELECT c.* FROM child c JOIN legs e USING (seq) WHERE k1 IS NOT NULL AND (len(e.cl) = 1 OR k2 IS NOT NULL)),
+pfull AS (SELECT p.* FROM parent p JOIN legs e USING (seq) WHERE k1 IS NOT NULL AND (len(e.pl) = 1 OR k2 IS NOT NULL)),
+filled AS (SELECT seq, count(*) AS filled FROM cfull GROUP BY seq),
+nested AS (
+  SELECT e.seq, count(DISTINCT (p.k1, p.k2)) <> count(*) AS is_nest
+  FROM legs e JOIN pfull p USING (seq) WHERE e.ct = e.pt GROUP BY e.seq),
+nest_orphans AS (
+  SELECT seq, coalesce(sum(n) FILTER (WHERE k > 1), 0) AS orphans
+  FROM (SELECT seq, k1, k2, count(DISTINCT (p1, p2)) AS k, count(*) AS n
+        FROM (SELECT c.seq, c.k1, c.k2, p.k1 AS p1, p.k2 AS p2 FROM cfull c JOIN pfull p ON p.seq = c.seq AND p.rn = c.rn)
+        GROUP BY seq, k1, k2)
+  GROUP BY seq),
+join_orphans AS (
+  SELECT c.seq, count(*) AS orphans
+  FROM cfull c
+  WHERE NOT EXISTS (SELECT 1 FROM pfull p WHERE p.seq = c.seq AND p.k1 = c.k1 AND p.k2 IS NOT DISTINCT FROM c.k2)
+  GROUP BY c.seq),
+per_edge AS (
+  SELECT e.seq, e.relationship, coalesce(f.filled, 0) AS filled,
+         CASE WHEN coalesce(n.is_nest, false) THEN coalesce(no.orphans, 0) ELSE coalesce(jo.orphans, 0) END AS orphans,
+         e.ct, e.pt
+  FROM legs e LEFT JOIN filled f USING (seq) LEFT JOIN nested n USING (seq)
+  LEFT JOIN nest_orphans no USING (seq) LEFT JOIN join_orphans jo USING (seq)),
+dates AS (
+  SELECT "table", "column", ci, row_number() OVER (PARTITION BY "table" ORDER BY ci) AS nth
+  FROM (SELECT DISTINCT "table", "column", ci FROM cells WHERE column_type = 'DATE' OR column_type LIKE 'TIMESTAMP%')),
+date_pairs AS (
+  SELECT e.seq, cd."column" AS child_column, pd."column" AS parent_column,
+         row_number() OVER (PARTITION BY e.seq ORDER BY cd.nth, pd.nth) AS pair_seq, cd.ci AS cci, pd.ci AS pci
+  FROM legs e JOIN dates cd ON cd."table" = e.ct AND cd.nth <= 3 JOIN dates pd ON pd."table" = e.pt AND pd.nth <= 3
+  WHERE e.ct <> e.pt),
+temporal AS (
+  SELECT dp.seq, dp.pair_seq, dp.child_column, dp.parent_column,
+         count(*) FILTER (WHERE cdv.val IS NOT NULL AND pdv.val IS NOT NULL) AS joined,
+         count(*) FILTER (WHERE cdv.val::TIMESTAMP < pdv.val::TIMESTAMP) AS precedes
+  FROM date_pairs dp
+  JOIN cfull c ON c.seq = dp.seq
+  JOIN pfull p ON p.seq = c.seq AND p.k1 = c.k1 AND p.k2 IS NOT DISTINCT FROM c.k2
+  JOIN legs e ON e.seq = dp.seq
+  JOIN cells cdv ON cdv."table" = e.ct AND cdv.rn = c.rn AND cdv.ci = dp.cci
+  JOIN cells pdv ON pdv."table" = e.pt AND pdv.rn = p.rn AND pdv.ci = dp.pci
+  GROUP BY ALL HAVING count(*) FILTER (WHERE cdv.val IS NOT NULL AND pdv.val IS NOT NULL) > 0)
+SELECT true AS applicable, NULL::VARCHAR AS reason, pe.seq, pe.relationship, pe.filled, pe.orphans,
+       CASE WHEN pe.filled = 0 THEN 0.0 ELSE pe.orphans / pe.filled::DOUBLE END AS orphan_rate,
+       t.pair_seq, t.child_column, t.parent_column, t.joined, t.precedes,
+       CASE WHEN t.joined IS NULL THEN NULL ELSE t.precedes / t.joined::DOUBLE END AS precedes_rate
+FROM per_edge pe LEFT JOIN temporal t USING (seq)
+UNION ALL
+SELECT false, 'no declared relationships', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+WHERE NOT EXISTS (SELECT 1 FROM legs)
+ORDER BY seq, pair_seq;
+
+--===------------------------------------------------------------------===--
+-- derivation_candidates(table): which numeric column is another two
+-- combined, as a product or a sum. Numeric columns in table order, twelve at
+-- most; a target and two operands each filled on twenty rows or more; the
+-- form admitted when the magnitudes fit within a factor of thirty. A row
+-- supports a triple when all three are filled and violates it when the
+-- target misses the form by more than 0.011 or a millionth of itself.
+--===------------------------------------------------------------------===--
+CREATE OR REPLACE MACRO derivation_candidates(tbl) AS TABLE
+WITH cells AS (SELECT * FROM dataset_cells(tbl)),
+numeric AS (
+  SELECT ci, "column", count(val) AS filled, avg(abs(TRY_CAST(val AS DOUBLE))) AS mag, count(*) AS total,
+         row_number() OVER (ORDER BY ci) AS nth
+  FROM cells
+  WHERE column_type IN ('TINYINT', 'SMALLINT', 'INTEGER', 'BIGINT', 'HUGEINT', 'UTINYINT', 'USMALLINT', 'UINTEGER',
+                        'UBIGINT', 'UHUGEINT', 'FLOAT', 'DOUBLE', 'REAL')
+     OR column_type LIKE 'DECIMAL%'
+  GROUP BY ci, "column"),
+capped AS (SELECT * FROM numeric WHERE nth <= 12),
+facts AS (SELECT count(*) AS numeric_columns, bool_or(nth > 12) AS truncated, max(filled) AS rows FROM numeric),
+triples AS (
+  SELECT a.ci AS ai, a."column" AS target, b.ci AS bi, b."column" AS operand_1, c.ci AS ci2, c."column" AS operand_2, form
+  FROM capped a, capped b, capped c, (SELECT unnest(['product', 'sum']) AS form)
+  WHERE b.nth < c.nth AND a.ci <> b.ci AND a.ci <> c.ci AND a.filled >= 20 AND b.filled >= 20 AND c.filled >= 20
+    AND CASE form
+          WHEN 'product' THEN coalesce(a.mag, 0) > 0 AND coalesce(b.mag, 0) > 0 AND coalesce(c.mag, 0) > 0
+                             AND b.mag * c.mag < 30 * a.mag AND a.mag < 30 * b.mag * c.mag
+          ELSE coalesce(b.mag, 0) + coalesce(c.mag, 0) > 0 AND coalesce(a.mag, 0) > 0
+               AND b.mag + c.mag < 30 * a.mag AND a.mag < 30 * (b.mag + c.mag) END),
+rows3 AS (
+  SELECT t.ai, t.bi, t.ci2, t.form, t.target, t.operand_1, t.operand_2,
+         TRY_CAST(a.val AS DOUBLE) AS av, TRY_CAST(b.val AS DOUBLE) AS bv, TRY_CAST(c.val AS DOUBLE) AS cv
+  FROM triples t
+  JOIN cells a ON a.ci = t.ai JOIN cells b ON b.ci = t.bi AND b.rn = a.rn JOIN cells c ON c.ci = t.ci2 AND c.rn = a.rn),
+measured AS (
+  SELECT target, form, operand_1, operand_2, ai, bi, ci2,
+         count(*) FILTER (WHERE av IS NOT NULL AND bv IS NOT NULL AND cv IS NOT NULL) AS support,
+         count(*) FILTER (WHERE av IS NOT NULL AND bv IS NOT NULL AND cv IS NOT NULL
+                          AND abs(av - CASE form WHEN 'product' THEN bv * cv ELSE bv + cv END) > greatest(0.011, abs(av) * 0.000001)) AS violations
+  FROM rows3 GROUP BY ALL)
+SELECT true AS applicable, NULL::VARCHAR AS reason, f.rows, f.truncated,
+       row_number() OVER (ORDER BY ai, bi, ci2, CASE form WHEN 'product' THEN 0 ELSE 1 END) AS seq,
+       target, form, operand_1, operand_2, support, violations,
+       CASE WHEN support = 0 THEN NULL ELSE 1 - violations / support::DOUBLE END AS match_rate
+FROM measured, facts f WHERE f.numeric_columns >= 3
+UNION ALL
+SELECT true, NULL, f.rows, f.truncated, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+FROM facts f WHERE f.numeric_columns >= 3 AND NOT EXISTS (SELECT 1 FROM measured)
+UNION ALL
+SELECT false, 'fewer than three numeric columns', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+FROM facts f WHERE f.numeric_columns < 3
+ORDER BY seq;
+
+--===------------------------------------------------------------------===--
+-- grounding_collisions(dataset): metrics that are the same thing twice.
+-- Two kinds: groundings whose SQL is the same statement once parsed, case
+-- and spacing aside, under different aspects; and groundings whose monthly series agree over every
+-- month though their SQL differs. The series pass reads each grounding's
+-- view with the kit's convention, period and value, folded by the
+-- grounding's behavior: a flow summed, a stock as the last value of the
+-- month. No groundings is one row with groundings 0.
+--===------------------------------------------------------------------===--
+CREATE OR REPLACE MACRO grounding_collisions(ds) AS TABLE
+WITH slots AS (
+  SELECT g.aspect, g.subject, g.body, g.actor_kind,
+         row_number() OVER (PARTITION BY g.aspect, g.subject ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 ELSE 1 END, g.seq DESC) AS rk
+  FROM glossql.glossary g JOIN glossql.aspects a ON a.name = g.aspect
+  WHERE g.dataset = ds AND a.kind = 'QUERY' AND json_extract_string(g.body, '$.sql') IS NOT NULL
+    AND json_extract(a.schema, '$."x-plan-of"') IS NULL),
+groundings AS (
+  SELECT aspect, subject, json_extract_string(body, '$.sql') AS sql,
+         coalesce(json_extract_string(body, '$.behavior'), 'flow') AS verb
+  FROM slots WHERE rk = 1),
+canon AS (
+  SELECT aspect, subject, sql, verb,
+         lower(coalesce(regexp_replace(json_serialize_sql(sql)::VARCHAR, '"query_location(_length)?":\d+,?', '', 'g'),
+                        regexp_replace(trim(sql), '\s+', ' ', 'g'))) AS canon
+  FROM groundings),
+sql_hits AS (
+  SELECT canon, list(DISTINCT aspect ORDER BY aspect) AS aspects, list(DISTINCT subject ORDER BY subject) AS subjects,
+         min(sql) AS sql, count(DISTINCT aspect) AS n
+  FROM canon GROUP BY canon HAVING count(DISTINCT aspect) >= 2),
+vcells AS (SELECT * FROM dataset_cells(ds, true) WHERE "table" IN (SELECT aspect FROM groundings)),
+periods AS (
+  SELECT "table", min(ci) AS pci FROM vcells WHERE column_type = 'DATE' OR column_type LIKE 'TIMESTAMP%' GROUP BY "table"),
+series AS (
+  SELECT v."table" AS aspect, date_trunc('month', p.val::TIMESTAMP) AS month,
+         CASE g.verb WHEN 'stock' THEN arg_max(TRY_CAST(v.val AS DOUBLE), p.val::TIMESTAMP) ELSE sum(TRY_CAST(v.val AS DOUBLE)) END AS value,
+         bool_or(v.val IS NULL) AS has_null
+  FROM vcells v JOIN periods pp ON pp."table" = v."table"
+  JOIN vcells p ON p."table" = v."table" AND p.rn = v.rn AND p.ci = pp.pci
+  JOIN groundings g ON g.aspect = v."table"
+  WHERE v."column" = 'value' AND p.val IS NOT NULL
+  GROUP BY v."table", date_trunc('month', p.val::TIMESTAMP), g.verb),
+prints AS (
+  SELECT aspect, string_agg(strftime(month, '%Y-%m') || '=' || round(value, 2)::VARCHAR, ';' ORDER BY month) AS fingerprint,
+         count(*) AS months
+  FROM series GROUP BY aspect HAVING NOT bool_or(has_null)),
+series_hits AS (
+  SELECT fingerprint, list(DISTINCT p.aspect ORDER BY p.aspect) AS aspects,
+         list(DISTINCT c.subject ORDER BY c.subject) AS subjects, max(months) AS months
+  FROM prints p JOIN canon c USING (aspect)
+  GROUP BY fingerprint HAVING count(DISTINCT p.aspect) >= 2 AND count(DISTINCT c.canon) >= 2),
+hits AS (
+  SELECT 0 AS phase, 'sql' AS kind, sql, NULL::BIGINT AS months, aspects, subjects FROM sql_hits
+  UNION ALL
+  SELECT 1, 'served_series', '', months, aspects, subjects FROM series_hits)
+SELECT (SELECT count(*) FROM groundings) AS groundings,
+       row_number() OVER (ORDER BY phase, aspects[1]) AS seq, kind, sql, months, aspects, subjects
+FROM hits
+UNION ALL
+SELECT (SELECT count(*) FROM groundings), NULL, NULL, NULL, NULL, NULL, NULL
+WHERE NOT EXISTS (SELECT 1 FROM hits)
+ORDER BY seq;
+
+--===------------------------------------------------------------------===--
+-- The aspects each screen lands, and the functions that land them. A
+-- function reads its screen, keeps what crosses its line, and shapes the
+-- value the aspect's schema requires. Each is FOR GLOBAL: any dataset.
+--===------------------------------------------------------------------===--
+
+DECLARE ASPECT hierarchy_candidates WITH $${
+  "type": "object", "required": ["applicable"],
+  "properties": {"applicable": {"type": "boolean"}, "rows": {"type": "integer"},
+                 "candidates": {"type": "array", "items": {"type": "object",
+                   "properties": {"from": {"type": "string"}, "to": {"type": "string"},
+                                  "g3": {"type": "number"}, "lambda": {"type": "number"},
+                                  "kind": {"type": "string", "enum": ["edge", "alias"]}}}}}
+}$$ AS MEASUREMENT ON TABLE;
+
+DECLARE FUNCTION detect_hierarchies FOR GLOBAL AS $$
+  SELECT bool_and(applicable) AS applicable, min(reason) AS reason,
+         CASE WHEN bool_and(applicable) THEN max(rows) END AS rows,
+         CASE WHEN bool_and(applicable) THEN coalesce(list({
+           'from': from_col, 'to': to_col, 'distinct_from': distinct_from, 'distinct_to': distinct_to,
+           'pair_groups': pair_groups, 'g3': g3, 'lambda': gk_lambda, 'rows_per_value': rows_per_value,
+           'kind': CASE WHEN g3 <= 0.01 AND g3_reverse <= 0.01 THEN 'alias' ELSE 'edge' END
+         } ORDER BY seq) FILTER (WHERE g3 <= 0.05), []) END AS candidates
+  FROM hierarchy_candidates($subject)
+$$ RETURNS hierarchy_candidates;
+
+DECLARE ASPECT relationship_candidates WITH $${
+  "type": "object",
+  "properties": {"candidates": {"type": "array", "items": {"type": "object",
+                   "properties": {"from": {"type": "string"}, "to": {"type": "string"},
+                                  "cardinality": {"type": "string"}, "overlap": {"type": "number"}}}},
+                 "summary": {"type": "object"}}
+}$$ AS MEASUREMENT ON DATASET;
+
+DECLARE FUNCTION detect_relationships FOR GLOBAL AS $$
+  WITH c AS (
+    SELECT coalesce(list({
+      'from': from_col, 'to': to_col, 'cardinality': cardinality, 'overlap': overlap, 'matched': matched,
+      'orphans': orphans, 'from_distinct': from_distinct, 'to_distinct': to_distinct,
+      'to_unique': to_unique, 'to_temporal': to_temporal,
+      'key_columns': CASE WHEN kc_from IS NOT NULL THEN [{'from': kc_from, 'to': kc_to}] END
+    } ORDER BY CASE WHEN to_unique AND NOT to_temporal THEN 0 ELSE 1 END,
+               CASE cardinality WHEN 'many-to-one' THEN 0 ELSE 1 END,
+               overlap DESC, matched / to_distinct::DOUBLE DESC, seq)
+      FILTER (WHERE from_col IS NOT NULL), []) AS candidates
+    FROM relationship_candidates($subject))
+  SELECT {
+    'candidates': candidates,
+    'summary': {
+      'candidates': len(candidates),
+      'top': list_slice(candidates, 1, 16),
+      'note': 'top 16: clean keys first (unique target, not a date), then many-to-one, then overlap, then key coverage — every candidate reads back via GLOSSARY(dataset::relationship_candidates)'
+    }} AS result
+  FROM c
+$$ RETURNS relationship_candidates;
+
+DECLARE ASPECT relationship_coherence WITH $${
+  "type": "object", "required": ["applicable"],
+  "properties": {"applicable": {"type": "boolean"},
+                 "relationships": {"type": "array", "items": {"type": "object",
+                   "properties": {"relationship": {"type": "string"}, "filled": {"type": "integer"},
+                                  "orphans": {"type": "integer"}, "orphan_rate": {"type": "number"},
+                                  "temporal": {"type": "array", "items": {"type": "object",
+                                    "properties": {"child_column": {"type": "string"}, "parent_column": {"type": "string"},
+                                                   "joined": {"type": "integer"}, "precedes": {"type": "integer"},
+                                                   "precedes_rate": {"type": "number"}}}}}}}}
+}$$ AS MEASUREMENT ON DATASET;
+
+DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$
+  WITH r AS (
+    SELECT applicable, reason, seq, relationship, filled, orphans, orphan_rate,
+           coalesce(list({'child_column': child_column, 'parent_column': parent_column, 'joined': joined,
+                          'precedes': precedes, 'precedes_rate': precedes_rate} ORDER BY pair_seq)
+                    FILTER (WHERE child_column IS NOT NULL), []) AS temporal
+    FROM relationship_checks($subject)
+    GROUP BY applicable, reason, seq, relationship, filled, orphans, orphan_rate)
+  SELECT bool_and(applicable) AS applicable, min(reason) AS reason,
+         CASE WHEN bool_and(applicable) THEN coalesce(list({
+           'relationship': relationship, 'filled': filled, 'orphans': orphans, 'orphan_rate': orphan_rate, 'temporal': temporal
+         } ORDER BY seq) FILTER (WHERE relationship IS NOT NULL), []) END AS relationships
+  FROM r
+$$ RETURNS relationship_coherence;
+
+DECLARE ASPECT derivation_candidates WITH $${
+  "type": "object", "required": ["applicable"],
+  "properties": {"applicable": {"type": "boolean"}, "rows": {"type": "integer"}, "truncated": {"type": "boolean"},
+                 "candidates": {"type": "array", "items": {"type": "object",
+                   "properties": {"target": {"type": "string"}, "form": {"type": "string", "enum": ["product", "sum"]},
+                                  "operands": {"type": "array", "items": {"type": "string"}},
+                                  "support": {"type": "integer"}, "violations": {"type": "integer"},
+                                  "match_rate": {"type": "number"}}}}}
+}$$ AS MEASUREMENT ON TABLE;
+
+DECLARE FUNCTION detect_derivations FOR GLOBAL AS $$
+  SELECT bool_and(applicable) AS applicable, min(reason) AS reason,
+         CASE WHEN bool_and(applicable) THEN max(rows) END AS rows,
+         CASE WHEN bool_and(applicable) THEN coalesce(list({
+           'target': target, 'form': form, 'operands': [operand_1, operand_2],
+           'support': support, 'violations': violations, 'match_rate': match_rate
+         } ORDER BY match_rate DESC, seq) FILTER (WHERE match_rate >= 0.95 AND support >= 20), []) END AS candidates,
+         CASE WHEN bool_and(applicable) THEN bool_or(truncated) END AS truncated
+  FROM derivation_candidates($subject)
+$$ RETURNS derivation_candidates;
+
+DECLARE ASPECT grounding_collisions WITH $${
+  "type": "object", "required": ["applicable"],
+  "properties": {"applicable": {"type": "boolean"}, "groundings": {"type": "integer"},
+                 "collisions": {"type": "array", "items": {"type": "object",
+                   "properties": {"sql": {"type": "string"},
+                                  "aspects": {"type": "array", "items": {"type": "string"}},
+                                  "subjects": {"type": "array", "items": {"type": "string"}}}}}}
+}$$ AS MEASUREMENT ON DATASET;
+
+DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$
+  SELECT max(groundings) > 0 AS applicable, max(groundings) AS groundings,
+         coalesce(list({'kind': kind, 'sql': sql, 'months': months, 'aspects': aspects, 'subjects': subjects}
+                       ORDER BY seq) FILTER (WHERE kind IS NOT NULL), []) AS collisions
+  FROM grounding_collisions($subject)
+$$ RETURNS grounding_collisions;

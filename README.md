@@ -78,6 +78,7 @@ FROM gloss_kit('kits/kpi/kit.sql');           -- vocabulary, grounding schema, f
 | a detector | a stored SQL body ATTEST runs over the witness's `slots`, `$threshold` bound |
 | `$subject`, `$threshold`, the actor | DuckDB 2.0 session variables (`SET VARIABLE`); `gloss_actor` is the kind supersession keys on, `gloss_actor_id` the writer, and a gloss lands with both |
 | JSON Schema admission | `json_schema_check(schema, document)`, a scalar function over the yyjson DuckDB ships |
+| a dataset's cells | `dataset_cells(subject[, views])`: every scalar column of a dataset's tables, or of one table, as one relation (`table`, `column`, `ci`, `column_type`, `rn`, `val`), generated at bind like `subject_column`; a screen that reads a whole dataset is SQL over it (`kits/quality/`) |
 | a grounding | a view in the dataset's schema; the body meets the grounding contract (`sql` or `stopped`, `assumptions` disclosed), then every grounding schema a kit declared, an aspect flavored `x-kind: grounding` |
 | a kit | a script of declarations; `gloss_kit(path)` runs it statement by statement on a second connection and serves one row each; the path is anything DuckDB's file system opens, a URL included once `httpfs` is loaded |
 | the store | `glossql_<relation>` tables in the lake's metadata catalog, beside the `ducklake_*` tables; the columns are the extension's own, sharpened to what the reads need, with the glossql engine's record as the teacher: settings and conditions as JSON, `dataset` on a gloss and a relationship, `mode` on an import, a supersession key per declaration relation; history is rows ordered by `seq`, the reads collapse; `ws.glossql.<relation>` reads each as a typed view |
@@ -85,7 +86,8 @@ FROM gloss_kit('kits/kpi/kit.sql');           -- vocabulary, grounding schema, f
 Source: `src/gloss_grammar.cpp` (rules and transforms), `src/gloss_store.cpp`
 (the store, admission, the reads), `src/gloss_runner.cpp` (statements that
 run SQL, on a second connection, and the kit loader), `src/gloss_schema.cpp`
-(the validator), `src/gloss_lineage.cpp` (the plan walk). Kits: `kits/README.md`; the KPI kit's words: `kits/kpi/SKILL.md`.
+(the validator), `src/gloss_lineage.cpp` (the plan walk). Kits: `kits/README.md`; the KPI kit's words: `kits/kpi/SKILL.md`; the
+quality kit's screens: `kits/quality/SKILL.md`.
 
 One departure from SPEC §5.2, proposed back to it: the fixed grounding
 schema is the grounding contract plus a grounding schema the kit declares,

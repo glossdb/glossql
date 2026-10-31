@@ -43,6 +43,7 @@
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/main/client_data.hpp"
 #include <set>
+#include <map>
 
 namespace duckdb {
 
@@ -993,6 +994,107 @@ static TableFunction SubjectColumnFunction() {
 }
 
 //===--------------------------------------------------------------------===//
+// dataset_cells(subject): every cell of a dataset's tables, or of one table, as
+// one relation — (table, column, ci, column_type, rn, val). The structure
+// screens a kit runs over a dataset are SQL over it: a self-join on rn puts a
+// row's columns side by side, a join on val matches values across columns.
+// val is text; column_type carries the stored type, so a screen matches values
+// within one type only; ci numbers the columns in table order, rn the rows of
+// each table. Nested columns stay out. Generated at bind, like subject_column
+//===--------------------------------------------------------------------===//
+
+static bool IsScalarType(const string &type) {
+	return !StringUtil::EndsWith(type, "[]") && !StringUtil::StartsWith(type, "STRUCT") &&
+	       !StringUtil::StartsWith(type, "MAP") && !StringUtil::StartsWith(type, "UNION") &&
+	       !StringUtil::StartsWith(type, "LIST");
+}
+
+static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	Inner inner(context);
+	auto subject = ResolveSubject(context, input.inputs[0].ToString());
+	auto parts = StringUtil::Split(subject, '.');
+	if (parts.empty() || parts.size() > 2) {
+		throw InvalidInputException("gloss: dataset_cells takes a dataset or dataset.table, got '%s'", subject);
+	}
+	auto lake = LakeName(context);
+	// a second argument true takes the dataset's views too — a grounding is one — each
+	// checked at bind and skipped when it does not plan, as a screen skips a
+	// grounding that fails
+	bool views = input.inputs.size() > 1 && !input.inputs[1].IsNull() && input.inputs[1].GetValue<bool>();
+	auto scope = " WHERE table_catalog = " + QuoteText(lake) + " AND table_schema = " + QuoteText(parts[0]);
+	auto filter = parts.size() == 2 ? " AND table_name = " + QuoteText(parts[1]) : string();
+	auto kinds = views ? "('BASE TABLE', 'VIEW')" : "('BASE TABLE')";
+	auto listed = inner.Scalar(
+	    "SELECT list(struct_pack(t := table_name, c := column_name, ty := data_type) ORDER BY table_name, ordinal_position)"
+	    " FROM information_schema.columns" +
+	    scope + " AND table_name IN (SELECT table_name FROM information_schema.tables" + scope + " AND table_type IN " +
+	    kinds + ")" + filter);
+	const string empty = "SELECT NULL::VARCHAR AS \"table\", NULL::VARCHAR AS \"column\", NULL::BIGINT AS ci,"
+	                     " NULL::VARCHAR AS column_type, NULL::BIGINT AS rn, NULL::VARCHAR AS val WHERE false";
+	if (listed.IsNull()) {
+		return make_uniq<SubqueryRef>(ParseSelect(empty));
+	}
+	// the columns per table, in the order listed
+	vector<string> tables;
+	std::map<string, vector<pair<string, string>>> columns;
+	for (auto &entry : ListValue::GetChildren(listed)) {
+		auto &fields = StructValue::GetChildren(entry);
+		auto table = fields[0].ToString();
+		if (columns.find(table) == columns.end()) {
+			tables.push_back(table);
+		}
+		columns[table].emplace_back(fields[1].ToString(), fields[2].ToString());
+	}
+	string sql;
+	idx_t ci = 0;
+	for (auto &table : tables) {
+		if (views) {
+			try {
+				inner.Run("SELECT * FROM " + inner.Table(parts[0], table) + " LIMIT 0");
+			} catch (std::exception &) {
+				continue;
+			}
+		}
+		string select = "SELECT row_number() OVER () AS rn";
+		string names;
+		string meta;
+		for (auto &column : columns[table]) {
+			if (!IsScalarType(column.second)) {
+				continue;
+			}
+			auto name = QuoteName(column.first);
+			select += ", " + name + "::VARCHAR AS " + name;
+			names += (names.empty() ? "" : ", ") + name;
+			meta += (meta.empty() ? "" : ", ") + string("(") + QuoteText(column.first) + ", " + to_string(ci) + ", " +
+			        QuoteText(column.second) + ")";
+			ci++;
+		}
+		if (names.empty()) {
+			continue;
+		}
+		sql += (sql.empty() ? "" : " UNION ALL ") + string("SELECT ") + QuoteText(table) +
+		       " AS \"table\", u.\"column\", m.ci, m.column_type, u.rn, u.val FROM (FROM (" + select + " FROM " +
+		       inner.Table(parts[0], table) + ") UNPIVOT INCLUDE NULLS (val FOR \"column\" IN (" + names +
+		       "))) u JOIN (VALUES " + meta + ") m(\"column\", ci, column_type) USING (\"column\")";
+	}
+	if (sql.empty()) {
+		return make_uniq<SubqueryRef>(ParseSelect(empty));
+	}
+	return make_uniq<SubqueryRef>(ParseSelect(sql));
+}
+
+static TableFunctionSet DatasetCellsFunctions() {
+	TableFunctionSet set("dataset_cells");
+	TableFunction tables("dataset_cells", {LogicalType::VARCHAR}, nullptr);
+	tables.bind_replace = DatasetCellsBindReplace;
+	set.AddFunction(tables);
+	TableFunction with_views("dataset_cells", {LogicalType::VARCHAR, LogicalType::BOOLEAN}, nullptr);
+	with_views.bind_replace = DatasetCellsBindReplace;
+	set.AddFunction(with_views);
+	return set;
+}
+
+//===--------------------------------------------------------------------===//
 // Registration
 //===--------------------------------------------------------------------===//
 
@@ -1129,6 +1231,7 @@ void RegisterGlossRunner(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossExtractFunction());
 	loader.RegisterFunction(GlossSelectOrExtractFunction());
 	loader.RegisterFunction(SubjectColumnFunction());
+	loader.RegisterFunction(DatasetCellsFunctions());
 }
 
 } // namespace duckdb

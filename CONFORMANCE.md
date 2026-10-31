@@ -96,8 +96,9 @@ the reads need: a declaration's SET pairs are one JSON `settings`, an
 aspect's WHEN one JSON `condition`, a gloss and a relationship carry their
 `dataset`, an import its `mode`, every row its `seq` and a timestamp.
 `gloss_kit(path)` loads a kit and records it in `glossql.kits`.
-`json_schema_check(schema, document)` and `subject_column(subject)` are
-plain functions. `gloss_lineage(sql)` serves the derivation of each
+`json_schema_check(schema, document)`, `subject_column(subject)` and
+`dataset_cells(subject[, views])`, a dataset's or a table's cells as one
+relation, are plain functions. `gloss_lineage(sql)` serves the derivation of each
 column of a SELECT as the session would plan it, a leaf being the scan,
 the column and its type; an imports row carries the same for its
 landing as `lineage`, so the row-to-row diff is the drift record. A measurement is a table macro any SQL may call, its one
