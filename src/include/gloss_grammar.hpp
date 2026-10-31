@@ -72,6 +72,20 @@ string ResolveSubject(ClientContext &context, const string &subject);
 //! counts as a table, so its columns are subjects like a table's); null when
 //! neither stands
 optional_ptr<CatalogEntry> RelationEntry(ClientContext &context, const string &schema, const string &table);
+//! One column of a dataset's relation, as gloss_columns serves it
+struct RelationColumn {
+	string table;
+	string column;
+	string type;
+	idx_t ordinal;
+	bool view;
+};
+//! Every column of a dataset's tables, and of its views where `views`, by
+//! relation name then position; one table's where `table` names it. A view
+//! is bound here for its columns and left out when it does not bind. The
+//! catalog is walked by name: no catalog-wide scan, so no view outside the
+//! dataset is bound for it (gloss_store.cpp)
+vector<RelationColumn> DatasetColumns(ClientContext &context, const string &dataset, const string &table, bool views);
 //! Double-quotes a name for SQL text
 string QuoteName(const string &name);
 //! Single-quotes a string for SQL text

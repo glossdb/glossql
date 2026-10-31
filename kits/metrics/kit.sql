@@ -75,9 +75,8 @@ aspects AS (
     SELECT name, kind, schema, row_number() OVER (PARTITION BY name ORDER BY seq DESC) AS rn
     FROM glossql.aspects) WHERE rn = 1 AND kind = 'QUERY'),
 views AS (
-  SELECT t.table_name AS metric FROM information_schema.tables t, ds
-  WHERE t.table_catalog = current_database() AND t.table_schema = ds.dataset AND t.table_type = 'VIEW'
-    AND t.table_name IN (SELECT name FROM aspects)),
+  SELECT DISTINCT c.table_name AS metric FROM gloss_columns(current_schema()) c
+  WHERE c.table_type = 'VIEW' AND c.table_name IN (SELECT name FROM aspects)),
 bodies AS (
   SELECT aspect AS metric, body FROM (
     SELECT g.aspect, g.body, row_number() OVER (PARTITION BY g.aspect ORDER BY g.seq DESC) AS rn
@@ -85,9 +84,8 @@ bodies AS (
     WHERE g.dataset = ds.dataset AND g.subject = ds.dataset AND g.aspect IN (SELECT name FROM aspects)) WHERE rn = 1),
 cols AS (
   SELECT c.table_name AS metric, c.column_name AS col, c.ordinal_position AS pos
-  FROM information_schema.columns c, ds
-  WHERE c.table_catalog = current_database() AND c.table_schema = ds.dataset
-    AND c.table_name IN (SELECT metric FROM views)),
+  FROM gloss_columns(current_schema()) c
+  WHERE c.table_name IN (SELECT metric FROM views)),
 slots AS MATERIALIZED (
   SELECT split_part(subject, '.', 2) AS metric, split_part(subject, '.', 3) AS col, aspect, value, state
   FROM gloss_glossary(current_schema(), NULL, false)
@@ -385,9 +383,8 @@ metrics_read_tables AS (
         FROM gloss_views_lineage(current_schema()))),
 metrics_unread AS (
   SELECT nullif(string_agg(t.table_name, ', ' ORDER BY t.table_name), '') AS tables
-  FROM information_schema.tables t, ds
-  WHERE t.table_catalog = current_database() AND t.table_schema = ds.dataset AND t.table_type = 'BASE TABLE'
-    AND t.table_name NOT IN (SELECT table_name FROM metrics_read_tables))
+  FROM (SELECT DISTINCT table_name FROM gloss_columns(current_schema(), false)) t
+  WHERE t.table_name NOT IN (SELECT table_name FROM metrics_read_tables))
 $ctes$ AS ctes, $arms$
 SELECT 'metrics' AS surface, 1 AS step, 'next' AS state, 'GLOSS definitions' AS act,
        'claim ' || a.name || ' for ' || ds.dataset AS say,

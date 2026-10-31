@@ -20,10 +20,12 @@
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/function/pragma_function.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/client_config.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/client_context_state.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -32,6 +34,9 @@
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
+
+#include <algorithm>
+#include <functional>
 
 namespace duckdb {
 
@@ -107,6 +112,55 @@ static string ColumnOf(ClientContext &context, CatalogEntry &entry, const string
 		}
 	}
 	return string();
+}
+
+vector<RelationColumn> DatasetColumns(ClientContext &context, const string &dataset, const string &table, bool views) {
+	vector<RelationColumn> result;
+	auto &catalog = Catalog::GetCatalog(context, Identifier(LakeName(context)));
+	auto schema = catalog.GetSchema(context, Identifier(dataset), OnEntryNotFound::RETURN_NULL);
+	if (!schema) {
+		return result;
+	}
+	vector<std::reference_wrapper<CatalogEntry>> relations;
+	schema->Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+		if (table.empty() || StringUtil::CIEquals(entry.name.GetIdentifierName(), table)) {
+			relations.push_back(entry);
+		}
+	});
+	std::sort(relations.begin(), relations.end(),
+	          [](const std::reference_wrapper<CatalogEntry> &a, const std::reference_wrapper<CatalogEntry> &b) {
+		          return a.get().name.GetIdentifierName() < b.get().name.GetIdentifierName();
+	          });
+	for (auto &relation : relations) {
+		auto &entry = relation.get();
+		auto name = entry.name.GetIdentifierName();
+		idx_t ordinal = 0;
+		if (entry.type == CatalogType::VIEW_ENTRY) {
+			if (!views) {
+				continue;
+			}
+			auto &view = entry.Cast<ViewCatalogEntry>();
+			shared_ptr<ViewColumnInfo> bound;
+			try {
+				view.BindView(context);
+				bound = view.GetColumnInfo();
+			} catch (std::exception &) {
+				continue;
+			}
+			for (idx_t i = 0; bound && i < bound->names.size(); i++) {
+				auto column = (i < view.aliases.size() ? view.aliases[i] : bound->names[i]).GetIdentifierName();
+				result.push_back({name, column, bound->types[i].ToString(), ++ordinal, true});
+			}
+			continue;
+		}
+		if (entry.type != CatalogType::TABLE_ENTRY) {
+			continue;
+		}
+		for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
+			result.push_back({name, column.Name().GetIdentifierName(), column.Type().ToString(), ++ordinal, false});
+		}
+	}
+	return result;
 }
 
 static bool TableExists(ClientContext &context, const string &schema, const string &table) {
@@ -575,19 +629,12 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 			                            StringUtil::Join(aspect.grains, ", "), subject, StringUtil::Lower(grain));
 		}
 	}
-	auto lake = " WHERE table_catalog = " + QuoteText(inner.ws.lake);
-	if (!pair && parts.size() == 2 && HasGrain(aspect, "TABLE")) {
-		auto landed = inner.Scalar("SELECT count(*) FROM information_schema.tables" + lake + " AND table_schema = " +
-		                           QuoteText(parts[0]) + " AND table_name = " + QuoteText(parts[1]));
-		if (landed.GetValue<int64_t>() == 0) {
-			throw InvalidInputException("gloss: %s names no table of %s", subject, parts[0]);
-		}
+	if (!pair && parts.size() == 2 && HasGrain(aspect, "TABLE") && !RelationEntry(context, parts[0], parts[1])) {
+		throw InvalidInputException("gloss: %s names no table of %s", subject, parts[0]);
 	}
 	if (!pair && parts.size() == 3 && HasGrain(aspect, "COLUMN")) {
-		auto landed = inner.Scalar(
-		    "SELECT count(*) FROM information_schema.columns" + lake + " AND table_schema = " + QuoteText(parts[0]) +
-		    " AND table_name = " + QuoteText(parts[1]) + " AND column_name = " + QuoteText(parts[2]));
-		if (landed.GetValue<int64_t>() == 0) {
+		auto entry = RelationEntry(context, parts[0], parts[1]);
+		if (!entry || ColumnOf(context, *entry, parts[2]).empty()) {
 			throw InvalidInputException("gloss: %s names no column of %s.%s", subject, parts[0], parts[1]);
 		}
 	}
@@ -621,15 +668,13 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 
 //! A relationship endpoint is a column, or a column tuple, of a landed table
 //! (SPEC §4): naming a table or column the dataset does not have is refused
-static void AdmitEndpoint(Inner &inner, const string &endpoint) {
+static void AdmitEndpoint(ClientContext &context, const string &endpoint) {
 	auto parts = StringUtil::Split(endpoint, '.');
 	if (parts.size() != 3) {
 		throw InvalidInputException("gloss: a relationship endpoint is [dataset.]table.key, not %s", endpoint);
 	}
-	auto lake = " WHERE table_catalog = " + QuoteText(inner.ws.lake);
-	auto landed = inner.Scalar("SELECT count(*) FROM information_schema.tables" + lake + " AND table_schema = " +
-	                           QuoteText(parts[0]) + " AND table_name = " + QuoteText(parts[1]));
-	if (landed.GetValue<int64_t>() == 0) {
+	auto entry = RelationEntry(context, parts[0], parts[1]);
+	if (!entry) {
 		throw InvalidInputException("gloss: %s names no table of %s", endpoint, parts[0]);
 	}
 	vector<string> columns;
@@ -640,10 +685,7 @@ static void AdmitEndpoint(Inner &inner, const string &endpoint) {
 		columns.push_back(key);
 	}
 	for (auto &column : columns) {
-		auto found = inner.Scalar(
-		    "SELECT count(*) FROM information_schema.columns" + lake + " AND table_schema = " + QuoteText(parts[0]) +
-		    " AND table_name = " + QuoteText(parts[1]) + " AND column_name = " + QuoteText(column));
-		if (found.GetValue<int64_t>() == 0) {
+		if (ColumnOf(context, *entry, column).empty()) {
 			throw InvalidInputException("gloss: %s names no column %s of %s.%s", endpoint, column, parts[0], parts[1]);
 		}
 	}
@@ -653,9 +695,9 @@ static void AdmitEndpoint(Inner &inner, const string &endpoint) {
 //! a view under the metric's name carrying the serving grounding's sql; a stop
 //! ends it
 static void Ground(Inner &inner, const string &dataset, const string &metric, const string &body) {
-	auto landed = inner.Scalar("SELECT count(*) FROM information_schema.tables WHERE table_catalog = " +
-	                           QuoteText(inner.ws.lake) + " AND table_schema = " + QuoteText(dataset) +
-	                           " AND table_name = " + QuoteText(metric) + " AND table_type = 'BASE TABLE'");
+	auto landed =
+	    inner.Scalar("SELECT count(*) FROM duckdb_tables() WHERE database_name = " + QuoteText(inner.ws.lake) +
+		             " AND schema_name = " + QuoteText(dataset) + " AND table_name = " + QuoteText(metric));
 	if (landed.GetValue<int64_t>() > 0) {
 		throw InvalidInputException("gloss: a grounding on a landed table's name is refused: %s.%s", dataset, metric);
 	}
@@ -669,9 +711,9 @@ static void Ground(Inner &inner, const string &dataset, const string &metric, co
 	auto standing = inner.Scalar("SELECT json_extract_string(body, '$.sql') FROM " + inner.Store("glossary") +
 	                             " WHERE dataset = " + QuoteText(dataset) + " AND subject = " + QuoteText(dataset) +
 	                             " AND aspect = " + QuoteText(metric) + " ORDER BY seq DESC LIMIT 1");
-	auto stands = inner.Scalar("SELECT count(*) FROM information_schema.tables WHERE table_catalog = " +
-	                           QuoteText(inner.ws.lake) + " AND table_schema = " + QuoteText(dataset) +
-	                           " AND table_name = " + QuoteText(metric) + " AND table_type = 'VIEW'");
+	auto stands = inner.Scalar("SELECT count(*) FROM " + inner.ws.Meta("view") + " v JOIN " + inner.ws.Meta("schema") +
+	                           " s ON s.schema_id = v.schema_id WHERE s.schema_name = " + QuoteText(dataset) +
+	                           " AND v.view_name = " + QuoteText(metric) + " AND v.end_snapshot IS NULL");
 	if (!standing.IsNull() && standing.ToString() == sql && stands.GetValue<int64_t>() > 0) {
 		return;
 	}
@@ -812,8 +854,8 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 	} else if (bind.table == "relationships") {
 		auto left = subject(bind.row[0]);
 		auto right = subject(bind.row[2]);
-		AdmitEndpoint(inner, left);
-		AdmitEndpoint(inner, right);
+		AdmitEndpoint(context, left);
+		AdmitEndpoint(context, right);
 		values = {QuoteText(DatasetOf(left)), QuoteText(left), bind.row[1].ToSQLString(), QuoteText(right)};
 		outcome = "declared relationship " + left + " " + bind.row[1].ToString() + " " + right;
 	} else if (bind.table == "sources") {
@@ -895,8 +937,12 @@ ParserExtension GlossParserExtension() {
 
 //===--------------------------------------------------------------------===//
 // The reads: GLOSSARY() and ATTEST(), planned as subqueries over the store
-// (bind_replace), so they compose with any SQL. The SQL is generated at bind
-// from the witnesses and detectors as they stand.
+// (bind_replace), so they compose with any SQL. A dataset's rows — the slots
+// with their staleness, the detectors' verdicts, the collapse — are computed
+// on the second connection from the witnesses and detectors as they stand,
+// once per connection and store version, and kept on the connection; a bind
+// serves them from there, narrowed to its subject and aspect in SQL. The
+// stale rule is planned once per version, not once per bind.
 //===--------------------------------------------------------------------===//
 
 struct ReadScope {
@@ -1201,15 +1247,14 @@ static string OwedSQL(const vector<WitnessRow> &witnesses, const ReadScope &scop
 		}
 		auto aspect = ", " + QuoteText(witness.aspect) + " AS aspect";
 		auto dataset = QuoteText(scope.dataset);
-		auto landed = " WHERE table_catalog = " + QuoteText(scope.ws.lake) + " AND table_schema = " + dataset;
+		auto columns = " FROM gloss_columns(" + dataset + ")";
 		vector<string> owed;
 		for (auto &grain : grains) {
 			if (grain == "COLUMN") {
-				owed.push_back("SELECT table_schema || '.' || table_name || '.' || column_name AS subject" + aspect +
-				               " FROM information_schema.columns" + landed);
+				owed.push_back("SELECT " + dataset + " || '.' || table_name || '.' || column_name AS subject" + aspect +
+				               columns);
 			} else if (grain == "TABLE") {
-				owed.push_back("SELECT table_schema || '.' || table_name AS subject" + aspect +
-				               " FROM information_schema.tables" + landed);
+				owed.push_back("SELECT DISTINCT " + dataset + " || '.' || table_name AS subject" + aspect + columns);
 			} else if (grain == "DATASET") {
 				owed.push_back("SELECT " + dataset + " AS subject" + aspect);
 			} else if (grain == "RELATIONSHIP") {
@@ -1233,9 +1278,8 @@ static string OwedSQL(const vector<WitnessRow> &witnesses, const ReadScope &scop
 			        QuoteText(witness.condition_value.ToString()) + ")";
 		} else if (!witness.condition_types.IsNull()) {
 			// owed only on columns of the named types: the base type, DECIMAL for DECIMAL(18,2) (SPEC §5.1)
-			part += " WHERE subject IN (SELECT table_schema || '.' || table_name || '.' || column_name"
-			        " FROM information_schema.columns" +
-			        landed + " AND upper(split_part(data_type, '(', 1)) IN (SELECT unnest(from_json(" +
+			part += " WHERE subject IN (SELECT " + dataset + " || '.' || table_name || '.' || column_name" + columns +
+			        " WHERE upper(split_part(column_type, '(', 1)) IN (SELECT unnest(from_json(" +
 			        QuoteText(witness.condition_types.ToString()) + ", '[\"VARCHAR\"]'))))";
 		}
 		parts.push_back(part);
@@ -1291,13 +1335,249 @@ static string RawSQL(const ReadScope &scope, const Value &aspect) {
 	       " w ON w.aspect = s.aspect ORDER BY s.subject, s.aspect, s.actor";
 }
 
+//===--------------------------------------------------------------------===//
+// gloss_columns(subject[, views]): every column of a dataset's tables, or of
+// one table, and of its views unless views is false — (table_name,
+// column_name, column_type, ordinal_position, table_type). What the reads,
+// the kits and the cells read a dataset's shape from: the dataset's own
+// relations by name, where information_schema binds every view of every
+// catalog for its columns
+//===--------------------------------------------------------------------===//
+
+struct ColumnsBindData : public FunctionData {
+	string dataset;
+	string table;
+	bool views = true;
+
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<ColumnsBindData>();
+		result->dataset = dataset;
+		result->table = table;
+		result->views = views;
+		return std::move(result);
+	}
+	bool Equals(const FunctionData &other) const override {
+		auto &o = other.Cast<ColumnsBindData>();
+		return dataset == o.dataset && table == o.table && views == o.views;
+	}
+};
+
+struct ColumnsState : public GlobalTableFunctionState {
+	vector<RelationColumn> rows;
+	idx_t next = 0;
+};
+
+static unique_ptr<FunctionData> ColumnsBind(ClientContext &context, TableFunctionBindInput &input,
+                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto subject = ResolveSubject(context, input.inputs[0].ToString());
+	auto parts = StringUtil::Split(subject, '.');
+	if (parts.empty() || parts.size() > 2) {
+		throw InvalidInputException("gloss: gloss_columns takes a dataset or dataset.table, got '%s'", subject);
+	}
+	auto result = make_uniq<ColumnsBindData>();
+	result->dataset = parts[0];
+	result->table = parts.size() == 2 ? parts[1] : string();
+	result->views = input.inputs.size() < 2 || input.inputs[1].IsNull() || input.inputs[1].GetValue<bool>();
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT,
+	                LogicalType::VARCHAR};
+	names = {Identifier("table_name"), Identifier("column_name"), Identifier("column_type"),
+	         Identifier("ordinal_position"), Identifier("table_type")};
+	return std::move(result);
+}
+
+static unique_ptr<GlobalTableFunctionState> ColumnsInit(ClientContext &context, TableFunctionInitInput &input) {
+	auto &bind = input.bind_data->Cast<ColumnsBindData>();
+	auto state = make_uniq<ColumnsState>();
+	state->rows = DatasetColumns(context, bind.dataset, bind.table, bind.views);
+	return std::move(state);
+}
+
+static void ColumnsExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &state = data.global_state->Cast<ColumnsState>();
+	idx_t count = 0;
+	while (state.next < state.rows.size() && count < STANDARD_VECTOR_SIZE) {
+		auto &row = state.rows[state.next++];
+		output.data[0].Append(Value(row.table));
+		output.data[1].Append(Value(row.column));
+		output.data[2].Append(Value(row.type));
+		output.data[3].Append(Value::BIGINT(NumericCast<int64_t>(row.ordinal)));
+		output.data[4].Append(Value(row.view ? "VIEW" : "BASE TABLE"));
+		count++;
+	}
+	output.CheckCardinality(count);
+}
+
+static TableFunctionSet GlossColumnsFunctions() {
+	TableFunctionSet set("gloss_columns");
+	set.AddFunction(TableFunction("gloss_columns", {LogicalType::VARCHAR}, ColumnsExec, ColumnsBind, ColumnsInit));
+	set.AddFunction(TableFunction("gloss_columns", {LogicalType::VARCHAR, LogicalType::BOOLEAN}, ColumnsExec,
+	                              ColumnsBind, ColumnsInit));
+	return set;
+}
+
+//===--------------------------------------------------------------------===//
+// The read cache: one connection's reads, by kind and dataset, each with the
+// store version it was computed at. Per connection (ClientContextState): the
+// rows go when the connection does; a write on any connection moves the
+// version, which every bind compares first.
+//===--------------------------------------------------------------------===//
+
+struct CachedRead {
+	string version;
+	vector<Identifier> names;
+	vector<LogicalType> types;
+	shared_ptr<ColumnDataCollection> rows;
+};
+
+struct ReadCache : public ClientContextState {
+	unordered_map<string, CachedRead> reads;
+	//! this connection is computing a read: a gloss read bound meanwhile is the
+	//! shape of a dataset view gloss_columns binds, never a read run, and binds
+	//! as an empty relation of the read's columns — the fill never recurses
+	bool filling = false;
+
+	static ReadCache &Of(ClientContext &context) {
+		return *context.registered_state->GetOrCreate<ReadCache>("gloss_read_cache");
+	}
+	static string Key(const string &kind, const string &dataset) {
+		return kind + "|" + dataset;
+	}
+};
+
+//! The store's version: the lake's current snapshot and every store relation's
+//! highest seq — everything a read's rows depend on, through the stale rule,
+//! the legs, the witnesses and the detectors
+static string StoreVersionSQL(const Workspace &ws) {
+	string sql = "SELECT (SELECT id FROM ducklake_current_snapshot(" + QuoteText(ws.lake) + "))::VARCHAR";
+	for (auto &relation : STORE_RELATIONS) {
+		sql += " || ':' || (SELECT coalesce(max(seq), 0) FROM " + ws.Store(relation.name) + ")::VARCHAR";
+	}
+	return sql;
+}
+
+//! The whole dataset a scope lies in: what a cache entry holds, and what a
+//! detector judges over, whatever the read's subject
+static ReadScope WholeOf(const ReadScope &scope) {
+	auto whole = scope;
+	whole.whole = true;
+	whole.filter = "(dataset = " + QuoteText(scope.dataset) + " OR " + SourceGrainSQL(scope.ws) + ")";
+	return whole;
+}
+
+//! One kind of read over a whole dataset: computed on the inner connection
+//! when the store's version moved since it was, else as kept
+static CachedRead &Cached(ClientContext &context, Inner &inner, const string &kind, const ReadScope &whole,
+                          const std::function<string()> &sql) {
+	auto &read = ReadCache::Of(context).reads[ReadCache::Key(kind, whole.dataset)];
+	ReadCache::Of(*inner.con.context).filling = true;
+	auto version = inner.Scalar(StoreVersionSQL(inner.ws)).ToString();
+	if (read.rows && read.version == version) {
+		return read;
+	}
+	auto result = inner.Run(sql());
+	auto rows = make_shared_ptr<ColumnDataCollection>(Allocator::DefaultAllocator(), result->GetTypes());
+	while (auto chunk = result->Fetch()) {
+		rows->Append(*chunk);
+	}
+	read.names = result->GetNames();
+	read.types = result->GetTypes();
+	read.rows = std::move(rows);
+	read.version = version;
+	return read;
+}
+
+//! gloss_cached(kind, dataset): the kept rows of a read, scanned; the read's
+//! bind computed them on this connection first
+struct CachedBindData : public FunctionData {
+	string key;
+
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<CachedBindData>();
+		result->key = key;
+		return std::move(result);
+	}
+	bool Equals(const FunctionData &other) const override {
+		return key == other.Cast<CachedBindData>().key;
+	}
+};
+
+struct CachedScanState : public GlobalTableFunctionState {
+	shared_ptr<ColumnDataCollection> rows;
+	ColumnDataScanState scan;
+};
+
+static unique_ptr<FunctionData> CachedBind(ClientContext &context, TableFunctionBindInput &input,
+                                           vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto key = ReadCache::Key(input.inputs[0].ToString(), input.inputs[1].ToString());
+	auto &reads = ReadCache::Of(context).reads;
+	auto entry = reads.find(key);
+	if (entry == reads.end() || !entry->second.rows) {
+		throw InvalidInputException("gloss_cached serves a read this connection computed; none stands for %s", key);
+	}
+	return_types = entry->second.types;
+	names = entry->second.names;
+	auto result = make_uniq<CachedBindData>();
+	result->key = key;
+	return std::move(result);
+}
+
+static unique_ptr<GlobalTableFunctionState> CachedInit(ClientContext &context, TableFunctionInitInput &input) {
+	auto &key = input.bind_data->Cast<CachedBindData>().key;
+	auto state = make_uniq<CachedScanState>();
+	state->rows = ReadCache::Of(context).reads.at(key).rows;
+	state->rows->InitializeScan(state->scan);
+	return std::move(state);
+}
+
+static void CachedExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &state = data.global_state->Cast<CachedScanState>();
+	state.rows->Scan(state.scan, output);
+}
+
+static TableFunction GlossCachedFunction() {
+	return TableFunction("gloss_cached", {LogicalType::VARCHAR, LogicalType::VARCHAR}, CachedExec, CachedBind,
+	                     CachedInit);
+}
+
+//! The columns of each kind of read, as the empty relation a bind serves while
+//! this connection fills a read
+static const char *const COLLAPSED_SHAPE = "subject VARCHAR, aspect VARCHAR, value JSON, band VARCHAR, score DOUBLE, "
+                                           "state VARCHAR";
+static const char *const RAW_SHAPE = "subject VARCHAR, aspect VARCHAR, kind VARCHAR, witness VARCHAR, actor VARCHAR, "
+                                     "body JSON, written_at TIMESTAMP, current BOOLEAN";
+static const char *const ATTEST_SHAPE = "subject VARCHAR, aspect VARCHAR, witness VARCHAR, band VARCHAR, "
+                                        "score DOUBLE, computed_at TIMESTAMP, current BOOLEAN, error VARCHAR";
+
+static unique_ptr<TableRef> Shape(const string &columns) {
+	vector<string> parts;
+	for (auto &column : StringUtil::Split(columns, ", ")) {
+		auto space = column.find(' ');
+		parts.push_back("NULL::" + column.substr(space + 1) + " AS " + column.substr(0, space));
+	}
+	return make_uniq<SubqueryRef>(ParseSelect("SELECT " + StringUtil::Join(parts, ", ") + " WHERE false"));
+}
+
+//! The narrowing a bind applies over the dataset's kept rows
+static string Narrowed(const string &kind, const ReadScope &scope, const Value &aspect, const string &order) {
+	return "SELECT * FROM gloss_cached(" + QuoteText(kind) + ", " + QuoteText(scope.dataset) + ") WHERE true" +
+	       (scope.whole ? string() : " AND " + scope.subjects) + AspectFilter(aspect) + " ORDER BY " + order;
+}
+
 static unique_ptr<TableRef> GlossGlossaryBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	bool all = input.inputs[2].GetValue<bool>();
+	if (ReadCache::Of(context).filling) {
+		return Shape(all ? RAW_SHAPE : COLLAPSED_SHAPE);
+	}
 	Inner inner(context);
 	auto scope = ScopeOf(context, inner, input.inputs[0]);
 	auto &aspect = input.inputs[1];
-	bool all = input.inputs[2].GetValue<bool>();
-	auto sql = all ? RawSQL(scope, aspect) : CollapsedSQL(inner, Witnesses(inner, aspect), scope, aspect);
-	return make_uniq<SubqueryRef>(ParseSelect(sql));
+	auto whole = WholeOf(scope);
+	auto kind = all ? "raw" : "collapsed";
+	Cached(context, inner, kind, whole, [&]() {
+		return all ? RawSQL(whole, Value()) : CollapsedSQL(inner, Witnesses(inner, Value()), whole, Value());
+	});
+	return make_uniq<SubqueryRef>(
+	    ParseSelect(Narrowed(kind, scope, aspect, all ? "subject, aspect, actor" : "subject, aspect")));
 }
 
 static TableFunction GlossGlossaryFunction() {
@@ -1308,13 +1588,18 @@ static TableFunction GlossGlossaryFunction() {
 }
 
 static unique_ptr<TableRef> GlossAttestBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	if (ReadCache::Of(context).filling) {
+		return Shape(ATTEST_SHAPE);
+	}
 	Inner inner(context);
 	auto scope = ScopeOf(context, inner, input.inputs[0]);
 	auto &aspect = input.inputs[1];
-	auto sql = "WITH " + string(HOISTED) + " AS MATERIALIZED (" + SlotsSQL(scope, "") + ") SELECT " +
-	           string(ATTEST_COLUMNS) + " FROM (" + VerdictsSQL(inner, Witnesses(inner, aspect), scope) +
-	           ") ORDER BY subject, aspect, witness";
-	return make_uniq<SubqueryRef>(ParseSelect(sql));
+	auto whole = WholeOf(scope);
+	Cached(context, inner, "attest", whole, [&]() {
+		return "WITH " + string(HOISTED) + " AS MATERIALIZED (" + SlotsSQL(whole, "") + ") SELECT " +
+		       string(ATTEST_COLUMNS) + " FROM (" + VerdictsSQL(inner, Witnesses(inner, Value()), whole) + ")";
+	});
+	return make_uniq<SubqueryRef>(ParseSelect(Narrowed("attest", scope, aspect, "subject, aspect, witness")));
 }
 
 static TableFunction GlossAttestFunction() {
@@ -1333,6 +1618,8 @@ void RegisterGlossStore(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossWriteFunctions());
 	loader.RegisterFunction(GlossGlossaryFunction());
 	loader.RegisterFunction(GlossAttestFunction());
+	loader.RegisterFunction(GlossCachedFunction());
+	loader.RegisterFunction(GlossColumnsFunctions());
 }
 
 } // namespace duckdb

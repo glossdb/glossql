@@ -65,7 +65,7 @@ FROM gloss_kit('kits/kpi/kit.sql');           -- vocabulary, grounding schema, f
 | glossql | DuckDB |
 |---|---|
 | statements (`DECLARE …`, `GLOSS`, `PROBE`, `IMPORT`) | rules prepended to `Statement`; each transform builds an `ExtensionStatement` whose plan is one table function |
-| `GLOSSARY()`, `ATTEST()` | rules prepended to `InnerTableRef`, transformed into table-function references whose `bind_replace` plans a subquery over the store |
+| `GLOSSARY()`, `ATTEST()` | rules prepended to `InnerTableRef`, transformed into table-function references whose `bind_replace` serves the dataset's rows, kept on the connection and computed again on the second connection when the store or the lake moved (`gloss_cached`), narrowed to the subject and aspect in SQL |
 | `SELECT f() FROM subject` (extraction) | the same rule shape as plain SQL; a custom terminal matcher marks the end of the statement, and the binder decides: an extraction when `f` is declared, the plain SQL it looks like otherwise |
 | the workspace | an attached DuckLake, one per connection (`SET VARIABLE gloss_workspace` picks among several) |
 | a dataset | a schema of the lake; `USE` is DuckDB's own; unprefixed subjects resolve against the connection's default schema |
@@ -79,6 +79,7 @@ FROM gloss_kit('kits/kpi/kit.sql');           -- vocabulary, grounding schema, f
 | `$subject`, `$threshold`, the actor | DuckDB 2.0 session variables (`SET VARIABLE`); `gloss_actor` is the kind supersession keys on, `gloss_actor_id` the writer, and a gloss lands with both |
 | JSON Schema admission | `json_schema_check(schema, document)`, a scalar function over the yyjson DuckDB ships |
 | a dataset's cells | `dataset_cells(subject[, views])`: every scalar column of a dataset's tables, or of one table, as one relation (`table`, `column`, `ci`, `column_type`, `rn`, `val`), generated at bind like `subject_column`; a screen that reads a whole dataset is SQL over it (`kits/quality/`) |
+| a dataset's shape | `gloss_columns(subject[, views])`: every column of a dataset's tables, or of one table, and of its views unless `views` is false (`table_name`, `column_name`, `column_type`, `ordinal_position`, `table_type`), the dataset's own relations walked by name — where `information_schema` binds every view of every catalog for its columns; what the reads' owed subjects, the cells and the kits read a dataset's shape from |
 | a grounding | a view in the dataset's schema; the body meets the grounding contract (`sql` or `stopped`, `assumptions` disclosed), then every grounding schema a kit declared, an aspect flavored `x-kind: grounding` |
 | a kit | a script of declarations; `gloss_kit(path)` runs it statement by statement on a second connection and serves one row each; the path is anything DuckDB's file system opens, a URL included once `httpfs` is loaded |
 | the store | `glossql_<relation>` tables in the lake's metadata catalog, beside the `ducklake_*` tables; the columns are the extension's own, sharpened to what the reads need, with the glossql engine's record as the teacher: settings and conditions as JSON, `dataset` on a gloss and a relationship, `mode` on an import, a supersession key per declaration relation; history is rows ordered by `seq`, the reads collapse; `ws.glossql.<relation>` reads each as a typed view |

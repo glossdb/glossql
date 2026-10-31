@@ -34,7 +34,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 |---|---|---|
 | subjects: dataset, table, column, pair path, tuple endpoints | holds | |
 | tables come from recipes | softened | any table of the schema is a subject, including one made by `CREATE TABLE` |
-| an endpoint names a landed column or the declaration is refused | holds | the table and every column of the key, in `information_schema`; views count |
+| an endpoint names a landed column or the declaration is refused | holds | the table and every column of the key, looked up in the catalog; views count |
 | relationships detected, verified, declared; no negative form | holds | a RELATIONSHIP gloss takes a declared pair path |
 
 ## §5 The glossary
