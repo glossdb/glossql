@@ -1,8 +1,9 @@
--- The futures kit: the worlds beside the actual — the walk's bands, the
--- forecast, the plan, the scenario's estimate — each what the model
--- service answers, landed as a measurement with its pin and reads, and
--- read back as SQL. Loaded after the metrics kit, whose series the
--- requests are built from. The service is named once for the instance
+-- The futures kit: the worlds beside the actual — the walk's bands and the
+-- forecast, each what the model service answers; the plan, judged against
+-- them — each landed as a measurement with its pin and reads, and read
+-- back as SQL, so that a door's next read judges from the record and
+-- never computes over the data. Loaded after the metrics kit, whose
+-- series the requests are built from. The service is named once for the instance
 -- (gloss_service_url, gloss_service_token); every call goes through
 -- glossql.service, one macro over gloss_service, so a suite stands in for
 -- the service by re-declaring the macro. The service owns its topic: the
@@ -551,7 +552,7 @@ UNION ALL SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM refus
 -- rows cover part of the period, no band; open: begun, no band covers the
 -- rest; ahead: not begun), covers (on the year row of a plan whose rows
 -- cover part of the year: how much), held_80, held_from, origin (the
--- forecast's). Computed at read, nothing recorded.
+-- forecast's). Computed at read; metric_plan lands it per plan.
 --===------------------------------------------------------------------===--
 
 CREATE OR REPLACE MACRO glossql.plan_points() AS TABLE
@@ -663,13 +664,99 @@ FROM banded
 ORDER BY plan, CASE grain WHEN 'year' THEN 0 ELSE 1 END, period;
 
 --===------------------------------------------------------------------===--
+-- metric_plan: the plan judged, as a measurement on the plan — the rows
+-- plan_points() serves for it as of the data, with the forecast run they
+-- were judged against (forecast_run, the newest metric_forecast
+-- measurement's seq, and its origin). Wanted on the plan's row until one
+-- stands; stale by the pin once the data or the record it read moves; the
+-- plan goal asks for it again once a newer forecast stands, which the pin
+-- does not see, measurements being no leg. plan_record(): the newest
+-- judgement per plan from the measurements alone, one row per point, the
+-- read a door's next arm takes; plan_points() stays the live read.
+--===------------------------------------------------------------------===--
+
+DECLARE ASPECT metric_plan WITH $${
+  "type": "object",
+  "properties": {
+    "plan": {"type": "string"},
+    "metric": {"type": ["string", "null"]},
+    "grain": {"type": ["string", "null"]},
+    "forecast_run": {"type": ["integer", "null"]},
+    "forecast_origin": {"type": ["string", "null"]},
+    "points": {"type": "array", "items": {"type": "object"}}
+  }
+}$$ AS MEASUREMENT ON TABLE;
+
+DECLARE FUNCTION metric_plan FOR GLOBAL AS $$
+  WITH pts AS (SELECT * FROM glossql.plan_points() WHERE plan = split_part($subject, '.', 2)),
+  own AS (SELECT metric, grain FROM glossql.plan_grains() WHERE plan = split_part($subject, '.', 2)),
+  run AS (SELECT max(seq) AS seq FROM glossql.measurements WHERE dataset = current_schema() AND function = 'metric_forecast')
+  SELECT split_part($subject, '.', 2) AS plan,
+         (SELECT any_value(metric) FROM own) AS metric,
+         (SELECT any_value(grain) FROM own) AS grain,
+         (SELECT seq FROM run) AS forecast_run,
+         (SELECT any_value(origin) FROM pts WHERE origin IS NOT NULL) AS forecast_origin,
+         (SELECT coalesce(list({'grain': grain, 'period': strftime(period, '%Y-%m-%d'), 'label': label, 'value': value,
+                                'actual': actual, 'variance': variance, 'low': low, 'expected': expected, 'high': high,
+                                'stands': stands, 'covers': covers, 'held_80': held_80, 'held_from': held_from}
+                               ORDER BY CASE grain WHEN 'year' THEN 0 ELSE 1 END, period), [])
+          FROM pts) AS points
+$$ RETURNS metric_plan;
+
+-- The gap is read by the witness's detector over the judgement's own
+-- voice: red where a banded period lies below or above the forecast's
+-- band, the score the share of banded periods that do, so that ATTEST()
+-- carries it and the brief counts it.
+DECLARE FUNCTION plan_gap FOR GLOBAL AS $$
+  SELECT subject,
+         CASE WHEN outside > 0 THEN 'red' ELSE 'green' END AS band,
+         CASE WHEN banded > 0 THEN outside / banded ELSE 0.0 END AS score
+  FROM (SELECT subject,
+               coalesce(len(list_filter(stands, lambda s: s IN ('below', 'above'))), 0)::DOUBLE AS outside,
+               coalesce(len(list_filter(stands, lambda s: s IN ('below', 'above', 'inside'))), 0)::DOUBLE AS banded
+        FROM (SELECT subject,
+                     list_transform(from_json(json_extract(body, '$.points'), '[{"stands": "VARCHAR"}]'), lambda p: p.stands) AS stands
+              FROM slots WHERE speaker = 'function'))
+$$;
+
+DECLARE WITNESS plan_w ON metric_plan DETECTOR plan_gap;
+
+CREATE OR REPLACE MACRO glossql.plan_record() AS TABLE
+WITH newest AS (
+  SELECT subject, value, computed_at FROM glossql.measurements
+  WHERE dataset = current_schema() AND function = 'metric_plan'
+  QUALIFY row_number() OVER (PARTITION BY subject ORDER BY seq DESC) = 1),
+judged AS (
+  SELECT json_extract_string(value, '$.plan') AS plan, json_extract_string(value, '$.metric') AS metric,
+         json_extract_string(value, '$.grain') AS plan_grain, json_extract(value, '$.forecast_run')::BIGINT AS forecast_run,
+         json_extract_string(value, '$.forecast_origin') AS forecast_origin, computed_at,
+         from_json(json_extract(value, '$.points'),
+           '[{"grain": "VARCHAR", "period": "VARCHAR", "label": "VARCHAR", "value": "DOUBLE", "actual": "DOUBLE", "variance": "DOUBLE",
+              "low": "DOUBLE", "expected": "DOUBLE", "high": "DOUBLE", "stands": "VARCHAR", "covers": "VARCHAR",
+              "held_80": "DOUBLE", "held_from": "VARCHAR"}]') AS points
+  FROM newest),
+pts AS (
+  SELECT plan, metric, plan_grain, forecast_run, forecast_origin, computed_at, unnest(points) AS p
+  FROM judged WHERE cardinality(points) > 0)
+SELECT plan, metric, plan_grain, forecast_run, forecast_origin, computed_at,
+       p.grain AS grain, p.period::TIMESTAMP AS period, p.label, p.value, p.actual, p.variance, p.low, p.expected, p.high,
+       p.stands, p.covers, p.held_80, p.held_from
+FROM pts
+UNION ALL
+SELECT plan, metric, plan_grain, forecast_run, forecast_origin, computed_at,
+       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+FROM judged WHERE coalesce(cardinality(points), 0) = 0
+ORDER BY plan, CASE grain WHEN 'year' THEN 0 ELSE 1 END, period;
+
+--===------------------------------------------------------------------===--
 -- The two goals this kit answers for a door's next read. bands: the walk
 -- stands and no band is red. plan: the plan served, the forecast at the
--- current origin, every gap judged. Served as CTEs and arms over the
--- relations the door reads once (ds, axes, owed, reds, bodies,
--- applicable); futures_red is the metric whose newest point the red
--- verdict scores, futures_gaps the plan years the forecast's band does
--- not hold.
+-- current origin, the plan judged against it, every gap judged by the
+-- human. Served as CTEs and arms over the relations the door reads once
+-- (ds, axes, owed, reds, bodies, applicable); every CTE reads the record,
+-- none the data: futures_red is the metric whose newest point the red
+-- verdict scores, futures_judged the plans' judgements as they stand,
+-- futures_gaps the plan years the forecast's band does not hold.
 --===------------------------------------------------------------------===--
 
 CREATE OR REPLACE MACRO glossql.routes_futures() AS TABLE
@@ -683,8 +770,17 @@ futures_plans AS (
   FROM (SELECT name, kind, schema FROM glossql.aspects QUALIFY row_number() OVER (PARTITION BY name ORDER BY seq DESC) = 1) a
   LEFT JOIN axes x ON x.metric = a.name
   WHERE a.kind = 'QUERY' AND json_extract_string(a.schema, '$.x-kind') = 'plan'),
+futures_forecast AS (
+  SELECT max(seq) AS run FROM glossql.measurements WHERE dataset = current_schema() AND function = 'metric_forecast'),
+futures_judged AS (
+  SELECT json_extract_string(m.value, '$.plan') AS plan, json_extract(m.value, '$.forecast_run')::BIGINT AS forecast_run,
+         coalesce(g.current, true) AS current
+  FROM (SELECT subject, value FROM glossql.measurements WHERE dataset = current_schema() AND function = 'metric_plan'
+        QUALIFY row_number() OVER (PARTITION BY subject ORDER BY seq DESC) = 1) m
+  LEFT JOIN (SELECT subject, current FROM gloss_glossary(current_schema(), NULL, true)
+             WHERE actor = 'function' AND aspect = 'metric_plan') g ON g.subject = m.subject),
 futures_gaps AS (
-  SELECT plan, metric, label, value, low, high, stands FROM glossql.plan_points()
+  SELECT plan, metric, label, value, low, high, stands FROM glossql.plan_record()
   WHERE grain = 'year' AND stands IN ('below', 'above')),
 futures_scenarios AS (
   SELECT a.name FROM (SELECT name, kind, schema FROM glossql.aspects QUALIFY row_number() OVER (PARTITION BY name ORDER BY seq DESC) = 1) a
@@ -778,7 +874,22 @@ SELECT 'plan', 6, 'next', 'metric_forecast', 'run the forecast again', o.why,
 FROM owed o CROSS JOIN ds
 WHERE o.kind = 're-measure' AND o.subject = 'metric_forecast' AND EXISTS (SELECT 1 FROM futures_plans WHERE applicable)
 UNION ALL
-SELECT 'plan', 7, 'next', 'GLOSS scenario',
+SELECT 'plan', 7, 'next', 'metric_plan',
+       'judge ' || p.plan,
+       p.plan || ' is served and nobody judged it against the actual and the forecast''s band: run the function over it, or the docket''s re-measure — the plan goal reads the judgement from the record',
+       'SELECT metric_plan() FROM ' || ds.dataset || '.' || p.plan, ''
+FROM futures_plans p CROSS JOIN ds
+WHERE p.applicable AND NOT EXISTS (SELECT 1 FROM futures_judged j WHERE j.plan = p.plan)
+UNION ALL
+SELECT 'plan', 8, 'next', 'metric_plan',
+       'judge ' || p.plan || ' again',
+       'the judgement of ' || p.plan || CASE WHEN NOT j.current THEN ' predates a change to what it read: run the function over it again, or the docket''s re-measure'
+                                             ELSE ' predates the newest forecast: run the function over it again' END,
+       'SELECT metric_plan() FROM ' || ds.dataset || '.' || p.plan, ''
+FROM futures_plans p JOIN futures_judged j USING (plan) CROSS JOIN ds CROSS JOIN futures_forecast f
+WHERE p.applicable AND (NOT j.current OR j.forecast_run IS DISTINCT FROM f.run)
+UNION ALL
+SELECT 'plan', 9, 'next', 'GLOSS scenario',
        'judge ' || g.plan || ' at ' || g.label || ': declare a scenario, or record the gap',
        g.plan || ' at ' || g.label || ' is ' || CAST(round(g.value, 2) AS VARCHAR)
          || ' and the forecast''s 80% band for ' || g.metric || ' runs ' || CAST(round(g.low, 2) AS VARCHAR) || ' to ' || CAST(round(g.high, 2) AS VARCHAR)
@@ -794,16 +905,16 @@ WHERE NOT EXISTS (SELECT 1 FROM futures_scenarios)
   AND NOT EXISTS (SELECT 1 FROM glossql.ruling_entries r WHERE r.dataset = ds.dataset AND r.aspect = g.plan AND r.key = 'plan-' || g.label)
   AND NOT EXISTS (SELECT 1 FROM glossql.open_questions q WHERE q.dataset = ds.dataset AND q.aspect = g.plan AND q.key = 'plan-' || g.label)
 UNION ALL
-SELECT 'plan', 8, 'blocked', '', '',
+SELECT 'plan', 10, 'blocked', '', '',
        g.plan || ' at ' || g.label || ' lies ' || g.stands || ' the forecast''s band and the question stands for the human', '', ''
 FROM futures_gaps g CROSS JOIN ds
 WHERE EXISTS (SELECT 1 FROM glossql.open_questions q WHERE q.dataset = ds.dataset AND q.aspect = g.plan AND q.key = 'plan-' || g.label)
 UNION ALL
-SELECT 'plan', 9, 'done', '', '',
+SELECT 'plan', 11, 'done', '', '',
        'the plan stands; the gap on ' || g.plan || ' at ' || g.label || ' carries the human''s ruling', '', ''
 FROM futures_gaps g CROSS JOIN ds
 WHERE EXISTS (SELECT 1 FROM glossql.ruling_entries r WHERE r.dataset = ds.dataset AND r.aspect = g.plan AND r.key = 'plan-' || g.label)
 UNION ALL
-SELECT 'plan', 10, 'done', '', '', 'every plan is served and no plan period lies outside the forecast''s band, or the gap carries a question or a ruling', '', ''
+SELECT 'plan', 12, 'done', '', '', 'every plan is served and judged, no plan period lies outside the forecast''s band, or the gap carries a question or a ruling', '', ''
 FROM ds
 $arms$ AS arms;

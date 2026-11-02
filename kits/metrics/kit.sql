@@ -70,7 +70,10 @@ CREATE OR REPLACE MACRO glossql.rung_default(g) AS
 -- read through the metric it names: its period and value are the columns
 -- named as that metric's, or period and value, its behaviour the metric's,
 -- its floor the grain its rows are booked against where the declaration
--- says so (x-covers); nothing is glossed on a plan's own columns.
+-- says so (x-covers); nothing is glossed on a plan's own columns. A served
+-- plan's row wants the judgement the futures kit measures on the plan
+-- (metric_plan over the plan) until one stands, as a metric's row wants
+-- the profile over its period column.
 --===------------------------------------------------------------------===--
 
 CREATE OR REPLACE MACRO glossql.metric_axes() AS TABLE
@@ -221,7 +224,12 @@ FROM judged
 UNION ALL
 SELECT metric, kind, plan_of, covers, stopped, reason IS NULL AS applicable, reason,
        period_column, value_column, numerator, denominator, NULL AS cadence, covers AS floor, NULL AS rung,
-       behavior, behavior_state, []::VARCHAR[], []::VARCHAR[], []::VARCHAR[], []::VARCHAR[], []::VARCHAR[], true
+       behavior, behavior_state, []::VARCHAR[], []::VARCHAR[], []::VARCHAR[], []::VARCHAR[],
+       CASE WHEN reason IS NULL AND NOT EXISTS (SELECT 1 FROM glossql.measurements m
+                                                WHERE m.dataset = current_schema() AND m.function = 'metric_plan'
+                                                  AND m.subject = current_schema() || '.' || judged_plans.metric)
+            THEN ['metric_plan over ' || current_schema() || '.' || metric] ELSE []::VARCHAR[] END,
+       true
 FROM judged_plans
 ORDER BY metric;
 

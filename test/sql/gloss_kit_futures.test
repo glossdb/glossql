@@ -357,8 +357,61 @@ SELECT count(*) FROM glossql.plan_points() WHERE plan = 'sales_budget';
 ----
 13
 
-# the routes serve the plan goal's arms
-query I
-SELECT count(*) FROM glossql.routes_futures() WHERE arms LIKE '%''plan'', 7, ''next'', ''GLOSS scenario''%';
+# --- the judgement lands on the plan: wanted on its row until one stands, measured over it, witnessed; the routes read it
+query T
+SELECT wanted FROM glossql.metric_axes() WHERE metric = 'sales_budget';
 ----
-1
+[metric_plan over fin.sales_budget]
+
+statement ok
+SELECT metric_plan() FROM fin.sales_budget;
+
+query T
+SELECT wanted FROM glossql.metric_axes() WHERE metric = 'sales_budget';
+----
+[]
+
+query TTTTI
+SELECT plan, metric, plan_grain, forecast_run = (SELECT max(seq) FROM glossql.measurements WHERE function = 'metric_forecast'), count(*)
+FROM glossql.plan_record() GROUP BY ALL;
+----
+sales_budget	sales	month	true	13
+
+query TTR
+SELECT label, stands, value FROM glossql.plan_record() WHERE stands IN ('below', 'above')
+ORDER BY CASE grain WHEN 'year' THEN 0 ELSE 1 END, period;
+----
+2025	above	2120.0
+2025-04	above	200.0
+2025-12	above	1000.0
+
+query TTTR
+SELECT subject, witness, band, round(score, 2) FROM ATTEST() WHERE witness = 'plan_w';
+----
+fin.sales_budget	plan_w	red	0.27
+
+# a change to what the judgement read owes it again
+statement ok
+INSERT INTO fin.ledger VALUES (DATE '2025-02-05', 2.0, 'water');
+
+query T
+SELECT current FROM ATTEST() WHERE witness = 'plan_w';
+----
+false
+
+statement ok
+SELECT metric_plan() FROM fin.sales_budget;
+
+query IT
+SELECT count(*), bool_and(current) FROM glossql.measurements m, ATTEST() a WHERE m.function = 'metric_plan' AND a.witness = 'plan_w';
+----
+2	true
+
+# the routes judge the plan from the record: the judgement asked for, asked again, then the gap
+query III
+SELECT count(*) FILTER (WHERE arms LIKE '%''plan'', 7, ''next'', ''metric_plan''%'),
+       count(*) FILTER (WHERE arms LIKE '%''plan'', 8, ''next'', ''metric_plan''%'),
+       count(*) FILTER (WHERE arms LIKE '%''plan'', 9, ''next'', ''GLOSS scenario''%')
+FROM glossql.routes_futures();
+----
+1	1	1
