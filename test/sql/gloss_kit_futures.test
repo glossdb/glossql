@@ -222,16 +222,35 @@ SELECT metric, behavior, grain, horizon, applicable, origin::DATE, len(ahead), s
 ----
 sales	flow	month	12	true	2025-02-01	12	[{'span': 1, 'to_go': quarter}, {'span': 10, 'to_go': year}]
 
-# the daily metrics ask the month to go, each from its own edge; one request per grain and set of totals
+# a stock at month grain asks no total: a second body at the month, beside the flow's
+statement ok
+DECLARE ASPECT balance WITH $${"title": "Balance"}$$ AS QUERY;
+
+statement ok
+GLOSS balance ON fin AS $${"sql": "SELECT date_trunc('month', booked)::DATE AS period, count(*)::DOUBLE AS value FROM fin.ledger GROUP BY ALL"}$$;
+
+statement ok
+GLOSS role ON balance.period AS $${"value": "timestamp"}$$;
+
+statement ok
+GLOSS role ON balance.value AS $${"value": "measure"}$$;
+
+statement ok
+SELECT temporal() FROM balance.period;
+
+statement ok
+GLOSS behavior ON balance.value AS $${"value": "stock"}$$;
+
+# the daily flows ask the month to go from the data's edge, which they share; one request per grain and set of totals
 query TTI
 SELECT grain, totals::VARCHAR, json_array_length(json_extract(body, '$.table.member')) FROM glossql.forecast_bodies() ORDER BY grain, totals;
 ----
-day	[24]	432
-day	[25]	157
+day	[24]	590
+month	[]	26
 month	[1, 10]	26
 
 query TTT
-SELECT json_extract_string(body, '$.table.period[13]'), json_extract_string(body, '$.table.status[13]'), json_extract_string(body, '$.table.period[25]') FROM glossql.forecast_bodies() WHERE grain = 'month';
+SELECT json_extract_string(body, '$.table.period[13]'), json_extract_string(body, '$.table.status[13]'), json_extract_string(body, '$.table.period[25]') FROM glossql.forecast_bodies() WHERE grain = 'month' AND totals <> [];
 ----
 2025-02-01	actual	2026-02-01
 
@@ -241,12 +260,19 @@ CREATE OR REPLACE MACRO glossql.service(route, body) AS '{"table":{"member":["sa
 statement ok
 SELECT metric_forecast() FROM fin;
 
-# the daily metrics got no point from the stand-in; sales its twelve steps and two totals
+# the other metrics got no point from the stand-in; sales its twelve steps and two totals, each once,
+# though both month bodies answered the service's coverage at the month
 query TTT
 SELECT metric, applicable, reason FROM glossql.forecast_points() WHERE metric <> 'sales' ORDER BY metric;
 ----
+balance	false	the service answered no point for this metric
 hires	false	the service answered no point for this metric
 spend	false	the service answered no point for this metric
+
+query I
+SELECT count(*) FROM glossql.forecast_points() WHERE metric = 'sales';
+----
+14
 
 query IIITTRRRRT
 SELECT point_seq, step, span, to_go, period, p10, p50, p90, held_80, held_from FROM glossql.forecast_points() WHERE metric = 'sales' AND point_seq IN (0, 2, 12, 13) ORDER BY point_seq;
@@ -261,9 +287,9 @@ SELECT grain, origin, served_by, current FROM glossql.forecast_points() WHERE me
 ----
 month	2025-02-01	glossthesi test	true
 
-# nothing has landed past the origin: the record tallies no point yet
+# nothing has landed past the origin: the record tallies no point yet, and says so with no row
 query I
-SELECT coalesce(sum(points), 0) FROM glossql.forecast_coverage();
+SELECT count(*) FROM glossql.forecast_coverage();
 ----
 0
 

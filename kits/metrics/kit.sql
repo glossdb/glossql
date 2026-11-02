@@ -241,7 +241,9 @@ ORDER BY metric;
 -- Without a grain, each metric at its own floor; with one, each metric at
 -- or below it at that grain, a metric coarser than the asked grain serving
 -- no rows. A rung of n buckets is served, the edge's bucket the last. A
--- flow sums and fills its total's empty periods with zero up to the edge;
+-- flow sums and fills its total's empty periods with zero up to the data's
+-- edge (the last instant any served metric reaches, so a flow whose rows
+-- stopped early shows its zeros, not an older window);
 -- a stock keeps the bucket's last level, summed over what stands at that
 -- instant; a ratio re-divides its summed halves. A dimension wider than 24
 -- members serves its top 23 by weight and 'other'. The actual world is
@@ -306,10 +308,16 @@ bucketed AS (
          coalesce(a.behavior, 'none') AS behavior, a.at_grain, a.rung
   FROM rows_ r JOIN asked a USING (metric)
   WHERE r.instant IS NOT NULL),
-edges AS (
-  SELECT metric, min(period) AS first, max(period) AS edge, any_value(at_grain) AS at_grain, any_value(rung) AS rung,
-         any_value(behavior) AS behavior
+-- a metric's edge is its last bucket; a flow's is the data's edge — the last instant any served metric
+-- reaches, at the flow's grain — so a flow whose rows stopped early shows its zeros, not an older window
+own_edges AS (
+  SELECT metric, min(period) AS first, max(period) AS own_edge, max(instant) AS last_at, any_value(at_grain) AS at_grain,
+         any_value(rung) AS rung, any_value(behavior) AS behavior
   FROM bucketed GROUP BY metric),
+edges AS (
+  SELECT metric, first, at_grain, rung, behavior,
+         CASE WHEN behavior = 'flow' THEN greatest(own_edge, date_trunc(at_grain, max(last_at) OVER ())) ELSE own_edge END AS edge
+  FROM own_edges),
 windowed AS (
   SELECT b.* FROM bucketed b JOIN edges e USING (metric)
   WHERE b.period > e.edge - glossql.grain_step(e.at_grain) * e.rung),

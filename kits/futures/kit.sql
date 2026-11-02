@@ -324,10 +324,12 @@ DECLARE FUNCTION metric_forecast FOR GLOBAL AS $$
            max(CASE WHEN level = 0.5 THEN value END) AS p50, max(CASE WHEN level = 0.9 THEN value END) AS p90,
            max(CASE WHEN level = 0.95 THEN value END) AS p95
     FROM rows_ GROUP BY metric, step, span),
+  -- the service's held-out share per grain, step and span: every body at a grain carries it, once is enough
   coverage AS (
-    SELECT b.grain, cv.c.step AS step, cv.c.span AS span, cv.c.low AS low, cv.c.high AS high, cv.c.share AS share
+    SELECT b.grain, cv.c.step AS step, cv.c.span AS span, cv.c.low AS low, cv.c.high AS high, any_value(cv.c.share) AS share
     FROM b, unnest(from_json(json_extract(b.a, '$.answer.coverage'),
-                   '[{"step": "BIGINT", "span": "BIGINT", "low": "DOUBLE", "high": "DOUBLE", "share": "DOUBLE"}]')) AS cv(c)),
+                   '[{"step": "BIGINT", "span": "BIGINT", "low": "DOUBLE", "high": "DOUBLE", "share": "DOUBLE"}]')) AS cv(c)
+    GROUP BY ALL),
   failures AS (
     SELECT e.member AS metric, list(e.error ORDER BY e.error) AS errors
     FROM (SELECT unnest(from_json(json_extract(a, '$.answer.errors'),
@@ -369,8 +371,10 @@ DECLARE WITNESS forecast_w ON metric_forecast DETECTOR forecast_stands;
 -- measurements alone. forecast_runs(): the same with the actual joined
 -- from the actual world where it has landed (for a span, the sum over its
 -- periods where every one has). forecast_coverage(): the record's tally —
--- per metric and for the dataset ('' the metric), per grain, step and
--- span: points landed, inside_80, inside_90, held_80, held_90.
+-- per metric and for the dataset ('' the metric), per grain, step, span
+-- and to_go (a span of one length under two names tallied under each)
+-- where a point has landed: points landed, inside_80, inside_90, held_80,
+-- held_90.
 -- forecast_points(): the newest run, flattened — one row per metric and
 -- point: seq, metric, applicable, reason, behavior, grain, origin,
 -- served_by, computed_at, current, point_seq, step, span, to_go, period,
@@ -418,19 +422,20 @@ LEFT JOIN actuals a ON a.metric = r.metric AND a.period = r.period AND r.span IS
 
 CREATE OR REPLACE MACRO glossql.forecast_coverage() AS TABLE
 WITH tally AS (
-  SELECT metric, grain, step, span, count(actual) AS points,
+  SELECT metric, grain, step, span, to_go, count(actual) AS points,
          count(*) FILTER (WHERE actual BETWEEN p10 AND p90) AS inside_80,
          count(*) FILTER (WHERE actual BETWEEN p05 AND p95) AS inside_90
   FROM glossql.forecast_runs() WHERE applicable AND step IS NOT NULL
-  GROUP BY metric, grain, step, span),
+  GROUP BY metric, grain, step, span, to_go
+  HAVING count(actual) > 0),
 whole AS (
-  SELECT '' AS metric, grain, step, span, sum(points) AS points, sum(inside_80) AS inside_80, sum(inside_90) AS inside_90
-  FROM tally GROUP BY grain, step, span)
-SELECT metric, grain, step, span, points, inside_80, inside_90,
+  SELECT '' AS metric, grain, step, span, to_go, sum(points) AS points, sum(inside_80) AS inside_80, sum(inside_90) AS inside_90
+  FROM tally GROUP BY grain, step, span, to_go)
+SELECT metric, grain, step, span, to_go, points, inside_80, inside_90,
        CASE WHEN points > 0 THEN inside_80 / points END AS held_80,
        CASE WHEN points > 0 THEN inside_90 / points END AS held_90
 FROM (SELECT * FROM tally UNION ALL SELECT * FROM whole)
-ORDER BY metric, grain, step, span NULLS FIRST;
+ORDER BY metric, grain, step, span NULLS FIRST, to_go NULLS FIRST;
 
 CREATE OR REPLACE MACRO glossql.forecast_points() AS TABLE
 WITH runs AS MATERIALIZED (SELECT * FROM glossql.forecast_runs()),
@@ -440,14 +445,14 @@ current_ AS (
   FROM gloss_glossary(current_schema(), NULL, true) WHERE actor = 'function' AND aspect = 'metric_forecast'),
 -- the record's tally behind held, over every run: per metric, and for the dataset
 tally AS (
-  SELECT metric, grain, step, span, count(actual) AS points,
+  SELECT metric, grain, step, span, to_go, count(actual) AS points,
          count(*) FILTER (WHERE actual BETWEEN p10 AND p90) AS inside_80,
          count(*) FILTER (WHERE actual BETWEEN p05 AND p95) AS inside_90
   FROM runs WHERE applicable AND step IS NOT NULL
-  GROUP BY metric, grain, step, span),
+  GROUP BY metric, grain, step, span, to_go),
 whole AS (
-  SELECT grain, step, span, sum(points) AS points, sum(inside_80) AS inside_80, sum(inside_90) AS inside_90
-  FROM tally GROUP BY grain, step, span),
+  SELECT grain, step, span, to_go, sum(points) AS points, sum(inside_80) AS inside_80, sum(inside_90) AS inside_90
+  FROM tally GROUP BY grain, step, span, to_go),
 rows_ AS (
   SELECT f.*, dense_rank() OVER (ORDER BY f.metric) - 1 AS seq,
          CASE WHEN f.step IS NULL THEN NULL
@@ -463,8 +468,8 @@ SELECT r.seq, r.metric, r.applicable, r.reason, r.behavior, r.grain, strftime(r.
        CASE WHEN tm.points >= 30 THEN tm.inside_90 / tm.points WHEN td.points >= 30 THEN td.inside_90 / td.points ELSE r.service_90 END AS held_90,
        CASE WHEN tm.points >= 30 THEN 'metric' WHEN td.points >= 30 THEN 'dataset' WHEN r.service_80 IS NOT NULL THEN 'service' END AS held_from
 FROM rows_ r
-LEFT JOIN tally tm ON tm.metric = r.metric AND tm.grain = r.grain AND tm.step = r.step AND tm.span IS NOT DISTINCT FROM r.span
-LEFT JOIN whole td ON td.grain = r.grain AND td.step = r.step AND td.span IS NOT DISTINCT FROM r.span
+LEFT JOIN tally tm ON tm.metric = r.metric AND tm.grain = r.grain AND tm.step = r.step AND tm.span IS NOT DISTINCT FROM r.span AND tm.to_go IS NOT DISTINCT FROM r.to_go
+LEFT JOIN whole td ON td.grain = r.grain AND td.step = r.step AND td.span IS NOT DISTINCT FROM r.span AND td.to_go IS NOT DISTINCT FROM r.to_go
 ORDER BY r.seq, r.point_seq NULLS FIRST;
 
 --===------------------------------------------------------------------===--
@@ -1050,17 +1055,17 @@ runs AS MATERIALIZED (
   LEFT JOIN floor_cells a ON a.metric = r.metric AND a.period = r.period AND r.span IS NULL
   WHERE r.applicable AND r.step IS NOT NULL),
 tally AS (
-  SELECT metric, grain, step, span, count(actual) AS points, count(*) FILTER (WHERE actual BETWEEN p10 AND p90) AS inside_80
-  FROM runs GROUP BY metric, grain, step, span),
-whole AS (SELECT grain, step, span, sum(points) AS points, sum(inside_80) AS inside_80 FROM tally GROUP BY grain, step, span),
+  SELECT metric, grain, step, span, to_go, count(actual) AS points, count(*) FILTER (WHERE actual BETWEEN p10 AND p90) AS inside_80
+  FROM runs GROUP BY metric, grain, step, span, to_go),
+whole AS (SELECT grain, step, span, to_go, sum(points) AS points, sum(inside_80) AS inside_80 FROM tally GROUP BY grain, step, span, to_go),
 newest_run AS (SELECT max(run) AS run FROM runs),
 fp AS MATERIALIZED (
   SELECT r.metric, r.grain, r.origin, r.step, r.span, r.to_go, r.period, r.p10, r.p50, r.p90,
          CASE WHEN tm.points >= 30 THEN tm.inside_80 / tm.points WHEN td.points >= 30 THEN td.inside_80 / td.points ELSE r.service_80 END AS held_80,
          CASE WHEN tm.points >= 30 THEN 'metric' WHEN td.points >= 30 THEN 'dataset' WHEN r.service_80 IS NOT NULL THEN 'service' END AS held_from
   FROM runs r JOIN newest_run n ON n.run = r.run
-  LEFT JOIN tally tm ON tm.metric = r.metric AND tm.grain = r.grain AND tm.step = r.step AND tm.span IS NOT DISTINCT FROM r.span
-  LEFT JOIN whole td ON td.grain = r.grain AND td.step = r.step AND td.span IS NOT DISTINCT FROM r.span),
+  LEFT JOIN tally tm ON tm.metric = r.metric AND tm.grain = r.grain AND tm.step = r.step AND tm.span IS NOT DISTINCT FROM r.span AND tm.to_go IS NOT DISTINCT FROM r.to_go
+  LEFT JOIN whole td ON td.grain = r.grain AND td.step = r.step AND td.span IS NOT DISTINCT FROM r.span AND td.to_go IS NOT DISTINCT FROM r.to_go),
 -- the band a row is held against: the step's at the metric's own grain; at a coarser grain, for a stock the band of the
 -- last period of the metric's grain inside it, for a flow that has begun the total that runs to the period's end
 candidates AS (

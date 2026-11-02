@@ -138,6 +138,39 @@ SELECT period::DATE, value FROM glossql.metric_series() WHERE dimension = '' ORD
 2024-03-01	130.0
 2024-04-01	113.0
 
+# a flow whose rows stopped early shows its zeros to the data's edge — the last instant another metric reaches
+statement ok
+CREATE TABLE fin.later AS SELECT DATE '2024-06-15' AS seen, 7.0 AS level;
+
+statement ok
+DECLARE ASPECT reach WITH $${"title": "Reach"}$$ AS QUERY;
+
+statement ok
+GLOSS reach ON fin AS $${"sql": "SELECT seen AS period, level AS value FROM fin.later"}$$;
+
+statement ok
+GLOSS role ON reach.period AS $${"value": "timestamp"}$$;
+
+statement ok
+GLOSS role ON reach.value AS $${"value": "measure"}$$;
+
+statement ok
+GLOSS ladder ON reach.period AS $${"floor": "month"}$$;
+
+statement ok
+GLOSS behavior ON reach.value AS $${"value": "stock"}$$;
+
+query TTR
+SELECT metric, period::DATE, value FROM glossql.metric_series() WHERE dimension = '' AND period >= DATE '2024-04-01' ORDER BY metric, period;
+----
+reach	2024-06-01	7.0
+spend	2024-04-01	113.0
+spend	2024-05-01	0.0
+spend	2024-06-01	0.0
+
+statement ok
+GLOSS reach ON fin AS $${"stopped": "one row, no series"}$$;
+
 # --- what feeds the metric, through the view's lineage
 
 # a field descends from the columns its derivation names; the summed value is computed, no column is its own
