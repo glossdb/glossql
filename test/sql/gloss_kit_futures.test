@@ -190,3 +190,175 @@ query IT
 SELECT count(*), bool_and(current) FROM glossql.measurements m, ATTEST() a WHERE m.function = 'metric_bands' AND a.witness = 'bands_w';
 ----
 2	true
+
+# --- the forecast: a monthly metric, twelve months ahead from the last period with a value, the quarter and the year to go
+
+statement ok
+CREATE TABLE fin.budget AS
+  SELECT (DATE '2025-01-01' + INTERVAL (m) MONTH)::DATE AS month,
+         [120.0, 10.0, 90.0, 200.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 1000.0][m + 1] AS planned
+  FROM range(12) r(m);
+
+statement ok
+DECLARE ASPECT sales WITH $${"title": "Sales"}$$ AS QUERY;
+
+statement ok
+GLOSS sales ON fin AS $${"sql": "SELECT date_trunc('month', booked)::DATE AS period, sum(amount) AS value FROM fin.ledger GROUP BY ALL"}$$;
+
+statement ok
+GLOSS role ON sales.period AS $${"value": "timestamp"}$$;
+
+statement ok
+GLOSS role ON sales.value AS $${"value": "measure"}$$;
+
+statement ok
+SELECT temporal() FROM sales.period;
+
+statement ok
+GLOSS behavior ON sales.value AS $${"value": "flow"}$$;
+
+query TTTITTIT
+SELECT metric, behavior, grain, horizon, applicable, origin::DATE, len(ahead), spans::VARCHAR FROM glossql.forecast_request() WHERE metric = 'sales';
+----
+sales	flow	month	12	true	2025-02-01	12	[{'span': 1, 'to_go': quarter}, {'span': 10, 'to_go': year}]
+
+# the daily metrics ask the month to go, each from its own edge; one request per grain and set of totals
+query TTI
+SELECT grain, totals::VARCHAR, json_array_length(json_extract(body, '$.table.member')) FROM glossql.forecast_bodies() ORDER BY grain, totals;
+----
+day	[24]	432
+day	[25]	157
+month	[1, 10]	26
+
+query TTT
+SELECT json_extract_string(body, '$.table.period[13]'), json_extract_string(body, '$.table.status[13]'), json_extract_string(body, '$.table.period[25]') FROM glossql.forecast_bodies() WHERE grain = 'month';
+----
+2025-02-01	actual	2026-02-01
+
+statement ok
+CREATE OR REPLACE MACRO glossql.service(route, body) AS '{"table":{"member":["sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales","sales"],"origin":["2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01","2025-02-01"],"step":[1,1,1,1,1,2,2,2,2,2,3,3,3,3,3,4,4,4,4,4,5,5,5,5,5,6,6,6,6,6,7,7,7,7,7,8,8,8,8,8,9,9,9,9,9,10,10,10,10,10,11,11,11,11,11,12,12,12,12,12,1,1,1,1,1,10,10,10,10,10],"span":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,1,1,1,1,10,10,10,10,10],"period":["2025-03-01","2025-03-01","2025-03-01","2025-03-01","2025-03-01","2025-04-01","2025-04-01","2025-04-01","2025-04-01","2025-04-01","2025-05-01","2025-05-01","2025-05-01","2025-05-01","2025-05-01","2025-06-01","2025-06-01","2025-06-01","2025-06-01","2025-06-01","2025-07-01","2025-07-01","2025-07-01","2025-07-01","2025-07-01","2025-08-01","2025-08-01","2025-08-01","2025-08-01","2025-08-01","2025-09-01","2025-09-01","2025-09-01","2025-09-01","2025-09-01","2025-10-01","2025-10-01","2025-10-01","2025-10-01","2025-10-01","2025-11-01","2025-11-01","2025-11-01","2025-11-01","2025-11-01","2025-12-01","2025-12-01","2025-12-01","2025-12-01","2025-12-01","2026-01-01","2026-01-01","2026-01-01","2026-01-01","2026-01-01","2026-02-01","2026-02-01","2026-02-01","2026-02-01","2026-02-01","2025-03-01","2025-03-01","2025-03-01","2025-03-01","2025-03-01","2025-12-01","2025-12-01","2025-12-01","2025-12-01","2025-12-01"],"column":["value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value","value"],"level":[0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95,0.05,0.1,0.5,0.9,0.95],"value":[70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,70,80,100,120,130,900,1000,1100,1400,1500],"actual":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],"pit":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],"withheld":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]},"answer":{"service":"glossthesi","version":"test","errors":[],"coverage":[{"step":1,"span":null,"low":0.1,"high":0.9,"share":0.8,"se":0.02,"points":1000,"datasets":10},{"step":1,"span":null,"low":0.05,"high":0.95,"share":0.9,"se":0.02,"points":1000,"datasets":10},{"step":2,"span":null,"low":0.1,"high":0.9,"share":0.8,"se":0.02,"points":1000,"datasets":10},{"step":2,"span":null,"low":0.05,"high":0.95,"share":0.9,"se":0.02,"points":1000,"datasets":10},{"step":1,"span":1,"low":0.1,"high":0.9,"share":0.79,"se":0.03,"points":500,"datasets":10},{"step":1,"span":1,"low":0.05,"high":0.95,"share":0.89,"se":0.03,"points":500,"datasets":10},{"step":10,"span":10,"low":0.1,"high":0.9,"share":0.79,"se":0.03,"points":500,"datasets":10},{"step":10,"span":10,"low":0.05,"high":0.95,"share":0.89,"se":0.03,"points":500,"datasets":10}]}}'::JSON;
+
+statement ok
+SELECT metric_forecast() FROM fin;
+
+# the daily metrics got no point from the stand-in; sales its twelve steps and two totals
+query TTT
+SELECT metric, applicable, reason FROM glossql.forecast_points() WHERE metric <> 'sales' ORDER BY metric;
+----
+hires	false	the service answered no point for this metric
+spend	false	the service answered no point for this metric
+
+query IIITTRRRRT
+SELECT point_seq, step, span, to_go, period, p10, p50, p90, held_80, held_from FROM glossql.forecast_points() WHERE metric = 'sales' AND point_seq IN (0, 2, 12, 13) ORDER BY point_seq;
+----
+0	1	NULL	NULL	2025-03-01	80.0	100.0	120.0	0.8	service
+2	3	NULL	NULL	2025-05-01	80.0	100.0	120.0	NULL	NULL
+12	1	1	quarter	2025-03-01	80.0	100.0	120.0	0.79	service
+13	10	10	year	2025-12-01	1000.0	1100.0	1400.0	0.79	service
+
+query TTTT
+SELECT grain, origin, served_by, current FROM glossql.forecast_points() WHERE metric = 'sales' LIMIT 1;
+----
+month	2025-02-01	glossthesi test	true
+
+# nothing has landed past the origin: the record tallies no point yet
+query I
+SELECT coalesce(sum(points), 0) FROM glossql.forecast_coverage();
+----
+0
+
+# the forecast world: the medians at the forecast's grain, under the metric
+query TTIR
+SELECT metric, world, count(*), any_value(value) FROM glossql.metric_series(world := 'forecast', grain := 'month') GROUP BY ALL;
+----
+sales	forecast	12	100.0
+
+# --- the plan: a QUERY aspect with x-kind plan and x-plan-of, read through the metric it plans
+
+statement ok
+DECLARE ASPECT sales_budget WITH $${"title": "Sales budget", "x-kind": "plan", "x-plan-of": "sales"}$$ AS QUERY;
+
+# declared and not grounded: no fact row yet, as for a metric; the plan goal asks for the grounding
+query I
+SELECT count(*) FROM glossql.metric_axes() WHERE metric = 'sales_budget';
+----
+0
+
+statement ok
+GLOSS sales_budget ON fin AS $${"sql": "SELECT month AS period, planned AS value FROM fin.budget"}$$;
+
+query TTTTTT
+SELECT metric, plan_of, applicable, period_column, value_column, behavior FROM glossql.metric_axes() WHERE metric = 'sales_budget';
+----
+sales_budget	sales	true	period	value	flow
+
+# a plan is no metric of the actual world, and neither the walk nor the forecast reads it
+query I
+SELECT count(*) FROM glossql.metric_series(grain := 'month') WHERE metric = 'sales_budget';
+----
+0
+
+query I
+SELECT count(*) FROM glossql.band_request() WHERE metric = 'sales_budget';
+----
+0
+
+query TTIR
+SELECT metric, world, count(*), sum(value) FROM glossql.metric_series(world := 'plan', plan := 'sales_budget', grain := 'month') GROUP BY ALL;
+----
+sales	plan	12	2120.0
+
+query TR
+SELECT period::DATE, value FROM glossql.metric_series(world := 'plan', plan := 'sales_budget', grain := 'year');
+----
+2025-01-01	2120.0
+
+query I
+SELECT count(*) FROM glossql.metric_series(world := 'plan', plan := 'sales_budget', grain := 'day');
+----
+0
+
+statement error
+SELECT * FROM glossql.metric_series(world := 'plan', grain := 'month');
+----
+names the plan it serves
+
+statement error
+SELECT * FROM glossql.metric_series(world := 'plan', plan := 'nothing');
+----
+no aspect of that name is declared
+
+statement error
+SELECT * FROM glossql.metric_series(world := 'plan', plan := 'sales');
+----
+sales is no plan
+
+statement error
+SELECT * FROM glossql.metric_series(world := 'dream');
+----
+the worlds are actual, plan and forecast
+
+# plan_points(): the year first — whole, begun, not complete: the actual to date plus the year to go bands it; then the months,
+# landed through the origin with their variance, the rest against their own step's band
+query TTTRRRRRRTTRT
+SELECT grain, label, period::DATE, value, actual, variance, low, expected, high, stands, covers, held_80, origin
+FROM glossql.plan_points() WHERE plan = 'sales_budget' AND (grain = 'year' OR label IN ('2025-01', '2025-02', '2025-03', '2025-04', '2025-12'))
+ORDER BY CASE grain WHEN 'year' THEN 0 ELSE 1 END, period;
+----
+year	2025	2025-01-01	2120.0	141.0	NULL	1141.0	1241.0	1541.0	above	NULL	0.79	2025-02-01
+month	2025-01	2025-01-01	120.0	124.0	4.0	NULL	NULL	NULL	landed	NULL	NULL	NULL
+month	2025-02	2025-02-01	10.0	17.0	7.0	NULL	NULL	NULL	landed	NULL	NULL	NULL
+month	2025-03	2025-03-01	90.0	NULL	NULL	80.0	100.0	120.0	inside	NULL	0.8	2025-02-01
+month	2025-04	2025-04-01	200.0	NULL	NULL	80.0	100.0	120.0	above	NULL	0.8	2025-02-01
+month	2025-12	2025-12-01	1000.0	NULL	NULL	80.0	100.0	120.0	above	NULL	NULL	2025-02-01
+
+query I
+SELECT count(*) FROM glossql.plan_points() WHERE plan = 'sales_budget';
+----
+13
+
+# the routes serve the plan goal's arms
+query I
+SELECT count(*) FROM glossql.routes_futures() WHERE arms LIKE '%''plan'', 7, ''next'', ''GLOSS scenario''%';
+----
+1

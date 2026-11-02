@@ -55,17 +55,22 @@ CREATE OR REPLACE MACRO glossql.rung_default(g) AS
 -- metric_axes(): one row per metric of the bound dataset — a QUERY aspect
 -- whose grounding stands as a view — what the record says its columns are
 -- and whether a series can be served: metric, kind (the aspect's x-kind),
--- stopped (the author's text), applicable, reason (the road out when it is
--- not), period_column, value_column, numerator and denominator (a ratio's
--- halves), cadence (the period column's measured granularity), floor (the
--- ladder's, else the cadence), rung (how many buckets the floor serves), behavior
+-- plan_of and covers (a plan's metric and the grain its rows are booked
+-- against), stopped (the author's text), applicable, reason (the road out
+-- when it is not), period_column, value_column, numerator and denominator
+-- (a ratio's halves), cadence (the period column's measured granularity),
+-- floor (the ladder's, else the cadence), rung (how many buckets the floor serves), behavior
 -- and behavior_state (the collapsed claim on the value column, NULL and
 -- 'none' where nobody spoke, 'contested' where the witness withholds it),
 -- dims (the slicing columns, primary first), unranked (the dimension
 -- columns no dimension gloss ranks), unadmitted (the served columns no
 -- role stands on), owed (the gloss each of those wants),
 -- wanted (the measurement the row reads and nobody ran), judged_current
--- (the profile stands at the data's own version).
+-- (the profile stands at the data's own version). A plan (x-kind plan) is
+-- read through the metric it names: its period and value are the columns
+-- named as that metric's, or period and value, its behaviour the metric's,
+-- its floor the grain its rows are booked against where the declaration
+-- says so (x-covers); nothing is glossed on a plan's own columns.
 --===------------------------------------------------------------------===--
 
 CREATE OR REPLACE MACRO glossql.metric_axes() AS TABLE
@@ -142,6 +147,8 @@ unadmitted AS (
 rows_ AS (
   SELECT ch.metric,
          json_extract_string(a.schema, '$.x-kind') AS kind,
+         json_extract_string(a.schema, '$.x-plan-of') AS plan_of,
+         json_extract_string(a.schema, '$.x-covers') AS covers,
          json_extract_string(b.body, '$.stopped') AS stopped,
          ch.period_column, ch.value_column, ch.period_cols, ch.measure_cols, ch.served,
          bh.behavior, bh.numerator, bh.denominator, coalesce(bh.behavior_state, 'none') AS behavior_state,
@@ -180,26 +187,59 @@ judged AS (
     END AS reason,
     CASE WHEN period_column IS NOT NULL AND NOT profiled AND stopped IS NULL AND coalesce(kind, '') NOT IN ('fact', 'relation')
          THEN ['temporal over ' || ds.dataset || '.' || metric || '.' || period_column] ELSE []::VARCHAR[] END AS wanted
-  FROM rows_, ds)
-SELECT metric, kind, stopped, reason IS NULL AS applicable, reason,
+  FROM rows_, ds WHERE coalesce(kind, '') <> 'plan'),
+-- a plan's row: its columns through the metric it plans
+plan_cols AS (SELECT metric, list(col ORDER BY pos) AS cols FROM cols GROUP BY metric),
+plans AS (
+  SELECT p.metric, p.kind, p.plan_of, p.covers, p.stopped, p.served,
+         CASE WHEN list_contains(pc.cols, m.period_column) THEN m.period_column WHEN list_contains(pc.cols, 'period') THEN 'period' END AS period_column,
+         CASE WHEN list_contains(pc.cols, m.value_column) THEN m.value_column WHEN list_contains(pc.cols, 'value') THEN 'value' END AS value_column,
+         m.metric IS NOT NULL AS of_declared, m.reason IS NULL AS of_applicable, m.reason AS of_reason,
+         m.period_column AS of_period, m.value_column AS of_value,
+         m.numerator, m.denominator, m.behavior, m.behavior_state
+  FROM rows_ p
+  LEFT JOIN plan_cols pc ON pc.metric = p.metric
+  LEFT JOIN judged m ON m.metric = p.plan_of
+  WHERE p.kind = 'plan'),
+judged_plans AS (
+  SELECT *,
+    CASE WHEN stopped IS NOT NULL THEN 'stopped: ' || stopped
+         WHEN plan_of IS NULL THEN 'a plan names the metric it plans: declare it with x-plan-of'
+         WHEN NOT of_declared THEN 'x-plan-of names ' || plan_of || ', which no QUERY aspect declares on this dataset'
+         WHEN NOT served THEN 'the grounding serves no view'
+         WHEN covers IS NOT NULL AND covers NOT IN ('quarter', 'year') THEN 'x-covers names the grain a row is booked against, year or quarter — ' || covers || ' is neither'
+         WHEN NOT of_applicable THEN 'the metric it plans is not served: ' || of_reason
+         WHEN period_column IS NULL THEN 'the plan serves no column named ' || coalesce(of_period, 'period') || ' (its metric''s period) nor period'
+         WHEN value_column IS NULL THEN 'the plan serves no column named ' || coalesce(of_value, 'value') || ' (its metric''s value) nor value'
+    END AS reason
+  FROM plans)
+SELECT metric, kind, plan_of, covers, stopped, reason IS NULL AS applicable, reason,
        period_column, value_column, numerator, denominator, cadence, floor,
        CASE WHEN floor IS NOT NULL THEN coalesce(json_extract(windows, '$.' || floor)::INTEGER, glossql.rung_default(floor)) END AS rung,
        behavior, behavior_state, dims, unranked, unadmitted, owed, wanted, judged_current
 FROM judged
+UNION ALL
+SELECT metric, kind, plan_of, covers, stopped, reason IS NULL AS applicable, reason,
+       period_column, value_column, numerator, denominator, NULL AS cadence, covers AS floor, NULL AS rung,
+       behavior, behavior_state, []::VARCHAR[], []::VARCHAR[], []::VARCHAR[], []::VARCHAR[], []::VARCHAR[], true
+FROM judged_plans
 ORDER BY metric;
 
 --===------------------------------------------------------------------===--
--- metric_series(grain := NULL): the cells of every applicable metric of
--- the bound dataset — metric, world ('actual'), dimension ('' the total,
--- else a slicing column), member, period (the bucket's start), value,
--- num and den (a ratio's summed halves), behavior. Without a grain, each
--- metric at its own floor; with one, each metric at or below it at that
--- grain, a metric coarser than the asked grain serving no rows. A rung of
--- n buckets is served, the edge's bucket the last. A flow sums and fills
--- its total's empty periods with zero up to the edge; a stock keeps the
--- bucket's last level, summed over what stands at that instant; a ratio
--- re-divides its summed halves. A dimension wider than 24 members serves
--- its top 23 by weight and 'other'.
+-- metric_series(grain := NULL, world := 'actual', plan := NULL): the cells
+-- of every applicable metric of the bound dataset — metric, world,
+-- dimension ('' the total, else a slicing column), member, period (the
+-- bucket's start), value, num and den (a ratio's summed halves), behavior.
+-- Without a grain, each metric at its own floor; with one, each metric at
+-- or below it at that grain, a metric coarser than the asked grain serving
+-- no rows. A rung of n buckets is served, the edge's bucket the last. A
+-- flow sums and fills its total's empty periods with zero up to the edge;
+-- a stock keeps the bucket's last level, summed over what stands at that
+-- instant; a ratio re-divides its summed halves. A dimension wider than 24
+-- members serves its top 23 by weight and 'other'. The actual world is
+-- this kit's; a plan (world := 'plan', plan := '<name>') and the forecast
+-- (world := 'forecast') are the futures kit's, served under the metric
+-- through world_cells(), which stands empty until that kit is loaded.
 --
 -- The no-claim rule: where rows have to be combined — a coarser grain than
 -- the floor, or several rows in one period — and no behaviour stands on
@@ -208,11 +248,17 @@ ORDER BY metric;
 -- such a metric serves no cell, and its fact row says what it owes.
 --===------------------------------------------------------------------===--
 
-CREATE OR REPLACE MACRO glossql.metric_series(grain := NULL, unclaimed := 'refuse') AS TABLE
+CREATE OR REPLACE MACRO glossql.world_cells(w, p, g) AS TABLE
+SELECT NULL::VARCHAR AS metric, NULL::VARCHAR AS world, NULL::VARCHAR AS dimension, NULL::VARCHAR AS member,
+       NULL::TIMESTAMP AS period, NULL::DOUBLE AS value, NULL::DOUBLE AS num, NULL::DOUBLE AS den, NULL::VARCHAR AS behavior
+WHERE false;
+
+CREATE OR REPLACE MACRO glossql.metric_series(grain := NULL, unclaimed := 'refuse', world := 'actual', plan := NULL) AS TABLE
 WITH asked AS MATERIALIZED (
   SELECT m.*, coalesce(grain, m.floor) AS at_grain
   FROM glossql.metric_axes() m
-  WHERE m.applicable AND (grain IS NULL OR glossql.grain_rank(grain) >= glossql.grain_rank(m.floor))),
+  WHERE m.applicable AND coalesce(m.kind, '') <> 'plan' AND world = 'actual'
+    AND (grain IS NULL OR glossql.grain_rank(grain) >= glossql.grain_rank(m.floor))),
 cells AS (
   SELECT * FROM dataset_cells(current_schema(), true) WHERE "table" IN (SELECT metric FROM asked)),
 all_rows AS MATERIALIZED (
@@ -291,6 +337,9 @@ member_cells AS (
   GROUP BY l.metric, l.dimension, CASE WHEN wt.rank <= 23 THEN l.member ELSE 'other' END, l.period, l.behavior)
 SELECT metric, 'actual' AS world, dimension, member, period, value, num, den, behavior
 FROM (SELECT * FROM total UNION ALL SELECT * FROM filled UNION ALL SELECT * FROM member_cells)
+UNION ALL
+SELECT metric, world, dimension, member, period, value, num, den, behavior
+FROM glossql.world_cells(world, plan, grain) WHERE world <> 'actual'
 ORDER BY metric, dimension, member, period;
 
 --===------------------------------------------------------------------===--
