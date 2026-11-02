@@ -895,20 +895,27 @@ static unique_ptr<GlobalTableFunctionState> ExtractInit(ClientContext &context, 
 }
 
 //! The value by result shape: one row and one column is the value, one row is an
-//! object of its columns, many rows are an array of row objects
+//! object of its columns, many rows are an array of row objects. The call runs
+//! once, into a table of the inner connection's own: a body may be costly or
+//! reach outside the process (gloss_service), and the shape, the count and the
+//! value are read off what that one run returned
 static Value ValueOf(Inner &inner, const string &call) {
-	auto shape = inner.Run("SELECT * FROM " + call + " LIMIT 0");
+	const string once = "__gloss_value";
+	inner.Run("CREATE OR REPLACE TEMP TABLE " + once + " AS SELECT * FROM " + call);
+	auto shape = inner.Run("SELECT * FROM " + once + " LIMIT 0");
 	auto columns = shape->ColumnCount();
-	auto rows = inner.Scalar("SELECT count(*) FROM " + call).GetValue<int64_t>();
+	auto rows = inner.Scalar("SELECT count(*) FROM " + once).GetValue<int64_t>();
 	string sql;
 	if (rows == 1 && columns == 1) {
-		sql = "SELECT to_json(" + QuoteName(shape->ColumnName(0).GetIdentifierName()) + ") FROM " + call;
+		sql = "SELECT to_json(" + QuoteName(shape->ColumnName(0).GetIdentifierName()) + ") FROM " + once;
 	} else if (rows == 1) {
-		sql = "SELECT to_json(t) FROM " + call + " AS t";
+		sql = "SELECT to_json(t) FROM " + once + " AS t";
 	} else {
-		sql = "SELECT to_json(list(t)) FROM " + call + " AS t";
+		sql = "SELECT to_json(list(t)) FROM " + once + " AS t";
 	}
-	return inner.Scalar(sql);
+	auto value = inner.Scalar(sql);
+	inner.Run("DROP TABLE " + once);
+	return value;
 }
 
 static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
