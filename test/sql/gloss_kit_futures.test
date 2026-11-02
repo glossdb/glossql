@@ -1,0 +1,192 @@
+# name: test/sql/gloss_kit_futures.test
+# description: the futures kit — the walk's request from the metric series, complete months only and seven at least; the walk landed as a measurement carrying the service's verdict; the reads and the witness over it
+# group: [sql]
+
+require gloss
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/gloss_kit_futures_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA gloss;
+
+statement ok
+FROM gloss_kit('kits/kpi/kit.sql');
+
+statement ok
+FROM gloss_kit('kits/quality/kit.sql');
+
+statement ok
+FROM gloss_kit('kits/metrics/kit.sql');
+
+statement ok
+FROM gloss_kit('kits/futures/kit.sql');
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'futures');
+
+statement ok
+USE fin;
+
+# a flow booked daily over thirteen whole months and three days of a fourteenth
+statement ok
+CREATE TABLE fin.ledger AS
+  SELECT DATE '2024-01-01' + INTERVAL (i) DAY AS booked, (i % 7 + 1)::DOUBLE AS amount, ['general', 'water', 'parks'][i % 3 + 1] AS fund
+  FROM range(400) r(i);
+
+statement ok
+DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS QUERY;
+
+statement ok
+GLOSS spend ON fin AS $${"sql": "SELECT booked AS period, amount AS value, fund FROM fin.ledger"}$$;
+
+statement ok
+GLOSS role ON spend.period AS $${"value": "timestamp"}$$;
+
+statement ok
+GLOSS role ON spend.value AS $${"value": "measure"}$$;
+
+statement ok
+GLOSS role ON spend.fund AS $${"value": "dimension"}$$;
+
+statement ok
+SELECT temporal() FROM spend.period;
+
+statement ok
+GLOSS behavior ON spend.value AS $${"value": "flow"}$$;
+
+# a second metric with four whole months: too short for the walk
+statement ok
+CREATE TABLE fin.recent AS SELECT DATE '2024-10-01' + INTERVAL (i) DAY AS booked, 1.0 AS amount FROM range(126) r(i);
+
+statement ok
+DECLARE ASPECT hires WITH $${"title": "Hires"}$$ AS QUERY;
+
+statement ok
+GLOSS hires ON fin AS $${"sql": "SELECT booked AS period, amount AS value FROM fin.recent"}$$;
+
+statement ok
+GLOSS role ON hires.period AS $${"value": "timestamp"}$$;
+
+statement ok
+GLOSS role ON hires.value AS $${"value": "measure"}$$;
+
+statement ok
+SELECT temporal() FROM hires.period;
+
+statement ok
+GLOSS behavior ON hires.value AS $${"value": "flow"}$$;
+
+# --- the request: whole months only, the month the edge falls inside left out; seven at least
+
+query TTIT
+SELECT metric, behavior, months, walkable FROM glossql.band_request();
+----
+hires	flow	4	false
+spend	flow	13	true
+
+query T
+SELECT reason FROM glossql.band_request() WHERE metric = 'hires';
+----
+the walk needs seven complete months, and hires has 4
+
+query IIRTTTR
+SELECT json_extract(body, '$.spec.origins')::INTEGER, json_array_length(json_extract(body, '$.table.period')),
+       json_extract(body, '$.spec.threshold')::DOUBLE, json_extract_string(body, '$.table.period[0]'),
+       json_extract_string(body, '$.table.period[12]'), json_extract_string(body, '$.table.member[12]'),
+       json_extract(body, '$.table.value[0]')::DOUBLE
+FROM glossql.band_body();
+----
+6	13	0.98	2024-01	2025-01	spend	118.0
+
+# the witness's threshold is the red line the walk is asked with
+statement ok
+DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.9;
+
+query R
+SELECT json_extract(body, '$.spec.threshold')::DOUBLE FROM glossql.band_body();
+----
+0.9
+
+# --- no service named: the walk refuses by name, before any call
+
+statement error
+SELECT metric_bands() FROM fin;
+----
+no service is named for /forecast
+
+# --- the service stood in for: two walked months, the newest outside the corridor, the older one withheld
+
+statement ok
+CREATE OR REPLACE MACRO glossql.service(route, body) AS '{"table": {"member": ["spend", "spend", "spend", "spend", "spend", "spend", "spend", "spend", "spend", "spend"], "period": ["2024-12", "2024-12", "2024-12", "2024-12", "2024-12", "2025-01", "2025-01", "2025-01", "2025-01", "2025-01"], "level": [0.05, 0.1, 0.5, 0.9, 0.95, 0.05, 0.1, 0.5, 0.9, 0.95], "value": [100, 110, 120, 130, 140, 200, 210, 220, 230, 240], "actual": [125, 125, 125, 125, 125, 300, 300, 300, 300, 300], "pit": [null, null, null, null, null, 1.0, 1.0, 1.0, 1.0, 1.0], "withheld": ["the training series is constant and the actual equals it", "the training series is constant and the actual equals it", "the training series is constant and the actual equals it", "the training series is constant and the actual equals it", "the training series is constant and the actual equals it", null, null, null, null, null]}, "answer": {"service": "glossthesi", "version": "test", "errors": [{"member": "spend", "origin": "2024-07", "error": "6 known values of history: a forecast needs 7"}], "coverage": [], "walk": {"score": 1.0, "band": "red", "threshold": 0.9, "members": [{"member": "spend", "column": "value", "walked": 2, "held_80": 0.0, "held_90": 0.0, "newest": {"origin": "2024-12", "period": "2025-01", "pit": 1.0, "displacement": 1.0, "withheld": null}}]}}}'::JSON;
+
+statement ok
+SELECT metric_bands() FROM fin;
+
+query TTRTR
+SELECT served_by, grain, score, band, threshold FROM glossql.band_verdict();
+----
+glossthesi test	month	1.0	red	0.9
+
+query TTRRRRRT
+SELECT metric, period, actual, p05, p50, p95, pit, withheld FROM glossql.band_points() WHERE metric = 'spend' ORDER BY point_seq;
+----
+spend	2024-12	125.0	100.0	120.0	140.0	NULL	the training series is constant and the actual equals it
+spend	2025-01	300.0	200.0	220.0	240.0	1.0	NULL
+
+query TRTIRR
+SELECT period, displacement, newest, walked, held_80, held_90 FROM glossql.band_points() WHERE metric = 'spend' ORDER BY point_seq;
+----
+2024-12	NULL	false	2	0.0	0.0
+2025-01	1.0	true	2	0.0	0.0
+
+query TTT
+SELECT metric, applicable, reason FROM glossql.band_points() WHERE metric = 'hires';
+----
+hires	false	the walk needs seven complete months, and hires has 4
+
+query T
+SELECT json_extract_string(value, '$.metrics[1].errors[0]') FROM glossql.measurements WHERE function = 'metric_bands';
+----
+6 known values of history: a forecast needs 7
+
+# the verdict is the service's, repeated by the witness's detector
+query TTTR
+SELECT subject, witness, band, score FROM ATTEST() WHERE witness = 'bands_w';
+----
+fin	bands_w	red	1.0
+
+# --- a repeat is served; a change to what the walk read owes a new one
+
+statement ok
+SELECT metric_bands() FROM fin;
+
+query I
+SELECT count(*) FROM glossql.measurements WHERE function = 'metric_bands';
+----
+1
+
+statement ok
+INSERT INTO fin.ledger VALUES (DATE '2025-02-04', 3.0, 'water');
+
+query T
+SELECT current FROM ATTEST() WHERE witness = 'bands_w';
+----
+false
+
+statement ok
+SELECT metric_bands() FROM fin;
+
+query IT
+SELECT count(*), bool_and(current) FROM glossql.measurements m, ATTEST() a WHERE m.function = 'metric_bands' AND a.witness = 'bands_w';
+----
+2	true
