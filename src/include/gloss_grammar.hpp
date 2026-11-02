@@ -105,6 +105,8 @@ TableFunction GlossExtractFunction();
 void RegisterGlossSchema(ExtensionLoader &loader);
 //! Registers gloss_lineage (gloss_lineage.cpp)
 void RegisterGlossLineage(ExtensionLoader &loader);
+// gloss_service(route, body): one call to the model service the instance names (gloss_service.cpp)
+void RegisterGlossService(ExtensionLoader &loader);
 
 //! The derivation of each output column of a query, in output order: what
 //! computes it, resolved through the bound plan down to the base scans;

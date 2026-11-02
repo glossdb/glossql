@@ -15,6 +15,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterGlossRunner(loader);
 	RegisterGlossSchema(loader);
 	RegisterGlossLineage(loader);
+	RegisterGlossService(loader);
 }
 
 void GlossExtension::Load(ExtensionLoader &loader) {

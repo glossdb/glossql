@@ -24,8 +24,13 @@ include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/yyjson/include)
 
 set(EXTENSION_SOURCES
-    src/gloss_extension.cpp src/gloss_grammar.cpp src/gloss_store.cpp
-    src/gloss_runner.cpp src/gloss_schema.cpp src/gloss_lineage.cpp)
+    src/gloss_extension.cpp
+    src/gloss_grammar.cpp
+    src/gloss_store.cpp
+    src/gloss_runner.cpp
+    src/gloss_schema.cpp
+    src/gloss_lineage.cpp
+    src/gloss_service.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})

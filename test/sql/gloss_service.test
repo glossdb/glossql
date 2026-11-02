@@ -1,0 +1,32 @@
+# name: test/sql/gloss_service.test
+# description: gloss_service(route, body) — one call to the model service the instance names; the refusals that come before any call goes out
+# group: [sql]
+
+require gloss
+
+require json
+
+# The service is named once for the instance; unnamed, every call refuses by name
+query I
+SELECT current_setting('gloss_service_url');
+----
+(empty)
+
+statement error
+SELECT gloss_service('/forecast', '{}');
+----
+no service is named for /forecast
+
+statement ok
+SET GLOBAL gloss_service_url = 'http://127.0.0.1:1';
+
+# DuckDB's built-in HTTP client speaks GET alone: a POST needs httpfs, and the refusal says so
+statement error
+SELECT gloss_service('/forecast', '{}');
+----
+speaks GET alone
+
+query II
+SELECT current_setting('gloss_service_token'), current_setting('gloss_service_timeout');
+----
+(empty)	600
