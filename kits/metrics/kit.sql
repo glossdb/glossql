@@ -245,9 +245,10 @@ ORDER BY metric;
 -- a stock keeps the bucket's last level, summed over what stands at that
 -- instant; a ratio re-divides its summed halves. A dimension wider than 24
 -- members serves its top 23 by weight and 'other'. The actual world is
--- this kit's; a plan (world := 'plan', plan := '<name>') and the forecast
--- (world := 'forecast') are the futures kit's, served under the metric
--- through world_cells(), which stands empty until that kit is loaded.
+-- this kit's; a plan (world := 'plan', plan := '<name>'), the forecast
+-- (world := 'forecast') and a scenario (world := 'scenario', scenario :=
+-- '<name>') are the futures kit's, served under the metric through
+-- world_cells(), which stands empty until that kit is loaded.
 --
 -- The no-claim rule: where rows have to be combined — a coarser grain than
 -- the floor, or several rows in one period — and no behaviour stands on
@@ -256,12 +257,12 @@ ORDER BY metric;
 -- such a metric serves no cell, and its fact row says what it owes.
 --===------------------------------------------------------------------===--
 
-CREATE OR REPLACE MACRO glossql.world_cells(w, p, g) AS TABLE
+CREATE OR REPLACE MACRO glossql.world_cells(w, p, s, g) AS TABLE
 SELECT NULL::VARCHAR AS metric, NULL::VARCHAR AS world, NULL::VARCHAR AS dimension, NULL::VARCHAR AS member,
        NULL::TIMESTAMP AS period, NULL::DOUBLE AS value, NULL::DOUBLE AS num, NULL::DOUBLE AS den, NULL::VARCHAR AS behavior
 WHERE false;
 
-CREATE OR REPLACE MACRO glossql.metric_series(grain := NULL, unclaimed := 'refuse', world := 'actual', plan := NULL) AS TABLE
+CREATE OR REPLACE MACRO glossql.metric_series(grain := NULL, unclaimed := 'refuse', world := 'actual', plan := NULL, scenario := NULL) AS TABLE
 WITH asked AS MATERIALIZED (
   SELECT m.*, coalesce(grain, m.floor) AS at_grain
   FROM glossql.metric_axes() m
@@ -351,7 +352,7 @@ FROM (SELECT * FROM total UNION ALL SELECT * FROM filled UNION ALL SELECT * FROM
 WHERE refused.refusal IS NULL
 UNION ALL
 SELECT metric, world, dimension, member, period, value, num, den, behavior
-FROM glossql.world_cells(world, plan, grain) WHERE world <> 'actual'
+FROM glossql.world_cells(world, plan, scenario, grain) WHERE world <> 'actual'
 ORDER BY metric, dimension, member, period;
 
 --===------------------------------------------------------------------===--

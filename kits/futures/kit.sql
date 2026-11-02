@@ -466,6 +466,316 @@ LEFT JOIN whole td ON td.grain = r.grain AND td.step = r.step AND td.span IS NOT
 ORDER BY r.seq, r.point_seq NULLS FIRST;
 
 --===------------------------------------------------------------------===--
+-- The scenario. A lever is a FACT on a column of a metric's view — a list
+-- price, a discount rate — glossed true where someone sets it, false where
+-- it was looked at and nobody does; a column with no lever gloss is no
+-- lever. A scenario is the actor's own FACT aspect on the dataset, x-kind
+-- scenario, its body a factor per period on declared levers: {"levers":
+-- [{"column": "<metric>.<column>", "factor": {"YYYY-MM": 1.15, …},
+-- "basis": "…"}]}; a period is a month or a day, one not named keeps a
+-- factor of one. scenarios(): every scenario declared, judged — glossed,
+-- each lever a glossed lever on a served metric's column, the factor a
+-- map. scenario_request(): the scenario's reach, one row per scenario
+-- and metric whose view carries one of its levers: grain (the metric's
+-- floor), origin (the last actual), history, the periods ahead up to the
+-- end of the last period the scenario names, and per lever its series
+-- (the mean of the column per period) and the value held as planned
+-- (the last at or before the origin); applicable needs 26 periods of
+-- history and a period ahead. scenario_bodies(): one request per
+-- scenario and metric as the service's contract spells it — the history
+-- as actual rows, the periods ahead twice, as planned (the lever held)
+-- and under the scenario (held times the period's factor), every lever
+-- an input column named as the scenario names it. No grounding is
+-- replayed over the data: the scenario world is the estimate ahead.
+--===------------------------------------------------------------------===--
+
+DECLARE ASPECT lever WITH $${
+  "type": "object", "required": ["value"],
+  "properties": {"value": {"type": "boolean"}, "grounds": {"type": "string"}}
+}$$ AS FACT ON COLUMN;
+
+CREATE OR REPLACE MACRO glossql.scenarios() AS TABLE
+WITH declared AS (
+  SELECT name FROM (SELECT name, kind, schema, row_number() OVER (PARTITION BY name ORDER BY seq DESC) AS rn FROM glossql.aspects)
+  WHERE rn = 1 AND kind = 'FACT' AND json_extract_string(schema, '$.x-kind') = 'scenario'),
+bodies AS (
+  SELECT d.name AS scenario, g.value AS body
+  FROM declared d LEFT JOIN gloss_glossary(current_schema(), NULL, false) g
+    ON g.aspect = d.name AND g.subject = current_schema() AND g.state = 'current'),
+levers AS (
+  SELECT b.scenario, u.l."column" AS lever, split_part(u.l."column", '.', 1) AS metric, split_part(u.l."column", '.', 2) AS col,
+         u.l.factor AS factor, u.l.basis AS basis
+  FROM bodies b, unnest(from_json(json_extract(b.body, '$.levers'), '[{"column": "VARCHAR", "factor": "JSON", "basis": "VARCHAR"}]')) AS u(l)
+  WHERE b.body IS NOT NULL),
+judged AS (
+  SELECT l.*,
+         CASE WHEN l.lever IS NULL OR l.col = '' THEN 'a lever names a served metric''s column, <metric>.<column>'
+              WHEN NOT EXISTS (SELECT 1 FROM gloss_glossary(current_schema(), NULL, false) g
+                               WHERE g.subject = current_schema() || '.' || l.lever AND g.aspect = 'lever' AND g.state = 'current'
+                                 AND (g.value->>'value') = 'true')
+                THEN l.lever || ' carries no lever gloss: a lever is a column someone sets, glossed lever true on the metric''s view'
+              WHEN NOT EXISTS (SELECT 1 FROM glossql.metric_axes() a WHERE a.metric = l.metric AND a.applicable AND coalesce(a.kind, '') NOT IN ('plan', 'fact', 'relation'))
+                THEN l.metric || ' is no served metric of this dataset'
+              WHEN NOT EXISTS (SELECT 1 FROM gloss_columns(current_schema()) c WHERE c.table_name = l.metric AND c.column_name = l.col)
+                THEN l.metric || ' serves no column named ' || l.col
+              WHEN json_type(l.factor) <> 'OBJECT' THEN 'the factor on ' || l.lever || ' is a factor per period, {"YYYY-MM": 1.15}'
+         END AS reason
+  FROM levers l),
+folded AS (
+  SELECT b.scenario, b.body IS NOT NULL AS glossed,
+         coalesce(list({'lever': j.lever, 'metric': j.metric, 'column': j.col, 'factor': j.factor, 'basis': j.basis, 'reason': j.reason}
+                       ORDER BY j.lever) FILTER (WHERE j.lever IS NOT NULL), []) AS levers,
+         CASE WHEN b.body IS NULL THEN 'declared and not glossed: a scenario is a factor per period on declared levers'
+              WHEN count(j.lever) = 0 THEN 'the scenario names no lever'
+              ELSE string_agg(j.reason, '; ' ORDER BY j.lever) END AS reason
+  FROM bodies b LEFT JOIN judged j USING (scenario)
+  GROUP BY b.scenario, b.body)
+SELECT scenario, glossed, reason IS NULL AS applicable, reason, levers FROM folded ORDER BY scenario;
+
+CREATE OR REPLACE MACRO glossql.scenario_request() AS TABLE
+WITH lv AS (
+  SELECT s.scenario, u.l.lever AS lever, u.l.metric AS metric, u.l."column" AS col, u.l.factor AS factor
+  FROM glossql.scenarios() s, unnest(s.levers) AS u(l) WHERE s.applicable),
+axes AS (SELECT metric, floor, period_column, behavior FROM glossql.metric_axes() WHERE applicable),
+series AS (
+  SELECT metric, period, value FROM glossql.metric_series(unclaimed := 'skip')
+  WHERE dimension = '' AND world = 'actual' AND value IS NOT NULL),
+origins AS (SELECT metric, max(period) AS origin, count(*) AS history FROM series GROUP BY metric),
+-- the lever's series: the mean of the column per period at the metric's floor
+lever_rows AS (
+  SELECT l.scenario, l.lever, c.rn,
+         max(CASE WHEN c."column" = a.period_column THEN TRY_CAST(c.val AS TIMESTAMP) END) AS instant,
+         max(CASE WHEN c."column" = l.col THEN TRY_CAST(c.val AS DOUBLE) END) AS at_row
+  FROM (SELECT DISTINCT scenario, lever, metric, col FROM lv) l
+  JOIN axes a ON a.metric = l.metric
+  JOIN dataset_cells(current_schema(), 'views') c ON c."table" = l.metric AND c."column" IN (a.period_column, l.col)
+  GROUP BY l.scenario, l.lever, c.rn),
+lever_series AS (
+  SELECT r.scenario, r.lever, date_trunc(a.floor, r.instant) AS period, avg(r.at_row) AS value
+  FROM lever_rows r JOIN (SELECT DISTINCT scenario, lever, metric FROM lv) l USING (scenario, lever) JOIN axes a ON a.metric = l.metric
+  WHERE r.instant IS NOT NULL AND r.at_row IS NOT NULL
+  GROUP BY r.scenario, r.lever, date_trunc(a.floor, r.instant)),
+-- the end of the last period a lever's factor names
+named AS (
+  SELECT l.scenario, l.lever, l.metric,
+         max(CASE WHEN len(k) = 7 THEN (k || '-01')::TIMESTAMP + INTERVAL 1 MONTH ELSE k::TIMESTAMP + INTERVAL 1 DAY END) AS until
+  FROM lv l, unnest(json_keys(l.factor)) AS u(k)
+  GROUP BY l.scenario, l.lever, l.metric),
+reach AS (
+  SELECT n.scenario, n.metric, a.floor AS grain, a.behavior, o.origin, o.history, max(n.until) AS until
+  FROM named n JOIN axes a USING (metric) LEFT JOIN origins o USING (metric)
+  GROUP BY n.scenario, n.metric, a.floor, a.behavior, o.origin, o.history),
+judged AS (
+  SELECT r.*,
+         CASE WHEN r.origin IS NULL THEN 'the series read serves no cell for ' || r.metric
+              WHEN r.until <= r.origin + glossql.grain_step(r.grain)
+                THEN 'the scenario names no period after ' || strftime(r.origin, '%Y-%m-%d') || ', the last actual of ' || r.metric
+              WHEN r.history < 26 THEN r.history || ' ' || r.grain || 's of history: the estimate needs 26' END AS reason
+  FROM reach r),
+ahead AS (
+  SELECT j.scenario, j.metric, list(g.p ORDER BY g.p) AS periods
+  FROM judged j, unnest(generate_series(j.origin + glossql.grain_step(j.grain), j.until - glossql.grain_step(j.grain), glossql.grain_step(j.grain))) AS g(p)
+  WHERE j.reason IS NULL GROUP BY j.scenario, j.metric),
+inputs AS (
+  SELECT l.scenario, l.metric,
+         list({'lever': l.lever, 'factor': l.factor,
+               'planned': (SELECT arg_max(ls.value, ls.period) FROM lever_series ls, judged j
+                           WHERE ls.scenario = l.scenario AND ls.lever = l.lever AND j.scenario = l.scenario AND j.metric = l.metric AND ls.period <= j.origin),
+               'series': (SELECT coalesce(list({'period': ls.period, 'value': ls.value} ORDER BY ls.period), [])
+                          FROM lever_series ls WHERE ls.scenario = l.scenario AND ls.lever = l.lever)} ORDER BY l.lever) AS levers
+  FROM lv l GROUP BY l.scenario, l.metric)
+SELECT j.scenario, j.metric, j.grain, j.behavior, j.origin, j.history, j.reason, j.reason IS NULL AS applicable,
+       coalesce(a.periods, []::TIMESTAMP[]) AS ahead, i.levers
+FROM judged j LEFT JOIN ahead a USING (scenario, metric) JOIN inputs i USING (scenario, metric)
+ORDER BY j.scenario, j.metric;
+
+CREATE OR REPLACE MACRO glossql.scenario_bodies() AS TABLE
+WITH r AS (SELECT * FROM glossql.scenario_request() WHERE applicable),
+hist AS (
+  SELECT r.scenario, r.metric, s.period, 'actual' AS status, s.value, 0 AS ord
+  FROM r JOIN (SELECT metric, period, value FROM glossql.metric_series(unclaimed := 'skip')
+               WHERE dimension = '' AND world = 'actual' AND value IS NOT NULL) s USING (metric)),
+ahead AS (
+  SELECT r.scenario, r.metric, u.p AS period, st.status, NULL::DOUBLE AS value, st.ord
+  FROM r, unnest(r.ahead) AS u(p), (VALUES ('plan', 1), ('scenario', 2)) st(status, ord)),
+rows_ AS (SELECT * FROM hist UNION ALL SELECT * FROM ahead),
+inputs AS (
+  SELECT r.scenario, r.metric, u.l.lever AS lever, u.l.factor AS factor, u.l.planned AS planned, u.l.series AS series
+  FROM r, unnest(r.levers) AS u(l)),
+input_cells AS (
+  SELECT w.scenario, w.metric, i.lever, w.period, w.ord,
+         CASE w.status WHEN 'actual' THEN list_extract(list_filter(i.series, lambda e: e.period = w.period), 1).value
+                       WHEN 'plan' THEN i.planned
+                       ELSE i.planned * coalesce(json_extract(i.factor, '$."' || strftime(w.period, '%Y-%m-%d') || '"')::DOUBLE,
+                                                 json_extract(i.factor, '$."' || strftime(w.period, '%Y-%m') || '"')::DOUBLE, 1.0) END AS value
+  FROM rows_ w JOIN inputs i USING (scenario, metric)),
+base AS (
+  SELECT w.scenario, w.metric,
+         json_object('member', list(w.metric ORDER BY w.period, w.ord), 'period', list(strftime(w.period, '%Y-%m-%d') ORDER BY w.period, w.ord),
+                     'status', list(w.status ORDER BY w.period, w.ord), 'value', list(w.value ORDER BY w.period, w.ord)) AS cols
+  FROM rows_ w GROUP BY w.scenario, w.metric),
+levered AS (
+  SELECT scenario, metric, json_group_object(lever, vals) AS cols
+  FROM (SELECT scenario, metric, lever, list(value ORDER BY period, ord) AS vals FROM input_cells GROUP BY scenario, metric, lever)
+  GROUP BY scenario, metric)
+SELECT r.scenario, r.metric, r.grain,
+       json_object('spec', json_object('targets', ['value'], 'levels', [0.1, 0.5, 0.9]),
+                   'table', json_merge_patch(b.cols, l.cols)) AS body
+FROM r JOIN base b USING (scenario, metric) JOIN levered l USING (scenario, metric)
+ORDER BY r.scenario, r.metric;
+
+--===------------------------------------------------------------------===--
+-- metric_scenario: the estimate as a measurement on the dataset, over
+-- every scenario glossed: per scenario its judgement and levers, per
+-- metric reached its grain, origin, the service's sign, confidence and
+-- basis, explains and error, the points ahead (period, low, value, high
+-- at the 10, 50 and 90 levels; the history's own reading with its 90%
+-- interval) and the parts (per lever, what it alone does by the
+-- history). Stale once the data or the record it read moves, which a new
+-- scenario gloss does. scenario_points(s): the newest estimate, one row
+-- per scenario (or every one, NULL), metric and period ahead, with how
+-- often such a band held, the forecast service's share at that grain and
+-- step; a metric not estimated is one row with its reason.
+-- scenario_levers(s): the parts.
+--===------------------------------------------------------------------===--
+
+DECLARE ASPECT metric_scenario WITH $${
+  "type": "object",
+  "properties": {
+    "served_by": {"type": ["string", "null"]},
+    "scenarios": {"type": "array", "items": {"type": "object"}}
+  }
+}$$ AS MEASUREMENT ON DATASET;
+
+DECLARE FUNCTION metric_scenario FOR GLOBAL AS $$
+  WITH sc AS (SELECT * FROM glossql.scenarios()),
+  req AS (SELECT * FROM glossql.scenario_request()),
+  b AS (SELECT scenario, metric, grain, glossql.service('/whatif', body) AS a FROM glossql.scenario_bodies()),
+  rows_ AS (
+    SELECT b.scenario, b.metric,
+           unnest(json_extract(a, '$.table.member')::VARCHAR[]) AS member,
+           unnest(json_extract(a, '$.table.period')::VARCHAR[]) AS period,
+           unnest(json_extract(a, '$.table.status')::VARCHAR[]) AS status,
+           unnest(coalesce(json_extract(a, '$.table.column')::VARCHAR[], list_transform(json_extract(a, '$.table.member')::VARCHAR[], lambda x: 'value'))) AS target,
+           unnest(json_extract(a, '$.table.level')::DOUBLE[]) AS level,
+           unnest(json_extract(a, '$.table.value')::DOUBLE[]) AS value,
+           unnest(coalesce(json_extract(a, '$.table.history_value')::DOUBLE[], list_transform(json_extract(a, '$.table.member')::VARCHAR[], lambda x: NULL::DOUBLE))) AS history_value,
+           unnest(coalesce(json_extract(a, '$.table.history_low')::DOUBLE[], list_transform(json_extract(a, '$.table.member')::VARCHAR[], lambda x: NULL::DOUBLE))) AS history_low,
+           unnest(coalesce(json_extract(a, '$.table.history_high')::DOUBLE[], list_transform(json_extract(a, '$.table.member')::VARCHAR[], lambda x: NULL::DOUBLE))) AS history_high,
+           unnest(coalesce(json_extract(a, '$.table.sign')::VARCHAR[], list_transform(json_extract(a, '$.table.member')::VARCHAR[], lambda x: NULL::VARCHAR))) AS sign,
+           unnest(coalesce(json_extract(a, '$.table.confidence')::VARCHAR[], list_transform(json_extract(a, '$.table.member')::VARCHAR[], lambda x: NULL::VARCHAR))) AS confidence,
+           unnest(coalesce(json_extract(a, '$.table.basis')::VARCHAR[], list_transform(json_extract(a, '$.table.member')::VARCHAR[], lambda x: NULL::VARCHAR))) AS basis,
+           unnest(coalesce(json_extract(a, '$.table.explains')::DOUBLE[], list_transform(json_extract(a, '$.table.member')::VARCHAR[], lambda x: NULL::DOUBLE))) AS explains,
+           unnest(coalesce(json_extract(a, '$.table.error')::DOUBLE[], list_transform(json_extract(a, '$.table.member')::VARCHAR[], lambda x: NULL::DOUBLE))) AS error
+    FROM b WHERE a IS NOT NULL),
+  points AS (
+    SELECT scenario, metric, period,
+           max(CASE WHEN level = 0.1 THEN value END) AS low, max(CASE WHEN level = 0.5 THEN value END) AS value,
+           max(CASE WHEN level = 0.9 THEN value END) AS high,
+           any_value(history_value) AS history_value, any_value(history_low) AS history_low, any_value(history_high) AS history_high
+    FROM rows_ WHERE member = metric AND status = 'scenario' AND target = 'value' AND period IS NOT NULL
+    GROUP BY scenario, metric, period),
+  said AS (
+    SELECT scenario, metric, any_value(sign) AS sign, any_value(confidence) AS confidence, any_value(basis) AS basis,
+           any_value(explains) AS explains, any_value(error) AS error
+    FROM rows_ WHERE member = metric AND target = 'value' GROUP BY scenario, metric),
+  parts AS (
+    SELECT b.scenario, b.metric, u.p.input AS lever, u.p.history_shift AS history_shift, u.p.history_low AS history_low, u.p.history_high AS history_high
+    FROM b, unnest(from_json(json_extract(a, '$.answer.parts'),
+           '[{"member": "VARCHAR", "column": "VARCHAR", "input": "VARCHAR", "history_shift": "DOUBLE", "history_low": "DOUBLE", "history_high": "DOUBLE"}]')) AS u(p)
+    WHERE u.p.member = b.metric AND coalesce(u.p."column", 'value') = 'value'),
+  failures AS (
+    SELECT b.scenario, b.metric, list(u.e.error ORDER BY u.e.error) AS errors
+    FROM b, unnest(from_json(json_extract(a, '$.answer.errors'), '[{"member": "VARCHAR", "column": "VARCHAR", "error": "VARCHAR"}]')) AS u(e)
+    WHERE u.e.member = b.metric GROUP BY b.scenario, b.metric),
+  per_metric AS (
+    SELECT r.scenario, r.metric, r.grain, r.origin,
+           r.applicable AND EXISTS (SELECT 1 FROM points p WHERE p.scenario = r.scenario AND p.metric = r.metric) AS applicable,
+           CASE WHEN NOT r.applicable THEN r.reason
+                WHEN NOT EXISTS (SELECT 1 FROM points p WHERE p.scenario = r.scenario AND p.metric = r.metric)
+                  THEN coalesce(f.errors[1], 'the service answered no point') END AS reason,
+           list_transform(r.levers, lambda l: l.lever) AS levers,
+           s.sign, s.confidence, s.basis, s.explains, s.error,
+           (SELECT coalesce(list({'period': p.period, 'low': p.low, 'value': p.value, 'high': p.high, 'history_value': p.history_value,
+                                  'history_low': p.history_low, 'history_high': p.history_high} ORDER BY p.period), [])
+            FROM points p WHERE p.scenario = r.scenario AND p.metric = r.metric) AS points,
+           (SELECT coalesce(list({'lever': pt.lever, 'history_shift': pt.history_shift, 'history_low': pt.history_low, 'history_high': pt.history_high} ORDER BY pt.lever), [])
+            FROM parts pt WHERE pt.scenario = r.scenario AND pt.metric = r.metric) AS parts
+    FROM req r LEFT JOIN said s ON s.scenario = r.scenario AND s.metric = r.metric
+    LEFT JOIN failures f ON f.scenario = r.scenario AND f.metric = r.metric),
+  per_scenario AS (
+    SELECT sc.scenario, sc.applicable, sc.reason,
+           list_transform(sc.levers, lambda l: {'lever': l.lever, 'basis': l.basis, 'reason': l.reason}) AS levers,
+           (SELECT coalesce(list({'metric': m.metric, 'grain': m.grain, 'origin': strftime(m.origin, '%Y-%m-%d'), 'applicable': m.applicable, 'reason': m.reason,
+                                  'levers': m.levers, 'sign': m.sign, 'confidence': m.confidence, 'basis': m.basis, 'explains': m.explains, 'error': m.error,
+                                  'points': m.points, 'parts': m.parts} ORDER BY m.metric), [])
+            FROM per_metric m WHERE m.scenario = sc.scenario) AS metrics
+    FROM sc)
+  SELECT (SELECT string_agg(DISTINCT json_extract_string(a, '$.answer.service') || ' ' || json_extract_string(a, '$.answer.version'), ', ') FROM b) AS served_by,
+         (SELECT coalesce(list({'scenario': scenario, 'applicable': applicable, 'reason': reason, 'levers': levers, 'metrics': metrics} ORDER BY scenario), [])
+          FROM per_scenario) AS scenarios
+$$ RETURNS metric_scenario;
+
+-- The estimate's witness says an estimate stands: green once one landed,
+-- so that it is owed while none has, and re-owed once stale.
+DECLARE FUNCTION scenario_stands FOR GLOBAL AS $$
+  SELECT subject, 'green' AS band, 0.0 AS score FROM slots WHERE speaker = 'function'
+$$;
+
+DECLARE WITNESS scenario_w ON metric_scenario DETECTOR scenario_stands;
+
+CREATE OR REPLACE MACRO glossql.scenario_points(s) AS TABLE
+WITH newest AS (
+  SELECT value, computed_at FROM glossql.measurements
+  WHERE dataset = current_schema() AND function = 'metric_scenario' ORDER BY seq DESC LIMIT 1),
+scn AS (
+  SELECT computed_at, json_extract_string(value, '$.served_by') AS served_by,
+         unnest(from_json(json_extract(value, '$.scenarios'),
+           '[{"scenario": "VARCHAR", "applicable": "BOOLEAN", "reason": "VARCHAR",
+              "metrics": [{"metric": "VARCHAR", "grain": "VARCHAR", "origin": "VARCHAR", "applicable": "BOOLEAN", "reason": "VARCHAR",
+                           "levers": ["VARCHAR"], "sign": "VARCHAR", "confidence": "VARCHAR", "basis": "VARCHAR", "explains": "DOUBLE", "error": "DOUBLE",
+                           "points": [{"period": "VARCHAR", "low": "DOUBLE", "value": "DOUBLE", "high": "DOUBLE",
+                                       "history_value": "DOUBLE", "history_low": "DOUBLE", "history_high": "DOUBLE"}]}]}]')) AS sc
+  FROM newest),
+mets AS (
+  SELECT computed_at, served_by, sc.scenario, sc.applicable AS scenario_applicable, sc.reason AS scenario_reason, unnest(sc.metrics) AS m
+  FROM scn WHERE s IS NULL OR sc.scenario = s),
+stepped AS (
+  SELECT computed_at, served_by, scenario, m.metric, m.grain, m.origin, m.applicable, m.reason, m.levers, m.sign, m.confidence, m.basis, m.explains, m.error,
+         unnest(m.points) AS p, unnest(generate_series(1, cardinality(m.points)::BIGINT)) AS step
+  FROM mets WHERE cardinality(m.points) > 0),
+-- how often such a band held: the service's share at that grain and step, from the newest forecast run (the record's own
+-- tally reads the series, which reads the worlds, which read this)
+held AS (
+  SELECT r.metric, r.grain, r.step, r.service_80 AS held_80, CASE WHEN r.service_80 IS NOT NULL THEN 'service' END AS held_from
+  FROM glossql.forecast_record() r JOIN (SELECT max(run) AS run FROM glossql.forecast_record()) n ON n.run = r.run
+  WHERE r.applicable AND r.span IS NULL AND r.step IS NOT NULL)
+SELECT s.scenario, s.metric, s.grain, s.origin, s.applicable, s.reason, s.levers, 'estimated' AS pass, s.step::BIGINT AS step,
+       s.p.period::TIMESTAMP AS period, s.p.low AS low, s.p.value AS value, s.p.high AS high,
+       s.p.history_value AS history_value, s.p.history_low AS history_low, s.p.history_high AS history_high,
+       h.held_80, h.held_from, s.sign, s.confidence, s.basis, s.explains, s.error, s.served_by, s.computed_at
+FROM stepped s LEFT JOIN held h ON h.metric = s.metric AND h.grain = s.grain AND h.step = s.step
+UNION ALL
+SELECT scenario, m.metric, m.grain, m.origin, m.applicable, m.reason, m.levers, 'estimated', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+       NULL, NULL, m.sign, m.confidence, m.basis, m.explains, m.error, served_by, computed_at
+FROM mets WHERE coalesce(cardinality(m.points), 0) = 0
+ORDER BY scenario, metric, step NULLS FIRST;
+
+CREATE OR REPLACE MACRO glossql.scenario_levers(s) AS TABLE
+WITH newest AS (
+  SELECT value, computed_at FROM glossql.measurements
+  WHERE dataset = current_schema() AND function = 'metric_scenario' ORDER BY seq DESC LIMIT 1),
+scn AS (
+  SELECT computed_at, unnest(from_json(json_extract(value, '$.scenarios'),
+           '[{"scenario": "VARCHAR", "metrics": [{"metric": "VARCHAR", "applicable": "BOOLEAN", "reason": "VARCHAR", "sign": "VARCHAR", "basis": "VARCHAR",
+              "parts": [{"lever": "VARCHAR", "history_shift": "DOUBLE", "history_low": "DOUBLE", "history_high": "DOUBLE"}]}]}]')) AS sc
+  FROM newest),
+mets AS (SELECT computed_at, sc.scenario, unnest(sc.metrics) AS m FROM scn WHERE s IS NULL OR sc.scenario = s)
+SELECT scenario, m.metric, m.applicable, m.reason, m.sign, m.basis, p.lever, p.history_shift, p.history_low, p.history_high, computed_at
+FROM (SELECT computed_at, scenario, m, unnest(m.parts) AS p FROM mets WHERE cardinality(m.parts) > 0)
+ORDER BY scenario, m.metric, p.lever;
+
+--===------------------------------------------------------------------===--
 -- The plan. plan_rows(): every applicable plan's rows through the metric
 -- it plans — plan, metric, behavior, covers, instant, value, and grain,
 -- the plan's own: the grain its rows are booked against where the
@@ -475,8 +785,9 @@ ORDER BY r.seq, r.point_seq NULLS FIRST;
 -- flow sums, a stock keeps the last level, anything else averages; a plan
 -- coarser than the asked grain serves nothing. world_cells(): the plan
 -- world (named plan, refused by name where it is no plan or nothing
--- serves it) and the forecast world (the newest forecast's medians at its
--- grain) under the metric, for metric_series(world := …).
+-- serves it), the forecast world (the newest forecast's medians at its
+-- grain) and the scenario world (named scenario: the newest estimate's
+-- medians ahead) under the metric, for metric_series(world := …).
 --===------------------------------------------------------------------===--
 
 CREATE OR REPLACE MACRO glossql.plan_rows() AS TABLE
@@ -511,11 +822,14 @@ WHERE r.instant IS NOT NULL AND r.value IS NOT NULL
   AND (at_grain IS NULL OR glossql.grain_rank(at_grain) >= glossql.grain_rank(r.grain))
 GROUP BY r.plan, r.metric, coalesce(at_grain, r.grain), date_trunc(coalesce(at_grain, r.grain), r.instant), r.behavior;
 
-CREATE OR REPLACE MACRO glossql.world_cells(w, p, g) AS TABLE
+CREATE OR REPLACE MACRO glossql.world_cells(w, p, s, g) AS TABLE
 WITH named AS (
   SELECT a.metric AS plan, a.applicable, a.reason FROM glossql.metric_axes() a WHERE a.kind = 'plan' AND a.metric = p),
 refusal AS (
-  SELECT CASE WHEN w NOT IN ('actual', 'plan', 'forecast') THEN error('metric_series(world := ''' || w || '''): the worlds are actual, plan and forecast')
+  SELECT CASE WHEN w NOT IN ('actual', 'plan', 'forecast', 'scenario') THEN error('metric_series(world := ''' || w || '''): the worlds are actual, plan, forecast and scenario')
+              WHEN w = 'scenario' AND s IS NULL THEN error('metric_series(world := ''scenario'') names the scenario it serves, scenario := ''<name>'' — a scenario is a FACT aspect declared with x-kind scenario, glossed with a factor per period on declared levers')
+              WHEN w = 'scenario' AND NOT EXISTS (SELECT 1 FROM glossql.scenarios() WHERE scenario = s) THEN error(
+                'metric_series(scenario := ''' || s || '''): no scenario of that name is declared — a scenario is a FACT aspect declared with x-kind scenario')
               WHEN w = 'plan' AND p IS NULL THEN error('metric_series(world := ''plan'') names the plan it serves, plan := ''<name>'' — a plan is a QUERY aspect declared with x-kind plan and x-plan-of <metric>')
               WHEN w = 'plan' AND NOT EXISTS (SELECT 1 FROM named) THEN error(
                 CASE WHEN NOT EXISTS (SELECT 1 FROM glossql.aspects WHERE name = p)
@@ -532,9 +846,15 @@ forecast_world AS (
   SELECT f.metric, 'forecast' AS world, '' AS dimension, '' AS member, f.period, f.p50 AS value,
          NULL::DOUBLE AS num, NULL::DOUBLE AS den, coalesce(f.behavior, 'none') AS behavior
   FROM glossql.forecast_record() f JOIN newest n ON n.run = f.run
-  WHERE w = 'forecast' AND f.applicable AND f.span IS NULL AND f.period IS NOT NULL AND (g IS NULL OR g = f.grain))
+  WHERE w = 'forecast' AND f.applicable AND f.span IS NULL AND f.period IS NOT NULL AND (g IS NULL OR g = f.grain)),
+scenario_world AS (
+  SELECT sp.metric, 'scenario' AS world, '' AS dimension, '' AS member, sp.period, sp.value,
+         NULL::DOUBLE AS num, NULL::DOUBLE AS den, coalesce(a.behavior, 'none') AS behavior
+  FROM glossql.scenario_points(s) sp LEFT JOIN glossql.metric_axes() a ON a.metric = sp.metric
+  WHERE w = 'scenario' AND sp.applicable AND sp.value IS NOT NULL AND (g IS NULL OR g = sp.grain))
 SELECT * FROM plan_world
 UNION ALL SELECT * FROM forecast_world
+UNION ALL SELECT * FROM scenario_world
 UNION ALL SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM refusal WHERE r IS NOT NULL;
 
 --===------------------------------------------------------------------===--
@@ -760,11 +1080,13 @@ ORDER BY plan, CASE grain WHEN 'year' THEN 0 ELSE 1 END, period;
 -- The two goals this kit answers for a door's next read. bands: the walk
 -- stands and no band is red. plan: the plan served, the forecast at the
 -- current origin, the plan judged against it, every gap judged by the
--- human. Served as CTEs and arms over the relations the door reads once
--- (ds, axes, owed, reds, bodies, applicable); every CTE reads the record,
--- none the data: futures_red is the metric whose newest point the red
--- verdict scores, futures_judged the plans' judgements as they stand,
--- futures_gaps the plan years the forecast's band does not hold.
+-- human — with a scenario's estimate where one is glossed. Served as
+-- CTEs and arms over the relations the door reads once (ds, axes, owed,
+-- reds, bodies, applicable); every CTE reads the record, none the data:
+-- futures_red is the metric whose newest point the red verdict scores,
+-- futures_judged the plans' judgements as they stand, futures_gaps the
+-- plan years the forecast's band does not hold, futures_estimate what
+-- the newest estimate says per scenario and metric.
 --===------------------------------------------------------------------===--
 
 CREATE OR REPLACE MACRO glossql.routes_futures() AS TABLE
@@ -796,7 +1118,9 @@ futures_scenarios AS (
     AND EXISTS (SELECT 1 FROM gloss_glossary(current_schema(), NULL, false) g WHERE g.aspect = a.name AND g.state = 'current')),
 futures_levers AS (
   SELECT string_agg(subject, ', ' ORDER BY subject) AS columns
-  FROM gloss_glossary(current_schema(), NULL, false) WHERE aspect = 'lever' AND state = 'current' AND (value->>'value') = 'true')
+  FROM gloss_glossary(current_schema(), NULL, false) WHERE aspect = 'lever' AND state = 'current' AND (value->>'value') = 'true'),
+futures_estimate AS (
+  SELECT DISTINCT scenario, metric, applicable, reason, sign, confidence, basis FROM glossql.scenario_points(NULL))
 $ctes$ AS ctes, $arms$
 SELECT 'bands' AS surface, 1 AS step, 'blocked' AS state, '' AS act, '' AS say, 'no applicable metric stands' AS why, '' AS statement, '' AS "then"
 FROM ds WHERE NOT EXISTS (SELECT 1 FROM axes WHERE applicable AND coalesce(kind, '') <> 'plan')
@@ -913,16 +1237,41 @@ WHERE NOT EXISTS (SELECT 1 FROM futures_scenarios)
   AND NOT EXISTS (SELECT 1 FROM glossql.ruling_entries r WHERE r.dataset = ds.dataset AND r.aspect = g.plan AND r.key = 'plan-' || g.label)
   AND NOT EXISTS (SELECT 1 FROM glossql.open_questions q WHERE q.dataset = ds.dataset AND q.aspect = g.plan AND q.key = 'plan-' || g.label)
 UNION ALL
-SELECT 'plan', 10, 'blocked', '', '',
+SELECT 'plan', 10, 'next', 'metric_scenario', 'run the estimate', o.why,
+       'SELECT metric_scenario() FROM ' || ds.dataset, ''
+FROM owed o, ds
+WHERE o.kind = 'never measured' AND o.subject = 'metric_scenario' AND EXISTS (SELECT 1 FROM futures_scenarios)
+UNION ALL
+SELECT 'plan', 11, 'next', 'metric_scenario', 'run the estimate again', o.why,
+       'SELECT metric_scenario() FROM ' || ds.dataset, ''
+FROM owed o, ds
+WHERE o.kind = 're-measure' AND o.subject = 'metric_scenario' AND EXISTS (SELECT 1 FROM futures_scenarios)
+UNION ALL
+SELECT 'plan', 12, 'next', 'GLOSS plan',
+       'judge ' || g.plan || ' at ' || g.label || ' under ' || s.name,
+       g.plan || ' at ' || g.label || ' lies ' || g.stands || ' the forecast''s band, and '
+         || CASE WHEN e.metric IS NULL THEN s.name || ' does not reach ' || g.metric || ': its levers move other metrics — record the gap as the plan''s assumption, or declare a scenario on a lever of ' || g.metric
+                 WHEN NOT e.applicable THEN s.name || ' gives no estimate for ' || g.metric || ' (' || coalesce(e.reason, 'no reason') || ') — record the gap as the plan''s assumption'
+                 ELSE s.name || ' moves ' || g.metric || ' ' || coalesce(e.confidence, '?') || ' (' || coalesce(e.sign, '?') || ': ' || coalesce(e.basis, '') || ') — read scenario_points(''' || s.name || ''') and record the gap with the scenario''s reading as the plan''s assumption' END,
+       '-- append to "assumptions" of the plan''s standing body: {"dimension": "definition", "key": "plan-' || g.label || '", "assumption": "<the gap at ' || g.label || ' and what ' || s.name || ' says closes it, or does not>", "basis": "' || s.name || '", "confidence": 0.7}' || chr(10)
+         || 'GLOSS ' || g.plan || ' ON ' || ds.dataset || ' AS $$' || coalesce(b.body, '<the standing body>') || '$$;',
+       'SELECT metric, period, value, low, high, sign, basis FROM scenario_points(''' || s.name || ''') WHERE metric = ''' || g.metric || ''''
+FROM futures_gaps g CROSS JOIN futures_scenarios s LEFT JOIN futures_estimate e ON e.scenario = s.name AND e.metric = g.metric
+LEFT JOIN bodies b ON b.metric = g.plan CROSS JOIN ds
+WHERE NOT EXISTS (SELECT 1 FROM owed o WHERE o.subject = 'metric_scenario')
+  AND NOT EXISTS (SELECT 1 FROM glossql.ruling_entries r WHERE r.dataset = ds.dataset AND r.aspect = g.plan AND r.key = 'plan-' || g.label)
+  AND NOT EXISTS (SELECT 1 FROM glossql.open_questions q WHERE q.dataset = ds.dataset AND q.aspect = g.plan AND q.key = 'plan-' || g.label)
+UNION ALL
+SELECT 'plan', 13, 'blocked', '', '',
        g.plan || ' at ' || g.label || ' lies ' || g.stands || ' the forecast''s band and the question stands for the human', '', ''
 FROM futures_gaps g CROSS JOIN ds
 WHERE EXISTS (SELECT 1 FROM glossql.open_questions q WHERE q.dataset = ds.dataset AND q.aspect = g.plan AND q.key = 'plan-' || g.label)
 UNION ALL
-SELECT 'plan', 11, 'done', '', '',
+SELECT 'plan', 14, 'done', '', '',
        'the plan stands; the gap on ' || g.plan || ' at ' || g.label || ' carries the human''s ruling', '', ''
 FROM futures_gaps g CROSS JOIN ds
 WHERE EXISTS (SELECT 1 FROM glossql.ruling_entries r WHERE r.dataset = ds.dataset AND r.aspect = g.plan AND r.key = 'plan-' || g.label)
 UNION ALL
-SELECT 'plan', 12, 'done', '', '', 'every plan is served and judged, no plan period lies outside the forecast''s band, or the gap carries a question or a ruling', '', ''
+SELECT 'plan', 15, 'done', '', '', 'every plan is served and judged, no plan period lies outside the forecast''s band, or the gap carries a question or a ruling', '', ''
 FROM ds
 $arms$ AS arms;

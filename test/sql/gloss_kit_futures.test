@@ -336,7 +336,7 @@ sales is no plan
 statement error
 SELECT * FROM glossql.metric_series(world := 'dream');
 ----
-the worlds are actual, plan and forecast
+the worlds are actual, plan, forecast and scenario
 
 # plan_points(): the year first — whole, begun, not complete: the actual to date plus the year to go bands it; then the months,
 # landed through the origin with their variance, the rest against their own step's band
@@ -412,6 +412,119 @@ query III
 SELECT count(*) FILTER (WHERE arms LIKE '%''plan'', 7, ''next'', ''metric_plan''%'),
        count(*) FILTER (WHERE arms LIKE '%''plan'', 8, ''next'', ''metric_plan''%'),
        count(*) FILTER (WHERE arms LIKE '%''plan'', 9, ''next'', ''GLOSS scenario''%')
+FROM glossql.routes_futures();
+----
+1	1	1
+
+# --- the scenario: a lever on a column of a metric's view, a scenario of a factor per period, the estimate ahead from the service
+
+statement ok
+DECLARE ASPECT priced WITH $${"title": "Priced spend"}$$ AS QUERY;
+
+statement ok
+GLOSS priced ON fin AS $${"sql": "SELECT booked AS period, amount AS value, 10.0 + amount / 10 AS price FROM fin.ledger"}$$;
+
+statement ok
+GLOSS role ON priced.period AS $${"value": "timestamp"}$$;
+
+statement ok
+GLOSS role ON priced.value AS $${"value": "measure"}$$;
+
+statement ok
+SELECT temporal() FROM priced.period;
+
+statement ok
+GLOSS behavior ON priced.value AS $${"value": "flow"}$$;
+
+statement ok
+DECLARE ASPECT price_up WITH $${"title": "Price +10% in February", "x-kind": "scenario", "type": "object", "required": ["levers"], "properties": {"levers": {"type": "array"}}}$$ AS FACT ON DATASET;
+
+# declared and not glossed
+query TTTT
+SELECT scenario, glossed, applicable, reason FROM glossql.scenarios();
+----
+price_up	false	false	declared and not glossed: a scenario is a factor per period on declared levers
+
+# a lever nobody glossed refuses the scenario at read
+statement ok
+GLOSS price_up ON fin AS $${"levers": [{"column": "priced.price", "factor": {"2025-02": 1.1}, "basis": "the February price list"}]}$$;
+
+query TT
+SELECT applicable, reason FROM glossql.scenarios();
+----
+false	priced.price carries no lever gloss: a lever is a column someone sets, glossed lever true on the metric's view
+
+statement ok
+GLOSS lever ON priced.price AS $${"value": true, "grounds": "the list price, set each quarter"}$$;
+
+query TTT
+SELECT applicable, reason, len(levers) FROM glossql.scenarios();
+----
+true	NULL	1
+
+# the reach: priced runs daily, its last actual 2025-02-05; the scenario names February, so 23 days ahead
+query TTTTII
+SELECT scenario, metric, grain, origin::DATE, history, len(ahead) FROM glossql.scenario_request();
+----
+price_up	priced	day	2025-02-05	402	23
+
+# the request: the history, then each day ahead twice; the lever held at its last value as planned, times the factor under the scenario
+query TITTRR
+SELECT metric, json_array_length(json_extract(body, '/table/member')), json_extract_string(body, '/table/status/402'), json_extract_string(body, '/table/status/403'),
+       json_extract(body, '/table/priced.price/402')::DOUBLE, round(json_extract(body, '/table/priced.price/403')::DOUBLE, 2)
+FROM glossql.scenario_bodies();
+----
+priced	448	plan	scenario	10.2	11.22
+
+query TR
+SELECT json_extract_string(body, '/table/period/401'), json_extract(body, '/table/priced.price/401')::DOUBLE FROM glossql.scenario_bodies();
+----
+2025-02-05	10.2
+
+statement ok
+CREATE OR REPLACE MACRO glossql.service(route, body) AS '{"table":{"member":["priced","priced","priced","priced","priced","priced","priced","priced","priced"],"period":["2025-02-06","2025-02-06","2025-02-06","2025-02-07","2025-02-07","2025-02-07","2025-02-08","2025-02-08","2025-02-08"],"column":["value","value","value","value","value","value","value","value","value"],"status":["scenario","scenario","scenario","scenario","scenario","scenario","scenario","scenario","scenario"],"level":[0.1,0.5,0.9,0.1,0.5,0.9,0.1,0.5,0.9],"value":[4.0,5.0,6.0,4.1,5.1,6.1,4.2,5.2,6.2],"history_value":[5.5,5.5,5.5,5.6,5.6,5.6,5.7,5.7,5.7],"history_low":[5.0,5.0,5.0,5.0,5.0,5.0,5.0,5.0,5.0],"history_high":[6.0,6.0,6.0,6.0,6.0,6.0,6.0,6.0,6.0],"sign":["+","+","+","+","+","+","+","+","+"],"confidence":["direction","direction","direction","direction","direction","direction","direction","direction","direction"],"basis":["the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher"],"explains":[0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4],"error":[1.5,1.5,1.5,1.5,1.5,1.5,1.5,1.5,1.5]},"answer":{"service":"glossthesi","version":"test","errors":[],"changed":["priced.price"],"parts":[{"member":"priced","column":"value","input":"priced.price","history_shift":0.5,"history_low":0.2,"history_high":0.8}]}}'::JSON;
+
+statement ok
+SELECT metric_scenario() FROM fin;
+
+query TTTITRRRTT
+SELECT scenario, metric, grain, step, period::DATE, low, value, high, sign, confidence FROM glossql.scenario_points('price_up');
+----
+price_up	priced	day	1	2025-02-06	4.0	5.0	6.0	+	direction
+price_up	priced	day	2	2025-02-07	4.1	5.1	6.1	+	direction
+price_up	priced	day	3	2025-02-08	4.2	5.2	6.2	+	direction
+
+query TTRRR
+SELECT metric, lever, history_shift, history_low, history_high FROM glossql.scenario_levers('price_up');
+----
+priced	priced.price	0.5	0.2	0.8
+
+# the scenario world under the metric: the estimate's medians ahead
+query TTIR
+SELECT metric, world, count(*), sum(value) FROM glossql.metric_series(world := 'scenario', scenario := 'price_up') GROUP BY ALL;
+----
+priced	scenario	3	15.3
+
+statement error
+SELECT * FROM glossql.metric_series(world := 'scenario');
+----
+names the scenario it serves
+
+statement error
+SELECT * FROM glossql.metric_series(world := 'scenario', scenario := 'nothing');
+----
+no scenario of that name is declared
+
+query TTTT
+SELECT subject, witness, band, current FROM ATTEST() WHERE witness = 'scenario_w';
+----
+fin	scenario_w	green	true
+
+# the routes: the estimate asked for, asked again, and the gap judged under the scenario
+query III
+SELECT count(*) FILTER (WHERE arms LIKE '%''plan'', 10, ''next'', ''metric_scenario''%'),
+       count(*) FILTER (WHERE arms LIKE '%''plan'', 11, ''next'', ''metric_scenario''%'),
+       count(*) FILTER (WHERE arms LIKE '%''plan'', 12, ''next'', ''GLOSS plan''%')
 FROM glossql.routes_futures();
 ----
 1	1	1
