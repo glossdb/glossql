@@ -16,6 +16,8 @@
 --   FROM gloss_kit('kits/futures/kit.sql');
 
 CREATE OR REPLACE MACRO glossql.service(route, body) AS gloss_service(route, body);
+-- the soft form: a refusal or an absent service comes back as {"error": "…"}, for a call the kit can stand without
+CREATE OR REPLACE MACRO glossql.service_soft(route, body) AS gloss_service(route, body, true);
 
 --===------------------------------------------------------------------===--
 -- The walk. band_series(): every applicable metric's total at month grain
@@ -483,11 +485,19 @@ ORDER BY r.seq, r.point_seq NULLS FIRST;
 -- (the last at or before the origin); applicable needs 26 periods of
 -- history, a period ahead, and an input the scenario moves — a lever
 -- held at nothing, or factors of one, move nothing, and the service
--- refuses a request where no input differs. scenario_bodies(): one request per
--- scenario and metric as the service's contract spells it — the history
--- as actual rows, the periods ahead twice, as planned (the lever held)
--- and under the scenario (held times the period's factor), every lever
--- an input column named as the scenario names it. No grounding is
+-- refuses a request where no input differs. lever_bodies(): one
+-- forecast request per scenario, metric and lever, the lever's own
+-- series as the member and the periods ahead as the horizon, at the
+-- forecast's reach per grain. scenario_bodies(paths := NULL): one
+-- what-if request per scenario and metric as the service's contract
+-- spells it — the history as actual rows, the periods ahead twice, as
+-- planned and under the scenario (planned times the period's factor),
+-- every lever an input column named as the scenario names it. The
+-- planned input is the lever's own forecast where paths carries one
+-- ({"<scenario>|<metric>|<lever>": [{period, value}]}, its last median
+-- held past its reach), else the lever's last actual value held. The
+-- estimate's measurement forecasts each lever first and passes the
+-- paths; a plain read of scenario_bodies() holds. No grounding is
 -- replayed over the data: the scenario world is the estimate ahead.
 --===------------------------------------------------------------------===--
 
@@ -585,10 +595,11 @@ held AS (
          (SELECT coalesce(list({'period': ls.period, 'value': ls.value} ORDER BY ls.period), [])
           FROM lever_series ls WHERE ls.scenario = l.scenario AND ls.lever = l.lever) AS series
   FROM lv l),
--- a lever the scenario does not move: its held value is nothing, or every factor ahead is one
+-- a lever the scenario does not move: every factor ahead is one (a planned value of nothing is judged once the
+-- planned path is known, in scenario_bodies)
 moved AS (
   SELECT h.scenario, h.metric, h.lever, h.planned,
-         coalesce(h.planned, 0) <> 0 AND EXISTS (
+         EXISTS (
            SELECT 1 FROM ahead a, unnest(a.periods) AS u(p)
            WHERE a.scenario = h.scenario AND a.metric = h.metric
              AND coalesce(json_extract(h.factor, '$."' || strftime(u.p, '%Y-%m-%d') || '"')::DOUBLE,
@@ -597,9 +608,7 @@ moved AS (
 inputs AS (
   SELECT h.scenario, h.metric,
          list({'lever': h.lever, 'factor': h.factor, 'planned': h.planned, 'series': h.series} ORDER BY h.lever) AS levers,
-         string_agg(CASE WHEN NOT m.moves THEN
-           CASE WHEN coalesce(h.planned, 0) = 0 THEN h.lever || ' stands at ' || coalesce(h.planned::VARCHAR, 'nothing') || ' at the origin, and a factor on nothing is nothing'
-                ELSE 'every factor on ' || h.lever || ' over the periods ahead is one' END END, '; ' ORDER BY h.lever) AS unmoved
+         string_agg(CASE WHEN NOT m.moves THEN 'every factor on ' || h.lever || ' over the periods ahead is one' END, '; ' ORDER BY h.lever) AS unmoved
   FROM held h JOIN moved m USING (scenario, metric, lever)
   GROUP BY h.scenario, h.metric)
 SELECT j.scenario, j.metric, j.grain, j.behavior, j.origin, j.history,
@@ -610,7 +619,28 @@ SELECT j.scenario, j.metric, j.grain, j.behavior, j.origin, j.history,
 FROM judged j LEFT JOIN ahead a USING (scenario, metric) JOIN inputs i USING (scenario, metric)
 ORDER BY j.scenario, j.metric;
 
-CREATE OR REPLACE MACRO glossql.scenario_bodies() AS TABLE
+CREATE OR REPLACE MACRO glossql.lever_bodies() AS TABLE
+WITH r AS (SELECT * FROM glossql.scenario_request() WHERE applicable),
+lv AS (
+  SELECT r.scenario, r.metric, r.grain, r.ahead, u.l.lever AS lever, u.l.series AS series,
+         CASE r.grain WHEN 'day' THEN 31 WHEN 'week' THEN 13 WHEN 'month' THEN 12 WHEN 'quarter' THEN 4 ELSE 0 END AS reach
+  FROM r, unnest(r.levers) AS u(l)),
+rows_ AS (
+  SELECT l.scenario, l.metric, l.lever, sp.s.period AS period, sp.s.value AS value, 'actual' AS status
+  FROM lv l, unnest(l.series) AS sp(s)
+  UNION ALL
+  SELECT l.scenario, l.metric, l.lever, ap.p, NULL::DOUBLE, 'forecast'
+  FROM lv l, unnest(l.ahead[1:least(len(l.ahead), l.reach)]) AS ap(p))
+SELECT l.scenario, l.metric, l.lever, l.grain, least(len(l.ahead), l.reach) AS horizon,
+       json_object('spec', json_object('targets', ['value'], 'horizon', least(len(l.ahead), l.reach), 'levels', [0.5], 'grain', l.grain),
+                   'table', json_object('member', list(l.lever ORDER BY w.period, w.status), 'period', list(strftime(w.period, '%Y-%m-%d') ORDER BY w.period, w.status),
+                                        'status', list(w.status ORDER BY w.period, w.status), 'value', list(w.value ORDER BY w.period, w.status))) AS body
+FROM lv l JOIN rows_ w USING (scenario, metric, lever)
+WHERE l.reach > 0 AND len(l.series) >= 6
+GROUP BY l.scenario, l.metric, l.lever, l.grain, l.ahead, l.reach
+ORDER BY l.scenario, l.metric, l.lever;
+
+CREATE OR REPLACE MACRO glossql.scenario_bodies(paths := NULL) AS TABLE
 WITH r AS (SELECT * FROM glossql.scenario_request() WHERE applicable),
 hist AS (
   SELECT r.scenario, r.metric, s.period, 'actual' AS status, s.value, 0 AS ord
@@ -621,15 +651,38 @@ ahead AS (
   FROM r, unnest(r.ahead) AS u(p), (VALUES ('plan', 1), ('scenario', 2)) st(status, ord)),
 rows_ AS (SELECT * FROM hist UNION ALL SELECT * FROM ahead),
 inputs AS (
-  SELECT r.scenario, r.metric, u.l.lever AS lever, u.l.factor AS factor, u.l.planned AS planned, u.l.series AS series
+  SELECT r.scenario, r.metric, u.l.lever AS lever, u.l.factor AS factor, u.l.planned AS held, u.l.series AS series,
+         from_json(coalesce(json_extract(paths, '$."' || r.scenario || '|' || r.metric || '|' || u.l.lever || '"'), '[]'::JSON),
+                   '[{"period": "VARCHAR", "value": "DOUBLE"}]') AS path
   FROM r, unnest(r.levers) AS u(l)),
-input_cells AS (
-  SELECT w.scenario, w.metric, i.lever, w.period, w.ord,
-         CASE w.status WHEN 'actual' THEN list_extract(list_filter(i.series, lambda e: e.period = w.period), 1).value
-                       WHEN 'plan' THEN i.planned
-                       ELSE i.planned * coalesce(json_extract(i.factor, '$."' || strftime(w.period, '%Y-%m-%d') || '"')::DOUBLE,
-                                                 json_extract(i.factor, '$."' || strftime(w.period, '%Y-%m') || '"')::DOUBLE, 1.0) END AS value
+-- the planned input at a period: the lever's forecast median there, its last median past the forecast's reach, else the held value
+planned AS (
+  SELECT w.scenario, w.metric, i.lever, w.period, w.ord, w.status, i.factor, i.series,
+         CASE WHEN i.path IS NOT NULL AND len(i.path) > 0
+              THEN coalesce(list_extract(list_filter(i.path, lambda e: e.period::TIMESTAMP = w.period), 1).value, i.path[-1].value)
+              ELSE i.held END AS planned
   FROM rows_ w JOIN inputs i USING (scenario, metric)),
+input_cells AS (
+  SELECT p.scenario, p.metric, p.lever, p.period, p.ord,
+         CASE p.status WHEN 'actual' THEN list_extract(list_filter(p.series, lambda e: e.period = p.period), 1).value
+                       WHEN 'plan' THEN p.planned
+                       ELSE p.planned * coalesce(json_extract(p.factor, '$."' || strftime(p.period, '%Y-%m-%d') || '"')::DOUBLE,
+                                                 json_extract(p.factor, '$."' || strftime(p.period, '%Y-%m') || '"')::DOUBLE, 1.0) END AS value
+  FROM planned p),
+-- an input the scenario moves: some period ahead where its value under the scenario differs from the planned one
+moves AS (
+  SELECT scenario, metric, lever,
+         bool_or(scenario_value IS DISTINCT FROM plan_value AND scenario_value IS NOT NULL) AS moves,
+         any_value(plan_value) AS planned_at_first
+  FROM (SELECT scenario, metric, lever, period,
+               max(CASE WHEN ord = 1 THEN value END) AS plan_value, max(CASE WHEN ord = 2 THEN value END) AS scenario_value
+        FROM input_cells WHERE ord > 0 GROUP BY scenario, metric, lever, period)
+  GROUP BY scenario, metric, lever),
+unmoved AS (
+  SELECT scenario, metric,
+         string_agg(lever || ' stands at ' || coalesce(planned_at_first::VARCHAR, 'nothing') || ' as planned over the periods ahead, and a factor on nothing is nothing', '; ' ORDER BY lever) AS reason
+  FROM moves WHERE NOT moves GROUP BY scenario, metric
+  HAVING NOT bool_or(moves)),
 base AS (
   SELECT w.scenario, w.metric,
          json_object('member', list(w.metric ORDER BY w.period, w.ord), 'period', list(strftime(w.period, '%Y-%m-%d') ORDER BY w.period, w.ord),
@@ -640,9 +693,12 @@ levered AS (
   FROM (SELECT scenario, metric, lever, list(value ORDER BY period, ord) AS vals FROM input_cells GROUP BY scenario, metric, lever)
   GROUP BY scenario, metric)
 SELECT r.scenario, r.metric, r.grain,
-       json_object('spec', json_object('targets', ['value'], 'levels', [0.1, 0.5, 0.9]),
-                   'table', json_merge_patch(b.cols, l.cols)) AS body
+       CASE WHEN u.reason IS NULL THEN json_object('spec', json_object('targets', ['value'], 'levels', [0.1, 0.5, 0.9]),
+                                                   'table', json_merge_patch(b.cols, l.cols)) END AS body,
+       u.reason AS unmoved
 FROM r JOIN base b USING (scenario, metric) JOIN levered l USING (scenario, metric)
+LEFT JOIN (SELECT scenario, metric, reason FROM unmoved
+           WHERE NOT EXISTS (SELECT 1 FROM moves m WHERE m.scenario = unmoved.scenario AND m.metric = unmoved.metric AND m.moves)) u USING (scenario, metric)
 ORDER BY r.scenario, r.metric;
 
 --===------------------------------------------------------------------===--
@@ -671,7 +727,29 @@ DECLARE ASPECT metric_scenario WITH $${
 DECLARE FUNCTION metric_scenario FOR GLOBAL AS $$
   WITH sc AS (SELECT * FROM glossql.scenarios()),
   req AS (SELECT * FROM glossql.scenario_request()),
-  b AS (SELECT scenario, metric, grain, glossql.service('/whatif', body) AS a FROM glossql.scenario_bodies()),
+  -- each lever's own forecast, soft: a refusal holds the lever instead
+  lf AS (SELECT lb.scenario, lb.metric, lb.lever, glossql.service_soft('/forecast', lb.body) AS fa FROM glossql.lever_bodies() lb),
+  medians AS (
+    SELECT scenario, metric, lever,
+           unnest(json_extract(fa, '$.table.period')::VARCHAR[]) AS period,
+           unnest(json_extract(fa, '$.table.level')::DOUBLE[]) AS level,
+           unnest(json_extract(fa, '$.table.value')::DOUBLE[]) AS value
+    FROM lf WHERE json_extract_string(fa, '$.error') IS NULL),
+  paths AS (
+    SELECT scenario, metric, lever, list({'period': period, 'value': value} ORDER BY period) AS path
+    FROM medians WHERE level = 0.5 AND period IS NOT NULL AND value IS NOT NULL GROUP BY scenario, metric, lever),
+  planned_json AS (SELECT json_group_object(scenario || '|' || metric || '|' || lever, path) AS j FROM paths),
+  planned_from AS (
+    SELECT r.scenario, r.metric, u.l.lever AS lever,
+           CASE WHEN p.lever IS NOT NULL THEN 'forecast'
+                WHEN lf.lever IS NULL THEN 'held: the lever is not forecast at this grain, or has too short a history'
+                ELSE 'held: ' || coalesce(json_extract_string(lf.fa, '$.error'), 'the forecast answered no median') END AS planned_from
+    FROM req r, unnest(r.levers) AS u(l)
+    LEFT JOIN lf ON lf.scenario = r.scenario AND lf.metric = r.metric AND lf.lever = u.l.lever
+    LEFT JOIN paths p ON p.scenario = r.scenario AND p.metric = r.metric AND p.lever = u.l.lever),
+  -- a body stands only where an input moves; a NULL body makes no call
+  b AS (SELECT scenario, metric, grain, unmoved, CASE WHEN body IS NOT NULL THEN glossql.service('/whatif', body) END AS a
+        FROM glossql.scenario_bodies(paths := (SELECT j FROM planned_json))),
   rows_ AS (
     SELECT b.scenario, b.metric,
            unnest(json_extract(a, '$.table.member')::VARCHAR[]) AS member,
@@ -711,11 +789,13 @@ DECLARE FUNCTION metric_scenario FOR GLOBAL AS $$
     WHERE u.e.member = b.metric GROUP BY b.scenario, b.metric),
   per_metric AS (
     SELECT r.scenario, r.metric, r.grain, r.origin,
-           r.applicable AND EXISTS (SELECT 1 FROM points p WHERE p.scenario = r.scenario AND p.metric = r.metric) AS applicable,
+           r.applicable AND bd.unmoved IS NULL AND EXISTS (SELECT 1 FROM points p WHERE p.scenario = r.scenario AND p.metric = r.metric) AS applicable,
            CASE WHEN NOT r.applicable THEN r.reason
+                WHEN bd.unmoved IS NOT NULL THEN 'the scenario moves no input of ' || r.metric || ': ' || bd.unmoved
                 WHEN NOT EXISTS (SELECT 1 FROM points p WHERE p.scenario = r.scenario AND p.metric = r.metric)
                   THEN coalesce(f.errors[1], 'the service answered no point') END AS reason,
-           list_transform(r.levers, lambda l: l.lever) AS levers,
+           (SELECT coalesce(list({'lever': pf.lever, 'planned_from': pf.planned_from} ORDER BY pf.lever), [])
+            FROM planned_from pf WHERE pf.scenario = r.scenario AND pf.metric = r.metric) AS levers,
            s.sign, s.confidence, s.basis, s.explains, s.error,
            (SELECT coalesce(list({'period': p.period, 'low': p.low, 'value': p.value, 'high': p.high, 'history_value': p.history_value,
                                   'history_low': p.history_low, 'history_high': p.history_high} ORDER BY p.period), [])
@@ -723,7 +803,8 @@ DECLARE FUNCTION metric_scenario FOR GLOBAL AS $$
            (SELECT coalesce(list({'lever': pt.lever, 'history_shift': pt.history_shift, 'history_low': pt.history_low, 'history_high': pt.history_high} ORDER BY pt.lever), [])
             FROM parts pt WHERE pt.scenario = r.scenario AND pt.metric = r.metric) AS parts
     FROM req r LEFT JOIN said s ON s.scenario = r.scenario AND s.metric = r.metric
-    LEFT JOIN failures f ON f.scenario = r.scenario AND f.metric = r.metric),
+    LEFT JOIN failures f ON f.scenario = r.scenario AND f.metric = r.metric
+    LEFT JOIN b bd ON bd.scenario = r.scenario AND bd.metric = r.metric),
   per_scenario AS (
     SELECT sc.scenario, sc.applicable, sc.reason,
            list_transform(sc.levers, lambda l: {'lever': l.lever, 'basis': l.basis, 'reason': l.reason}) AS levers,
@@ -754,7 +835,7 @@ scn AS (
          unnest(from_json(json_extract(value, '$.scenarios'),
            '[{"scenario": "VARCHAR", "applicable": "BOOLEAN", "reason": "VARCHAR",
               "metrics": [{"metric": "VARCHAR", "grain": "VARCHAR", "origin": "VARCHAR", "applicable": "BOOLEAN", "reason": "VARCHAR",
-                           "levers": ["VARCHAR"], "sign": "VARCHAR", "confidence": "VARCHAR", "basis": "VARCHAR", "explains": "DOUBLE", "error": "DOUBLE",
+                           "levers": [{"lever": "VARCHAR", "planned_from": "VARCHAR"}], "sign": "VARCHAR", "confidence": "VARCHAR", "basis": "VARCHAR", "explains": "DOUBLE", "error": "DOUBLE",
                            "points": [{"period": "VARCHAR", "low": "DOUBLE", "value": "DOUBLE", "high": "DOUBLE",
                                        "history_value": "DOUBLE", "history_low": "DOUBLE", "history_high": "DOUBLE"}]}]}]')) AS sc
   FROM newest),
@@ -771,13 +852,13 @@ held AS (
   SELECT r.metric, r.grain, r.step, r.service_80 AS held_80, CASE WHEN r.service_80 IS NOT NULL THEN 'service' END AS held_from
   FROM glossql.forecast_record() r JOIN (SELECT max(run) AS run FROM glossql.forecast_record()) n ON n.run = r.run
   WHERE r.applicable AND r.span IS NULL AND r.step IS NOT NULL)
-SELECT s.scenario, s.metric, s.grain, s.origin, s.applicable, s.reason, s.levers, 'estimated' AS pass, s.step::BIGINT AS step,
+SELECT s.scenario, s.metric, s.grain, s.origin, s.applicable, s.reason, list_transform(s.levers, lambda l: l.lever) AS levers, 'estimated' AS pass, s.step::BIGINT AS step,
        s.p.period::TIMESTAMP AS period, s.p.low AS low, s.p.value AS value, s.p.high AS high,
        s.p.history_value AS history_value, s.p.history_low AS history_low, s.p.history_high AS history_high,
        h.held_80, h.held_from, s.sign, s.confidence, s.basis, s.explains, s.error, s.served_by, s.computed_at
 FROM stepped s LEFT JOIN held h ON h.metric = s.metric AND h.grain = s.grain AND h.step = s.step
 UNION ALL
-SELECT scenario, m.metric, m.grain, m.origin, m.applicable, m.reason, m.levers, 'estimated', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+SELECT scenario, m.metric, m.grain, m.origin, m.applicable, m.reason, list_transform(m.levers, lambda l: l.lever), 'estimated', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
        NULL, NULL, m.sign, m.confidence, m.basis, m.explains, m.error, served_by, computed_at
 FROM mets WHERE coalesce(cardinality(m.points), 0) = 0
 ORDER BY scenario, metric, step NULLS FIRST;
@@ -789,12 +870,16 @@ WITH newest AS (
 scn AS (
   SELECT computed_at, unnest(from_json(json_extract(value, '$.scenarios'),
            '[{"scenario": "VARCHAR", "metrics": [{"metric": "VARCHAR", "applicable": "BOOLEAN", "reason": "VARCHAR", "sign": "VARCHAR", "basis": "VARCHAR",
+              "levers": [{"lever": "VARCHAR", "planned_from": "VARCHAR"}],
               "parts": [{"lever": "VARCHAR", "history_shift": "DOUBLE", "history_low": "DOUBLE", "history_high": "DOUBLE"}]}]}]')) AS sc
   FROM newest),
-mets AS (SELECT computed_at, sc.scenario, unnest(sc.metrics) AS m FROM scn WHERE s IS NULL OR sc.scenario = s)
-SELECT scenario, m.metric, m.applicable, m.reason, m.sign, m.basis, p.lever, p.history_shift, p.history_low, p.history_high, computed_at
-FROM (SELECT computed_at, scenario, m, unnest(m.parts) AS p FROM mets WHERE cardinality(m.parts) > 0)
-ORDER BY scenario, m.metric, p.lever;
+mets AS (SELECT computed_at, sc.scenario, unnest(sc.metrics) AS m FROM scn WHERE s IS NULL OR sc.scenario = s),
+levers AS (SELECT computed_at, scenario, m, unnest(m.levers) AS l FROM mets WHERE cardinality(m.levers) > 0),
+parts AS (SELECT scenario, m.metric AS metric, unnest(m.parts) AS p FROM mets WHERE cardinality(m.parts) > 0)
+SELECT l.scenario, l.m.metric AS metric, l.m.applicable AS applicable, l.m.reason AS reason, l.m.sign AS sign, l.m.basis AS basis,
+       l.l.lever AS lever, l.l.planned_from AS planned_from, p.p.history_shift AS history_shift, p.p.history_low AS history_low, p.p.history_high AS history_high, l.computed_at
+FROM levers l LEFT JOIN parts p ON p.scenario = l.scenario AND p.metric = l.m.metric AND p.p.lever = l.l.lever
+ORDER BY l.scenario, metric, lever;
 
 --===------------------------------------------------------------------===--
 -- The plan. plan_rows(): every applicable plan's rows through the metric

@@ -481,7 +481,7 @@ SELECT scenario, applicable, reason FROM glossql.scenario_request() WHERE scenar
 price_flat	false	the scenario moves no input of priced: every factor on priced.price over the periods ahead is one
 
 query I
-SELECT count(*) FROM glossql.scenario_bodies();
+SELECT count(*) FROM glossql.scenario_bodies() WHERE body IS NOT NULL;
 ----
 1
 
@@ -498,6 +498,24 @@ SELECT json_extract_string(body, '/table/period/401'), json_extract(body, '/tabl
 ----
 2025-02-05	10.2
 
+# with the lever's forecast as the planned input: its median where it reaches, its last median past that
+query RRRR
+SELECT json_extract(body, '/table/priced.price/402')::DOUBLE, round(json_extract(body, '/table/priced.price/403')::DOUBLE, 2),
+       json_extract(body, '/table/priced.price/406')::DOUBLE, round(json_extract(body, '/table/priced.price/407')::DOUBLE, 2)
+FROM glossql.scenario_bodies(paths := '{"price_up|priced|priced.price": [{"period": "2025-02-06", "value": 10.5}, {"period": "2025-02-07", "value": 10.6}]}');
+----
+10.5	11.55	10.6	11.66
+
+# the lever's own forecast request: the series as the member, 23 days ahead within the day grain's reach of 31
+query TTTIIT
+SELECT lever, grain, horizon, json_array_length(json_extract(body, '/table/member')), json_extract(body, '/spec/horizon')::INTEGER, json_extract_string(body, '/table/status/402')
+FROM glossql.lever_bodies();
+----
+priced.price	day	23	425	23	forecast
+
+statement ok
+CREATE OR REPLACE MACRO glossql.service_soft(route, body) AS '{"table":{"member":["priced.price","priced.price","priced.price"],"step":[1,2,3],"period":["2025-02-06","2025-02-07","2025-02-08"],"column":["value","value","value"],"level":[0.5,0.5,0.5],"value":[10.5,10.6,10.7]},"answer":{"service":"glossthesi","version":"test","errors":[],"coverage":[]}}'::JSON;
+
 statement ok
 CREATE OR REPLACE MACRO glossql.service(route, body) AS '{"table":{"member":["priced","priced","priced","priced","priced","priced","priced","priced","priced"],"period":["2025-02-06","2025-02-06","2025-02-06","2025-02-07","2025-02-07","2025-02-07","2025-02-08","2025-02-08","2025-02-08"],"column":["value","value","value","value","value","value","value","value","value"],"status":["scenario","scenario","scenario","scenario","scenario","scenario","scenario","scenario","scenario"],"level":[0.1,0.5,0.9,0.1,0.5,0.9,0.1,0.5,0.9],"value":[4.0,5.0,6.0,4.1,5.1,6.1,4.2,5.2,6.2],"history_value":[5.5,5.5,5.5,5.6,5.6,5.6,5.7,5.7,5.7],"history_low":[5.0,5.0,5.0,5.0,5.0,5.0,5.0,5.0,5.0],"history_high":[6.0,6.0,6.0,6.0,6.0,6.0,6.0,6.0,6.0],"sign":["+","+","+","+","+","+","+","+","+"],"confidence":["direction","direction","direction","direction","direction","direction","direction","direction","direction"],"basis":["the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher","the history shows spend up where the price was higher"],"explains":[0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4],"error":[1.5,1.5,1.5,1.5,1.5,1.5,1.5,1.5,1.5]},"answer":{"service":"glossthesi","version":"test","errors":[],"changed":["priced.price"],"parts":[{"member":"priced","column":"value","input":"priced.price","history_shift":0.5,"history_low":0.2,"history_high":0.8}]}}'::JSON;
 
@@ -511,10 +529,10 @@ price_up	priced	day	1	2025-02-06	4.0	5.0	6.0	+	direction
 price_up	priced	day	2	2025-02-07	4.1	5.1	6.1	+	direction
 price_up	priced	day	3	2025-02-08	4.2	5.2	6.2	+	direction
 
-query TTRRR
-SELECT metric, lever, history_shift, history_low, history_high FROM glossql.scenario_levers('price_up');
+query TTTRRR
+SELECT metric, lever, planned_from, history_shift, history_low, history_high FROM glossql.scenario_levers('price_up');
 ----
-priced	priced.price	0.5	0.2	0.8
+priced	priced.price	forecast	0.5	0.2	0.8
 
 # the scenario world under the metric: the estimate's medians ahead
 query TTIR
@@ -536,6 +554,52 @@ query TTTT
 SELECT subject, witness, band, current FROM ATTEST() WHERE witness = 'scenario_w';
 ----
 fin	scenario_w	green	true
+
+# a lever whose forecast the service refuses is held, and the estimate stands
+statement ok
+CREATE OR REPLACE MACRO glossql.service_soft(route, body) AS '{"error": "the service answered 422 on /forecast: 3 periods of history, a forecast needs 6"}'::JSON;
+
+statement ok
+INSERT INTO fin.ledger VALUES (DATE '2025-02-06', 4.0, 'parks');
+
+statement ok
+SELECT metric_scenario() FROM fin;
+
+query TT
+SELECT lever, planned_from FROM glossql.scenario_levers('price_up');
+----
+priced.price	held: the service answered 422 on /forecast: 3 periods of history, a forecast needs 6
+
+# a lever that stands at nothing as planned — held at zero, its forecast refused — moves nothing: judged in the measurement, no call
+statement ok
+GLOSS priced ON fin AS $${"sql": "SELECT booked AS period, amount AS value, 10.0 + amount / 10 AS price, CASE WHEN booked >= DATE '2025-02-01' THEN 0.0 ELSE 1.0 END AS promo FROM fin.ledger"}$$;
+
+statement ok
+GLOSS lever ON priced.promo AS $${"value": true, "grounds": "the promotion flag"}$$;
+
+statement ok
+DECLARE ASPECT promo_on WITH $${"title": "Promotion doubled", "x-kind": "scenario", "type": "object", "required": ["levers"], "properties": {"levers": {"type": "array"}}}$$ AS FACT ON DATASET;
+
+statement ok
+GLOSS promo_on ON fin AS $${"levers": [{"column": "priced.promo", "factor": {"2025-02": 2.0}, "basis": "twice the promotion"}]}$$;
+
+query TTT
+SELECT scenario, applicable, reason FROM glossql.scenario_request() WHERE scenario = 'promo_on';
+----
+promo_on	true	NULL
+
+query TT
+SELECT scenario, unmoved FROM glossql.scenario_bodies() WHERE scenario = 'promo_on';
+----
+promo_on	priced.promo stands at 0.0 as planned over the periods ahead, and a factor on nothing is nothing
+
+statement ok
+SELECT metric_scenario() FROM fin;
+
+query TTTT
+SELECT scenario, metric, applicable, reason FROM glossql.scenario_points('promo_on');
+----
+promo_on	priced	false	the scenario moves no input of priced: priced.promo stands at 0.0 as planned over the periods ahead, and a factor on nothing is nothing
 
 # the routes: the estimate asked for, asked again, and the gap judged under the scenario
 query III

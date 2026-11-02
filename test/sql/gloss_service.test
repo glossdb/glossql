@@ -26,6 +26,12 @@ SELECT gloss_service('/forecast', '{}');
 ----
 speaks GET alone: LOAD httpfs, and the call to /forecast can go out
 
+# the soft form answers a refusing or absent service as a JSON error; the refusals before any call stay loud
+statement error
+SELECT gloss_service('/forecast', '{}', true);
+----
+speaks GET alone: LOAD httpfs, and the call to /forecast can go out
+
 query II
 SELECT current_setting('gloss_service_token'), current_setting('gloss_service_timeout');
 ----

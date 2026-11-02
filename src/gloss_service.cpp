@@ -10,12 +10,18 @@
 // needs httpfs loaded, which also brings TLS; the refusal names that too.
 // gloss_service_timeout bounds one call, whole, in seconds. A 4xx or 5xx is an
 // error carrying the service's own text, so an agent reads what to repair.
+// gloss_service(route, body, true) is the soft form: a service that refuses
+// or does not answer comes back as {"error": "…"} instead, for a call whose
+// failure a kit can stand without — a lever's own forecast, where the held
+// value serves instead; the refusals before any call goes out stay loud.
 
 #include "gloss_grammar.hpp"
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
+#include "duckdb/common/vector_operations/ternary_executor.hpp"
 #include "duckdb/execution/expression_executor_state.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -32,7 +38,25 @@ static string Setting(ClientContext &context, const char *name) {
 	return value.IsNull() ? string() : value.ToString();
 }
 
-static void ServiceExec(DataChunk &args, ExpressionState &state, Vector &result) {
+static string ErrorJson(const string &text) {
+	string out = "{\"error\": \"";
+	for (auto c : text) {
+		if (c == '"' || c == '\\') {
+			out += '\\';
+			out += c;
+		} else if (c == '\n') {
+			out += "\\n";
+		} else if (static_cast<unsigned char>(c) < 0x20) {
+			out += ' ';
+		} else {
+			out += c;
+		}
+	}
+	return out + "\"}";
+}
+
+template <class EXEC>
+static void ServiceRun(DataChunk &args, ExpressionState &state, Vector &result, EXEC run) {
 	auto &context = state.GetContext();
 	auto &db = DatabaseInstance::GetDatabase(context);
 	auto base = Setting(context, "gloss_service_url");
@@ -45,8 +69,7 @@ static void ServiceExec(DataChunk &args, ExpressionState &state, Vector &result)
 	auto &util = HTTPUtil::Get(db);
 	auto get_only = util.GetName() == "Built-In";
 
-	BinaryExecutor::Execute<string_t, string_t, string_t>(
-	    args.data[0], args.data[1], result, args.size(), [&](string_t route_t, string_t body_t) {
+	run([&](string_t route_t, string_t body_t, bool soft) {
 		    auto route = route_t.GetString();
 		    if (base.empty()) {
 			    throw InvalidInputException("no service is named for %s: set gloss_service_url (GLOSSQL_SERVICE_URL) "
@@ -72,14 +95,38 @@ static void ServiceExec(DataChunk &args, ExpressionState &state, Vector &result)
 		    auto response = util.Request(post);
 		    auto body = response->body.empty() ? post.buffer_out : response->body;
 		    if (response->HasRequestError()) {
-			    throw IOException("the service at %s did not answer: %s", url, response->GetRequestError());
+			    auto text = StringUtil::Format("the service at %s did not answer: %s", url, response->GetRequestError());
+			    if (soft) {
+				    return StringVector::AddString(result, ErrorJson(text));
+			    }
+			    throw IOException(text);
 		    }
 		    if (!response->Success()) {
-			    throw InvalidInputException("the service answered %d on %s: %s", static_cast<int>(response->status),
-				                            route, body.substr(0, 4000));
+			    auto text = StringUtil::Format("the service answered %d on %s: %s", static_cast<int>(response->status),
+			                                   route, body.substr(0, 4000));
+			    if (soft) {
+				    return StringVector::AddString(result, ErrorJson(text));
+			    }
+			    throw InvalidInputException(text);
 		    }
 		    return StringVector::AddString(result, body);
 	    });
+}
+
+static void ServiceExec(DataChunk &args, ExpressionState &state, Vector &result) {
+	ServiceRun(args, state, result, [&](auto call) {
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
+		    args.data[0], args.data[1], result, args.size(),
+		    [&](string_t route_t, string_t body_t) { return call(route_t, body_t, false); });
+	});
+}
+
+static void ServiceSoftExec(DataChunk &args, ExpressionState &state, Vector &result) {
+	ServiceRun(args, state, result, [&](auto call) {
+		TernaryExecutor::Execute<string_t, string_t, bool, string_t>(
+		    args.data[0], args.data[1], args.data[2], result,
+		    [&](string_t route_t, string_t body_t, bool soft) { return call(route_t, body_t, soft); });
+	});
 }
 
 void RegisterGlossService(ExtensionLoader &loader) {
@@ -92,11 +139,18 @@ void RegisterGlossService(ExtensionLoader &loader) {
 	                          LogicalType::VARCHAR, Value(""), nullptr, SetScope::GLOBAL);
 	config.AddExtensionOption("gloss_service_timeout", "Seconds one service call may take, whole", LogicalType::BIGINT,
 	                          Value::BIGINT(600), nullptr, SetScope::GLOBAL);
+	ScalarFunctionSet set("gloss_service");
 	ScalarFunction service("gloss_service", {LogicalType::VARCHAR, LogicalType::JSON()}, LogicalType::JSON(),
 	                       ServiceExec);
 	service.SetVolatile();
 	service.SetFallible();
-	loader.RegisterFunction(service);
+	set.AddFunction(service);
+	ScalarFunction soft("gloss_service", {LogicalType::VARCHAR, LogicalType::JSON(), LogicalType::BOOLEAN},
+	                    LogicalType::JSON(), ServiceSoftExec);
+	soft.SetVolatile();
+	soft.SetFallible();
+	set.AddFunction(soft);
+	loader.RegisterFunction(set);
 }
 
 } // namespace duckdb
