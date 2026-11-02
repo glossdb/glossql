@@ -194,4 +194,9 @@ public:
 	Workspace ws;
 };
 
+//! The store's version — the lake's snapshot and every store relation's
+//! highest seq — that the reads and the kept views are kept under; any write
+//! moves it (gloss_store.cpp)
+string StoreVersion(Inner &inner);
+
 } // namespace duckdb

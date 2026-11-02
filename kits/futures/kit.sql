@@ -34,7 +34,7 @@ WITH axes AS (SELECT * FROM glossql.metric_axes() WHERE applicable),
 edges AS (
   SELECT c."table" AS metric, max(TRY_CAST(c.val AS TIMESTAMP)) AS edge,
          count(DISTINCT date_trunc('day', TRY_CAST(c.val AS TIMESTAMP))) > count(DISTINCT date_trunc('month', TRY_CAST(c.val AS TIMESTAMP))) AS finer
-  FROM dataset_cells(current_schema(), true) c JOIN axes a ON a.metric = c."table" AND a.period_column = c."column"
+  FROM dataset_cells(current_schema(), 'views') c JOIN axes a ON a.metric = c."table" AND a.period_column = c."column"
   GROUP BY c."table"),
 partials AS (
   SELECT metric, date_trunc('month', edge) AS period FROM edges
@@ -487,7 +487,7 @@ rows_ AS (
   SELECT p.plan, p.metric, p.behavior, p.covers,
          max(CASE WHEN c."column" = p.period_column THEN TRY_CAST(c.val AS TIMESTAMP) END) AS instant,
          max(CASE WHEN c."column" = p.value_column THEN TRY_CAST(c.val AS DOUBLE) END) AS value
-  FROM dataset_cells(current_schema(), true) c JOIN p ON p.plan = c."table"
+  FROM dataset_cells(current_schema(), 'views') c JOIN p ON p.plan = c."table"
   GROUP BY p.plan, p.metric, p.behavior, p.covers, c.rn),
 gaps AS (
   SELECT plan, min(gap) AS gap
@@ -613,8 +613,16 @@ verdict AS (
     CASE WHEN j.part THEN j.last_end <= j.origin_end ELSE j.period_end <= j.origin_end END AS complete,
     CASE WHEN j.part THEN j.first <= j.origin ELSE j.begun END AS has_begun
   FROM judged j LEFT JOIN part_actual pa ON pa.plan = j.plan AND pa.year = j.period),
--- the newest forecast's bands, with how often such a band held: the record's own share where it holds thirty points, else the service's
-runs AS MATERIALIZED (SELECT * FROM glossql.forecast_runs() WHERE applicable AND step IS NOT NULL),
+-- the newest forecast's bands, with how often such a band held: the record's own share where it holds thirty points, else the
+-- service's; the actual behind each run as forecast_runs() joins it, over this read's own cells
+runs AS MATERIALIZED (
+  SELECT r.*,
+         CASE WHEN r.span IS NULL THEN a.value
+              ELSE (SELECT CASE WHEN count(*) = r.span THEN sum(a2.value) END FROM floor_cells a2
+                    WHERE a2.metric = r.metric AND a2.period > r.origin AND a2.period <= r.period) END AS actual
+  FROM glossql.forecast_record() r
+  LEFT JOIN floor_cells a ON a.metric = r.metric AND a.period = r.period AND r.span IS NULL
+  WHERE r.applicable AND r.step IS NOT NULL),
 tally AS (
   SELECT metric, grain, step, span, count(actual) AS points, count(*) FILTER (WHERE actual BETWEEN p10 AND p90) AS inside_80
   FROM runs GROUP BY metric, grain, step, span),

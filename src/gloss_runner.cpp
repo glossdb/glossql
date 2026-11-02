@@ -1049,15 +1049,16 @@ static TableFunction SubjectColumnFunction() {
 }
 
 //===--------------------------------------------------------------------===//
-// dataset_cells(subject): every cell of a dataset's tables, or of one table, as
-// one relation — (table, column, ci, column_type, rn, val). The structure
+// dataset_cells(subject [, views]): every cell of a dataset's tables, or of one
+// table, as one relation — (table, column, ci, column_type, rn, val). The structure
 // screens a kit runs over a dataset are SQL over it: a self-join on rn puts a
 // row's columns side by side, a join on val matches values across columns.
 // val is text; column_type carries the stored type, so a screen matches values
 // within one type only; ci numbers the columns in table order, rn the rows of
 // each table. Nested columns stay out. Generated at bind, like subject_column,
-// over the dataset's own relations (DatasetColumns)
-//===--------------------------------------------------------------------===//
+// over the dataset's own relations (DatasetColumns); a view's rows come from
+// gloss_kept_view, kept once per store version, a table's from the table
+//===------------------------------------------------------------------===//
 
 static bool IsScalarType(const string &type) {
 	return !StringUtil::EndsWith(type, "[]") && !StringUtil::StartsWith(type, "STRUCT") &&
@@ -1072,27 +1073,55 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	if (parts.empty() || parts.size() > 2) {
 		throw InvalidInputException("gloss: dataset_cells takes a dataset or dataset.table, got '%s'", subject);
 	}
-	// a second argument true takes the dataset's views too — a grounding is one — each
-	// bound at bind and skipped when it does not, as a screen skips a grounding
-	// that fails
-	bool views = input.inputs.size() > 1 && !input.inputs[1].IsNull() && input.inputs[1].GetValue<bool>();
+	// a second argument true (or 'all') takes the dataset's views too — a grounding
+	// is one — each bound at bind and skipped when it does not, as a screen skips a
+	// grounding that fails; 'views' takes the views alone, so that a read over the
+	// groundings — the series, the walk's request, a plan's rows — binds no table
+	bool views = false;
+	bool only_views = false;
+	if (input.inputs.size() > 1 && !input.inputs[1].IsNull()) {
+		if (input.inputs[1].type().id() == LogicalTypeId::VARCHAR) {
+			auto mode = input.inputs[1].ToString();
+			if (mode == "views") {
+				views = only_views = true;
+			} else if (mode == "all") {
+				views = true;
+			} else if (mode != "tables") {
+				throw InvalidInputException("gloss: dataset_cells takes tables, views or all, got '%s'", mode);
+			}
+		} else {
+			views = input.inputs[1].GetValue<bool>();
+		}
+	}
 	const string empty = "SELECT NULL::VARCHAR AS \"table\", NULL::VARCHAR AS \"column\", NULL::BIGINT AS ci,"
 	                     " NULL::VARCHAR AS column_type, NULL::BIGINT AS rn, NULL::VARCHAR AS val WHERE false";
 	// the columns per table, in the order listed
 	vector<string> tables;
 	std::map<string, vector<pair<string, string>>> columns;
+	std::set<string> kept;
 	for (auto &column : DatasetColumns(context, parts[0], parts.size() == 2 ? parts[1] : string(), views)) {
+		if (only_views && !column.view) {
+			continue;
+		}
 		if (columns.find(column.table) == columns.end()) {
 			tables.push_back(column.table);
 		}
 		columns[column.table].emplace_back(column.column, column.type);
+		if (column.view) {
+			kept.insert(column.table);
+		}
 	}
 	if (tables.empty()) {
 		return make_uniq<SubqueryRef>(ParseSelect(empty));
 	}
+	// the version every kept view is read under, once for the bind
+	string version = kept.empty() ? string() : StoreVersion(inner);
 	string sql;
 	idx_t ci = 0;
 	for (auto &table : tables) {
+		string from = kept.count(table) ? "gloss_kept_view(" + QuoteText(parts[0]) + ", " + QuoteText(table) +
+		                                      ", " + QuoteText(version) + ")"
+		                                : inner.Table(parts[0], table);
 		string select = "SELECT row_number() OVER () AS rn";
 		string names;
 		string meta;
@@ -1112,7 +1141,7 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 		}
 		sql += (sql.empty() ? "" : " UNION ALL ") + string("SELECT ") + QuoteText(table) +
 		       " AS \"table\", u.\"column\", m.ci, m.column_type, u.rn, u.val FROM (FROM (" + select + " FROM " +
-		       inner.Table(parts[0], table) + ") UNPIVOT INCLUDE NULLS (val FOR \"column\" IN (" + names +
+		       from + ") UNPIVOT INCLUDE NULLS (val FOR \"column\" IN (" + names +
 		       "))) u JOIN (VALUES " + meta + ") m(\"column\", ci, column_type) USING (\"column\")";
 	}
 	if (sql.empty()) {
@@ -1129,6 +1158,9 @@ static TableFunctionSet DatasetCellsFunctions() {
 	TableFunction with_views("dataset_cells", {LogicalType::VARCHAR, LogicalType::BOOLEAN}, nullptr);
 	with_views.bind_replace = DatasetCellsBindReplace;
 	set.AddFunction(with_views);
+	TableFunction which("dataset_cells", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr);
+	which.bind_replace = DatasetCellsBindReplace;
+	set.AddFunction(which);
 	return set;
 }
 

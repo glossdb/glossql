@@ -181,6 +181,46 @@ SELECT min_max() FROM spend_total.value;
 ----
 min_max	fin.spend_total.value	min_max	{"min":8.0,"max":8.0}	true
 
+# --- a view's rows are kept once per store version: the cells read serves them; a write to its table
+# and a re-gloss each move the version
+query I
+SELECT count(*) FROM dataset_cells('fin', true) WHERE "table" = 'spend';
+----
+6
+
+statement ok
+INSERT INTO fin.t VALUES (DATE '2024-04-01', 7, 'w');
+
+query IR
+SELECT count(*), sum(TRY_CAST(val AS DOUBLE)) FILTER (WHERE "column" = 'value') FROM dataset_cells('fin', true) WHERE "table" = 'spend';
+----
+8	15.0
+
+statement ok
+GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a * 2 AS value FROM fin.t"}$$;
+
+query R
+SELECT sum(TRY_CAST(val AS DOUBLE)) FROM dataset_cells('fin', true) WHERE "table" = 'spend' AND "column" = 'value';
+----
+30.0
+
+# 'views' takes the views alone; 'all' the tables and the views, as true does
+query II
+SELECT count(DISTINCT "table") FILTER (WHERE "table" IN ('spend', 'spend_total')), count(*) FILTER (WHERE "table" = 't')
+FROM dataset_cells('fin', 'views');
+----
+2	0
+
+query I
+SELECT count(*) FILTER (WHERE "table" = 't') > 0 FROM dataset_cells('fin', 'all');
+----
+true
+
+statement error
+SELECT * FROM dataset_cells('fin', 'some');
+----
+takes tables, views or all
+
 # --- a stop drops the view: its columns' glosses read stale, and a new gloss on them is refused
 
 statement ok

@@ -1566,6 +1566,61 @@ static TableFunction GlossCachedFunction() {
 	                     CachedInit);
 }
 
+string StoreVersion(Inner &inner) {
+	return inner.Scalar(StoreVersionSQL(inner.ws)).ToString();
+}
+
+//===--------------------------------------------------------------------===//
+// A view kept: a dataset's view, its rows computed once per store version and
+// kept in the object cache beside the reads, so that a cells read over the
+// dataset's views — the series, the walk's request, a plan's rows — scans
+// what stands instead of computing every view from its tables on each call.
+// The version is the reads' own: any write moves it. A view's rows are a
+// fraction of its tables' (a metric's series), so the entry is small, and
+// the buffer pool counts and evicts it like a read's
+//===--------------------------------------------------------------------===//
+
+static string ViewKey(const string &dataset, const string &view) {
+	return "gloss_view|" + dataset + "|" + view;
+}
+
+//! gloss_kept_view(dataset, view, version): the view's rows as kept at that
+//! version, else computed on the inner connection and kept. The version is
+//! the caller's, read once for every view a cells read binds
+static unique_ptr<FunctionData> KeptViewBind(ClientContext &context, TableFunctionBindInput &input,
+                                             vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto dataset = input.inputs[0].ToString();
+	auto view = input.inputs[1].ToString();
+	auto version = input.inputs[2].ToString();
+	auto &cache = ObjectCache::GetObjectCache(context);
+	auto key = ViewKey(dataset, view);
+	auto kept = cache.Get<CachedRead>(key);
+	if (!kept || kept->version != version) {
+		Inner inner(context);
+		auto result = inner.Run("SELECT * FROM " + inner.Table(dataset, view));
+		auto read = make_shared_ptr<CachedRead>();
+		read->rows = make_shared_ptr<ColumnDataCollection>(Allocator::Get(context), result->GetTypes());
+		while (auto chunk = result->Fetch()) {
+			read->rows->Append(*chunk);
+		}
+		read->names = result->GetNames();
+		read->types = result->GetTypes();
+		read->version = version;
+		cache.Put(key, read);
+		kept = read;
+	}
+	auto result = make_uniq<CachedBindData>();
+	result->read = kept;
+	return_types = kept->types;
+	names = kept->names;
+	return std::move(result);
+}
+
+static TableFunction GlossKeptViewFunction() {
+	return TableFunction("gloss_kept_view", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                     CachedExec, KeptViewBind, CachedInit);
+}
+
 //! The columns of each kind of read, as the empty relation a bind serves while
 //! this connection fills a read
 static const char *const COLLAPSED_SHAPE = "subject VARCHAR, aspect VARCHAR, value JSON, band VARCHAR, score DOUBLE, "
@@ -1632,6 +1687,7 @@ void RegisterGlossStore(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossGlossaryFunction());
 	loader.RegisterFunction(GlossAttestFunction());
 	loader.RegisterFunction(GlossCachedFunction());
+	loader.RegisterFunction(GlossKeptViewFunction());
 	loader.RegisterFunction(GlossColumnsFunctions());
 }
 

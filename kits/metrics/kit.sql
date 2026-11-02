@@ -268,7 +268,7 @@ WITH asked AS MATERIALIZED (
   WHERE m.applicable AND coalesce(m.kind, '') <> 'plan' AND world = 'actual'
     AND (grain IS NULL OR glossql.grain_rank(grain) >= glossql.grain_rank(m.floor))),
 cells AS (
-  SELECT * FROM dataset_cells(current_schema(), true) WHERE "table" IN (SELECT metric FROM asked)),
+  SELECT * FROM dataset_cells(current_schema(), 'views') WHERE "table" IN (SELECT metric FROM asked)),
 all_rows AS MATERIALIZED (
   SELECT c."table" AS metric, c.rn,
          max(CASE WHEN c."column" = a.period_column THEN TRY_CAST(c.val AS TIMESTAMP) END) AS instant,
@@ -295,15 +295,14 @@ refused AS (
            || CASE WHEN coarser THEN ', and ' || metric || ' is asked at a coarser grain than its floor' ELSE ', and ' || metric || ' serves several rows in one period' END
            || ': gloss it — GLOSS behavior ON ' || current_schema() || '.' || metric || '.' || value_column || ' AS $${"value": "<flow|stock|ratio>"}$$', '; ')) END AS refusal
   FROM combining WHERE coarser OR shared),
--- the metrics served: every asked one but those that need a claim nobody made
+-- the metrics served: every asked one but those that need a claim nobody made; the refusal gates the
+-- cells served, below, where the rows are few
 rows_ AS (
-  SELECT r.* FROM all_rows r, refused
-  WHERE refused.refusal IS NULL
-    AND r.metric NOT IN (SELECT metric FROM combining WHERE coarser OR shared)),
+  SELECT r.* FROM all_rows r
+  WHERE r.metric NOT IN (SELECT metric FROM combining WHERE coarser OR shared)),
 bucketed AS (
   SELECT r.metric, r.instant, date_trunc(a.at_grain, r.instant) AS period, r.value, r.num, r.den, r.members,
-         coalesce(a.behavior, 'none') AS behavior, a.at_grain, a.rung,
-         max(r.instant) OVER (PARTITION BY r.metric, date_trunc(a.at_grain, r.instant)) AS last_at
+         coalesce(a.behavior, 'none') AS behavior, a.at_grain, a.rung
   FROM rows_ r JOIN asked a USING (metric)
   WHERE r.instant IS NOT NULL),
 edges AS (
@@ -313,14 +312,18 @@ edges AS (
 windowed AS (
   SELECT b.* FROM bucketed b JOIN edges e USING (metric)
   WHERE b.period > e.edge - glossql.grain_step(e.at_grain) * e.rung),
+-- a stock's level in a bucket is what stands at the bucket's last instant: that instant, per stock metric and bucket,
+-- grouped rather than windowed, since a window over every row of every flow costs the read more than the rest
+levels AS (
+  SELECT metric, period, max(instant) AS last_at FROM windowed WHERE behavior = 'stock' GROUP BY metric, period),
 total AS (
-  SELECT metric, '' AS dimension, '' AS member, period, behavior,
-         CASE behavior WHEN 'stock' THEN sum(value) FILTER (WHERE instant = last_at)
-                       WHEN 'ratio' THEN sum(num) / nullif(sum(den), 0)
-                       ELSE sum(value) END AS value,
-         CASE behavior WHEN 'ratio' THEN sum(num) END AS num,
-         CASE behavior WHEN 'ratio' THEN sum(den) END AS den
-  FROM windowed GROUP BY metric, period, behavior),
+  SELECT w.metric, '' AS dimension, '' AS member, w.period, w.behavior,
+         CASE w.behavior WHEN 'stock' THEN sum(w.value) FILTER (WHERE w.instant = l.last_at)
+                         WHEN 'ratio' THEN sum(w.num) / nullif(sum(w.den), 0)
+                         ELSE sum(w.value) END AS value,
+         CASE w.behavior WHEN 'ratio' THEN sum(w.num) END AS num,
+         CASE w.behavior WHEN 'ratio' THEN sum(w.den) END AS den
+  FROM windowed w LEFT JOIN levels l USING (metric, period) GROUP BY w.metric, w.period, w.behavior),
 filled AS (
   SELECT e.metric, '' AS dimension, '' AS member, g.period, e.behavior, 0.0 AS value, NULL::DOUBLE AS num, NULL::DOUBLE AS den
   FROM edges e, unnest(generate_series(greatest(e.first, e.edge - glossql.grain_step(e.at_grain) * (e.rung - 1)), e.edge, glossql.grain_step(e.at_grain))) AS g(period)
@@ -344,7 +347,8 @@ member_cells AS (
   FROM long l JOIN weights wt USING (metric, dimension, member)
   GROUP BY l.metric, l.dimension, CASE WHEN wt.rank <= 23 THEN l.member ELSE 'other' END, l.period, l.behavior)
 SELECT metric, 'actual' AS world, dimension, member, period, value, num, den, behavior
-FROM (SELECT * FROM total UNION ALL SELECT * FROM filled UNION ALL SELECT * FROM member_cells)
+FROM (SELECT * FROM total UNION ALL SELECT * FROM filled UNION ALL SELECT * FROM member_cells), refused
+WHERE refused.refusal IS NULL
 UNION ALL
 SELECT metric, world, dimension, member, period, value, num, den, behavior
 FROM glossql.world_cells(world, plan, grain) WHERE world <> 'actual'
@@ -358,7 +362,7 @@ ORDER BY metric, dimension, member, period;
 
 CREATE OR REPLACE MACRO glossql.fact_values() AS TABLE
 WITH facts AS (SELECT metric, stopped FROM glossql.metric_axes() WHERE kind = 'fact'),
-cells AS (SELECT * FROM dataset_cells(current_schema(), true) WHERE "table" IN (SELECT metric FROM facts)),
+cells AS (SELECT * FROM dataset_cells(current_schema(), 'views') WHERE "table" IN (SELECT metric FROM facts)),
 shape AS (
   SELECT "table" AS metric, count(DISTINCT rn) AS rows_, bool_or("column" = 'value') AS has_value,
          max(CASE WHEN "column" = 'value' THEN TRY_CAST(val AS DOUBLE) END) AS value

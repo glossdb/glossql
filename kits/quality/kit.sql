@@ -335,7 +335,7 @@ sql_hits AS (
   SELECT canon, list(DISTINCT aspect ORDER BY aspect) AS aspects, list(DISTINCT subject ORDER BY subject) AS subjects,
          min(sql) AS sql, count(DISTINCT aspect) AS n
   FROM canon GROUP BY canon HAVING count(DISTINCT aspect) >= 2),
-vcells AS (SELECT * FROM dataset_cells(ds, true) WHERE "table" IN (SELECT aspect FROM groundings)),
+vcells AS (SELECT * FROM dataset_cells(ds, 'views') WHERE "table" IN (SELECT aspect FROM groundings)),
 periods AS (
   SELECT "table", min(ci) AS pci FROM vcells WHERE column_type = 'DATE' OR column_type LIKE 'TIMESTAMP%' GROUP BY "table"),
 series AS (
