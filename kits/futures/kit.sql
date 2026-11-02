@@ -481,7 +481,9 @@ ORDER BY r.seq, r.point_seq NULLS FIRST;
 -- end of the last period the scenario names, and per lever its series
 -- (the mean of the column per period) and the value held as planned
 -- (the last at or before the origin); applicable needs 26 periods of
--- history and a period ahead. scenario_bodies(): one request per
+-- history, a period ahead, and an input the scenario moves — a lever
+-- held at nothing, or factors of one, move nothing, and the service
+-- refuses a request where no input differs. scenario_bodies(): one request per
 -- scenario and metric as the service's contract spells it — the history
 -- as actual rows, the periods ahead twice, as planned (the lever held)
 -- and under the scenario (held times the period's factor), every lever
@@ -576,15 +578,34 @@ ahead AS (
   SELECT j.scenario, j.metric, list(g.p ORDER BY g.p) AS periods
   FROM judged j, unnest(generate_series(j.origin + glossql.grain_step(j.grain), j.until - glossql.grain_step(j.grain), glossql.grain_step(j.grain))) AS g(p)
   WHERE j.reason IS NULL GROUP BY j.scenario, j.metric),
+held AS (
+  SELECT l.scenario, l.metric, l.lever, l.factor,
+         (SELECT arg_max(ls.value, ls.period) FROM lever_series ls, judged j
+          WHERE ls.scenario = l.scenario AND ls.lever = l.lever AND j.scenario = l.scenario AND j.metric = l.metric AND ls.period <= j.origin) AS planned,
+         (SELECT coalesce(list({'period': ls.period, 'value': ls.value} ORDER BY ls.period), [])
+          FROM lever_series ls WHERE ls.scenario = l.scenario AND ls.lever = l.lever) AS series
+  FROM lv l),
+-- a lever the scenario does not move: its held value is nothing, or every factor ahead is one
+moved AS (
+  SELECT h.scenario, h.metric, h.lever, h.planned,
+         coalesce(h.planned, 0) <> 0 AND EXISTS (
+           SELECT 1 FROM ahead a, unnest(a.periods) AS u(p)
+           WHERE a.scenario = h.scenario AND a.metric = h.metric
+             AND coalesce(json_extract(h.factor, '$."' || strftime(u.p, '%Y-%m-%d') || '"')::DOUBLE,
+                          json_extract(h.factor, '$."' || strftime(u.p, '%Y-%m') || '"')::DOUBLE, 1.0) <> 1.0) AS moves
+  FROM held h),
 inputs AS (
-  SELECT l.scenario, l.metric,
-         list({'lever': l.lever, 'factor': l.factor,
-               'planned': (SELECT arg_max(ls.value, ls.period) FROM lever_series ls, judged j
-                           WHERE ls.scenario = l.scenario AND ls.lever = l.lever AND j.scenario = l.scenario AND j.metric = l.metric AND ls.period <= j.origin),
-               'series': (SELECT coalesce(list({'period': ls.period, 'value': ls.value} ORDER BY ls.period), [])
-                          FROM lever_series ls WHERE ls.scenario = l.scenario AND ls.lever = l.lever)} ORDER BY l.lever) AS levers
-  FROM lv l GROUP BY l.scenario, l.metric)
-SELECT j.scenario, j.metric, j.grain, j.behavior, j.origin, j.history, j.reason, j.reason IS NULL AS applicable,
+  SELECT h.scenario, h.metric,
+         list({'lever': h.lever, 'factor': h.factor, 'planned': h.planned, 'series': h.series} ORDER BY h.lever) AS levers,
+         string_agg(CASE WHEN NOT m.moves THEN
+           CASE WHEN coalesce(h.planned, 0) = 0 THEN h.lever || ' stands at ' || coalesce(h.planned::VARCHAR, 'nothing') || ' at the origin, and a factor on nothing is nothing'
+                ELSE 'every factor on ' || h.lever || ' over the periods ahead is one' END END, '; ' ORDER BY h.lever) AS unmoved
+  FROM held h JOIN moved m USING (scenario, metric, lever)
+  GROUP BY h.scenario, h.metric)
+SELECT j.scenario, j.metric, j.grain, j.behavior, j.origin, j.history,
+       coalesce(j.reason, CASE WHEN i.unmoved IS NOT NULL AND NOT EXISTS (SELECT 1 FROM moved m WHERE m.scenario = j.scenario AND m.metric = j.metric AND m.moves)
+                               THEN 'the scenario moves no input of ' || j.metric || ': ' || i.unmoved END) AS reason,
+       coalesce(j.reason, CASE WHEN i.unmoved IS NOT NULL AND NOT EXISTS (SELECT 1 FROM moved m WHERE m.scenario = j.scenario AND m.metric = j.metric AND m.moves) THEN 'x' END) IS NULL AS applicable,
        coalesce(a.periods, []::TIMESTAMP[]) AS ahead, i.levers
 FROM judged j LEFT JOIN ahead a USING (scenario, metric) JOIN inputs i USING (scenario, metric)
 ORDER BY j.scenario, j.metric;

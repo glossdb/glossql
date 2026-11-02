@@ -468,6 +468,23 @@ SELECT scenario, metric, grain, origin::DATE, history, len(ahead) FROM glossql.s
 ----
 price_up	priced	day	2025-02-05	402	23
 
+# a scenario whose factors are all one, or whose lever stands at nothing, moves no input: judged, never sent
+statement ok
+DECLARE ASPECT price_flat WITH $${"title": "Prices held", "x-kind": "scenario", "type": "object", "required": ["levers"], "properties": {"levers": {"type": "array"}}}$$ AS FACT ON DATASET;
+
+statement ok
+GLOSS price_flat ON fin AS $${"levers": [{"column": "priced.price", "factor": {"2025-02": 1.0}, "basis": "nothing changes"}]}$$;
+
+query TTT
+SELECT scenario, applicable, reason FROM glossql.scenario_request() WHERE scenario = 'price_flat';
+----
+price_flat	false	the scenario moves no input of priced: every factor on priced.price over the periods ahead is one
+
+query I
+SELECT count(*) FROM glossql.scenario_bodies();
+----
+1
+
 # the request: the history, then each day ahead twice; the lever held at its last value as planned, times the factor under the scenario
 query TITTRR
 SELECT metric, json_array_length(json_extract(body, '/table/member')), json_extract_string(body, '/table/status/402'), json_extract_string(body, '/table/status/403'),
