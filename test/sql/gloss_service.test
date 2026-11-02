@@ -24,7 +24,7 @@ SET GLOBAL gloss_service_url = 'http://127.0.0.1:1';
 statement error
 SELECT gloss_service('/forecast', '{}');
 ----
-speaks GET alone
+speaks GET alone: LOAD httpfs, and the call to /forecast can go out
 
 query II
 SELECT current_setting('gloss_service_token'), current_setting('gloss_service_timeout');

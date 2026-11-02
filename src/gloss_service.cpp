@@ -43,10 +43,7 @@ static void ServiceExec(DataChunk &args, ExpressionState &state, Vector &result)
 	auto timeout_text = Setting(context, "gloss_service_timeout");
 	uint64_t timeout = timeout_text.empty() ? 600 : static_cast<uint64_t>(std::stoll(timeout_text));
 	auto &util = HTTPUtil::Get(db);
-	if (util.GetName() == "Built-In") {
-		throw InvalidInputException("the HTTP client DuckDB carries speaks GET alone: LOAD httpfs, and a service "
-		                            "call can go out");
-	}
+	auto get_only = util.GetName() == "Built-In";
 
 	BinaryExecutor::Execute<string_t, string_t, string_t>(
 	    args.data[0], args.data[1], result, args.size(), [&](string_t route_t, string_t body_t) {
@@ -55,6 +52,11 @@ static void ServiceExec(DataChunk &args, ExpressionState &state, Vector &result)
 			    throw InvalidInputException("no service is named for %s: set gloss_service_url (GLOSSQL_SERVICE_URL) "
 				                            "to the model service, and the call goes out",
 				                            route);
+		    }
+		    if (get_only) {
+			    throw InvalidInputException("the HTTP client DuckDB carries speaks GET alone: LOAD httpfs, and the call "
+			                                "to %s can go out",
+			                                route);
 		    }
 		    auto url = base + route;
 		    auto params = util.InitializeParameters(context, url);
