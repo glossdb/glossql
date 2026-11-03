@@ -1,6 +1,6 @@
 # Conformance: SPEC.md against this extension
 
-What of `../glossql/SPEC.md` this extension implements, what it softens
+What of `SPEC.md` this extension implements, what it softens
 because DuckDB already has the thing in another shape, what stays outside
 the plugin by design, and what is not built yet. The grammar,
 `grammar.ebnf`, is implemented in full: every statement and read parses.

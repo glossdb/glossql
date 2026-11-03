@@ -5,6 +5,9 @@ DuckDB 2.0 extension, built on the PEG parser's grammar extension API.
 
 Status: every statement and read of `grammar.ebnf` parses and runs; the semantics of `SPEC.md` are implemented where DuckDB
 has the primitive: the section-by-section account is `CONFORMANCE.md`.
+`SPEC.md`, `grammar.ebnf` and the corpus (`corpus/`: transcriptions of real
+artifacts, the language's acceptance record) live here with the parser;
+`test/sql/gloss_corpus.test` holds every block of the record to the grammar.
 The workspace is a DuckLake: datasets are its schemas, landings its
 snapshots, and the store lives in its catalog, so a gloss carries the
 snapshot it was written at,
@@ -13,7 +16,7 @@ that changed. The core ships no vocabulary; a kit does (`kits/`: KPI,
 quality and spatial, loaded with `gloss_kit()`). The research behind it,
 with what each round
 confirmed, is `duckdb-2.0-research.md`. The suites under `test/sql/` are
-the acceptance record (thirteen suites, 1449 assertions).
+the acceptance record (fourteen suites, 1453 assertions).
 
 ```sql
 LOAD gloss;

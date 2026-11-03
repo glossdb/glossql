@@ -1,0 +1,54 @@
+# name: test/sql/gloss_corpus.test
+# description: the language's record parses as tagged: every ```sql block of SPEC.md and every ```glossql block of the corpus parses on the grammar, every ```glossql-gap block is a parser error
+# group: [sql]
+
+require gloss
+
+require json
+
+statement ok
+SET active_grammar_extensions = ['gloss'];
+
+# every ```sql block of SPEC.md and every ```glossql or ```glossql-gap block of the corpus (a ```sql block there quotes
+# the source artifact), with its file and line, judged by the parser: a statement the grammar admits serializes, or is
+# "not implemented" where there is no SELECT to serialize; one it refuses is a parser error
+statement ok
+CREATE VIEW record AS
+WITH blocks AS (
+    SELECT filename, content, unnest(regexp_extract_all(content, '(?s)```sql\n.*?\n```')) AS block
+    FROM read_text('SPEC.md')
+    UNION ALL
+    SELECT filename, content, unnest(regexp_extract_all(content, '(?s)```(?:glossql|glossql-gap)\n.*?\n```')) AS block
+    FROM read_text('corpus/*.md')
+), bodies AS (
+    SELECT filename,
+           1 + length(content[1:instr(content, block)]) - length(replace(content[1:instr(content, block)], chr(10), '')) AS line,
+           regexp_extract(block, '^```([a-z-]+)', 1) AS tag,
+           regexp_replace(block, '(?s)^```[a-z-]+\n(.*)\n```$', '\1') AS body
+    FROM blocks
+)
+SELECT filename, line, tag,
+       coalesce(json_serialize_sql(body)->>'error_type', 'ok') AS verdict,
+       coalesce(json_serialize_sql(body)->>'error_message', '') AS message
+FROM bodies;
+
+# the record's size, so an empty read cannot pass
+query I
+SELECT count(*) > 80 FROM record WHERE tag IN ('glossql', 'sql');
+----
+true
+
+query I
+SELECT count(*) > 0 FROM record WHERE tag = 'glossql-gap';
+----
+true
+
+# an admitted block the parser refuses is a regression
+query III
+SELECT filename, line, left(message, 80) FROM record WHERE tag IN ('glossql', 'sql') AND verdict = 'parser' ORDER BY ALL;
+----
+
+# a gap the parser admits means the grammar gained the form: the tag flips to glossql
+query II
+SELECT filename, line FROM record WHERE tag = 'glossql-gap' AND verdict <> 'parser' ORDER BY ALL;
+----
