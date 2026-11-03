@@ -9,7 +9,8 @@ glossql is one SQL-shaped surface for a workspace's data and its
 context. Data lands in tables of a DuckLake; context is JSON attached
 to subjects (`dataset`, `table`, `table.column`) under declared aspects.
 The `gloss` extension gives DuckDB the grammar and the store; a kit
-gives the words (`kits/kpi/SKILL.md` teaches the KPI kit's). Everything
+gives the words (`kits/kpi/SKILL.md` teaches the KPI kit's,
+`kits/quality/SKILL.md` the quality kit's screens). Everything
 live — the vocabulary, the tables, the record — is read through the
 language, never assumed.
 
@@ -38,6 +39,7 @@ USE ws;
 .output /dev/null
 PRAGMA gloss;
 FROM gloss_kit('/path/to/kits/kpi/kit.sql');            -- every kit the workspace runs
+FROM gloss_kit('/path/to/kits/quality/kit.sql');        -- after the KPI kit, whose words its screens read against
 .output
 ```
 
@@ -176,5 +178,7 @@ flow, which columns join — is your work. What remains askable is
 judgment: definitions, conventions, business meaning, a choice between
 readings. Ask it in chat; the person's ruling lands through their call.
 
-What the words mean, the order of a round, and the keys a metric's
-grounding carries: the kit's skill (`kits/kpi/SKILL.md`).
+What the words mean, the order of a round, and the claims a metric's
+view carries on its columns: the KPI kit's skill (`kits/kpi/SKILL.md`).
+Which screens find structure before you declare it, and how to write a
+check of your own: the quality kit's (`kits/quality/SKILL.md`).

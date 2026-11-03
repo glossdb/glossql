@@ -3,8 +3,10 @@
 The [glossql](https://github.com/glossdb/glossql) context language as a
 DuckDB 2.0 extension, built on the PEG parser's grammar extension API.
 
-Status: **spike, round eight**. Every statement and read of `grammar.ebnf`
-parses and runs; the semantics of `SPEC.md` are implemented where DuckDB
+Status: the engine of the [glossql](https://github.com/glossdb/glossql)
+server, which pins a commit of this repository (`crates/duck/gloss.ref`)
+and carries the extension in every binary and image. Every statement and
+read of `grammar.ebnf` parses and runs; the semantics of `SPEC.md` are implemented where DuckDB
 has the primitive: the section-by-section account is `CONFORMANCE.md`.
 The workspace is a DuckLake: datasets are its schemas, landings its
 snapshots, and the store lives in its catalog, so a gloss carries the
@@ -13,7 +15,7 @@ a measurement the versions of what it read, and each reads `stale` once
 that changed. The core ships no vocabulary; a kit does (`kits/`, loaded
 with `gloss_kit()`). The research behind it, with what each round
 confirmed, is `duckdb-2.0-research.md`. The suites under `test/sql/` are
-the acceptance record (nine suites, 977 assertions).
+the acceptance record (thirteen suites, 1449 assertions).
 
 ```sql
 LOAD gloss;
@@ -48,8 +50,9 @@ SELECT min_max() FROM orders.amount;            -- extraction lands a measuremen
 FROM glossql.min_max('fin.orders.amount');      -- the same function, as the table macro it is
 
 DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS QUERY;
-GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders", "behavior": "flow"}$$;
-FROM fin.revenue;                               -- a grounding is a view; a kit's grounding schema types `behavior`
+GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders"}$$;
+FROM fin.revenue;                               -- a grounding is a view, and a table of the dataset
+GLOSS behavior ON revenue.revenue AS $${"value": "flow"}$$;  -- its columns are subjects: a reader of the numbers finds its words there
 ```
 
 The session above declares its own words. A fresh workspace takes them
@@ -57,7 +60,8 @@ from a kit instead, and the kit's `SKILL.md` teaches the actor what they
 mean:
 
 ```sql
-FROM gloss_kit('kits/kpi/kit.sql');           -- vocabulary, grounding schema, functions, witnesses: one row per statement
+FROM gloss_kit('kits/kpi/kit.sql');           -- vocabulary, functions, witnesses: one row per statement
+FROM gloss_kit('kits/quality/kit.sql');       -- the screens over a dataset's cells, after the KPI kit
 ```
 
 ## How glossql maps onto DuckDB
@@ -80,7 +84,7 @@ FROM gloss_kit('kits/kpi/kit.sql');           -- vocabulary, grounding schema, f
 | JSON Schema admission | `json_schema_check(schema, document)`, a scalar function over the yyjson DuckDB ships |
 | a dataset's cells | `dataset_cells(subject[, views])`: every scalar column of a dataset's tables, or of one table, as one relation (`table`, `column`, `ci`, `column_type`, `rn`, `val`), generated at bind like `subject_column`; a screen that reads a whole dataset is SQL over it (`kits/quality/`) |
 | a dataset's shape | `gloss_columns(subject[, views])`: every column of a dataset's tables, or of one table, and of its views unless `views` is false (`table_name`, `column_name`, `column_type`, `ordinal_position`, `table_type`), the dataset's own relations walked by name — where `information_schema` binds every view of every catalog for its columns; what the reads' owed subjects, the cells and the kits read a dataset's shape from |
-| a grounding | a view in the dataset's schema; the body meets the grounding contract (`sql` or `stopped`, `assumptions` disclosed), then every grounding schema a kit declared, an aspect flavored `x-kind: grounding` |
+| a grounding | a view in the dataset's schema, and a table of the dataset: its columns are subjects, and what a reader of its rows needs is glossed on them; the body meets the grounding contract (`sql` or `stopped`, `assumptions` disclosed), then any schema a kit declared for a body key of its own, an aspect flavored `x-kind: grounding` |
 | a kit | a script of declarations; `gloss_kit(path)` runs it statement by statement on a second connection and serves one row each; the path is anything DuckDB's file system opens, a URL included once `httpfs` is loaded |
 | the store | `glossql_<relation>` tables in the lake's metadata catalog, beside the `ducklake_*` tables; the columns are the extension's own, sharpened to what the reads need, with the glossql engine's record as the teacher: settings and conditions as JSON, `dataset` on a gloss and a relationship, `mode` on an import, a supersession key per declaration relation; history is rows ordered by `seq`, the reads collapse; `ws.glossql.<relation>` reads each as a typed view |
 
@@ -89,11 +93,6 @@ Source: `src/gloss_grammar.cpp` (rules and transforms), `src/gloss_store.cpp`
 run SQL, on a second connection, and the kit loader), `src/gloss_schema.cpp`
 (the validator), `src/gloss_lineage.cpp` (the plan walk). Kits: `kits/README.md`; the KPI kit's words: `kits/kpi/SKILL.md`; the
 quality kit's screens: `kits/quality/SKILL.md`.
-
-One departure from SPEC §5.2, proposed back to it: the fixed grounding
-schema is the grounding contract plus a grounding schema the kit declares,
-so the cube's keys (`behavior`, `grain`, `axes`) are the KPI kit's to
-declare, teach and close (`../glossql/.claude/plans/grounding.md`).
 
 Not built on purpose: the `read.` prefix. A grounding is its view,
 reached by the bare name under `USE` or as `dataset.metric`, which SPEC

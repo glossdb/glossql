@@ -20,6 +20,7 @@ ATTACH 'ducklake:ws.ducklake' AS ws (DATA_PATH 'ws/');   -- the workspace
 USE ws;
 PRAGMA gloss;
 FROM gloss_kit('kits/kpi/kit.sql');
+FROM gloss_kit('kits/quality/kit.sql');     -- after the KPI kit, whose words its screens read against
 ```
 
 `gloss_kit(path)` reads the script through DuckDB's file system, so the
