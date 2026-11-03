@@ -1076,8 +1076,7 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	// a second argument true (or 'all') takes the dataset's views too — a grounding
 	// is one — each bound at bind and skipped when it does not, as a screen skips a
 	// grounding that fails; 'views' takes the views alone, so that a read over the
-	// groundings — a metric's series, a forecast's request, a plan's rows, as the
-	// server's kits read them — binds no table
+	// groundings — a metric's series, a plan's rows — binds no table
 	bool views = false;
 	bool only_views = false;
 	if (input.inputs.size() > 1 && !input.inputs[1].IsNull()) {

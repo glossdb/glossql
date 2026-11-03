@@ -1,14 +1,11 @@
--- The KPI kit: the vocabulary a workspace starts with, the grounding schema
--- its metrics carry, the detector that judges the vocabulary, two
--- measurements that profile the columns, and the witnesses that bind them.
--- The core ships no aspect; what an actor must learn about these words is
--- SKILL.md beside this file. Load it with
+-- The KPI kit: the vocabulary a workspace starts with, the detector that
+-- judges the vocabulary, two measurements that profile the columns, and
+-- the witnesses that bind them. The core ships no aspect; what an actor
+-- must learn about these words is SKILL.md beside this file. Load it with
 --
 --   FROM gloss_kit('kits/kpi/kit.sql');
 --
--- Every statement is glossql, so a fork is an edit. The ported source is
--- the glossql server's kpi_kit.glossql and its function library; the cube
--- and the apps stay outside this plugin.
+-- Every statement is glossql, so a fork is an edit.
 
 -- Column vocabulary. role classes every column; behavior and unit are the
 -- claims on measures, dimension the claim on dimensions. WHEN narrows what

@@ -3,21 +3,15 @@
 The [glossql](https://github.com/glossdb/glossql) context language as a
 DuckDB 2.0 extension, built on the PEG parser's grammar extension API.
 
-Status: the engine of the [glossql](https://github.com/glossdb/glossql)
-server, which pins a commit of this repository (`crates/duck/gloss.ref`)
-and carries the extension in every binary and image. Every statement and
-read of `grammar.ebnf` parses and runs; the semantics of `SPEC.md` are implemented where DuckDB
+Status: every statement and read of `grammar.ebnf` parses and runs; the semantics of `SPEC.md` are implemented where DuckDB
 has the primitive: the section-by-section account is `CONFORMANCE.md`.
 The workspace is a DuckLake: datasets are its schemas, landings its
 snapshots, and the store lives in its catalog, so a gloss carries the
 snapshot it was written at,
 a measurement the versions of what it read, and each reads `stale` once
-that changed. The core ships no vocabulary; a kit does. The language's
-kits, KPI, quality and spatial, are `kits/` here, loaded with
-`gloss_kit()`; the metrics and futures kits, whose words depend on the
-server's doors and the model service, are the glossql repository's
-(`kits/` there, with their suites), loaded after these. The research
-behind it, with what each round
+that changed. The core ships no vocabulary; a kit does (`kits/`: KPI,
+quality and spatial, loaded with `gloss_kit()`). The research behind it,
+with what each round
 confirmed, is `duckdb-2.0-research.md`. The suites under `test/sql/` are
 the acceptance record (thirteen suites, 1449 assertions).
 
@@ -96,8 +90,8 @@ Source: `src/gloss_grammar.cpp` (rules and transforms), `src/gloss_store.cpp`
 (the store, admission, the reads), `src/gloss_runner.cpp` (statements that
 run SQL, on a second connection, and the kit loader), `src/gloss_schema.cpp`
 (the validator), `src/gloss_lineage.cpp` (the plan walk). Kits: `kits/README.md`; the KPI kit's words: `kits/kpi/SKILL.md`; the
-quality kit's screens: `kits/quality/SKILL.md`; the metrics and futures
-kits: `kits/` in the glossql repository.
+quality kit's screens: `kits/quality/SKILL.md`; the spatial kit's:
+`kits/spatial/SKILL.md`.
 
 Not built on purpose: the `read.` prefix. A grounding is its view,
 reached by the bare name under `USE` or as `dataset.metric`, which SPEC

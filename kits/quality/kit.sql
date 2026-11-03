@@ -318,10 +318,10 @@ ORDER BY seq;
 -- value, the first date column standing in for the period. The behavior
 -- glossed on the value column folds the month: a flow summed, a stock the
 -- month's last level, a ratio its summed halves re-divided, the columns
--- its numerator and denominator name; none claimed reads as flow. A plan,
--- a QUERY aspect the server's futures kit flavors x-plan-of, stands beside
--- its metric and is never its twin, so it stays out. No groundings is one
--- row with groundings 0.
+-- its numerator and denominator name; none claimed reads as flow. A QUERY
+-- aspect flavored x-plan-of names the metric it plans: it stands beside that
+-- metric and is never its twin, so it stays out. No groundings is one row
+-- with groundings 0.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO grounding_collisions(ds) AS TABLE
 WITH slots AS (
@@ -522,7 +522,7 @@ $$ RETURNS grounding_collisions;
 
 --===------------------------------------------------------------------===--
 -- The temporal profile: a date column's window, cadence, completeness and
--- gaps, as the server's metrics and futures kits read them. Cadence is the nearest
+-- gaps, as a reader that windows a series needs them. Cadence is the nearest
 -- named grain to the median gap between distinct instants; completeness
 -- counts calendar buckets over the column's own window; a gap is a stretch
 -- beyond twice the median, the twenty largest sampled. A point in time

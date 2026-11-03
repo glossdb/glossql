@@ -4,12 +4,7 @@ The extension ships the language and the store and no vocabulary. A kit
 is the vocabulary: a script of glossql declarations, aspects, functions
 and witnesses, with a `SKILL.md` beside it that teaches an actor the
 words. The core validates what a kit declares; the kit decides what is
-said. The glossql server brings its own kits beside these, loaded after
-them, in `kits/` of its repository with their suites: the metrics kit,
-whose series read serves the worlds its doors answer from, and the
-futures kit, which calls the model service. A kit whose words depend on
-a door or a service lives with that door or service; the kits here
-depend on the language alone.
+said. A workspace runs kits of its own beside these, loaded after them.
 
 | Kit | Brings |
 |---|---|
