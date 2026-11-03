@@ -70,47 +70,47 @@ static void ServiceRun(DataChunk &args, ExpressionState &state, Vector &result, 
 	auto get_only = util.GetName() == "Built-In";
 
 	run([&](string_t route_t, string_t body_t, bool soft) {
-		    auto route = route_t.GetString();
-		    if (base.empty()) {
-			    throw InvalidInputException("no service is named for %s: set gloss_service_url (GLOSSQL_SERVICE_URL) "
-				                            "to the model service, and the call goes out",
-				                            route);
-		    }
-		    if (get_only) {
-			    throw InvalidInputException("the HTTP client DuckDB carries speaks GET alone: LOAD httpfs, and the call "
-			                                "to %s can go out",
-			                                route);
-		    }
-		    auto url = base + route;
-		    auto params = util.InitializeParameters(context, url);
-		    params->timeout = timeout;
-		    params->timeout_usec = 0;
-		    HTTPHeaders headers;
-		    headers.Insert("Content-Type", "application/json");
-		    headers.Insert("Accept", "application/json");
-		    if (!token.empty()) {
-			    headers.Insert("Authorization", "Bearer " + token);
-		    }
-		    PostRequestInfo post(url, headers, *params, const_data_ptr_cast(body_t.GetData()), body_t.GetSize());
-		    auto response = util.Request(post);
-		    auto body = response->body.empty() ? post.buffer_out : response->body;
-		    if (response->HasRequestError()) {
-			    auto text = StringUtil::Format("the service at %s did not answer: %s", url, response->GetRequestError());
-			    if (soft) {
-				    return StringVector::AddString(result, ErrorJson(text));
-			    }
-			    throw IOException(text);
-		    }
-		    if (!response->Success()) {
-			    auto text = StringUtil::Format("the service answered %d on %s: %s", static_cast<int>(response->status),
-			                                   route, body.substr(0, 4000));
-			    if (soft) {
-				    return StringVector::AddString(result, ErrorJson(text));
-			    }
-			    throw InvalidInputException(text);
-		    }
-		    return StringVector::AddString(result, body);
-	    });
+		auto route = route_t.GetString();
+		if (base.empty()) {
+			throw InvalidInputException("no service is named for %s: set gloss_service_url (GLOSSQL_SERVICE_URL) "
+			                            "to the model service, and the call goes out",
+			                            route);
+		}
+		if (get_only) {
+			throw InvalidInputException("the HTTP client DuckDB carries speaks GET alone: LOAD httpfs, and the call "
+			                            "to %s can go out",
+			                            route);
+		}
+		auto url = base + route;
+		auto params = util.InitializeParameters(context, url);
+		params->timeout = timeout;
+		params->timeout_usec = 0;
+		HTTPHeaders headers;
+		headers.Insert("Content-Type", "application/json");
+		headers.Insert("Accept", "application/json");
+		if (!token.empty()) {
+			headers.Insert("Authorization", "Bearer " + token);
+		}
+		PostRequestInfo post(url, headers, *params, const_data_ptr_cast(body_t.GetData()), body_t.GetSize());
+		auto response = util.Request(post);
+		auto body = response->body.empty() ? post.buffer_out : response->body;
+		if (response->HasRequestError()) {
+			auto text = StringUtil::Format("the service at %s did not answer: %s", url, response->GetRequestError());
+			if (soft) {
+				return StringVector::AddString(result, ErrorJson(text));
+			}
+			throw IOException(text);
+		}
+		if (!response->Success()) {
+			auto text = StringUtil::Format("the service answered %d on %s: %s", static_cast<int>(response->status),
+			                               route, body.substr(0, 4000));
+			if (soft) {
+				return StringVector::AddString(result, ErrorJson(text));
+			}
+			throw InvalidInputException(text);
+		}
+		return StringVector::AddString(result, body);
+	});
 }
 
 static void ServiceExec(DataChunk &args, ExpressionState &state, Vector &result) {

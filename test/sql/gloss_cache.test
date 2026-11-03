@@ -113,3 +113,87 @@ query I
 SELECT count(*) FROM gloss_cached('attest', 'fin');
 ----
 0
+
+# --- a read is kept per lake: two workspaces attached to one instance, a dataset of one name in each,
+# both at one version, each served its own rows
+
+statement ok
+ATTACH 'ducklake::memory:' AS a (DATA_PATH '{TEST_DIR}/gloss_cache_lake_a/');
+
+statement ok
+ATTACH 'ducklake::memory:' AS b (DATA_PATH '{TEST_DIR}/gloss_cache_lake_b/');
+
+statement ok
+SET VARIABLE gloss_workspace = 'a';
+
+statement ok
+USE a;
+
+statement ok
+PRAGMA gloss;
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'lake a');
+
+statement ok
+USE a.fin;
+
+statement ok
+CREATE TABLE a.fin.t (x INTEGER);
+
+statement ok
+DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+statement ok
+GLOSS meaning ON t.x AS $${"value": "lake a"}$$;
+
+statement ok
+SET VARIABLE gloss_workspace = 'b';
+
+statement ok
+USE b;
+
+statement ok
+PRAGMA gloss;
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'lake b');
+
+statement ok
+USE b.fin;
+
+statement ok
+CREATE TABLE b.fin.t (x INTEGER);
+
+statement ok
+DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+statement ok
+GLOSS meaning ON t.x AS $${"value": "lake b"}$$;
+
+query I
+SELECT (SELECT id FROM ducklake_current_snapshot('a')) = (SELECT id FROM ducklake_current_snapshot('b'));
+----
+true
+
+statement ok
+SET VARIABLE gloss_workspace = 'a';
+
+statement ok
+USE a.fin;
+
+query II
+SELECT subject, value->>'value' FROM GLOSSARY(fin);
+----
+fin.t.x	lake a
+
+statement ok
+SET VARIABLE gloss_workspace = 'b';
+
+statement ok
+USE b.fin;
+
+query II
+SELECT subject, value->>'value' FROM GLOSSARY(fin);
+----
+fin.t.x	lake b

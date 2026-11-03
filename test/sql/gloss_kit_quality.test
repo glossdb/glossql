@@ -62,6 +62,18 @@ SELECT count(*) FROM dataset_cells('fin.orders');
 ----
 10
 
+# a table's own columns named rn, val or column are cells like any other: the row number is the read's, under its own name
+statement ok
+CREATE TABLE fin.odd AS SELECT 1 AS rn, 'a' AS val, 'x' AS "column";
+
+query IIT
+SELECT count(*), count(DISTINCT rn), string_agg("column", ',' ORDER BY ci) FROM dataset_cells('fin.odd');
+----
+3	1	rn,val,column
+
+statement ok
+DROP TABLE fin.odd;
+
 # --- relationship_candidates: the key from orders to customers, the orphan 9, and the measurement over it
 
 query ITTTRII

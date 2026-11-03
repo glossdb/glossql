@@ -1414,8 +1414,8 @@ static TableFunctionSet GlossColumnsFunctions() {
 }
 
 //===--------------------------------------------------------------------===//
-// The read cache: the instance's reads, by kind and dataset, each with the
-// store version it was computed at. An entry of DuckDB's object cache, its
+// The read cache: the instance's reads, by lake, kind and dataset, each with
+// the store version it was computed at. An entry of DuckDB's object cache, its
 // bytes reserved in the buffer pool: memory_limit counts it, and pressure
 // evicts it, after which a bind computes it again. Every connection shares
 // it; a write on any connection moves the version, which every bind
@@ -1453,8 +1453,10 @@ struct ReadFill : public ClientContextState {
 	}
 };
 
-static string CacheKey(const string &kind, const string &dataset) {
-	return "gloss_read|" + kind + "|" + dataset;
+//! A read is kept per lake: two workspaces attached to one instance can hold
+//! a dataset of one name at one version each
+static string CacheKey(const string &lake, const string &kind, const string &dataset) {
+	return "gloss_read|" + lake + "|" + kind + "|" + dataset;
 }
 
 //! The store's version: the lake's current snapshot and every store relation's
@@ -1498,7 +1500,7 @@ static string ReadSQL(Inner &inner, const string &kind, const ReadScope &whole) 
 //! stands, else computed on the inner connection and kept
 static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const string &kind, const ReadScope &whole) {
 	auto &cache = ObjectCache::GetObjectCache(context);
-	auto key = CacheKey(kind, whole.dataset);
+	auto key = CacheKey(inner.ws.lake, kind, whole.dataset);
 	ReadFill::Of(*inner.con.context).filling = true;
 	auto version = inner.Scalar(StoreVersionSQL(inner.ws)).ToString();
 	auto kept = cache.Get<CachedRead>(key);
@@ -1580,8 +1582,8 @@ string StoreVersion(Inner &inner) {
 // the buffer pool counts and evicts it like a read's
 //===--------------------------------------------------------------------===//
 
-static string ViewKey(const string &dataset, const string &view) {
-	return "gloss_view|" + dataset + "|" + view;
+static string ViewKey(const string &lake, const string &dataset, const string &view) {
+	return "gloss_view|" + lake + "|" + dataset + "|" + view;
 }
 
 //! gloss_kept_view(dataset, view, version): the view's rows as kept at that
@@ -1593,7 +1595,7 @@ static unique_ptr<FunctionData> KeptViewBind(ClientContext &context, TableFuncti
 	auto view = input.inputs[1].ToString();
 	auto version = input.inputs[2].ToString();
 	auto &cache = ObjectCache::GetObjectCache(context);
-	auto key = ViewKey(dataset, view);
+	auto key = ViewKey(LakeName(context), dataset, view);
 	auto kept = cache.Get<CachedRead>(key);
 	if (!kept || kept->version != version) {
 		Inner inner(context);
@@ -1607,7 +1609,7 @@ static unique_ptr<FunctionData> KeptViewBind(ClientContext &context, TableFuncti
 		read->types = result->GetTypes();
 		read->version = version;
 		cache.Put(key, read);
-		kept = read;
+		kept = std::move(read);
 	}
 	auto result = make_uniq<CachedBindData>();
 	result->read = kept;

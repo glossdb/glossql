@@ -1119,10 +1119,11 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	string sql;
 	idx_t ci = 0;
 	for (auto &table : tables) {
-		string from = kept.count(table) ? "gloss_kept_view(" + QuoteText(parts[0]) + ", " + QuoteText(table) +
-		                                      ", " + QuoteText(version) + ")"
+		string from = kept.count(table) ? "gloss_kept_view(" + QuoteText(parts[0]) + ", " + QuoteText(table) + ", " +
+		                                      QuoteText(version) + ")"
 		                                : inner.Table(parts[0], table);
-		string select = "SELECT row_number() OVER () AS rn";
+		// the row number under a name no table's column takes, served as rn
+		string select = "SELECT row_number() OVER () AS __gloss_rn";
 		string names;
 		string meta;
 		for (auto &column : columns[table]) {
@@ -1140,9 +1141,9 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 			continue;
 		}
 		sql += (sql.empty() ? "" : " UNION ALL ") + string("SELECT ") + QuoteText(table) +
-		       " AS \"table\", u.\"column\", m.ci, m.column_type, u.rn, u.val FROM (FROM (" + select + " FROM " +
-		       from + ") UNPIVOT INCLUDE NULLS (val FOR \"column\" IN (" + names +
-		       "))) u JOIN (VALUES " + meta + ") m(\"column\", ci, column_type) USING (\"column\")";
+		       " AS \"table\", u.\"column\", m.ci, m.column_type, u.__gloss_rn AS rn, u.val FROM (FROM (" + select +
+		       " FROM " + from + ") UNPIVOT INCLUDE NULLS (val FOR \"column\" IN (" + names + "))) u JOIN (VALUES " +
+		       meta + ") m(\"column\", ci, column_type) USING (\"column\")";
 	}
 	if (sql.empty()) {
 		return make_uniq<SubqueryRef>(ParseSelect(empty));
