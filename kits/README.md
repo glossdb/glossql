@@ -4,13 +4,13 @@ The extension ships the language and the store and no vocabulary. A kit
 is the vocabulary: a script of glossql declarations, aspects, functions
 and witnesses, with a `SKILL.md` beside it that teaches an actor the
 words. The core validates what a kit declares; the kit decides what is
-said.
+said. A wrapper of the extension brings its own kits beside these,
+loaded after them.
 
 | Kit | Brings |
 |---|---|
 | `kpi/` | column and table vocabulary (`meaning`, `role`, `behavior` with `ratio` and its halves, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the `slot_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the witnesses that bind them; a metric's view carries the same words on its columns |
 | `quality/` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates` and `grounding_collisions` as table macros, and the five measurements that land them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`), the `temporal` profile, and the `rate_tolerance` detector that bands an authored expectation against a check voice; loaded after `kpi/` |
-| `metrics/` | a metric as a view whose columns carry the vocabulary: the `ladder` on a time column (floor, rungs), and the reads over the collapsed slots and the view — `metric_axes()`, the fact row per metric; `metric_series(grain := …)`, the cells, refusing a coarser grain while no behaviour stands on the value column; `fact_values()`; `metric_sources(metric)` through `gloss_lineage`; loaded after `quality/` |
 
 ## Loading
 
