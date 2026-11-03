@@ -35,7 +35,7 @@ query TTI
 SELECT name, location, statements FROM glossql.kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
-quality	kits/quality/kit.sql	17
+quality	kits/quality/kit.sql	18
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
 
@@ -331,6 +331,55 @@ SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$
 FROM GLOSSARY(fin.amounts.d::temporal_profile);
 ----
 false	true
+
+# --- rate_tolerance: the validation detector. The expectation is a FACT gloss carrying a
+# tolerance, the check a function returning the same aspect with the breach rate it measured
+
+statement ok
+DECLARE ASPECT ids_present WITH $${"type": "object", "required": ["outcome"], "properties": {"outcome": {"type": "string"}, "tolerance": {"type": "number"}, "breach_rate": {"type": "number"}}}$$ AS FACT ON TABLE;
+
+statement ok
+DECLARE WITNESS ids_w ON ids_present BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;
+
+statement ok
+GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "tolerance": 0.2}$$;
+
+# no check has spoken: yellow, never green
+query TTR
+SELECT subject, band, score FROM ATTEST(orders::ids_present);
+----
+fin.orders	yellow	0.0
+
+statement ok
+DECLARE FUNCTION ids_present_check FOR fin AS $$
+  SELECT 'measured: orders whose customer is unknown' AS outcome,
+         count(*) FILTER (WHERE c.id IS NULL) / count(*)::DOUBLE AS breach_rate
+  FROM orders o LEFT JOIN customers c ON c.id = o.customer_id
+$$ RETURNS ids_present;
+
+statement ok
+SELECT ids_present_check() FROM orders;
+
+# one order in five names no customer: at the tolerance, green, the rate as the score
+query TTR
+SELECT subject, band, score FROM ATTEST(orders::ids_present);
+----
+fin.orders	green	0.2
+
+# the human's tolerance outranks the agent's: tightened, the same rate is red
+statement ok
+SET VARIABLE gloss_actor = 'human';
+
+statement ok
+GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "tolerance": 0.1}$$;
+
+statement ok
+RESET VARIABLE gloss_actor;
+
+query TTR
+SELECT subject, band, score FROM ATTEST(orders::ids_present);
+----
+fin.orders	red	0.2
 
 # the kit run again is silent
 query I

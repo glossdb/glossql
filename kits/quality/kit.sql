@@ -595,3 +595,31 @@ DECLARE FUNCTION temporal FOR GLOBAL AS $$
          THEN {'expected': e.expected, 'actual': e.actual, 'ratio': e.actual::DOUBLE / e.expected::DOUBLE} END AS completeness
   FROM w CROSS JOIN conf c CROSS JOIN sig CROSS JOIN samp CROSS JOIN expect e
 $$ RETURNS temporal_profile;
+
+--===------------------------------------------------------------------===--
+-- rate_tolerance: the validation detector. A validation is a FACT aspect
+-- whose schema carries `tolerance` and `breach_rate`: an agent or a human
+-- glosses the expectation with the tolerance, and a function returning
+-- the same aspect is the check, its `breach_rate` the violation share
+-- (0.0 passes). Per subject: no check voice yet is yellow; a rate at or
+-- under the tolerance is green, above it red. The human's tolerance
+-- outranks the agent's; the witness's THRESHOLD stands in while no
+-- expectation carries one, and 0.0 when neither does. One-sided: a
+-- source whose expected dirt must not be cleaned away declares its own
+-- detector, red on both sides.
+--===------------------------------------------------------------------===--
+
+DECLARE FUNCTION rate_tolerance FOR GLOBAL AS $$
+  WITH s AS (
+    SELECT subject,
+           max(try_cast(body->>'breach_rate' AS DOUBLE)) FILTER (WHERE speaker = 'function') AS rate,
+           coalesce(max(try_cast(body->>'tolerance' AS DOUBLE)) FILTER (WHERE speaker = 'human'),
+                    max(try_cast(body->>'tolerance' AS DOUBLE)) FILTER (WHERE speaker = 'agent')) AS tolerance
+    FROM slots GROUP BY subject)
+  SELECT subject,
+         CASE WHEN rate IS NULL THEN 'yellow'
+              WHEN rate <= coalesce(tolerance, $threshold, 0.0) THEN 'green'
+              ELSE 'red' END AS band,
+         least(greatest(coalesce(rate, 0.0), 0.0), 1.0) AS score
+  FROM s
+$$;

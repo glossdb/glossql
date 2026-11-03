@@ -76,6 +76,25 @@ What each line means:
 A measurement lands with what it read; a repeat serves the landed row
 while that is unchanged and computes once a table moved.
 
+## A check of your own
+
+A validation is a FACT aspect whose schema carries `tolerance` and
+`breach_rate`. Gloss the expectation with the tolerance you measured at
+landing, never an assumed zero. Declare a function that returns the
+same aspect and measures the violation share as `breach_rate`, 0.0
+passing. A witness on the aspect names the kit's detector:
+
+```glossql
+DECLARE WITNESS ids_w ON ids_present BY (AGENT, HUMAN)
+  DETECTOR rate_tolerance THRESHOLD 0.0;
+```
+
+`ATTEST()` bands each subject: yellow while no check has spoken, green
+at or under the tolerance, red above it. The human's tolerance outranks
+the agent's; the witness's threshold stands in while no gloss carries
+one. The detector is one-sided: a source whose expected dirt must not
+be cleaned away declares its own, red on both sides.
+
 ## What this kit does not do
 
 No witness judges these measurements: they are evidence, served beside
