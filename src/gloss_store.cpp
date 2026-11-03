@@ -1575,8 +1575,9 @@ string StoreVersion(Inner &inner) {
 //===--------------------------------------------------------------------===//
 // A view kept: a dataset's view, its rows computed once per store version and
 // kept in the object cache beside the reads, so that a cells read over the
-// dataset's views — the series, the walk's request, a plan's rows — scans
-// what stands instead of computing every view from its tables on each call.
+// dataset's views — a metric's series, a forecast's request, a plan's rows,
+// as the server's kits read them — scans what stands instead of computing
+// every view from its tables on each call.
 // The version is the reads' own: any write moves it. A view's rows are a
 // fraction of its tables' (a metric's series), so the entry is small, and
 // the buffer pool counts and evicts it like a read's

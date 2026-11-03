@@ -89,7 +89,8 @@ sums, a stock keeps the period's last level, a ratio re-divides the
 summed halves the view serves under the names `numerator` and
 `denominator` give; `dimension` on a dimension column says whether the
 series slices by it; `entity` on the view says what one row is and its
-`grain`. A metrics kit reads them.
+`grain`. The metrics kit reads them, the glossql server's, loaded after
+this one.
 
 Re-glossing supersedes your own slot; a human's slot stands beside it.
 What the company revises, the metric's meaning, unit, owner or source,

@@ -326,9 +326,10 @@ string JsonStringField(const string &document_text, const string &field) {
 
 //! The grounding contract: what the engine reads of a QUERY gloss — the sql it
 //! serves as a view, or the stop that ends one — and the disclosure key every
-//! reader may rely on. Anything else a reader expects of a grounding (the
-//! cube's behavior, grain, axes) is a kit's key: declared in the aspect's WITH
-//! schema and validated there, taught to the actor by the kit's skill.
+//! reader may rely on. What a reader needs of the view's rows — the period, the
+//! measure and its behavior, the slices — is glossed on the view's columns under
+//! a kit's aspects (SPEC §5.2); a kit that needs a body key of its own declares
+//! a schema for it, flavored x-kind: grounding, validated after this one.
 const char *const GROUNDING_CONTRACT = R"JSON({
   "type": "object",
   "oneOf": [{"required": ["sql"]}, {"required": ["stopped"]}],

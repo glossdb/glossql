@@ -4,12 +4,17 @@ The extension ships the language and the store and no vocabulary. A kit
 is the vocabulary: a script of glossql declarations, aspects, functions
 and witnesses, with a `SKILL.md` beside it that teaches an actor the
 words. The core validates what a kit declares; the kit decides what is
-said. A wrapper of the extension brings its own kits beside these,
-loaded after them.
+said. The glossql server brings its own kits beside these, loaded after
+them, in `kits/` of its repository with their suites: the metrics kit,
+whose series read serves the worlds its doors answer from, and the
+futures kit, which calls the model service. A kit whose words depend on
+a door or a service lives with that door or service; the kits here
+depend on the language alone.
 
 | Kit | Brings |
 |---|---|
 | `kpi/` | column and table vocabulary (`meaning`, `role`, `behavior` with `ratio` and its halves, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the `slot_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the witnesses that bind them; a metric's view carries the same words on its columns |
+| `spatial/` | the geometry vocabulary: `shape` on a geometry column (`WHEN TYPE = 'GEOMETRY'`), the `crs` its coordinates are in, and the `geometry_profile` measurement; its first lines install and load DuckDB's spatial extension |
 | `quality/` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates` and `grounding_collisions` as table macros, and the five measurements that land them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`), the `temporal` profile, and the `rate_tolerance` detector that bands an authored expectation against a check voice; loaded after `kpi/` |
 
 ## Loading

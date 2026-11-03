@@ -12,8 +12,12 @@ The workspace is a DuckLake: datasets are its schemas, landings its
 snapshots, and the store lives in its catalog, so a gloss carries the
 snapshot it was written at,
 a measurement the versions of what it read, and each reads `stale` once
-that changed. The core ships no vocabulary; a kit does (`kits/`, loaded
-with `gloss_kit()`). The research behind it, with what each round
+that changed. The core ships no vocabulary; a kit does. The language's
+kits, KPI, quality and spatial, are `kits/` here, loaded with
+`gloss_kit()`; the metrics and futures kits, whose words depend on the
+server's doors and the model service, are the glossql repository's
+(`kits/` there, with their suites), loaded after these. The research
+behind it, with what each round
 confirmed, is `duckdb-2.0-research.md`. The suites under `test/sql/` are
 the acceptance record (thirteen suites, 1449 assertions).
 
@@ -92,7 +96,8 @@ Source: `src/gloss_grammar.cpp` (rules and transforms), `src/gloss_store.cpp`
 (the store, admission, the reads), `src/gloss_runner.cpp` (statements that
 run SQL, on a second connection, and the kit loader), `src/gloss_schema.cpp`
 (the validator), `src/gloss_lineage.cpp` (the plan walk). Kits: `kits/README.md`; the KPI kit's words: `kits/kpi/SKILL.md`; the
-quality kit's screens: `kits/quality/SKILL.md`.
+quality kit's screens: `kits/quality/SKILL.md`; the metrics and futures
+kits: `kits/` in the glossql repository.
 
 Not built on purpose: the `read.` prefix. A grounding is its view,
 reached by the bare name under `USE` or as `dataset.metric`, which SPEC
