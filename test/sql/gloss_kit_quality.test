@@ -249,16 +249,16 @@ statement ok
 DECLARE ASPECT costs WITH $${"title": "costs"}$$ AS QUERY;
 
 statement ok
-GLOSS revenue ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger", "behavior": "flow", "grain": ["period"]}$$;
+GLOSS revenue ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger"}$$;
 
 statement ok
-GLOSS turnover ON fin AS $${"sql": "select DATE as period,  value from fin.ledger", "behavior": "flow", "grain": ["period"]}$$;
+GLOSS turnover ON fin AS $${"sql": "select DATE as period,  value from fin.ledger"}$$;
 
 statement ok
-GLOSS open_items ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger WHERE value IS NOT NULL", "behavior": "flow", "grain": ["period"]}$$;
+GLOSS open_items ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger WHERE value IS NOT NULL"}$$;
 
 statement ok
-GLOSS costs ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger WHERE value > 250", "behavior": "flow", "grain": ["period"]}$$;
+GLOSS costs ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger WHERE value > 250"}$$;
 
 query ITTI
 SELECT groundings, kind, aspects::VARCHAR, months FROM grounding_collisions('fin') ORDER BY seq;
@@ -266,13 +266,47 @@ SELECT groundings, kind, aspects::VARCHAR, months FROM grounding_collisions('fin
 4	sql	[revenue, turnover]	NULL
 4	served_series	[open_items, revenue, turnover]	3
 
+# the series pass reads the view's claims: a view whose columns carry role timestamp and role measure under
+# other names folds like one named period and value, and not before the roles are glossed
+statement ok
+DECLARE ASPECT margin WITH $${"title": "margin"}$$ AS QUERY;
+
+statement ok
+GLOSS margin ON fin AS $${"sql": "SELECT date AS day, value AS amount FROM fin.ledger"}$$;
+
+query T
+SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_series';
+----
+[open_items, revenue, turnover]
+
+statement ok
+GLOSS role ON margin.day AS $${"value": "timestamp"}$$;
+
+statement ok
+GLOSS role ON margin.amount AS $${"value": "measure"}$$;
+
+query T
+SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_series';
+----
+[margin, open_items, revenue, turnover]
+
+# the behavior glossed on the value column folds the month: a stock keeps the month's last level, so open_items
+# no longer agrees with the flows
+statement ok
+GLOSS behavior ON open_items.value AS $${"value": "stock"}$$;
+
+query T
+SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_series';
+----
+[margin, revenue, turnover]
+
 statement ok
 SELECT detect_grounding_collisions() FROM fin;
 
 query TT
 SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.groundings') FROM GLOSSARY(fin::grounding_collisions);
 ----
-true	4
+true	5
 
 # --- the temporal profile: cadence, completeness and gaps on four shapes of a date column
 

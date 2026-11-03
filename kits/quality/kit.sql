@@ -309,25 +309,30 @@ ORDER BY seq;
 --===------------------------------------------------------------------===--
 -- grounding_collisions(dataset): metrics that are the same thing twice.
 -- Two kinds: groundings whose SQL is the same statement once parsed, case
--- and spacing aside, under different aspects; and groundings whose monthly series agree over every
--- month though their SQL differs. The series pass reads each grounding's
--- view with the kit's convention, period and value, folded by the
--- grounding's behavior: a flow summed, a stock as the last value of the
--- month. No groundings is one row with groundings 0.
+-- and spacing aside, under different aspects; and groundings whose monthly
+-- series agree over every month though their SQL differs. The series pass
+-- reads each grounding's view by the claims on its columns, as a metrics
+-- kit does: the period is the column glossed role timestamp (one, or the
+-- one named period), the value the column glossed role measure (one, or
+-- the one named value); without the claims, the columns named period and
+-- value, the first date column standing in for the period. The behavior
+-- glossed on the value column folds the month: a flow summed, a stock the
+-- month's last level, a ratio its summed halves re-divided, the columns
+-- its numerator and denominator name; none claimed reads as flow. A plan,
+-- a QUERY aspect a futures kit flavors x-plan-of, stands beside its metric
+-- and is never its twin, so it stays out. No groundings is one row with
+-- groundings 0.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO grounding_collisions(ds) AS TABLE
 WITH slots AS (
-  SELECT g.aspect, g.subject, g.body, g.actor_kind,
+  SELECT g.aspect, g.subject, g.body,
          row_number() OVER (PARTITION BY g.aspect, g.subject ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 ELSE 1 END, g.seq DESC) AS rk
   FROM glossql.glossary g JOIN glossql.aspects a ON a.name = g.aspect
   WHERE g.dataset = ds AND a.kind = 'QUERY' AND json_extract_string(g.body, '$.sql') IS NOT NULL
     AND json_extract(a.schema, '$."x-plan-of"') IS NULL),
-groundings AS (
-  SELECT aspect, subject, json_extract_string(body, '$.sql') AS sql,
-         coalesce(json_extract_string(body, '$.behavior'), 'flow') AS verb
-  FROM slots WHERE rk = 1),
+groundings AS (SELECT aspect, subject, json_extract_string(body, '$.sql') AS sql FROM slots WHERE rk = 1),
 canon AS (
-  SELECT aspect, subject, sql, verb,
+  SELECT aspect, subject, sql,
          lower(coalesce(regexp_replace(json_serialize_sql(sql)::VARCHAR, '"query_location(_length)?":\d+,?', '', 'g'),
                         regexp_replace(trim(sql), '\s+', ' ', 'g'))) AS canon
   FROM groundings),
@@ -336,21 +341,48 @@ sql_hits AS (
          min(sql) AS sql, count(DISTINCT aspect) AS n
   FROM canon GROUP BY canon HAVING count(DISTINCT aspect) >= 2),
 vcells AS (SELECT * FROM dataset_cells(ds, 'views') WHERE "table" IN (SELECT aspect FROM groundings)),
-periods AS (
-  SELECT "table", min(ci) AS pci FROM vcells WHERE column_type = 'DATE' OR column_type LIKE 'TIMESTAMP%' GROUP BY "table"),
+vcols AS (SELECT DISTINCT "table", "column", ci, column_type FROM vcells),
+claims AS (
+  SELECT split_part(subject, '.', 2) AS aspect, split_part(subject, '.', 3) AS col, g.aspect AS claim, value
+  FROM gloss_glossary(ds, NULL, false) g
+  WHERE g.aspect IN ('role', 'behavior') AND state IN ('current', 'stale') AND value IS NOT NULL
+    AND len(string_split(subject, '.')) = 3 AND split_part(subject, '.', 2) IN (SELECT aspect FROM groundings)),
+roles AS (
+  SELECT aspect, value->>'value' AS role,
+         list(col ORDER BY CASE WHEN col IN ('period', 'value') THEN 0 ELSE 1 END, col) AS cols
+  FROM claims WHERE claim = 'role' GROUP BY aspect, value->>'value'),
+chosen AS (
+  SELECT g.aspect,
+         coalesce(CASE WHEN len(p.cols) = 1 OR p.cols[1] = 'period' THEN p.cols[1] END,
+                  (SELECT c."column" FROM vcols c WHERE c."table" = g.aspect AND c."column" = 'period'),
+                  (SELECT c."column" FROM vcols c WHERE c."table" = g.aspect AND (c.column_type = 'DATE' OR c.column_type LIKE 'TIMESTAMP%')
+                   ORDER BY c.ci LIMIT 1)) AS period_column,
+         coalesce(CASE WHEN len(m.cols) = 1 OR m.cols[1] = 'value' THEN m.cols[1] END,
+                  (SELECT c."column" FROM vcols c WHERE c."table" = g.aspect AND c."column" = 'value')) AS value_column
+  FROM groundings g
+  LEFT JOIN roles p ON p.aspect = g.aspect AND p.role = 'timestamp'
+  LEFT JOIN roles m ON m.aspect = g.aspect AND m.role = 'measure'),
+folds AS (
+  SELECT c.aspect, c.period_column, c.value_column,
+         coalesce(b.value->>'value', 'flow') AS verb, b.value->>'numerator' AS num, b.value->>'denominator' AS den
+  FROM chosen c LEFT JOIN claims b ON b.claim = 'behavior' AND b.aspect = c.aspect AND b.col = c.value_column
+  WHERE c.period_column IS NOT NULL AND c.value_column IS NOT NULL),
 series AS (
-  SELECT v."table" AS aspect, date_trunc('month', p.val::TIMESTAMP) AS month,
-         CASE g.verb WHEN 'stock' THEN arg_max(TRY_CAST(v.val AS DOUBLE), p.val::TIMESTAMP) ELSE sum(TRY_CAST(v.val AS DOUBLE)) END AS value,
-         bool_or(v.val IS NULL) AS has_null
-  FROM vcells v JOIN periods pp ON pp."table" = v."table"
-  JOIN vcells p ON p."table" = v."table" AND p.rn = v.rn AND p.ci = pp.pci
-  JOIN groundings g ON g.aspect = v."table"
-  WHERE v."column" = 'value' AND p.val IS NOT NULL
-  GROUP BY v."table", date_trunc('month', p.val::TIMESTAMP), g.verb),
+  SELECT f.aspect, date_trunc('month', TRY_CAST(p.val AS TIMESTAMP)) AS month,
+         CASE f.verb
+           WHEN 'stock' THEN arg_max(TRY_CAST(v.val AS DOUBLE), TRY_CAST(p.val AS TIMESTAMP)) FILTER (WHERE v."column" = f.value_column)
+           WHEN 'ratio' THEN sum(TRY_CAST(v.val AS DOUBLE)) FILTER (WHERE v."column" = f.num)
+                             / sum(TRY_CAST(v.val AS DOUBLE)) FILTER (WHERE v."column" = f.den)
+           ELSE sum(TRY_CAST(v.val AS DOUBLE)) FILTER (WHERE v."column" = f.value_column) END AS value,
+         bool_or(v.val IS NULL) FILTER (WHERE v."column" = f.value_column) AS has_null
+  FROM folds f
+  JOIN vcells p ON p."table" = f.aspect AND p."column" = f.period_column AND TRY_CAST(p.val AS TIMESTAMP) IS NOT NULL
+  JOIN vcells v ON v."table" = f.aspect AND v.rn = p.rn AND v."column" IN (f.value_column, f.num, f.den)
+  GROUP BY f.aspect, date_trunc('month', TRY_CAST(p.val AS TIMESTAMP)), f.verb, f.value_column, f.num, f.den),
 prints AS (
   SELECT aspect, string_agg(strftime(month, '%Y-%m') || '=' || round(value, 2)::VARCHAR, ';' ORDER BY month) AS fingerprint,
          count(*) AS months
-  FROM series GROUP BY aspect HAVING NOT bool_or(has_null)),
+  FROM series GROUP BY aspect HAVING NOT bool_or(coalesce(has_null, false) OR value IS NULL)),
 series_hits AS (
   SELECT fingerprint, list(DISTINCT p.aspect ORDER BY p.aspect) AS aspects,
          list(DISTINCT c.subject ORDER BY c.subject) AS subjects, max(months) AS months
