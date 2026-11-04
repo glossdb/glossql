@@ -1,0 +1,253 @@
+# name: test/sql/glossql_lake.test
+# description: the workspace is a DuckLake; the store lives in its catalog, landings are snapshots, glosses carry them and read stale when their subject changed
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+# --- the workspace is the attached lake: without one there is nowhere to stand
+
+statement error
+PRAGMA glossql;
+----
+no DuckLake is attached
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/lake.ducklake' AS ws (DATA_PATH '{TEST_DIR}/lake_data/');
+
+query T
+PRAGMA glossql;
+----
+workspace ws: the store is __ducklake_metadata_ws.main.glossql_*, read as ws.glossql.* (11 views made)
+
+# the store relations sit beside the ducklake_* tables, in the record's own layout; the lake reads them as views
+query I
+SELECT count(*) FROM __ducklake_metadata_ws.main.glossql_aspects;
+----
+0
+
+query T
+SELECT table_name FROM information_schema.tables WHERE table_catalog = 'ws' AND table_schema = 'glossql' ORDER BY table_name;
+----
+aspects
+datasets
+functions
+glossary
+imports
+kits
+measurements
+recipes
+relationships
+sources
+witnesses
+
+# a second init is a no-op for the views
+query T
+PRAGMA glossql;
+----
+workspace ws: the store is __ducklake_metadata_ws.main.glossql_*, read as ws.glossql.* (0 views made)
+
+statement ok
+USE ws;
+
+# --- a landing is a snapshot of the lake
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'persistence');
+
+statement ok
+USE fin;
+
+statement ok
+COPY (SELECT i AS id, 'seg' || (i % 2) AS segment FROM range(4) t(i)) TO '{TEST_DIR}/segments.csv' (HEADER);
+
+statement ok
+DECLARE SOURCE files SET (type: csv, location: '{TEST_DIR}');
+
+statement ok
+DECLARE RECIPE segments ON fin FROM files AS $$SELECT id::INTEGER AS id, segment FROM read_csv('segments.csv')$$;
+
+query I
+SELECT snapshot_id = (SELECT max(snapshot_id) FROM ducklake_snapshots('ws')) FROM glossql.imports;
+----
+true
+
+# --- a gloss carries the snapshot it was written at; a dataset or a pair path carries none (SPEC §5.2)
+
+statement ok
+DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN, TABLE, DATASET;
+
+statement ok
+GLOSS meaning ON segments.id AS $${"value": "the row's number"}$$;
+
+statement ok
+GLOSS meaning ON segments.segment AS $${"value": "the segment code"}$$;
+
+statement ok
+GLOSS meaning ON segments AS $${"value": "one row per segment"}$$;
+
+statement ok
+GLOSS meaning ON fin AS $${"value": "the finance workspace"}$$;
+
+# the snapshot is the lake's: the one the landing made, which nothing moved since
+query TT
+SELECT subject, snapshot_id = (SELECT snapshot_id FROM glossql.imports) FROM glossql.glossary ORDER BY seq;
+----
+fin.segments.id	true
+fin.segments.segment	true
+fin.segments	true
+fin	NULL
+
+query TT
+SELECT subject, state FROM GLOSSARY(fin) ORDER BY subject;
+----
+fin	current
+fin.segments	current
+fin.segments.id	current
+fin.segments.segment	current
+
+# --- rows arriving under the same shape do not age a gloss
+
+statement ok
+COPY (SELECT i AS id, 'seg' || (i % 3) AS segment FROM range(6) t(i)) TO '{TEST_DIR}/segments.csv' (HEADER);
+
+statement ok
+IMPORT segments;
+
+query I
+SELECT count(*) FROM fin.segments;
+----
+6
+
+# DuckDB's own IMPORT DATABASE stays its own under the grammar
+statement error
+IMPORT DATABASE '{TEST_DIR}/nowhere';
+----
+Cannot open file
+
+query TT
+SELECT subject, state FROM GLOSSARY(segments) ORDER BY subject;
+----
+fin.segments	current
+fin.segments.id	current
+fin.segments.segment	current
+
+# --- a re-land that retypes a column ages the gloss on it, and the gloss on its table; the other column stays current
+
+statement ok
+DECLARE RECIPE segments ON fin FROM files AS $$SELECT id::VARCHAR AS id, segment FROM read_csv('segments.csv')$$;
+
+query TT
+SELECT subject, state FROM GLOSSARY(segments) ORDER BY subject;
+----
+fin.segments	stale
+fin.segments.id	stale
+fin.segments.segment	current
+
+# served and marked: the value is still there
+query TTT
+SELECT subject, value, state FROM GLOSSARY(segments.id);
+----
+fin.segments.id	{"value": "the row's number"}	stale
+
+query TTT
+SELECT subject, actor, current FROM GLOSSARY(segments, all => true) ORDER BY subject;
+----
+fin.segments	agent	false
+fin.segments.id	agent	false
+fin.segments.segment	agent	true
+
+# a new gloss stands at the new shape
+statement ok
+GLOSS meaning ON segments.id AS $${"value": "the row's number, as text now"}$$;
+
+query TT
+SELECT subject, state FROM GLOSSARY(segments.id);
+----
+fin.segments.id	current
+
+# --- a dropped column ages its gloss for good
+
+statement ok
+DECLARE RECIPE segments ON fin FROM files AS $$SELECT id::VARCHAR AS id FROM read_csv('segments.csv')$$;
+
+query TT
+SELECT subject, state FROM GLOSSARY(segments) ORDER BY subject;
+----
+fin.segments	stale
+fin.segments.id	current
+fin.segments.segment	stale
+
+# --- the lake keeps every landing: time travel is DuckLake's
+
+statement ok
+SET VARIABLE first_landing = (SELECT min(snapshot_id) FROM glossql.imports);
+
+query I
+SELECT count(*) FROM fin.segments AT (VERSION => getvariable('first_landing'));
+----
+4
+
+query I
+SELECT count(*) FROM glossql.imports;
+----
+4
+
+# --- the workspace is the file: re-attached under another alias, the store and the glossary stand, and the views follow the alias
+
+statement ok
+USE memory;
+
+statement ok
+DETACH ws;
+
+statement error
+SELECT count(*) FROM GLOSSARY(fin);
+----
+no DuckLake is attached
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/lake.ducklake' AS ws2 (DATA_PATH '{TEST_DIR}/lake_data/');
+
+query T
+PRAGMA glossql;
+----
+workspace ws2: the store is __ducklake_metadata_ws2.main.glossql_*, read as ws2.glossql.* (11 views made)
+
+statement ok
+USE ws2.fin;
+
+query I
+SELECT count(*) FROM glossql.glossary;
+----
+5
+
+query TT
+SELECT subject, state FROM GLOSSARY(segments) ORDER BY subject;
+----
+fin.segments	stale
+fin.segments.id	current
+fin.segments.segment	stale
+
+# --- two lakes: the workspace must be named
+
+statement ok
+ATTACH 'ducklake::memory:' AS other;
+
+statement error
+SELECT count(*) FROM GLOSSARY(fin);
+----
+2 DuckLakes are attached (other, ws2): SET VARIABLE glossql_workspace = 'name' picks one
+
+statement ok
+SET VARIABLE glossql_workspace = 'ws2';
+
+query I
+SELECT count(*) FROM GLOSSARY(fin);
+----
+4

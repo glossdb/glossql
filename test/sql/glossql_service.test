@@ -1,0 +1,38 @@
+# name: test/sql/glossql_service.test
+# description: glossql_service(route, body) — one call to the model service the instance names; the refusals that come before any call goes out
+# group: [sql]
+
+require glossql
+
+require json
+
+# The service is named once for the instance; unnamed, every call refuses by name
+query I
+SELECT current_setting('glossql_service_url');
+----
+(empty)
+
+statement error
+SELECT glossql_service('/judge', '{}');
+----
+no service is named for /judge
+
+statement ok
+SET GLOBAL glossql_service_url = 'http://127.0.0.1:1';
+
+# DuckDB's built-in HTTP client speaks GET alone: a POST needs httpfs, and the refusal says so
+statement error
+SELECT glossql_service('/judge', '{}');
+----
+speaks GET alone: LOAD httpfs, and the call to /judge can go out
+
+# the soft form answers a refusing or absent service as a JSON error; the refusals before any call stay loud
+statement error
+SELECT glossql_service('/judge', '{}', true);
+----
+speaks GET alone: LOAD httpfs, and the call to /judge can go out
+
+query II
+SELECT current_setting('glossql_service_token'), current_setting('glossql_service_timeout');
+----
+(empty)	600

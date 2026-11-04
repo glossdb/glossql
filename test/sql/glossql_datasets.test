@@ -1,0 +1,343 @@
+# name: test/sql/glossql_datasets.test
+# description: datasets are schemas; sources, recipes, probes and imports ride DuckDB's own readers and ATTACH
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_datasets_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+# --- DECLARE DATASET: a schema plus a row; DuckDB's own USE binds it
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'working-capital analysis over ERP and CRM exports');
+
+# an unchanged re-declaration is a no-op
+query T
+DECLARE DATASET fin SET (purpose: 'working-capital analysis over ERP and CRM exports');
+----
+dataset fin unchanged: no-op
+
+# the SET pairs land as one JSON object, checked against what the statement takes
+query TT
+SELECT name, settings FROM glossql.datasets;
+----
+fin	{"purpose":"working-capital analysis over ERP and CRM exports"}
+
+query I
+SELECT count(*) FROM duckdb_schemas() WHERE schema_name = 'fin';
+----
+1
+
+statement error
+DECLARE DATASET bad SET (owner: 'x');
+----
+property 'owner' is not allowed
+
+statement error
+DECLARE DATASET bad SET (purpose: 'x', purpose: 'y');
+----
+setting 'purpose' is given twice
+
+statement ok
+USE fin;
+
+query T
+SELECT current_schema();
+----
+fin
+
+# --- DECLARE SOURCE: a file source is a directory the recipe's paths resolve under
+
+statement ok
+COPY (SELECT i AS id, 'seg' || (i % 2) AS segment FROM range(4) t(i)) TO '{TEST_DIR}/segments.csv' (HEADER);
+
+statement ok
+DECLARE SOURCE crm_export SET (type: csv, location: '{TEST_DIR}');
+
+query T
+DECLARE SOURCE crm_export SET (type: csv, location: '{TEST_DIR}');
+----
+source crm_export unchanged: no-op
+
+# the kind is any word: what an extension reads has no fixed list
+statement ok
+DECLARE SOURCE sheets SET (type: excel, location: 'x');
+
+statement error
+DECLARE SOURCE bad SET (location: 'x');
+----
+missing required property 'type'
+
+query TTT
+SELECT name, settings->>'type', settings->>'via' FROM glossql.sources ORDER BY name;
+----
+crm_export	csv	NULL
+sheets	excel	NULL
+
+# --- PROBE: the rehearsal, executed at the source, landing nothing
+
+query IT
+PROBE crm_export AS $$SELECT id, segment FROM read_csv('segments.csv') ORDER BY id LIMIT 2$$;
+----
+0	seg0
+1	seg1
+
+statement error
+PROBE nowhere AS $$SELECT 1$$;
+----
+source 'nowhere' is not declared
+
+query I
+SELECT count(*) FROM glossql.imports;
+----
+0
+
+# --- DECLARE RECIPE: the SQL runs at the source and lands as the typed table
+
+statement ok
+DECLARE RECIPE segments ON fin FROM crm_export AS $$SELECT id::INTEGER AS id, segment FROM read_csv('segments.csv')$$;
+
+query I
+SELECT count(*) FROM fin.segments;
+----
+4
+
+query TT
+SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'fin' AND table_name = 'segments' ORDER BY ordinal_position;
+----
+id	INTEGER
+segment	VARCHAR
+
+query TTTI
+SELECT dataset, table_name, mode, rows FROM glossql.imports;
+----
+fin	segments	replace	4
+
+statement error
+DECLARE RECIPE nowhere ON fin FROM nowhere AS $$SELECT 1$$;
+----
+source 'nowhere' is not declared
+
+statement error
+DECLARE RECIPE x ON nods FROM crm_export AS $$SELECT 1$$;
+----
+dataset 'nods' is not declared
+
+# an unchanged re-declaration is a no-op (SPEC §3)
+
+statement ok
+DECLARE RECIPE segments ON fin FROM crm_export AS $$SELECT id::INTEGER AS id, segment FROM read_csv('segments.csv')$$;
+
+query I
+SELECT count(*) FROM glossql.recipes WHERE table_name = 'segments';
+----
+1
+
+query I
+SELECT count(*) FROM glossql.imports;
+----
+1
+
+# --- unprefixed subjects resolve against the USE'd dataset
+
+statement ok
+DECLARE ASPECT unit WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+statement ok
+GLOSS unit ON segments.segment AS $${"value": "code"}$$;
+
+query T
+SELECT subject FROM glossql.glossary;
+----
+fin.segments.segment
+
+query TT
+SELECT subject, value FROM GLOSSARY(segments.segment);
+----
+fin.segments.segment	{"value": "code"}
+
+query TT
+SELECT subject, value FROM GLOSSARY(fin.segments.segment);
+----
+fin.segments.segment	{"value": "code"}
+
+# no subject sweeps the USE'd dataset; a table serves its columns
+query T
+SELECT subject FROM GLOSSARY();
+----
+fin.segments.segment
+
+query T
+SELECT subject FROM GLOSSARY(segments);
+----
+fin.segments.segment
+
+# --- IMPORT: the recipe runs again; an unkeyed table is replaced whole
+
+statement ok
+COPY (SELECT i AS id, 'seg' || (i % 2) AS segment FROM range(6) t(i)) TO '{TEST_DIR}/segments.csv' (HEADER);
+
+statement ok
+IMPORT segments;
+
+query I
+SELECT count(*) FROM fin.segments;
+----
+6
+
+statement ok
+IMPORT fin.segments;
+
+query TTTI
+SELECT dataset, table_name, mode, rows FROM glossql.imports ORDER BY imported_at, seq;
+----
+fin	segments	replace	4
+fin	segments	replace	6
+fin	segments	replace	6
+
+statement error
+IMPORT nothing;
+----
+has no recipe
+
+# a keyed recipe merges by its key on import
+
+statement ok
+DECLARE RECIPE keyed ON fin FROM crm_export SET (key: id) AS $$SELECT id::INTEGER AS id, segment FROM read_csv('segments.csv')$$;
+
+query I
+SELECT count(*) FROM fin.keyed;
+----
+6
+
+statement ok
+COPY (SELECT i AS id, 'new' AS segment FROM range(4, 10) t(i)) TO '{TEST_DIR}/segments.csv' (HEADER);
+
+statement ok
+IMPORT keyed;
+
+query I
+SELECT count(*) FROM fin.keyed;
+----
+10
+
+query TT
+SELECT segment, count(*) FROM fin.keyed GROUP BY segment ORDER BY segment;
+----
+new	6
+seg0	2
+seg1	2
+
+query T
+SELECT mode FROM glossql.imports WHERE table_name = 'keyed' ORDER BY imported_at DESC, seq DESC LIMIT 1;
+----
+merge
+
+# a composite key is one setting, 'a, b', as the glossql engine spells it
+statement ok
+DECLARE RECIPE keyed2 ON fin FROM crm_export SET (key: 'id, segment') AS $$SELECT id::INTEGER AS id, segment FROM read_csv('segments.csv')$$;
+
+statement ok
+IMPORT fin.keyed2;
+
+query TTI
+SELECT settings, mode, (SELECT count(*) FROM fin.keyed2) FROM glossql.recipes r JOIN glossql.imports i USING (dataset, table_name) WHERE table_name = 'keyed2' ORDER BY i.seq DESC LIMIT 1;
+----
+{"key":"id, segment"}	merge	6
+
+statement error
+DECLARE RECIPE bad ON fin FROM crm_export SET (key: id, key: segment) AS $$SELECT 1$$;
+----
+setting 'key' is given twice
+
+statement error
+DECLARE RECIPE bad ON fin FROM crm_export SET (mode: append) AS $$SELECT 1$$;
+----
+property 'mode' is not allowed
+
+# --- dropped rows (SPEC §3): the recipe is the landing, so nothing is lost between source and table;
+# a reader told to store its rejects reports what it skipped, one told to ignore errors silently cannot be counted
+
+query I
+SELECT count(*) FROM glossql.imports WHERE dropped_rows_count = 0;
+----
+7
+
+statement ok
+COPY (SELECT * FROM (VALUES ('1', 'a'), ('x', 'b'), ('3', 'c')) t(id, segment)) TO '{TEST_DIR}/faulty.csv' (HEADER);
+
+query T
+DECLARE RECIPE faulty ON fin FROM crm_export AS $$SELECT * FROM read_csv('faulty.csv', types = {'id': 'INTEGER'}, store_rejects = true)$$;
+----
+landed fin.faulty: 2 rows, 1 dropped (new)
+
+query T
+IMPORT faulty;
+----
+imported fin.faulty: 2 rows, 1 dropped (replaced)
+
+statement ok
+DECLARE RECIPE silent ON fin FROM crm_export AS $$SELECT * FROM read_csv('faulty.csv', types = {'id': 'INTEGER'}, ignore_errors = true)$$;
+
+query TII
+SELECT table_name, rows, dropped_rows_count FROM glossql.imports WHERE table_name IN ('faulty', 'silent') ORDER BY imported_at, seq;
+----
+faulty	2	1
+faulty	2	1
+silent	2	NULL
+
+# --- a relational source is a database DuckDB has ATTACHed
+
+statement ok
+ATTACH '{TEST_DIR}/crm.duckdb' AS crm;
+
+statement ok
+CREATE TABLE crm.customer_segments AS SELECT i AS id, 'tier' || i AS segment FROM range(3) t(i);
+
+statement ok
+DECLARE SOURCE crm SET (type: relational_db, location: 'crm');
+
+query IT
+PROBE crm AS $$SELECT id, segment FROM customer_segments ORDER BY id LIMIT 1$$;
+----
+0	tier0
+
+statement ok
+DECLARE RECIPE tiers ON fin FROM crm AS $$SELECT id, segment FROM customer_segments$$;
+
+query I
+SELECT count(*) FROM fin.tiers;
+----
+3
+
+statement ok
+DECLARE SOURCE detached SET (type: relational_db, location: 'nowhere');
+
+statement error
+PROBE detached AS $$SELECT 1$$;
+----
+not attached
+
+# the caller's connection is untouched by the recipe's USE and file_search_path
+query T
+SELECT current_schema();
+----
+fin
+
+query T
+SELECT current_setting('file_search_path');
+----
+(empty)

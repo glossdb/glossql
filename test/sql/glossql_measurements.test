@@ -1,0 +1,323 @@
+# name: test/sql/glossql_measurements.test
+# description: a measurement lands at its pin with what it read; a later extraction serves it while those reads are unchanged, and a function voice is current while they are
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_measurements_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'measurements');
+
+statement ok
+USE fin;
+
+statement ok
+CREATE TABLE fin.orders AS SELECT i AS id, i * 1.5 AS amount FROM range(4) t(i);
+
+statement ok
+CREATE TABLE fin.other AS SELECT 1 AS x;
+
+statement ok
+DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max": {}}}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
+
+# --- extraction lands the row at its pin: every leg the body could have read, at its version now
+
+query TTTTT
+SELECT min_max() FROM orders.amount;
+----
+min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
+
+# reads names what the body read, by name; the pin is the dataset's tables at the
+# last snapshot that wrote them and the store relations at their highest seq
+query TT
+SELECT reads, pin FROM glossql.measurements;
+----
+fin.orders	fin.orders:14,fin.other:15,glossql.aspects:1,glossql.datasets:1,glossql.functions:1,glossql.glossary:-,glossql.imports:-,glossql.kits:-,glossql.recipes:-,glossql.relationships:-,glossql.sources:-,glossql.witnesses:-
+
+# --- a repeat is a serve, not a rerun
+
+query TTTTT
+SELECT min_max() FROM orders.amount;
+----
+min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	false
+
+query I
+SELECT count(*) FROM glossql.measurements;
+----
+1
+
+# a write the body never reads is not its staleness: another table, the glossary
+
+statement ok
+INSERT INTO fin.other VALUES (2);
+
+statement ok
+DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+statement ok
+GLOSS note ON orders.amount AS $${"text": "landed"}$$;
+
+query TTTTT
+SELECT min_max() FROM orders.amount;
+----
+min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	false
+
+# --- one of its reads moving makes the next extraction compute; old rows stand as the drift record
+
+statement ok
+INSERT INTO fin.orders VALUES (9, 9.0);
+
+query TTTTT
+SELECT min_max() FROM orders.amount;
+----
+min_max	fin.orders.amount	min_max	{"min":0.0,"max":9.0}	true
+
+query TT
+SELECT value, reads FROM glossql.measurements ORDER BY seq;
+----
+{"min":0.0,"max":4.5}	fin.orders
+{"min":0.0,"max":9.0}	fin.orders
+
+# a re-declared function is never served from a measurement of its older body
+
+statement ok
+DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) + 1 AS max FROM subject_column($subject) $$ RETURNS min_max;
+
+query TTTTT
+SELECT min_max() FROM orders.amount;
+----
+min_max	fin.orders.amount	min_max	{"min":0.0,"max":10.0}	true
+
+# --- the store relations are legs too: a body that reads the glossary moves with it
+
+statement ok
+DECLARE ASPECT notes WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION notes FOR fin AS $$ SELECT count(*) AS n FROM glossql.glossary g WHERE g.subject = $subject AND g.aspect = 'note' $$ RETURNS notes;
+
+query TTTTT
+SELECT notes() FROM orders.amount;
+----
+notes	fin.orders.amount	notes	1	true
+
+query T
+SELECT reads FROM glossql.measurements WHERE function = 'notes';
+----
+glossql.glossary
+
+statement ok
+INSERT INTO fin.orders VALUES (10, 10.0);
+
+query TTTTT
+SELECT notes() FROM orders.amount;
+----
+notes	fin.orders.amount	notes	1	false
+
+statement ok
+GLOSS note ON orders.amount AS $${"text": "landed again"}$$;
+
+query TTTTT
+SELECT notes() FROM orders.amount;
+----
+notes	fin.orders.amount	notes	2	true
+
+# --- a body that reads nothing stands for ever; one whose reads cannot be named stands at its exact pin
+
+statement ok
+DECLARE ASPECT answer WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION answer FOR fin AS $$ SELECT 42 AS n FROM range(1) $$ RETURNS answer;
+
+statement ok
+DECLARE ASPECT tables WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION tables FOR fin AS $$ SELECT count(*) AS n FROM duckdb_tables() WHERE schema_name = split_part($subject, '.', 1) $$ RETURNS tables;
+
+query TTTTT
+SELECT answer(), tables() FROM orders.amount;
+----
+answer	fin.orders.amount	answer	42	true
+tables	fin.orders.amount	tables	2	true
+
+query TT
+SELECT function, reads FROM glossql.measurements WHERE function IN ('answer', 'tables') ORDER BY function;
+----
+answer	(empty)
+tables	**
+
+statement ok
+INSERT INTO fin.other VALUES (3);
+
+query TTTTT
+SELECT answer(), tables() FROM orders.amount;
+----
+answer	fin.orders.amount	answer	42	false
+tables	fin.orders.amount	tables	2	true
+
+# ** moves with the store too
+
+statement ok
+GLOSS note ON orders.amount AS $${"text": "third"}$$;
+
+query TTTTT
+SELECT answer(), tables() FROM orders.amount;
+----
+answer	fin.orders.amount	answer	42	false
+tables	fin.orders.amount	tables	2	true
+
+query TTTTT
+SELECT tables() FROM orders.amount;
+----
+tables	fin.orders.amount	tables	2	false
+
+# --- a body that carries a top-level summary serves the summary; the whole value lands
+
+statement ok
+DECLARE ASPECT profile WITH $${"type": "object", "required": ["summary", "detail"]}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION profile FOR fin AS $$ SELECT {'n': count(*)} AS summary, list(v ORDER BY v) AS detail FROM subject_column($subject) $$ RETURNS profile;
+
+query TTTTT
+SELECT profile() FROM orders.amount;
+----
+profile	fin.orders.amount	profile	{"n":6}	true
+
+query T
+SELECT value FROM glossql.measurements WHERE function = 'profile';
+----
+{"summary":{"n":6},"detail":[0.0,1.5,3.0,4.5,9.0,10.0]}
+
+query TT
+SELECT aspect, value FROM GLOSSARY(orders.amount::profile);
+----
+profile	{"summary":{"n":6},"detail":[0.0,1.5,3.0,4.5,9.0,10.0]}
+
+# --- a function voice is current while what it read is unchanged, and the verdict says so
+
+statement ok
+DECLARE FUNCTION all_current FOR fin AS $$ SELECT subject, CASE WHEN bool_and(current) THEN 'green' ELSE 'red' END AS band, 0.0 AS score FROM slots GROUP BY subject $$;
+
+statement ok
+DECLARE WITNESS min_max_w ON min_max DETECTOR all_current THRESHOLD 0.5;
+
+query TTTTT
+SELECT min_max() FROM orders.amount;
+----
+min_max	fin.orders.amount	min_max	{"min":0.0,"max":11.0}	true
+
+query TTTT
+SELECT subject, band, current, error FROM ATTEST(orders.amount::min_max);
+----
+fin.orders.amount	green	true	NULL
+
+query TTT
+SELECT actor, body, current FROM GLOSSARY(orders.amount::min_max, all => true);
+----
+function	{"min":0.0,"max":11.0}	true
+
+query TTT
+SELECT value, band, state FROM GLOSSARY(orders.amount::min_max);
+----
+{"min":0.0,"max":11.0}	green	current
+
+statement ok
+DELETE FROM fin.orders WHERE id = 10;
+
+# the detector sees the slot's current; the verdict's current is every function voice it read
+
+query TTTT
+SELECT subject, band, current, error FROM ATTEST(orders.amount::min_max);
+----
+fin.orders.amount	red	false	NULL
+
+query TTT
+SELECT actor, body, current FROM GLOSSARY(orders.amount::min_max, all => true);
+----
+function	{"min":0.0,"max":11.0}	false
+
+# served and marked: the voice stays, stale beside it
+
+query TTT
+SELECT value, band, state FROM GLOSSARY(orders.amount::min_max);
+----
+{"min":0.0,"max":11.0}	red	stale
+
+query TTTTT
+SELECT min_max() FROM orders.amount;
+----
+min_max	fin.orders.amount	min_max	{"min":0.0,"max":10.0}	true
+
+query TTT
+SELECT value, band, state FROM GLOSSARY(orders.amount::min_max);
+----
+{"min":0.0,"max":10.0}	green	current
+
+# a gloss's own staleness is the subject's shape (SPEC §5.2), a voice's is its reads: a landing ages the voice only
+
+statement ok
+DECLARE WITNESS note_w ON note BY (AGENT, HUMAN);
+
+query TTT
+SELECT aspect, actor, current FROM GLOSSARY(orders.amount, all => true) ORDER BY aspect, actor;
+----
+answer	function	true
+min_max	function	true
+note	agent	true
+notes	function	false
+profile	function	false
+tables	function	false
+
+statement ok
+INSERT INTO fin.orders VALUES (11, 1.0);
+
+query TTT
+SELECT aspect, actor, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'note') ORDER BY aspect;
+----
+min_max	function	false
+note	agent	true
+
+# --- a table named like its dataset: a two-part subject is the table's column when the column exists, the dataset's table otherwise; a resolved subject resolves to itself
+
+statement ok
+CREATE TABLE fin.fin AS SELECT 1 AS id, 2.5 AS amount;
+
+query TTTTT
+SELECT min_max() FROM fin.amount;
+----
+min_max	fin.fin.amount	min_max	{"min":2.5,"max":3.5}	true
+
+query TTTTT
+SELECT min_max() FROM fin.fin.amount;
+----
+min_max	fin.fin.amount	min_max	{"min":2.5,"max":3.5}	false
+
+query T
+SELECT DISTINCT subject FROM GLOSSARY(fin.id);
+----
+fin.fin.id
+
+query T
+SELECT count(*) > 0 FROM GLOSSARY(fin.orders) WHERE subject LIKE 'fin.orders.%';
+----
+true

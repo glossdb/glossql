@@ -13,7 +13,7 @@ Nothing here was built; the build spike is the proposed next step.
 | `GrammarExtension` | `src/include/duckdb/parser/grammar_extension.hpp` | name + description + `GetChanges() -> vector<GrammarChange>`; registered with `GrammarExtension::Register(DatabaseInstance&, shared_ptr<…>)` from a C++ extension entry (`DUCKDB_CPP_EXTENSION_ENTRY`). Merged in PR #24919 (2026-09-04). |
 | `GrammarChange` | `src/include/duckdb/parser/grammar_change.hpp` | `AddRule(peg_text, transform, suppress_suggestions)`, `AddChoice` / `PrependChoice(rule, choice, cursor)`, `RemoveChoice`, `ReplaceChoice`, `ReplaceRule`, `SetTransformProcess`, `AddTerminalRuleOverride(rule, matcher_factory)` for custom matchers. |
 | The grammar | `src/parser/peg/grammar/statements/*.gram` (41 files), inlined as `inlined_grammar.gram` | Every rule of DuckSQL is addressable by name: `Statement`, `SelectAtom`, `InnerTableRef`, `TableFunction`, `Expression`, `ReservedKeyword`, `UnreservedKeyword`, … |
-| Activation | `src/common/settings.json` (`active_grammar_extensions`, scope **local**), `duckdb_grammar_extensions()` | Opt-in per connection: `SET active_grammar_extensions = ['gloss']`. Grammar is compiled once per distinct active set and cached. Opt-in exists because PEG ordered choice lets extensions conflict (PR text). |
+| Activation | `src/common/settings.json` (`active_grammar_extensions`, scope **local**), `duckdb_grammar_extensions()` | Opt-in per connection: `SET active_grammar_extensions = ['glossql']`. Grammar is compiled once per distinct active set and cached. Opt-in exists because PEG ordered choice lets extensions conflict (PR text). |
 | Transform | `src/include/duckdb/parser/peg/transformer/peg_transformer.hpp`, `transform_result.hpp` | A rule's transform is `arena_ptr<TransformProcess>(PEGTransformer&, ParseResult&)`. Simplest form: `MakeProcess<FinalizeTransformProcess>(…, FinalizeFn)`; `FinalizeFn` walks the `ParseResult` tree and calls `transformer.Transform<T>(child)` to reuse DuckDB's own transforms (`Expression` → `ParsedExpression`, `TableRef`, `SelectStatement`, `GroupByNode` …). A `Statement` alternative returns `MakeResult<unique_ptr<SQLStatement>>`. Result types carry stable names so this works across the loadable-extension boundary. |
 | Keywords | `matcher/keyword_matcher.hpp:75`, `create_table.gram:76` | A quoted literal in a rule matches token text case-insensitively; `PlainIdentifier <- !ReservedKeyword …`, so a new word stays usable as an identifier unless added to `ReservedKeyword`. Declare category with `AddChoice("UnreservedKeyword", "'GLOSS'")`. |
 | Tokenizer | `src/parser/peg/tokenizer/base_tokenizer.cpp:341-371` | `$$…$$` and `$tag$…$tag$` are native string tokens. `->`, `<->`, `=>`, `::` are single operator tokens. `$name` is a `ColLabelParameter` and resolves to a `SET VARIABLE` in 2.0. |
@@ -124,7 +124,7 @@ string `'orders.amount'`, but as deprecated behaviour behind
 ## 7. Spike results (2026-10-28)
 
 Built as a loadable C++ extension on the v2.0.0 extension template
-(`src/gloss_grammar.cpp`, `src/gloss_store.cpp`; suite
+(`src/glossql_grammar.cpp`, `src/glossql_store.cpp`; suite
 `test/sql/glossql.test`, 73 assertions, all passing; the same statements run
 through the CLI with `LOAD`). Confirmed:
 
@@ -148,16 +148,16 @@ through the CLI with `LOAD`). Confirmed:
 - **New words stay identifiers**: `gloss`, `aspect`, `glossary`, `fact` as
   column and table names, and the JSON `->` operator, are untouched.
 - **Per-connection opt-in** behaves as documented: before
-  `SET active_grammar_extensions = ['gloss']` and after `RESET`, a glossql
+  `SET active_grammar_extensions = ['glossql']` and after `RESET`, a glossql
   statement is a parser error; `duckdb_grammar_extensions()` lists it.
-- **The actor rides the connection** as `SET VARIABLE gloss_actor`; the
+- **The actor rides the connection** as `SET VARIABLE glossql_actor`; the
   collapsed read picks human over agent, newest first.
 
 Two parse-tree facts the demos do not show: a rule whose body is one macro
 call (`R <- Parens(List(X))`) wraps the macro's list in a list of its own,
 and `X*` arrives as `Optional(Repeat)` while `X+` is a bare `Repeat`.
 `CALL` invokes table functions only; a pragma query function
-(`PRAGMA gloss`) runs the multi-statement DDL. The CLI parses a `-c`
+(`PRAGMA glossql`) runs the multi-statement DDL. The CLI parses a `-c`
 batch before executing it, so the grammar setting applies from the next
 batch; stdin and the test runner go statement by statement.
 
@@ -213,7 +213,7 @@ versioned landings, snapshot-pinned reads, `stale`.
   grammar extensions apply (`src/planner/statement_preprocessor.cpp`),
   but the expansion runs as one transaction, and the store's lookups on a
   second connection would not see the kit's own earlier declarations.
-  `gloss_kit(path)` is a table function: it reads the script through
+  `glossql_kit(path)` is a table function: it reads the script through
   `FileSystem::GetFileSystem(context)` (local paths; URLs once `httpfs` is
   loaded), sets `active_grammar_extensions` on a second connection,
   `ExtractStatements()` the script, and runs each statement with
@@ -399,8 +399,8 @@ template. What held in DuckDB:
 - **`dataset` on a gloss and a relationship** turns the dataset-wide read's
   `subject LIKE 'fin.%'` into an equality; the owed set keeps the subject
   predicate, having no dataset column of its own.
-- **`actor_kind` and `actor_id`.** The kind comes from `gloss_actor` as
-  before; the id from `gloss_actor_id`, NULL when the wrapper set none.
+- **`actor_kind` and `actor_id`.** The kind comes from `glossql_actor` as
+  before; the id from `glossql_actor_id`, NULL when the wrapper set none.
   The raw read keeps the SPEC's `actor` column, the kind.
 
 ## 14. Round eight: lineage off the bound plan

@@ -1,0 +1,245 @@
+(* glossql grammar.
+   Machine-readable source of truth for syntax; SPEC.md carries the semantics.
+
+   Lexical conventions (SQL host):
+   - name:    [A-Za-z_][A-Za-z0-9_]*  or double-quoted "name" (never a keyword);
+              an unquoted name folds to lowercase, a quoted one keeps its case
+   - string:  single-quoted, '' escapes a quote
+   - number:  decimal literal
+   - dollar:  a dollar-quoted verbatim region, postgres-style — $$ ... $$, or
+              $tag$ ... $tag$ when the content itself contains "$$"; nothing
+              inside is escaped, the content rides byte-exact
+   - json:    a dollar region whose content is a JSON object per RFC 8259
+   - keywords are case-insensitive; statements end with ";"
+
+   Every statement lexes with the stock sqlparser tokenizer on the postgres
+   dialect ("<->" is one token there); every keyword and operator is chosen
+   so this holds — no custom lexing anywhere.
+
+   Substrate SQL is opaque to this grammar: glossql adds statements and table
+   functions to a SQL host (views, SELECT bodies and DELETE FROM glossary
+   are host SQL), it does not re-specify SQL. The actor
+   (agent_id | human_id) rides the connection — there is no BY-actor clause
+   anywhere; the engine stamps writer and actor kind on every statement. *)
+
+script            = { statement, ";" } ;
+
+statement         = declaration
+                  | use
+                  | gloss
+                  | extract
+                  | probe_stmt
+                  | import_stmt
+                  | substrate_sql ;          (* allowlisted: SELECT,
+                                                DROP TABLE, DELETE FROM
+                                                glossary — the rest of
+                                                DDL/DML is refused *)
+
+declaration       = "DECLARE", ( source_decl
+                               | recipe_decl
+                               | dataset_decl
+                               | relationship_decl
+                               | aspect_decl
+                               | function_decl
+                               | witness_decl ) ;
+
+probe_stmt        = "PROBE", name, "AS", dollar ;
+                    (* PROBE source AS $$ <sql> $$ — the recipe
+                       rehearsal: same SQL surface, same path
+                       resolution, executed at the source, landing nothing.
+                       The result always carries its schema; LIMIT 0
+                       rehearses the identity a DECLARE RECIPE would stamp *)
+
+import_stmt       = "IMPORT", [ name, "." ], name ;
+                    (* IMPORT [dataset.]table — a data update: the
+                       table's recipe runs again over its source and
+                       the table becomes the result as the source
+                       stands now, in one commit. The schema is the
+                       table's or the import errors; how the engine
+                       reaches the result — appending the files no
+                       landing has read, or replacing the table whole
+                       — is its own, and the outcome names it *)
+
+(* -- sources ------------------------------------------------------------ *)
+
+source_decl       = "SOURCE", name, "SET", "(", pair, { ",", pair }, ")" ;
+pair              = name, ":", ( name | string | number ) ;
+                    (* keys today: type (relational_db|parquet|csv|json),
+                       location (url/path, no credentials), via (reference to
+                       engine-held secrets — secrets never appear in statements) *)
+
+recipe_decl       = "RECIPE", name, "ON", name, "FROM", name,
+                    [ "SET", "(", pair, { ",", pair }, ")" ], "AS", dollar ;
+                    (* RECIPE r ON dataset FROM source [SET (key: col)] AS
+                       $$ <sql> $$ — the
+                       sql runs at the source: a relational source executes
+                       it in its own dialect; at a file source the engine
+                       runs it, read_parquet/read_csv/read_json resolving
+                       under the source's location, try_to_date/
+                       try_to_timestamp registered. Dollar-quoted so
+                       foreign-dialect text never meets the host tokenizer.
+                       The recipe carries the casts:
+                       the result lands as table r, the typed table —
+                       no derived view, no raw twin. Identity is content
+                       (SQL + produced schema): unchanged re-declaration
+                       is a no-op, changed supersedes and re-lands — the
+                       old landing drops, the table lands fresh, glosses
+                       stay; DROP TABLE removes whole and refuses on data
+                       or glosses. SET (key: col[, col]) names the table's
+                       key: a keyed recipe's result merges into the table
+                       by that key on every import, an unkeyed recipe's
+                       result is the table *)
+
+(* -- datasets ----------------------------------------------------------- *)
+
+dataset_decl      = "DATASET", name, "SET", "(", pair, { ",", pair }, ")" ;
+                    (* keys today: purpose *)
+
+use               = "USE", name ;
+                    (* unprefixed paths resolve against the USE'd dataset;
+                       a landed table of it wins over a dataset of the
+                       same name at the head of a two-part path *)
+
+(* -- relationships ------------------------------------------------------ *)
+
+relationship_decl = "RELATIONSHIP", rel_side, rel_op, rel_side ;
+rel_op            = "->"                     (* many-to-one, the FK direction *)
+                  | "<->" ;                  (* one-to-one *)
+rel_side          = [ name, "." ], name, ".", rel_key ; (* [dataset.]table.key *)
+rel_key           = name                     (* one column *)
+                  | "(", name, ",", name, { ",", name }, ")" ;
+                    (* composite — the tuple is the key *)
+
+(* -- subjects ----------------------------------------------------------- *)
+
+subject           = path
+                  | pair_path ;
+path              = name, [ ".", name, [ ".", name ] ] ;
+                    (* dataset | dataset.table | dataset.table.column;
+                       views count as tables; unprefixed resolves via USE *)
+pair_path         = rel_side, rel_op, rel_side ;
+                    (* a declared relationship, addressed by its pair path *)
+
+(* -- glossary ----------------------------------------------------------- *)
+
+aspect_decl       = "ASPECT", name, "WITH", json, "AS", aspect_kind ;
+aspect_kind       = "QUERY"                  (* SQL-grounded; glosses validate
+                                                against the standard grounding
+                                                schema; WITH schema carries the
+                                                ontology entry; grounded on the
+                                                dataset, so it takes no grain
+                                                clause *)
+                  | ( "MEASUREMENT"          (* never glossed; value = bound
+                                                function's cached JSON output *)
+                    | "FACT" ),              (* authored assertion; WITH schema
+                                                validates the gloss body *)
+                    [ grain_clause ] ;
+grain_clause      = "ON", grain, { ",", grain },
+                    [ "WHEN", ( name, "=", string
+                              | "TYPE", ( "=", string
+                                        | "IN", "(", string, { ",", string }, ")" ) ) ] ;
+grain             = "DATASET" | "TABLE" | "COLUMN" | "RELATIONSHIP" | "SOURCE" ;
+                    (* the subject classes glosses may attach to;
+                       absent = all. WHEN names a sibling aspect and a
+                       value: the aspect is owed on a
+                       subject only while that aspect's collapsed body
+                       carries `value` = the literal — bounds
+                       `unassessed` disclosure and every count derived
+                       from it; writes stay gated by grain alone, and a
+                       spoken slot outside its condition serves
+                       normally. WHEN TYPE, on a grain list of COLUMN
+                       alone, names data types instead: the aspect is
+                       owed on the columns whose base type (the name
+                       before any parenthesis, DECIMAL for
+                       DECIMAL(18,2)) is one of them. *)
+
+gloss             = "GLOSS", name, "ON", subject, "AS", json ;
+                    (* body admission by declared kind:
+                       FACT -> the aspect's WITH schema,
+                       QUERY -> the standard grounding schema,
+                       MEASUREMENT -> rejected.
+                       supersession key: (subject, aspect, actor kind) *)
+
+(* -- functions ---------------------------------------------------------- *)
+
+function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
+                    "AS", dollar,
+                    [ "RETURNS", name ] ;
+                    (* the engine's analytical machinery; never a metric
+                       (metrics are QUERY aspects run as their SQL).
+                       AS carries the body itself (fixture 24): a body
+                       on disk was a body an agent over MCP could
+                       neither write nor read, so the store keeps it and
+                       `SELECT script FROM functions` serves the library as
+                       examples. `FROM 'path'` is retired, not deprecated —
+                       two homes for one body is the staleness the registry
+                       rulings exist against. Every body is one SQL query
+                       the engine plans — read-only: a RETURNS body runs
+                       over data at the statement's pin; a detector body
+                       runs over its witness's `slots` relation.
+                       Settings are context, never call arguments; a SQL
+                       body composes its context inline. RETURNS names
+                       the aspect the output fills,
+                       validated against that aspect's schema; a MEASUREMENT
+                       aspect has one returning function, a FACT aspect's
+                       returning functions are voices in its slots. No RETURNS
+                       declares a detector — role by shape; the attest
+                       contract is the engine's. Results land in the
+                       measurements relation *)
+
+extract           = "SELECT", call, { ",", call }, "FROM", subject ;
+call              = name, "(", ")" ;
+                    (* calls are bare — settings are context,
+                       never arguments.
+                       extraction computes at the read's pin and lands a
+                       measurements row; the same pin serves it back, any
+                       input moving recomputes — there is no REFRESH.
+                       Functions never write the glossary. *)
+
+(* -- witnesses ---------------------------------------------------------- *)
+
+witness_decl      = "WITNESS", name, "ON", name,
+                    [ "BY", "(", speaker, { ",", speaker }, ")" ],
+                    [ "DETECTOR", name ],
+                    [ "THRESHOLD", number ] ;
+speaker           = "AGENT"                  (* admits agent glosses *)
+                  | "HUMAN" ;                (* admits human glosses *)
+                    (* declared per aspect, dataset-wide; one current value per
+                       (subject, aspect) per speaker — function voices arrive
+                       via RETURNS (function_decl), never through the gate.
+                       BY or DETECTOR must be named (checked at admission);
+                       on a MEASUREMENT aspect BY is refused. DETECTOR names
+                       a function without RETURNS; THRESHOLD is the entropy
+                       cutoff in 0..1 *)
+
+(* -- reading (table functions in substrate SQL) ------------------------- *)
+
+glossary_read     = "GLOSSARY", "(", [ glossary_args ], ")" ;
+glossary_args     = subject, [ "::", name ], [ ",", all_flag ]
+                  | all_flag ;
+all_flag          = "all", "=>", "true" ;
+                    (* no subject sweeps the USE'd dataset; "::aspect" narrows
+                       to one declared aspect, as in attest_read.
+                       collapsed default: one row per (subject, aspect) —
+                       (subject, aspect, value, band, score, state); value is
+                       the precedence pick (human > agent > function),
+                       withheld when the detector's score exceeds the
+                       threshold; state in unassessed | contested | current |
+                       stale — every gap visible, stale served-and-marked.
+                       all => true: one row per (subject, aspect, kind, witness)
+                       — (subject, aspect, kind, witness, actor, body,
+                       written_at); kind is the aspect's kind, the speaker is
+                       actor under witness *)
+
+attest_read       = "ATTEST", "(", [ subject, [ "::", name ] ], ")" ;
+                    (* no argument sweeps the USE'd dataset; "::aspect" (the
+                       host's cast spelling) narrows to one declared aspect —
+                       fin.trial_balance names a table, fin::reconciliation an
+                       aspect. standard attest schema:
+                       (subject, aspect, witness, band, score, computed_at,
+                       current, error);
+                       band: green|yellow|orange|red|error, score: 0..1;
+                       error carries the failure text where the detector
+                       itself could not answer, null otherwise.
+                       sweeps are WHERE clauses over this relation, never a
+                       special form *)

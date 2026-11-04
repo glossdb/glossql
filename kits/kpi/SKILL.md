@@ -1,6 +1,6 @@
 ---
-name: gloss-kpi
-description: The KPI kit's vocabulary for a gloss workspace — what each aspect means, the order of a round, the keys a metric's grounding carries. Use after gloss_kit('kits/kpi/kit.sql') when glossing columns, tables, sources and metrics.
+name: glossql-kpi
+description: The KPI kit's vocabulary for a glossql workspace — what each aspect means, the order of a round, the keys a metric's grounding carries. Use after glossql_kit('kits/kpi/kit.sql') when glossing columns, tables, sources and metrics.
 ---
 
 # The KPI kit: what it teaches
@@ -14,7 +14,7 @@ taught: the tables, the declarations, the glossary.
 ## Load and check
 
 ```sql
-FROM gloss_kit('kits/kpi/kit.sql');     -- one row per statement; the same line in the opener, so every process starts with the kit
+FROM glossql_kit('kits/kpi/kit.sql');     -- one row per statement; the same line in the opener, so every process starts with the kit
 SELECT * FROM glossql.kits;                -- what this workspace runs
 SELECT name, kind, grains FROM glossql.aspects;
 ```
@@ -50,7 +50,7 @@ value withheld, the verdict `red` above 0.7. `meaning`, `entity` and
 4. Gloss with grounds: `GLOSS behavior ON orders.amount AS $${"value":
    "flow", "grounds": "sums over orders, never a balance"}$$;`. You speak
    as `agent`. A person's ruling arrives as `human`, which the wrapper
-   sets with `SET VARIABLE gloss_actor = 'human'`; never set it yourself.
+   sets with `SET VARIABLE glossql_actor = 'human'`; never set it yourself.
 5. Read the verdicts: `SELECT * FROM ATTEST(orders.amount::role);`. A red
    band is a disagreement to resolve by re-glossing, not to overwrite.
 

@@ -1,0 +1,237 @@
+# name: test/sql/glossql_views.test
+# description: a view counts as a table (SPEC §3) — a grounding's view and its columns are subjects, glossed, measured and owed like a table's; the view's definition is the shape its glosses age by and a leg of what is measured over it
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_views_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'views');
+
+statement ok
+USE fin;
+
+statement ok
+CREATE TABLE fin.t (d DATE, a DOUBLE, k VARCHAR);
+
+statement ok
+INSERT INTO fin.t VALUES (DATE '2024-01-01', 1, 'x'), (DATE '2024-02-01', 2, 'y');
+
+statement ok
+DECLARE ASPECT role WITH $${"type": "object", "required": ["value"], "properties": {"value": {"enum": ["key", "measure", "dimension", "timestamp", "attribute"]}}}$$ AS FACT ON COLUMN;
+
+statement ok
+DECLARE ASPECT entity WITH $${"type": "object"}$$ AS FACT ON TABLE;
+
+statement ok
+DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS QUERY;
+
+statement ok
+GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t"}$$;
+
+# --- the view's columns are subjects: relative or qualified, in the catalog's spelling
+
+query T
+GLOSS role ON spend.VALUE AS $${"value": "measure"}$$;
+----
+glossed role on fin.spend.value as agent
+
+query T
+GLOSS role ON fin.spend.period AS $${"value": "timestamp"}$$;
+----
+glossed role on fin.spend.period as agent
+
+# the view itself is a table's subject
+
+query T
+GLOSS entity ON spend AS $${"value": "spend by period"}$$;
+----
+glossed entity on fin.spend as agent
+
+# a column the view does not serve is refused as a table's would be
+
+statement error
+GLOSS role ON spend.amount AS $${"value": "measure"}$$;
+----
+names no column of fin.spend
+
+query TTT
+SELECT subject, aspect, state FROM GLOSSARY(spend) ORDER BY subject, aspect;
+----
+fin.spend	entity	current
+fin.spend.period	role	current
+fin.spend.value	role	current
+
+# --- measured like a table's column, and served while the view and what it reads stand
+
+statement ok
+DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max": {}}}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
+
+query TTTTT
+SELECT min_max() FROM spend.value;
+----
+min_max	fin.spend.value	min_max	{"min":1.0,"max":2.0}	true
+
+# its reads name the view beside the table behind it, and the pin carries the view at the snapshot that defined it
+
+query TI
+SELECT reads, len(list_filter(string_split(pin, ','), lambda p: starts_with(p, 'fin.spend:'))) FROM glossql.measurements;
+----
+fin.spend,fin.t	1
+
+query TTTTT
+SELECT min_max() FROM spend.value;
+----
+min_max	fin.spend.value	min_max	{"min":1.0,"max":2.0}	false
+
+# a landing in the table behind the view reruns it
+
+statement ok
+INSERT INTO fin.t VALUES (DATE '2024-03-01', 5, 'z');
+
+query TTTTT
+SELECT min_max() FROM spend.value;
+----
+min_max	fin.spend.value	min_max	{"min":1.0,"max":5.0}	true
+
+# the same sql glossed again keeps the view: served, and the column's gloss current
+
+statement ok
+GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t", "assumptions": [{"assumption": "a is net of tax"}]}$$;
+
+query TTTTT
+SELECT min_max() FROM spend.value;
+----
+min_max	fin.spend.value	min_max	{"min":1.0,"max":5.0}	false
+
+query TT
+SELECT subject, state FROM GLOSSARY(spend.value::role);
+----
+fin.spend.value	current
+
+# --- other sql is a new definition: the measurement reruns, and the glosses on the view and its columns read stale
+
+statement ok
+GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a * 2 AS value FROM fin.t"}$$;
+
+query TTTTT
+SELECT min_max() FROM spend.value;
+----
+min_max	fin.spend.value	min_max	{"min":2.0,"max":10.0}	true
+
+query TTT
+SELECT subject, aspect, state FROM GLOSSARY(spend) WHERE aspect IN ('role', 'entity') ORDER BY subject, aspect;
+----
+fin.spend	entity	stale
+fin.spend.period	role	stale
+fin.spend.value	role	stale
+
+# glossed again, the slot is current at the new definition
+
+query T
+GLOSS role ON spend.value AS $${"value": "measure"}$$;
+----
+glossed role on fin.spend.value as agent
+
+query TT
+SELECT subject, state FROM GLOSSARY(spend.value::role);
+----
+fin.spend.value	current
+
+# --- a view over the view: the measurement's legs run through both
+
+statement ok
+DECLARE ASPECT spend_total WITH $${"title": "Spend, total"}$$ AS QUERY;
+
+statement ok
+GLOSS spend_total ON fin AS $${"sql": "SELECT sum(value) AS value FROM (SELECT * FROM spend) s"}$$;
+
+query TTTTT
+SELECT min_max() FROM spend_total.value;
+----
+min_max	fin.spend_total.value	min_max	{"min":16.0,"max":16.0}	true
+
+query T
+SELECT reads FROM glossql.measurements ORDER BY seq DESC LIMIT 1;
+----
+fin.spend,fin.spend_total,fin.t
+
+statement ok
+GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t"}$$;
+
+query TTTTT
+SELECT min_max() FROM spend_total.value;
+----
+min_max	fin.spend_total.value	min_max	{"min":8.0,"max":8.0}	true
+
+# --- a view's rows are kept once per store version: the cells read serves them; a write to its table
+# and a re-gloss each move the version
+query I
+SELECT count(*) FROM dataset_cells('fin', true) WHERE "table" = 'spend';
+----
+6
+
+statement ok
+INSERT INTO fin.t VALUES (DATE '2024-04-01', 7, 'w');
+
+query IR
+SELECT count(*), sum(TRY_CAST(val AS DOUBLE)) FILTER (WHERE "column" = 'value') FROM dataset_cells('fin', true) WHERE "table" = 'spend';
+----
+8	15.0
+
+statement ok
+GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a * 2 AS value FROM fin.t"}$$;
+
+query R
+SELECT sum(TRY_CAST(val AS DOUBLE)) FROM dataset_cells('fin', true) WHERE "table" = 'spend' AND "column" = 'value';
+----
+30.0
+
+# 'views' takes the views alone; 'all' the tables and the views, as true does
+query II
+SELECT count(DISTINCT "table") FILTER (WHERE "table" IN ('spend', 'spend_total')), count(*) FILTER (WHERE "table" = 't')
+FROM dataset_cells('fin', 'views');
+----
+2	0
+
+query I
+SELECT count(*) FILTER (WHERE "table" = 't') > 0 FROM dataset_cells('fin', 'all');
+----
+true
+
+statement error
+SELECT * FROM dataset_cells('fin', 'some');
+----
+takes tables, views or all
+
+# --- a stop drops the view: its columns' glosses read stale, and a new gloss on them is refused
+
+statement ok
+GLOSS spend ON fin AS $${"stopped": "retired"}$$;
+
+query TT
+SELECT subject, state FROM GLOSSARY(spend.value::role);
+----
+fin.spend.value	stale
+
+statement error
+GLOSS role ON spend.period AS $${"value": "timestamp"}$$;
+----
+names no column of fin.spend
