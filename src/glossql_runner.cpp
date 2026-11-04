@@ -21,6 +21,7 @@
 #include "duckdb/common/file_open_flags.hpp"
 
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/crypto/md5.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/attached_database.hpp"
@@ -1173,13 +1174,16 @@ static TableFunctionSet DatasetCellsFunctions() {
 
 //===--------------------------------------------------------------------===//
 // glossql_kit(path): a kit is a script of declarations — aspects, functions,
-// witnesses — read from anything DuckDB's file system opens (a local path, or a
-// URL once httpfs is loaded), run statement by statement on a second
-// connection under the glossql grammar, one row per statement. Each statement
-// commits on its own, as it does from a script; a failing statement stops the
-// load and the ones before it stand. A kit run again, as the opener does at
-// every start-up, is silent: its unchanged declarations are no-ops and no kits
-// row lands; its LOAD lines are what bring an extension into the process
+// witnesses — and the SQL beside them, read from anything DuckDB's file system
+// opens (a local path, or a URL once httpfs is loaded), run statement by
+// statement on a second connection under the glossql grammar, one row per
+// statement. Each statement commits on its own, as it does from a script; a
+// failing statement stops the load, the ones before it stand and no kits row
+// lands, so the next load runs the kit again. A kit that ran lands a kits row
+// with the hash of its text. Run again with that text, as the opener does at
+// every start-up, the kit stands: what it declared and created is in the lake,
+// so one row says so and only its LOAD and INSTALL lines run, which bring an
+// extension into the process. A changed text runs whole and lands a new row
 //===--------------------------------------------------------------------===//
 
 struct KitState : public GlobalTableFunctionState {
@@ -1245,20 +1249,37 @@ string FirstLine(const string &text) {
 	return newline == string::npos ? trimmed : trimmed.substr(0, newline);
 }
 
+//! The hash of a kit's text, as its kits row records it
+static string ScriptHash(const string &script) {
+	MD5Context md5;
+	md5.Add(script);
+	char digest[MD5Context::MD5_HASH_LENGTH_TEXT + 1];
+	md5.FinishHex(digest);
+	return string(digest, MD5Context::MD5_HASH_LENGTH_TEXT);
+}
+
 static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<KitState>();
 	if (!state.ran) {
 		state.ran = true;
 		auto path = data.bind_data->Cast<RunnerBindData>().inputs[0].ToString();
 		auto script = ReadScript(context, path);
+		auto name = KitName(path);
+		auto hash = ScriptHash(script);
 		Inner inner(context);
 		inner.Run("SET active_grammar_extensions = ['glossql']");
+		auto newest = inner.Scalar("SELECT hash FROM " + inner.Store("kits") + " WHERE name = " + QuoteText(name) +
+		                           " ORDER BY seq DESC LIMIT 1");
+		bool stands = !newest.IsNull() && newest.ToString() == hash;
 		auto statements = inner.con.ExtractStatements(script);
 		for (auto &statement : statements) {
 			auto head = FirstLine(statement->query);
+			if (stands && statement->type != StatementType::LOAD_STATEMENT) {
+				continue;
+			}
 			auto result = inner.con.Query(std::move(statement));
 			if (result->HasError()) {
-				throw InvalidInputException("glossql: kit %s stopped at statement %d (%s): %s", KitName(path),
+				throw InvalidInputException("glossql: kit %s stopped at statement %d (%s): %s", name,
 				                            state.rows.size() + 1, head, result->GetError());
 			}
 			string outcome = "ok";
@@ -1269,14 +1290,12 @@ static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk 
 			}
 			state.rows.emplace_back(head, outcome);
 		}
-		bool landed = false;
-		for (auto &row : state.rows) {
-			landed = landed || (row.second != "ok" && !StringUtil::EndsWith(row.second, ": no-op"));
-		}
-		if (landed) {
-			inner.Run("INSERT INTO " + inner.Store("kits") + " VALUES (" + inner.Seq("kits") + ", " +
-			          QuoteText(KitName(path)) + ", " + QuoteText(path) + ", " + to_string(state.rows.size()) +
-			          ", now())");
+		if (stands) {
+			state.rows.emplace_back(name, "stands");
+		} else {
+			inner.Run("INSERT INTO " + inner.Store("kits") + " VALUES (" + inner.Seq("kits") + ", " + QuoteText(name) +
+			          ", " + QuoteText(path) + ", " + to_string(state.rows.size()) + ", now(), " + QuoteText(hash) +
+			          ")");
 		}
 	}
 	idx_t count = 0;

@@ -276,8 +276,9 @@ static const StoreRelation STORE_RELATIONS[] = {
     {"datasets", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL", "name",
 	 "seq, name, settings::JSON AS settings, declared_at", "declared_at"},
     {"kits",
-	 "name VARCHAR NOT NULL, location VARCHAR NOT NULL, statements INTEGER NOT NULL, loaded_at TIMESTAMP NOT NULL", "",
-	 "*", "loaded_at"},
+	 "name VARCHAR NOT NULL, location VARCHAR NOT NULL, statements INTEGER NOT NULL, loaded_at TIMESTAMP NOT NULL, "
+	 "hash VARCHAR",
+	 "", "*", "loaded_at"},
     {"sources", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL", "name",
 	 "seq, name, settings::JSON AS settings, declared_at", "declared_at"},
     {"recipes",
@@ -424,6 +425,8 @@ static void InitExec(ClientContext &context, TableFunctionInput &data, DataChunk
 		inner.Run("CREATE TABLE IF NOT EXISTS " + ws.Store(relation.name) + " (seq BIGINT NOT NULL, " +
 		          relation.columns + ")");
 	}
+	// a store made before a kit carried its text's hash: the column added where it is missing
+	inner.Run("ALTER TABLE " + ws.Store("kits") + " ADD COLUMN IF NOT EXISTS hash VARCHAR");
 	inner.Run("CREATE SCHEMA IF NOT EXISTS " + QuoteName(ws.lake) + ".glossql");
 	idx_t views = 0;
 	for (auto &relation : STORE_RELATIONS) {

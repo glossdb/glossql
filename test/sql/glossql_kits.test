@@ -52,16 +52,16 @@ SELECT count(*) FROM glossql.aspects;
 ----
 10
 
-# a kit run again, as the opener does at start-up, is silent: every declaration unchanged, no new kits row
-query I
-SELECT count(*) FROM (FROM glossql_kit('kits/kpi/kit.sql')) WHERE outcome <> 'ok' AND outcome NOT LIKE '%unchanged: no-op';
+# a kit run again with the same text, as the opener does at start-up, stands: one row says so, nothing runs, no new kits row
+query TT
+FROM glossql_kit('kits/kpi/kit.sql');
 ----
-0
+kpi	stands
 
-query I
-SELECT count(*) FROM glossql.kits;
+query II
+SELECT count(*), length(max(hash)) FROM glossql.kits;
 ----
-1
+1	32
 
 # a failing statement stops the load; the ones before it stand
 statement error
@@ -195,3 +195,24 @@ query TT
 SELECT subject, state FROM GLOSSARY(cased) WHERE aspect = 'meaning' AND subject LIKE '%.OrderId';
 ----
 fin.cased.OrderId	current
+
+# --- a kit's name under a changed text runs whole and lands a new kits row; the original text is then not the
+# newest row's for the name, so it runs again
+
+statement ok
+COPY (SELECT 'DECLARE ASPECT probe WITH $${"title": "Probe"}$$ AS FACT ON DATASET;' AS s) TO '{TEST_DIR}/glossql_kits_lake/kpi.sql' (FORMAT csv, HEADER false, QUOTE '');
+
+query I
+SELECT count(*) FROM (FROM glossql_kit('{TEST_DIR}/glossql_kits_lake/kpi.sql')) WHERE outcome <> 'stands';
+----
+1
+
+query I
+SELECT count(*) FROM (FROM glossql_kit('kits/kpi/kit.sql')) WHERE outcome = 'stands';
+----
+0
+
+query TI
+SELECT name, count(*) FROM glossql.kits GROUP BY name;
+----
+kpi	3

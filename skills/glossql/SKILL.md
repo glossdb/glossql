@@ -29,7 +29,7 @@ SQL
 ```
 
 The opener loads the extension, attaches the lake, activates the grammar,
-makes the store where missing and replays the workspace's kits, silently:
+makes the store where missing and loads the workspace's kits, each standing when its text is unchanged:
 
 ```sql
 .startup_text none
@@ -114,7 +114,7 @@ disagreement to resolve by re-glossing with grounds, not to overwrite.
 | `DECLARE FUNCTION f FOR fin\|GLOBAL AS $$sql$$ [RETURNS aspect];` | a measurement (`RETURNS`: a table macro over `subject_column($subject)`) or a detector (no `RETURNS`: runs at read over the witness's `slots` with `$threshold`) |
 | `SELECT f() FROM orders.amount;` | extract: compute and land the measurement, or serve the landed row while what it read is unchanged (`computed` says which) |
 | `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication |
-| `FROM glossql_kit('path-or-url');` | run a kit's declarations, one row each: once to adopt it, then from the opener at every start-up, silently when unchanged |
+| `FROM glossql_kit('path-or-url');` | run a kit's declarations, one row each, and land a kits row with the text's hash; run again unchanged, as the opener does at every start-up, the kit stands in one row and only its LOAD lines run; changed, it runs whole |
 | `FROM glossql_lineage($$sql$$);` | every output column of a SELECT down to the base scans, `(column, derivation, complete)` |
 
 A body rides `$$…$$` as written: plain double quotes inside, nothing
