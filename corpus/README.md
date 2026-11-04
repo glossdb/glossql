@@ -10,7 +10,7 @@ and the corpus to the grammar:
 
 - ` ```glossql ` — must parse under `grammar.ebnf`. A failure is a regression.
 - ` ```glossql-gap ` — invented syntax documenting a grammar gap; must **fail**
-  to parse. When the grammar gains the form, the checker flags "gap closed" and
+  to parse. When the grammar gains the form, the suite lists the block and
   the tag flips to ` ```glossql `.
 
 Verdict vocabulary: TRANSCRIBES · GRAMMAR GAP · SEMANTICS UNDEFINED ·

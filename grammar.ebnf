@@ -73,7 +73,7 @@ recipe_decl       = "RECIPE", name, "ON", name, "FROM", name,
                     (* RECIPE r ON dataset FROM source [SET (key: col)] AS
                        $$ <sql> $$ — the
                        sql runs at the source: a relational source executes
-                       it in its own dialect; at a file source the server
+                       it in its own dialect; at a file source the engine
                        runs it, read_parquet/read_csv/read_json resolving
                        under the source's location, try_to_date/
                        try_to_timestamp registered. Dollar-quoted so

@@ -82,7 +82,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 
 | SPEC | Status | Here |
 |---|---|---|
-| agents learn through skills, the door tells | outside | a kit ships its `SKILL.md`; the door is the wrapper's (`kits/README.md`) |
+| agents learn through skills, the door tells | outside | a kit ships its `SKILL.md`; the door is the wrapper's (`README.md`: the CLI and MCP doors) |
 | the actor comes from the door | softened | `SET VARIABLE gloss_actor` is the kind, `gloss_actor_id` the writer, both set by the wrapper on the actor's connection; a gloss lands with `actor_kind` and `actor_id` |
 
 ## Beyond SPEC

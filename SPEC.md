@@ -21,7 +21,7 @@ Ground rules:
   Rendering conventions ride the schema. Authored prose is opaque.
 - **The actor rides the transport.** Every connection carries an actor
   (agent_id or human_id). An answer the door elicits from
-  the human mid-call is server-witnessed and lands with human standing —
+  the human mid-call is door-witnessed and lands with human standing —
   the same rule; the transport is just not always a connection (fixture
   22). There is no BY clause anywhere; the engine
   stamps writer and actor kind on every statement.
@@ -78,7 +78,7 @@ DECLARE RECIPE segments ON fin FROM crm AS $$SELECT id, segment FROM customer_se
 ```
 
 The recipe SQL runs **at the source**: a relational source executes it in
-its own dialect; at a file source the server runs it, with `read_parquet` /
+its own dialect; at a file source the engine runs it, with `read_parquet` /
 `read_csv` / `read_json` resolving paths under the source's location and
 `try_to_date` / `try_to_timestamp` registered. **The recipe carries the
 casts**: typing is authored, not decided. The author
@@ -584,7 +584,7 @@ results: no construct writes a verdict into data.
 ## 8. Skills
 
 Agents use the language through skills; agents are not part of the grammar.
-The door tells, skills teach: the server's one surface
+The door tells, skills teach: the one surface
 takes statements and returns outcomes, and everything an agent must *learn*
 ships as skills sourced from this repository's artifacts — the language
 (this document, `grammar.ebnf`), the flows (corpus fixtures 11 and 12),
@@ -624,7 +624,7 @@ never by argument.
 PoC notes: batch visibility comes from (long-running) transactions — the
 running system's run_id + snapshot-head pointer is the verbose version of
 the same guarantee · the actor rides the transport — the connection,
-or a door-elicited answer, server-witnessed with human standing ·
+or a door-elicited answer, door-witnessed with human standing ·
 value-at-read: a QUERY aspect's
 value is its view — `FROM dso`, or `FROM fin.dso` — the collapsed
 current grounding expanded at plan time, nesting allowed behind a
