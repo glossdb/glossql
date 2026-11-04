@@ -258,6 +258,39 @@ SELECT settings, mode, (SELECT count(*) FROM fin.keyed2) FROM recipes r JOIN imp
 ----
 {"key":"id, segment"}	merge	6
 
+# a keyed recipe's result carries each key once (SPEC §3): a source that carries a
+# key twice is refused by name, at the first landing as at an import, and nothing lands
+statement ok
+COPY (SELECT i % 3 AS id, 'dup' AS segment FROM range(6) t(i)) TO '{TEST_DIR}/dups.csv' (HEADER);
+
+statement error
+DECLARE RECIPE twice ON fin FROM crm_export SET (key: id) AS $$SELECT id::INTEGER AS id, segment FROM read_csv('dups.csv')$$;
+----
+carries key id more than once: 3 keys, 0 among them
+
+query I
+SELECT count(*) FROM information_schema.tables WHERE table_schema = 'fin' AND table_name = 'twice';
+----
+0
+
+statement error
+DECLARE RECIPE twice2 ON fin FROM crm_export SET (key: 'id, segment') AS $$SELECT id::INTEGER AS id, segment FROM read_csv('dups.csv')$$;
+----
+carries key id, segment more than once: 3 keys, (0, dup) among them
+
+statement ok
+COPY (SELECT i AS id, 'new' AS segment FROM range(4, 10) t(i) UNION ALL SELECT 4, 'again' UNION ALL SELECT 5, 'again') TO '{TEST_DIR}/segments.csv' (HEADER);
+
+statement error
+IMPORT keyed;
+----
+carries key id more than once: 2 keys, 4 among them
+
+query I
+SELECT count(*) FROM fin.keyed;
+----
+10
+
 statement error
 DECLARE RECIPE bad ON fin FROM crm_export SET (key: id, key: segment) AS $$SELECT 1$$;
 ----
