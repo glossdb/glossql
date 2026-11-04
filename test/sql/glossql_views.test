@@ -92,7 +92,7 @@ min_max	fin.spend.value	min_max	{"min":1.0,"max":2.0}	true
 # its reads name the view beside the table behind it, and the pin carries the view at the snapshot that defined it
 
 query TI
-SELECT reads, len(list_filter(string_split(pin, ','), lambda p: starts_with(p, 'fin.spend:'))) FROM glossql.measurements;
+SELECT reads, len(list_filter(string_split(pin, ','), lambda p: starts_with(p, 'fin.spend:'))) FROM measurements;
 ----
 fin.spend,fin.t	1
 
@@ -169,7 +169,7 @@ SELECT min_max() FROM spend_total.value;
 min_max	fin.spend_total.value	min_max	{"min":16.0,"max":16.0}	true
 
 query T
-SELECT reads FROM glossql.measurements ORDER BY seq DESC LIMIT 1;
+SELECT reads FROM measurements ORDER BY seq DESC LIMIT 1;
 ----
 fin.spend,fin.spend_total,fin.t
 

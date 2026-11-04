@@ -68,7 +68,7 @@ static bool SchemaExists(ClientContext &context, const string &name) {
 static bool SourceExists(ClientContext &context, const string &name) {
 	Connection con(*context.db);
 	auto result = con.Query("SELECT count(*) FROM " + QuoteName(LakeName(context)) +
-	                        ".glossql.sources WHERE name = " + QuoteText(name));
+	                        ".main.sources WHERE name = " + QuoteText(name));
 	if (result->HasError()) {
 		return false;
 	}
@@ -341,6 +341,26 @@ static string Newest(const Workspace &ws, const string &relation) {
 // Pins and reads (SPEC §6): what a measurement read, at the version it read it
 //===--------------------------------------------------------------------===//
 
+//! The store's relations as the lake reads them, quoted, comma-separated: the
+//! view names in main that are no leg of their own, since their table's seq is
+static string StoreViewNames() {
+	vector<string> names;
+	for (auto &relation : STORE_RELATIONS) {
+		names.push_back(QuoteText(relation.name));
+	}
+	return StringUtil::Join(names, ", ");
+}
+
+string StoreLegNames() {
+	vector<string> names;
+	for (auto &relation : STORE_RELATIONS) {
+		if (string(relation.name) != "measurements") {
+			names.push_back(QuoteText("main." + string(relation.name)));
+		}
+	}
+	return StringUtil::Join(names, ", ");
+}
+
 string LegsSQL(const Workspace &ws) {
 	// a table's version is the last snapshot that wrote, altered or dropped it: the
 	// lake's own change log, where compaction is not a write
@@ -360,12 +380,13 @@ string LegsSQL(const Workspace &ws) {
 	sql += " UNION ALL SELECT s.schema_name || '.' || v.view_name, v.begin_snapshot::VARCHAR FROM " + ws.Meta("view") +
 	       " v JOIN " + ws.Meta("schema") +
 	       " s ON s.schema_id = v.schema_id AND s.end_snapshot IS NULL WHERE v.end_snapshot IS NULL"
-	       " AND s.schema_name <> 'glossql'";
+	       " AND NOT (s.schema_name = 'main' AND v.view_name IN (" +
+	       StoreViewNames() + "))";
 	for (auto &relation : STORE_RELATIONS) {
 		if (string(relation.name) == "measurements") {
 			continue; // an output, never an input
 		}
-		sql += " UNION ALL SELECT 'glossql." + string(relation.name) + "', coalesce(max(seq)::VARCHAR, '-') FROM " +
+		sql += " UNION ALL SELECT 'main." + string(relation.name) + "', coalesce(max(seq)::VARCHAR, '-') FROM " +
 		       ws.Store(relation.name);
 	}
 	return sql;
@@ -427,23 +448,23 @@ static void InitExec(ClientContext &context, TableFunctionInput &data, DataChunk
 	}
 	// a store made before a kit carried its text's hash: the column added where it is missing
 	inner.Run("ALTER TABLE " + ws.Store("kits") + " ADD COLUMN IF NOT EXISTS hash VARCHAR");
-	inner.Run("CREATE SCHEMA IF NOT EXISTS " + QuoteName(ws.lake) + ".glossql");
 	idx_t views = 0;
 	for (auto &relation : STORE_RELATIONS) {
 		// the view's text names the metadata catalog, quoted or bare as the lake re-serializes it
 		auto standing = inner.Scalar("SELECT count(*) FROM duckdb_views() WHERE database_name = " + QuoteText(ws.lake) +
-		                             " AND schema_name = 'glossql' AND view_name = " + QuoteText(relation.name) +
+		                             " AND schema_name = 'main' AND view_name = " + QuoteText(relation.name) +
 		                             " AND (contains(sql, " + QuoteText(ws.meta + ".") + ") OR contains(sql, " +
 		                             QuoteText(QuoteName(ws.meta) + ".") + "))");
 		if (standing.GetValue<int64_t>() > 0) {
 			continue;
 		}
-		inner.Run("CREATE OR REPLACE VIEW " + QuoteName(ws.lake) + ".glossql." + QuoteName(relation.name) +
-		          " AS SELECT " + relation.view + " FROM " + ws.Store(relation.name));
+		inner.Run("CREATE OR REPLACE VIEW " + QuoteName(ws.lake) + ".main." + QuoteName(relation.name) + " AS SELECT " +
+		          relation.view + " FROM " + ws.Store(relation.name));
 		views++;
 	}
 	output.data[0].Append(Value("workspace " + ws.lake + ": the store is " + ws.meta + "." + ws.meta_schema +
-	                            ".glossql_*, read as " + ws.lake + ".glossql.* (" + to_string(views) + " views made)"));
+	                            ".glossql_*, read as the views of " + ws.lake + ".main (" + to_string(views) +
+	                            " views made)"));
 }
 
 static TableFunction GlossInitFunction() {
@@ -899,7 +920,7 @@ static TableFunctionSet GlossWriteFunctions() {
 }
 
 //===--------------------------------------------------------------------===//
-// DELETE FROM [lake.][glossql.]glossary [alias] [WHERE ...]: SPEC §5.2's
+// DELETE FROM [lake.][main.]glossary [alias] [WHERE ...]: SPEC §5.2's
 // removal. The lake reads the store as views, and the engine deletes through
 // a table only, so the statement runs on the store's table, where every write
 // goes. Its result is a DELETE's: the rows removed

@@ -23,7 +23,7 @@ LOAD glossql;
 PRAGMA glossql;                                   -- the grammar for this connection, the store where missing   -- opt-in per connection
 ATTACH 'ducklake:ws.ducklake' AS ws (DATA_PATH 'ws/');   -- the workspace is a DuckLake
 USE ws;
-PRAGMA glossql;                            -- the store: glossql_* tables in the lake's catalog, read as ws.glossql.*
+PRAGMA glossql;                            -- the store: glossql_* tables in the lake's catalog, read as views in ws.main
 
 DECLARE DATASET fin SET (purpose: 'working-capital analysis');
 USE fin;                                        -- a dataset is a schema of the lake; DuckDB's USE binds it
@@ -48,7 +48,7 @@ SELECT * FROM GLOSSARY(orders.amount, all => true);
 DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$ AS MEASUREMENT ON COLUMN;
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 SELECT min_max() FROM orders.amount;            -- extraction lands a measurement with what it read; a repeat serves it while that is unchanged
-FROM glossql.min_max('fin.orders.amount');      -- the same function, as the table macro it is
+FROM min_max('fin.orders.amount');              -- the same function, as the table macro it is
 
 DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS QUERY;
 GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders"}$$;
@@ -70,7 +70,7 @@ FROM glossql_kit('kits/quality/kit.sql');       -- the screens over a dataset's 
 | glossql | DuckDB |
 |---|---|
 | statements (`DECLARE …`, `GLOSS`, `PROBE`, `IMPORT`, `DELETE FROM glossary`) | rules prepended to `Statement`; each transform builds an `ExtensionStatement` whose plan is one table function |
-| `DELETE FROM [lake.][glossql.]glossary [WHERE …]` | the same, run on the store's table in the lake's metadata catalog: `glossql.glossary` is a view over it, and DuckDB deletes through a table only; the result is a DELETE's row count, and the reads' version moves with it |
+| `DELETE FROM [lake.][main.]glossary [WHERE …]` | the same, run on the store's table in the lake's metadata catalog: `main.glossary` is a view over it, and DuckDB deletes through a table only; the result is a DELETE's row count, and the reads' version moves with it |
 | `GLOSSARY()`, `ATTEST()` | rules prepended to `InnerTableRef`, transformed into table-function references whose `bind_replace` serves the dataset's rows, kept by the instance in DuckDB's object cache under the store's version and computed again on the second connection when the store or the lake moved (`glossql_cached`), narrowed to the subject and aspect in SQL |
 | `SELECT f() FROM subject` (extraction) | the same rule shape as plain SQL; a custom terminal matcher marks the end of the statement, and the binder decides: an extraction when `f` is declared, the plain SQL it looks like otherwise |
 | the workspace | an attached DuckLake, one per connection (`SET VARIABLE glossql_workspace` picks among several) |
@@ -88,7 +88,7 @@ FROM glossql_kit('kits/quality/kit.sql');       -- the screens over a dataset's 
 | a dataset's shape | `glossql_columns(subject[, views])`: every column of a dataset's tables, or of one table, and of its views unless `views` is false (`table_name`, `column_name`, `column_type`, `ordinal_position`, `table_type`), the dataset's own relations walked by name — where `information_schema` binds every view of every catalog for its columns; what the reads' owed subjects, the cells and the kits read a dataset's shape from |
 | a grounding | a view in the dataset's schema, and a table of the dataset: its columns are subjects, and what a reader of its rows needs is glossed on them; the body meets the grounding contract (`sql` or `stopped`, `assumptions` disclosed), then any schema a kit declared for a body key of its own, an aspect flavored `x-kind: grounding` |
 | a kit | a script of declarations; `glossql_kit(path)` runs it statement by statement on a second connection and serves one row each, landing a kits row with the text's hash; run again unchanged it stands, one row and only its LOAD lines, since what it created is in the lake; the path is anything DuckDB's file system opens, a URL included once `httpfs` is loaded |
-| the store | `glossql_<relation>` tables in the lake's metadata catalog, beside the `ducklake_*` tables; the columns are the extension's own, sharpened to what the reads need, with the glossql engine's record as the teacher: settings and conditions as JSON, `dataset` on a gloss and a relationship, `mode` on an import, a supersession key per declaration relation; history is rows ordered by `seq`, the reads collapse; `ws.glossql.<relation>` reads each as a typed view |
+| the store | `glossql_<relation>` tables in the lake's metadata catalog, beside the `ducklake_*` tables; the columns are the extension's own, sharpened to what the reads need, with the glossql engine's record as the teacher: settings and conditions as JSON, `dataset` on a gloss and a relationship, `mode` on an import, a supersession key per declaration relation; history is rows ordered by `seq`, the reads collapse; `ws.main.<relation>` reads each as a typed view, bare from any dataset in use, since the lake's `main` is on every search path |
 
 Source: `src/glossql_grammar.cpp` (rules and transforms), `src/glossql_store.cpp`
 (the store, admission, the reads), `src/glossql_runner.cpp` (statements that

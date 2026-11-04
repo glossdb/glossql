@@ -80,7 +80,7 @@ The CLI renders for a coding agent when it finds one in the environment
   rows, 0 dropped (new)`, `imported …`, `glossed …`. An extraction
   answers with the measurement row (`function, subject, aspect, value,
   computed`); twenty extractions in one call are twenty small tables,
-  and `glossql.measurements` holds the lot afterwards.
+  and `measurements` holds the lot afterwards.
 - a refused statement is one JSON line on stderr and exit status 1.
   The language's refusals open with `gloss:` and name what was wrong;
   the parser's and the binder's are DuckDB's own.
@@ -107,7 +107,7 @@ disagreement to resolve by re-glossing with grounds, not to overwrite.
 | `DECLARE RELATIONSHIP dept_emp.emp_no -> employees.emp_no;` | declare a join edge (`<->` both ways; `a.(x, y) -> b.(x, y)` composite) between landed columns |
 | `DECLARE ASPECT name WITH $$json-schema$$ AS FACT\|MEASUREMENT\|QUERY [ON TABLE, COLUMN, DATASET, SOURCE, RELATIONSHIP [WHEN aspect = 'value' \| WHEN TYPE = 'T' \| WHEN TYPE IN ('T', 'U')]];` | add a word; the schema is checked on every body; `ON` is the grain, `WHEN` narrows what is owed: to subjects whose sibling aspect says so, or to columns of a data type (the base type, `DECIMAL` for `DECIMAL(18,2)`; `ON COLUMN` alone) |
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot; a QUERY aspect is glossed on the dataset (`GLOSS revenue ON fin AS …`) and then serves as the view `fin.revenue` |
-| `DELETE FROM glossary WHERE subject = '…' AND aspect = '…';` | take rows out of the record for good; what the newest remaining rows say then serves; `glossql.glossary` and the lake's full name spell the same rows |
+| `DELETE FROM glossary WHERE subject = '…' AND aspect = '…';` | take rows out of the record for good; what the newest remaining rows say then serves; `main.glossary` and the lake's full name spell the same rows |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context, one row per subject and aspect |
 | `SELECT … FROM GLOSSARY(subject, all => true);` | every slot, raw |
 | `SELECT … FROM ATTEST(subject \| subject::aspect);` | the witnesses' verdicts |
@@ -146,8 +146,8 @@ reads the one source, and a gloss from any dataset supersedes.
   actor, body, written_at, current)`.
 - `ATTEST(subject)` serves `(subject, aspect, witness, band, score,
   computed_at, current, error)`.
-- the store, as views under `glossql.` of the lake (`ws.glossql.*`
-  from elsewhere); every column, nothing else: `datasets (seq, name,
+- the store, as views in the lake's `main` schema, bare from any
+  dataset in use (`ws.main.*` from elsewhere); every column, nothing else: `datasets (seq, name,
   settings, declared_at)` · `sources (seq, name, settings,
   declared_at)` · `recipes (seq, dataset, table_name, source, settings,
   sql, declared_at)` · `imports (seq, dataset, table_name, mode, rows,

@@ -235,7 +235,7 @@ string Inner::FunctionSchema(const string &dataset, const string &name) {
 		auto found = Scalar("SELECT count(*) FROM " + Store("functions") + " WHERE name = " + QuoteText(name) +
 		                    " AND scope = " + QuoteText(scope));
 		if (found.GetValue<int64_t>() > 0) {
-			return scope == "GLOBAL" ? "glossql" : scope;
+			return scope == "GLOBAL" ? "main" : scope;
 		}
 	}
 	return "";
@@ -640,7 +640,7 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 		Outcome(output, "function " + name + " unchanged: no-op");
 		return;
 	}
-	auto schema = scope == "GLOBAL" ? string("glossql") : scope;
+	auto schema = scope == "GLOBAL" ? string("main") : scope;
 	if (scope != "GLOBAL") {
 		auto declared =
 		    inner.Scalar("SELECT count(*) FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(scope));
@@ -758,7 +758,7 @@ static unique_ptr<FunctionData> ExtractBind(ClientContext &context, TableFunctio
 }
 
 //! What a body read (SPEC §6): the lake's tables as <dataset>.<table> and the
-//! store relations as glossql.<relation>, by name; ** when a read could not be
+//! store relations as main.<relation>, by name; ** when a read could not be
 //! named, such as a file, a catalog function or another attached database;
 //! empty for a body that read nothing
 struct Reads {
@@ -790,7 +790,7 @@ static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads)
 			if (catalog == ws.lake) {
 				reads.names.insert(schema + "." + name);
 			} else if (catalog == ws.meta && schema == ws.meta_schema && StringUtil::StartsWith(name, "glossql_")) {
-				reads.names.insert("glossql." + name.substr(8));
+				reads.names.insert("main." + name.substr(8));
 			} else {
 				reads.everything = true;
 			}
@@ -870,8 +870,8 @@ static string PinOf(Inner &inner, const string &dataset, const string &reads) {
 	named.push_back("''");
 	return inner
 	    .Scalar("SELECT coalesce(string_agg(name || ':' || version, ',' ORDER BY name || ':' || version), '') FROM (" +
-	            LegsSQL(inner.ws) + ") WHERE starts_with(name, " + QuoteText(dataset + ".") +
-	            ") OR starts_with(name, 'glossql.') OR name IN (" + StringUtil::Join(named, ", ") + ")")
+	            LegsSQL(inner.ws) + ") WHERE starts_with(name, " + QuoteText(dataset + ".") + ") OR name IN (" +
+	            StoreLegNames() + ") OR name IN (" + StringUtil::Join(named, ", ") + ")")
 	    .ToString();
 }
 
@@ -939,7 +939,7 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		if (schema.empty()) {
 			throw InvalidInputException("glossql: %s is not a declared function for %s", name, dataset);
 		}
-		auto scope = schema == "glossql" ? "GLOBAL" : schema;
+		auto scope = schema == "main" ? "GLOBAL" : schema;
 		auto returns =
 		    inner.Scalar("SELECT returns FROM " + inner.Store("functions") + " WHERE name = " + QuoteText(name) +
 			             " AND scope = " + QuoteText(scope) + " ORDER BY seq DESC LIMIT 1");

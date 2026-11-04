@@ -57,7 +57,7 @@ statement ok
 DECLARE ASPECT min_max WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN, TABLE;
 
 query TTT
-SELECT name, kind, grains FROM glossql.aspects ORDER BY name;
+SELECT name, kind, grains FROM aspects ORDER BY name;
 ----
 min_max	MEASUREMENT	[COLUMN, TABLE]
 revenue	QUERY	[]
@@ -94,7 +94,7 @@ statement ok
 RESET VARIABLE glossql_actor_id;
 
 query TTTTT
-SELECT dataset, subject, aspect, actor_kind, actor_id FROM glossql.glossary ORDER BY actor_kind, seq;
+SELECT dataset, subject, aspect, actor_kind, actor_id FROM glossary ORDER BY actor_kind, seq;
 ----
 main	main.orders.amount	unit	agent	NULL
 main	main.orders.amount	unit	human	NULL
@@ -192,7 +192,7 @@ statement ok
 DECLARE RELATIONSHIP txn.(business_id, account) -> coa.(business_id, code);
 
 query TTTT
-SELECT dataset, left_side, op, right_side FROM glossql.relationships ORDER BY left_side;
+SELECT dataset, left_side, op, right_side FROM relationships ORDER BY left_side;
 ----
 main	main.invoices.order_id	<->	main.orders.id
 main	main.orders.customer_id	->	main.customers.id
@@ -206,7 +206,9 @@ SELECT subject, value FROM GLOSSARY(orders.customer_id -> customers.id);
 ----
 main.orders.customer_id -> main.customers.id	{"value": "2% orphaned rows"}
 
-# --- the new words stay identifiers; stock SQL is untouched
+# --- the new words stay identifiers; stock SQL is untouched. In the lake's
+# main schema `glossary` names the record's view; a dataset may still name a
+# table so, spelled with its schema
 
 query IIII
 SELECT 1 AS gloss, 2 AS aspect, 3 AS glossary, 4 AS fact;
@@ -214,10 +216,13 @@ SELECT 1 AS gloss, 2 AS aspect, 3 AS glossary, 4 AS fact;
 1	2	3	4
 
 statement ok
-CREATE TABLE glossary (id INTEGER);
+CREATE SCHEMA other;
+
+statement ok
+CREATE TABLE other.glossary (id INTEGER);
 
 query I
-SELECT count(*) FROM glossary;
+SELECT count(*) FROM other.glossary;
 ----
 0
 

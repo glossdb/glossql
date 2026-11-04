@@ -423,9 +423,9 @@ static arena_ptr<TransformResultValue> FinalizeDeleteGlossary(PEGTransformer &tr
 	string spelled = "glossary";
 	if (IsRule(target, "GlossGlossaryInLake")) {
 		lake = Value(Ident(transformer, target.Cast<ListParseResult>().GetChild(0)));
-		spelled = lake.ToString() + ".glossql.glossary";
+		spelled = lake.ToString() + ".main.glossary";
 	} else if (IsRule(target, "GlossGlossaryInSchema")) {
-		spelled = "glossql.glossary";
+		spelled = "main.glossary";
 	}
 	Value alias(LogicalType::VARCHAR);
 	auto &alias_opt = list.Child<OptionalParseResult>(3);
@@ -780,7 +780,7 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	// IMPORT DATABASE its own: a name followed by anything but the end is not ours
 	// (the rule parser ignores a ! lookahead)
 	statement("GlossImport <- 'IMPORT' Identifier GlossPathTail? GlossEnd", StartImport);
-	// DELETE FROM [lake.][glossql.]glossary [alias] [WHERE ...]: the lake reads the
+	// DELETE FROM [lake.][main.]glossary [alias] [WHERE ...]: the lake reads the
 	// store as views, and the engine deletes through a table only, so the removal
 	// (SPEC §5.2) is a statement here, run on the store's table. The name's words
 	// are custom terminals, since a keyword literal sees a quoted identifier with
@@ -793,7 +793,7 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	rule("GlossSchemaWord <- Identifier");
 	rule("GlossGlossaryWord <- Identifier");
 	changes.push_back(GrammarChange::AddTerminalRuleOverride(
-	    "GlossSchemaWord", [](const PEGKeywordHelper &) { return make_uniq<GlossWordMatcher>("glossql"); }));
+	    "GlossSchemaWord", [](const PEGKeywordHelper &) { return make_uniq<GlossWordMatcher>("main"); }));
 	changes.push_back(GrammarChange::AddTerminalRuleOverride(
 	    "GlossGlossaryWord", [](const PEGKeywordHelper &) { return make_uniq<GlossWordMatcher>("glossary"); }));
 

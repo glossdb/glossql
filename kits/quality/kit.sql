@@ -186,7 +186,7 @@ edges AS (
               ELSE [substr(left_side, length(ds) + length(split_part(left_side, '.', 2)) + 3)] END AS cl,
          CASE WHEN right_side LIKE '%(%' THEN string_split(regexp_extract(right_side, '\((.*)\)', 1), ', ')
               ELSE [substr(right_side, length(ds) + length(split_part(right_side, '.', 2)) + 3)] END AS pl
-  FROM glossql.relationships WHERE dataset = ds),
+  FROM main.relationships WHERE dataset = ds),
 legs AS (SELECT * FROM edges WHERE len(cl) = len(pl) AND len(cl) BETWEEN 1 AND 2),
 -- each side's rows pivoted onto the edge's legs
 child AS (
@@ -327,7 +327,7 @@ CREATE OR REPLACE MACRO grounding_collisions(ds) AS TABLE
 WITH slots AS (
   SELECT g.aspect, g.subject, g.body, coalesce(json_extract_string(a.schema, '$."x-kind"'), '') AS flavor,
          row_number() OVER (PARTITION BY g.aspect, g.subject ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 ELSE 1 END, g.seq DESC) AS rk
-  FROM glossql.glossary g JOIN glossql.aspects a ON a.name = g.aspect
+  FROM main.glossary g JOIN main.aspects a ON a.name = g.aspect
   WHERE g.dataset = ds AND a.kind = 'QUERY' AND json_extract_string(g.body, '$.sql') IS NOT NULL),
 groundings AS (SELECT aspect, subject, flavor, json_extract_string(body, '$.sql') AS sql FROM slots WHERE rk = 1),
 canon AS (

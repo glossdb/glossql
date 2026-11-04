@@ -23,7 +23,7 @@ ATTACH 'ducklake:{TEST_DIR}/lake.ducklake' AS ws (DATA_PATH '{TEST_DIR}/lake_dat
 query T
 PRAGMA glossql;
 ----
-workspace ws: the store is __ducklake_metadata_ws.main.glossql_*, read as ws.glossql.* (11 views made)
+workspace ws: the store is __ducklake_metadata_ws.main.glossql_*, read as the views of ws.main (11 views made)
 
 # the store relations sit beside the ducklake_* tables, in the record's own layout; the lake reads them as views
 query I
@@ -32,7 +32,7 @@ SELECT count(*) FROM __ducklake_metadata_ws.main.glossql_aspects;
 0
 
 query T
-SELECT table_name FROM information_schema.tables WHERE table_catalog = 'ws' AND table_schema = 'glossql' ORDER BY table_name;
+SELECT table_name FROM information_schema.tables WHERE table_catalog = 'ws' AND table_schema = 'main' ORDER BY table_name;
 ----
 aspects
 datasets
@@ -50,7 +50,7 @@ witnesses
 query T
 PRAGMA glossql;
 ----
-workspace ws: the store is __ducklake_metadata_ws.main.glossql_*, read as ws.glossql.* (0 views made)
+workspace ws: the store is __ducklake_metadata_ws.main.glossql_*, read as the views of ws.main (0 views made)
 
 statement ok
 USE ws;
@@ -73,7 +73,7 @@ statement ok
 DECLARE RECIPE segments ON fin FROM files AS $$SELECT id::INTEGER AS id, segment FROM read_csv('segments.csv')$$;
 
 query I
-SELECT snapshot_id = (SELECT max(snapshot_id) FROM ducklake_snapshots('ws')) FROM glossql.imports;
+SELECT snapshot_id = (SELECT max(snapshot_id) FROM ducklake_snapshots('ws')) FROM imports;
 ----
 true
 
@@ -96,7 +96,7 @@ GLOSS meaning ON fin AS $${"value": "the finance workspace"}$$;
 
 # the snapshot is the lake's: the one the landing made, which nothing moved since
 query TT
-SELECT subject, snapshot_id = (SELECT snapshot_id FROM glossql.imports) FROM glossql.glossary ORDER BY seq;
+SELECT subject, snapshot_id = (SELECT snapshot_id FROM imports) FROM glossary ORDER BY seq;
 ----
 fin.segments.id	true
 fin.segments.segment	true
@@ -186,7 +186,7 @@ fin.segments.segment	stale
 # --- the lake keeps every landing: time travel is DuckLake's
 
 statement ok
-SET VARIABLE first_landing = (SELECT min(snapshot_id) FROM glossql.imports);
+SET VARIABLE first_landing = (SELECT min(snapshot_id) FROM imports);
 
 query I
 SELECT count(*) FROM fin.segments AT (VERSION => getvariable('first_landing'));
@@ -194,7 +194,7 @@ SELECT count(*) FROM fin.segments AT (VERSION => getvariable('first_landing'));
 4
 
 query I
-SELECT count(*) FROM glossql.imports;
+SELECT count(*) FROM imports;
 ----
 4
 
@@ -217,13 +217,13 @@ ATTACH 'ducklake:{TEST_DIR}/lake.ducklake' AS ws2 (DATA_PATH '{TEST_DIR}/lake_da
 query T
 PRAGMA glossql;
 ----
-workspace ws2: the store is __ducklake_metadata_ws2.main.glossql_*, read as ws2.glossql.* (11 views made)
+workspace ws2: the store is __ducklake_metadata_ws2.main.glossql_*, read as the views of ws2.main (11 views made)
 
 statement ok
 USE ws2.fin;
 
 query I
-SELECT count(*) FROM glossql.glossary;
+SELECT count(*) FROM glossary;
 ----
 5
 

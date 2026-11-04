@@ -96,7 +96,7 @@ statement ok
 DECLARE RECIPE sales ON fin FROM erp AS $$SELECT id::INTEGER AS id, amount::DOUBLE AS amount, customer FROM read_csv('sales.csv')$$;
 
 query TT
-SELECT table_name, lineage FROM glossql.imports;
+SELECT table_name, lineage FROM imports;
 ----
 sales	{"id":"cast(read_csv.id:BIGINT as INTEGER)","amount":"cast(read_csv.amount:BIGINT as DOUBLE)","customer":"read_csv.customer:VARCHAR"}
 
@@ -185,7 +185,7 @@ statement ok
 GLOSS note ON raw.amount AS $${"text": "whole units"}$$;
 
 query T
-SELECT lineage->>'amount' FROM glossql.imports WHERE table_name = 'raw';
+SELECT lineage->>'amount' FROM imports WHERE table_name = 'raw';
 ----
 cast(read_csv.amount:BIGINT as DOUBLE)
 
@@ -202,7 +202,7 @@ SELECT subject, state FROM GLOSSARY(raw.amount);
 fin.raw.amount	stale
 
 query TT
-SELECT mode, lineage->>'amount' FROM glossql.imports WHERE table_name = 'raw' ORDER BY seq;
+SELECT mode, lineage->>'amount' FROM imports WHERE table_name = 'raw' ORDER BY seq;
 ----
 replace	cast(read_csv.amount:BIGINT as DOUBLE)
 replace	read_csv.amount:DOUBLE

@@ -49,18 +49,18 @@ DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FR
 function min_max unchanged: no-op
 
 query TTTT
-SELECT name, scope, returns, script LIKE '%subject_column($subject)%' FROM glossql.functions;
+SELECT name, scope, returns, script LIKE '%subject_column($subject)%' FROM functions;
 ----
 min_max	GLOBAL	min_max	true
 
-# the function is a table macro in the glossql schema: a UDF for any SQL
+# the function is a table macro in the lake's main schema: a UDF for any SQL
 query TT
-SELECT function_name, function_type FROM duckdb_functions() WHERE schema_name = 'glossql' AND function_name = 'min_max';
+SELECT function_name, function_type FROM duckdb_functions() WHERE schema_name = 'main' AND function_name = 'min_max';
 ----
 min_max	table_macro
 
 query RR
-SELECT min, max FROM glossql.min_max('fin.orders.amount');
+SELECT min, max FROM main.min_max('fin.orders.amount');
 ----
 0.0	13.5
 
@@ -72,7 +72,7 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":13.5}	true
 
 query TTTT
-SELECT dataset, function, subject, value FROM glossql.measurements;
+SELECT dataset, function, subject, value FROM measurements;
 ----
 fin	min_max	fin.orders.amount	{"min":0.0,"max":13.5}
 
@@ -98,7 +98,7 @@ row_count	fin.orders.segment	row_count	10	true
 tops	fin.orders.segment	tops	[{"v":"seg0","n":4},{"v":"seg1","n":3}]	true
 
 query I
-SELECT count(*) FROM glossql.measurements;
+SELECT count(*) FROM measurements;
 ----
 3
 
@@ -171,6 +171,6 @@ DECLARE FUNCTION x FOR nowhere AS $$ SELECT 1 $$ RETURNS min_max;
 dataset 'nowhere' is not declared
 
 query T
-SELECT trim(script) FROM glossql.functions WHERE name = 'bands';
+SELECT trim(script) FROM functions WHERE name = 'bands';
 ----
 SELECT subject, 'green' AS band, 0.0 AS score FROM slots GROUP BY subject
