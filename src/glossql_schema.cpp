@@ -9,7 +9,7 @@
 // anyOf, allOf, not. Everything else (title, description, x-*) is an
 // annotation and ignored.
 
-#include "gloss_grammar.hpp"
+#include "glossql_grammar.hpp"
 
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector/vector_iterator.hpp"

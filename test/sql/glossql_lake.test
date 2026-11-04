@@ -1,8 +1,8 @@
-# name: test/sql/gloss_lake.test
+# name: test/sql/glossql_lake.test
 # description: the workspace is a DuckLake; the store lives in its catalog, landings are snapshots, glosses carry them and read stale when their subject changed
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
@@ -13,7 +13,7 @@ require ducklake
 # --- the workspace is the attached lake: without one there is nowhere to stand
 
 statement error
-PRAGMA gloss;
+PRAGMA glossql;
 ----
 no DuckLake is attached
 
@@ -21,7 +21,7 @@ statement ok
 ATTACH 'ducklake:{TEST_DIR}/lake.ducklake' AS ws (DATA_PATH '{TEST_DIR}/lake_data/');
 
 query T
-PRAGMA gloss;
+PRAGMA glossql;
 ----
 workspace ws: the store is __ducklake_metadata_ws.main.glossql_*, read as ws.glossql.* (11 views made)
 
@@ -48,7 +48,7 @@ witnesses
 
 # a second init is a no-op for the views
 query T
-PRAGMA gloss;
+PRAGMA glossql;
 ----
 workspace ws: the store is __ducklake_metadata_ws.main.glossql_*, read as ws.glossql.* (0 views made)
 
@@ -215,7 +215,7 @@ statement ok
 ATTACH 'ducklake:{TEST_DIR}/lake.ducklake' AS ws2 (DATA_PATH '{TEST_DIR}/lake_data/');
 
 query T
-PRAGMA gloss;
+PRAGMA glossql;
 ----
 workspace ws2: the store is __ducklake_metadata_ws2.main.glossql_*, read as ws2.glossql.* (11 views made)
 
@@ -242,10 +242,10 @@ ATTACH 'ducklake::memory:' AS other;
 statement error
 SELECT count(*) FROM GLOSSARY(fin);
 ----
-2 DuckLakes are attached (other, ws2): SET VARIABLE gloss_workspace = 'name' picks one
+2 DuckLakes are attached (other, ws2): SET VARIABLE glossql_workspace = 'name' picks one
 
 statement ok
-SET VARIABLE gloss_workspace = 'ws2';
+SET VARIABLE glossql_workspace = 'ws2';
 
 query I
 SELECT count(*) FROM GLOSSARY(fin);

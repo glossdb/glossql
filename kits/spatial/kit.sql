@@ -3,7 +3,7 @@
 -- names it in its opener, so every process starts with the extension loaded.
 -- What an actor must learn about these words is SKILL.md beside this file.
 --
---   FROM gloss_kit('kits/spatial/kit.sql');
+--   FROM glossql_kit('kits/spatial/kit.sql');
 
 INSTALL spatial;
 LOAD spatial;

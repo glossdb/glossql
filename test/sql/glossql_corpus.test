@@ -1,13 +1,13 @@
-# name: test/sql/gloss_corpus.test
+# name: test/sql/glossql_corpus.test
 # description: the language's record parses as tagged: every ```sql block of SPEC.md and every ```glossql block of the corpus parses on the grammar, every ```glossql-gap block is a parser error
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
 statement ok
-SET active_grammar_extensions = ['gloss'];
+SET active_grammar_extensions = ['glossql'];
 
 # every ```sql block of SPEC.md and every ```glossql or ```glossql-gap block of the corpus (a ```sql block there quotes
 # the source artifact), with its file and line, judged by the parser: a statement the grammar admits serializes, or is

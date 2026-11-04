@@ -9,7 +9,7 @@ in the month it was authorized, sliced by fund and by object
 harmonisation demo's service level: the share of a system's rows that
 keep their required fields, by system of record — a ratio, neither
 stock nor flow, which the fixed enum cannot say. The host is the DuckDB
-extension (`../gloss`), where a grounding is a view in the catalog and
+extension (this repository), where a grounding is a view in the catalog and
 a view and its columns are subjects like a table's, glossed, measured
 and owed (its views suite).
 

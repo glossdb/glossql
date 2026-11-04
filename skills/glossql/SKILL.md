@@ -1,6 +1,6 @@
 ---
-name: gloss
-description: Speak glossql in a DuckDB workspace through the duckdb CLI — the opener, the call shape, the statement set, the reads, the store relations, how a refusal looks. Use when reading or writing anything in a gloss workspace (datasets, sources, recipes, glosses, functions, witnesses, metrics).
+name: glossql
+description: Speak glossql in a DuckDB workspace through the duckdb CLI — the opener, the call shape, the statement set, the reads, the store relations, how a refusal looks. Use when reading or writing anything in a glossql workspace (datasets, sources, recipes, glosses, functions, witnesses, metrics).
 ---
 
 # Speaking glossql through the duckdb CLI
@@ -16,13 +16,13 @@ language, never assumed.
 
 ## The door
 
-A workspace is a directory holding `gloss.sql` (the opener),
+A workspace is a directory holding `glossql.sql` (the opener),
 `ws.ducklake` (the lake's catalog) and `ws/` (its data). A call is one
 `duckdb` process run from that directory, the opener first, your
 statements on stdin in a quoted heredoc:
 
 ```sh
-duckdb -unsigned -bail -init gloss.sql <<'SQL'
+duckdb -unsigned -bail -init glossql.sql <<'SQL'
 USE employees;
 SELECT * FROM GLOSSARY(dept_emp) WHERE state <> 'current';
 SQL
@@ -33,13 +33,13 @@ makes the store where missing and replays the workspace's kits, silently:
 
 ```sql
 .startup_text none
-LOAD '/path/to/gloss.duckdb_extension';                  -- or LOAD gloss, once installed
+LOAD '/path/to/glossql.duckdb_extension';                  -- or LOAD glossql, once installed
 ATTACH 'ducklake:ws.ducklake' AS ws (DATA_PATH 'ws/');
 USE ws;
 .output /dev/null
-PRAGMA gloss;
-FROM gloss_kit('/path/to/kits/kpi/kit.sql');            -- every kit the workspace runs
-FROM gloss_kit('/path/to/kits/quality/kit.sql');        -- after the KPI kit, whose words its screens read against
+PRAGMA glossql;
+FROM glossql_kit('/path/to/kits/kpi/kit.sql');            -- every kit the workspace runs
+FROM glossql_kit('/path/to/kits/quality/kit.sql');        -- after the KPI kit, whose words its screens read against
 .output
 ```
 
@@ -59,7 +59,7 @@ FROM gloss_kit('/path/to/kits/quality/kit.sql');        -- after the KPI kit, wh
   lines, and the opener's replay is what loads it next time. A kit run
   again is silent: unchanged declarations are no-ops, no kits row lands.
 
-Through MCP the door is the tool `gloss(statements)` on one connection
+Through MCP the door is the tool `glossql(statements)` on one connection
 the server holds open: the same statements, a markdown table per read,
 an outcome line per write, a refusal as the tool's error, DuckDB's class
 ahead of the `gloss:` message, with what landed before it above. There
@@ -88,8 +88,8 @@ The CLI renders for a coding agent when it finds one in the environment
 ## Who speaks
 
 You are `agent`. A person rules through their own call with `SET
-VARIABLE gloss_actor = 'human';` ahead of their statements (and `SET
-VARIABLE gloss_actor_id = '<who>';` for the record); never set it
+VARIABLE glossql_actor = 'human';` ahead of their statements (and `SET
+VARIABLE glossql_actor_id = '<who>';` for the record); never set it
 yourself. The collapsed read prefers the human's slot and judges a
 disagreement through the witness's detector; a red band is a
 disagreement to resolve by re-glossing with grounds, not to overwrite.
@@ -113,8 +113,8 @@ disagreement to resolve by re-glossing with grounds, not to overwrite.
 | `DECLARE FUNCTION f FOR fin\|GLOBAL AS $$sql$$ [RETURNS aspect];` | a measurement (`RETURNS`: a table macro over `subject_column($subject)`) or a detector (no `RETURNS`: runs at read over the witness's `slots` with `$threshold`) |
 | `SELECT f() FROM orders.amount;` | extract: compute and land the measurement, or serve the landed row while what it read is unchanged (`computed` says which) |
 | `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication |
-| `FROM gloss_kit('path-or-url');` | run a kit's declarations, one row each: once to adopt it, then from the opener at every start-up, silently when unchanged |
-| `FROM gloss_lineage($$sql$$);` | every output column of a SELECT down to the base scans, `(column, derivation, complete)` |
+| `FROM glossql_kit('path-or-url');` | run a kit's declarations, one row each: once to adopt it, then from the opener at every start-up, silently when unchanged |
+| `FROM glossql_lineage($$sql$$);` | every output column of a SELECT down to the base scans, `(column, derivation, complete)` |
 
 A body rides `$$…$$` as written: plain double quotes inside, nothing
 escaped, closing `}$$;`. A grounding's `sql` is one line inside its JSON

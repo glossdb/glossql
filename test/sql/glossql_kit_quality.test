@@ -1,8 +1,8 @@
-# name: test/sql/gloss_kit_quality.test
+# name: test/sql/glossql_kit_quality.test
 # description: the quality kit: the structure screens as table macros over dataset_cells, and the measurements that land them
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
@@ -11,13 +11,13 @@ require parquet
 require ducklake
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/gloss_kit_quality_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_kit_quality_lake/');
 
 statement ok
 USE ws;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 statement ok
 DECLARE DATASET fin SET (purpose: 'quality');
@@ -26,10 +26,10 @@ statement ok
 USE fin;
 
 statement ok
-CREATE TABLE main.kpi AS FROM gloss_kit('kits/kpi/kit.sql');
+CREATE TABLE main.kpi AS FROM glossql_kit('kits/kpi/kit.sql');
 
 statement ok
-CREATE TABLE main.quality AS FROM gloss_kit('kits/quality/kit.sql');
+CREATE TABLE main.quality AS FROM glossql_kit('kits/quality/kit.sql');
 
 query TTI
 SELECT name, location, statements FROM glossql.kits ORDER BY name;
@@ -414,13 +414,13 @@ fin.orders	green	0.2
 
 # the human's tolerance outranks the agent's: tightened, the same rate is red
 statement ok
-SET VARIABLE gloss_actor = 'human';
+SET VARIABLE glossql_actor = 'human';
 
 statement ok
 GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "tolerance": 0.1}$$;
 
 statement ok
-RESET VARIABLE gloss_actor;
+RESET VARIABLE glossql_actor;
 
 query TTR
 SELECT subject, band, score FROM ATTEST(orders::ids_present);
@@ -429,6 +429,6 @@ fin.orders	red	0.2
 
 # the kit run again is silent
 query I
-SELECT count(*) FROM (FROM gloss_kit('kits/quality/kit.sql')) WHERE outcome <> 'ok' AND outcome NOT LIKE '%unchanged: no-op';
+SELECT count(*) FROM (FROM glossql_kit('kits/quality/kit.sql')) WHERE outcome <> 'ok' AND outcome NOT LIKE '%unchanged: no-op';
 ----
 0

@@ -52,7 +52,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | two QUERY glosses of one aspect on different tables coexist | softened | the subject of a QUERY gloss is the dataset, as §5.2 also says; one serving view per metric |
 | `DELETE FROM glossary` | holds | `glossql.glossary` is a table |
 | `snapshot_id`, `stale` | holds | every glossary row carries the lake's snapshot at write, NULL for a dataset subject or a pair path; staleness is a join against `ducklake_column`, and against `ducklake_view` for a view or its column, never a guess |
-| `GLOSSARY()` collapsed and raw; `unassessed`, `contested`, `current` | holds | `gloss_glossary()` plans a subquery over the store |
+| `GLOSSARY()` collapsed and raw; `unassessed`, `contested`, `current` | holds | `glossql_glossary()` plans a subquery over the store |
 | `stale` | holds | served and marked: a gloss against its subject's shape, a function voice against what it read |
 
 ## §6 The function library
@@ -83,22 +83,22 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | SPEC | Status | Here |
 |---|---|---|
 | agents learn through skills, the door tells | outside | a kit ships its `SKILL.md`; the door is the wrapper's (`README.md`: the CLI and MCP doors) |
-| the actor comes from the door | softened | `SET VARIABLE gloss_actor` is the kind, `gloss_actor_id` the writer, both set by the wrapper on the actor's connection; a gloss lands with `actor_kind` and `actor_id` |
+| the actor comes from the door | softened | `SET VARIABLE glossql_actor` is the kind, `glossql_actor_id` the writer, both set by the wrapper on the actor's connection; a gloss lands with `actor_kind` and `actor_id` |
 
 ## Beyond SPEC
 
 The workspace is an attached DuckLake, one per connection (`SET VARIABLE
-gloss_workspace` picks among several). `PRAGMA gloss` makes the
+glossql_workspace` picks among several). `PRAGMA glossql` makes the
 store: the relations as `glossql_<relation>` tables in the lake's metadata
 catalog, beside the `ducklake_*` tables, and the views `ws.glossql.<relation>`
 that read them typed. The columns are the extension's own, sharpened to what
 the reads need: a declaration's SET pairs are one JSON `settings`, an
 aspect's WHEN one JSON `condition`, a gloss and a relationship carry their
 `dataset`, an import its `mode`, every row its `seq` and a timestamp.
-`gloss_kit(path)` loads a kit and records it in `glossql.kits`.
+`glossql_kit(path)` loads a kit and records it in `glossql.kits`.
 `json_schema_check(schema, document)`, `subject_column(subject)` and
 `dataset_cells(subject[, views])`, a dataset's or a table's cells as one
-relation, are plain functions. `gloss_lineage(sql)` serves the derivation of each
+relation, are plain functions. `glossql_lineage(sql)` serves the derivation of each
 column of a SELECT as the session would plan it, a leaf being the scan,
 the column and its type; an imports row carries the same for its
 landing as `lineage`, so the row-to-row diff is the drift record. A measurement is a table macro any SQL may call, its one

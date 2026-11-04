@@ -1,8 +1,8 @@
-# name: test/sql/gloss_functions.test
+# name: test/sql/glossql_functions.test
 # description: functions are table macros; extraction computes them for a subject and lands measurements
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
@@ -11,13 +11,13 @@ require parquet
 require ducklake
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/gloss_functions_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_functions_lake/');
 
 statement ok
 USE ws;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 statement ok
 DECLARE DATASET fin SET (purpose: 'functions');

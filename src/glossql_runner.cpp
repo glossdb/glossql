@@ -14,7 +14,7 @@
 // What one inner statement does is atomic; the glossql statement itself is
 // not atomic with a transaction the caller may have open.
 
-#include "gloss_grammar.hpp"
+#include "glossql_grammar.hpp"
 
 #include <algorithm>
 #include "duckdb/common/file_system.hpp"
@@ -58,7 +58,7 @@ namespace duckdb {
 
 string LakeName(ClientContext &context) {
 	auto &variables = ClientConfig::GetConfig(context).user_variables;
-	auto named = variables.find(Identifier("gloss_workspace"));
+	auto named = variables.find(Identifier("glossql_workspace"));
 	if (named != variables.end() && !named->second.IsNull()) {
 		return named->second.ToString();
 	}
@@ -74,10 +74,10 @@ string LakeName(ClientContext &context) {
 	std::sort(lakes.begin(), lakes.end());
 	if (lakes.empty()) {
 		throw InvalidInputException(
-		    "gloss: no DuckLake is attached: the workspace is a lake, ATTACH 'ducklake:...' first");
+		    "glossql: no DuckLake is attached: the workspace is a lake, ATTACH 'ducklake:...' first");
 	}
 	throw InvalidInputException(
-	    "gloss: %d DuckLakes are attached (%s): SET VARIABLE gloss_workspace = 'name' picks one", lakes.size(),
+	    "glossql: %d DuckLakes are attached (%s): SET VARIABLE glossql_workspace = 'name' picks one", lakes.size(),
 	    StringUtil::Join(lakes, ", "));
 }
 
@@ -105,7 +105,7 @@ static Workspace FindWorkspace(ClientContext &context, Connection &con) {
 			return ws;
 		}
 	}
-	throw InvalidInputException("gloss: the metadata catalog of DuckLake '%s' was not found", ws.lake);
+	throw InvalidInputException("glossql: the metadata catalog of DuckLake '%s' was not found", ws.lake);
 }
 
 string Workspace::Store(const string &relation) const {
@@ -194,7 +194,7 @@ Value Inner::Snapshot() {
 unique_ptr<QueryResult> Inner::Run(const string &sql) {
 	auto result = con.Query(sql);
 	if (result->HasError()) {
-		throw InvalidInputException("gloss: %s", result->GetError());
+		throw InvalidInputException("glossql: %s", result->GetError());
 	}
 	return result;
 }
@@ -251,7 +251,7 @@ static SourceInfo LookupSource(Inner &inner, const string &name) {
 	auto row = inner.Row("SELECT settings::JSON->>'type', settings::JSON->>'location' FROM " + inner.Store("sources") +
 	                     " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
 	if (row.empty()) {
-		throw InvalidInputException("gloss: source '%s' is not declared", name);
+		throw InvalidInputException("glossql: source '%s' is not declared", name);
 	}
 	return SourceInfo {name, row[0].ToString(), row[1].ToString()};
 }
@@ -263,7 +263,7 @@ static void AtSource(Inner &inner, const SourceInfo &source) {
 		auto attached =
 		    inner.Scalar("SELECT count(*) FROM duckdb_databases() WHERE database_name = " + QuoteText(source.location));
 		if (attached.GetValue<int64_t>() == 0) {
-			throw InvalidInputException("gloss: source '%s' names database '%s', which is not attached — "
+			throw InvalidInputException("glossql: source '%s' names database '%s', which is not attached — "
 			                            "ATTACH it first (postgres, mysql, sqlite, duckdb, ...)",
 			                            source.name, source.location);
 		}
@@ -340,7 +340,7 @@ static void DatasetExec(ClientContext &context, TableFunctionInput &data, DataCh
 }
 
 TableFunction GlossDatasetFunction() {
-	return TableFunction("gloss_declare_dataset", {LogicalType::VARCHAR, LogicalType::VARCHAR}, DatasetExec,
+	return TableFunction("glossql_declare_dataset", {LogicalType::VARCHAR, LogicalType::VARCHAR}, DatasetExec,
 	                     OutcomeBind, RunnerInit);
 }
 
@@ -371,7 +371,7 @@ static RecipeRow NewestRecipe(Inner &inner, const string &dataset, const string 
 	auto row = inner.Row("SELECT source, settings, sql FROM " + inner.Store("recipes") + " WHERE dataset = " +
 	                     QuoteText(dataset) + " AND table_name = " + QuoteText(table) + " ORDER BY seq DESC LIMIT 1");
 	if (row.empty()) {
-		throw InvalidInputException("gloss: %s.%s has no recipe — tables come from recipes", dataset, table);
+		throw InvalidInputException("glossql: %s.%s has no recipe — tables come from recipes", dataset, table);
 	}
 	return RecipeRow {row[0].ToString(), row[1].ToString(), row[2].ToString()};
 }
@@ -486,7 +486,7 @@ static void RecipeExec(ClientContext &context, TableFunctionInput &data, DataChu
 	auto dataset_exists =
 	    inner.Scalar("SELECT count(*) FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(dataset));
 	if (dataset_exists.GetValue<int64_t>() == 0) {
-		throw InvalidInputException("gloss: dataset '%s' is not declared", dataset);
+		throw InvalidInputException("glossql: dataset '%s' is not declared", dataset);
 	}
 
 	auto landed = Land(inner, dataset, name, recipe, true);
@@ -499,7 +499,7 @@ static void RecipeExec(ClientContext &context, TableFunctionInput &data, DataChu
 
 TableFunction GlossRecipeFunction() {
 	return TableFunction(
-	    "gloss_declare_recipe",
+	    "glossql_declare_recipe",
 	    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	    RecipeExec, OutcomeBind, RunnerInit);
 }
@@ -525,7 +525,7 @@ static void ImportExec(ClientContext &context, TableFunctionInput &data, DataChu
 }
 
 TableFunction GlossImportFunction() {
-	return TableFunction("gloss_import", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ImportExec, OutcomeBind,
+	return TableFunction("glossql_import", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ImportExec, OutcomeBind,
 	                     RunnerInit);
 }
 
@@ -551,7 +551,7 @@ static unique_ptr<FunctionData> ProbeBind(ClientContext &context, TableFunctionB
 	AtSource(inner, LookupSource(inner, source));
 	auto prepared = inner.con.Prepare(sql);
 	if (prepared->HasError()) {
-		throw InvalidInputException("gloss: probe of %s: %s", source, prepared->GetError());
+		throw InvalidInputException("glossql: probe of %s: %s", source, prepared->GetError());
 	}
 	return_types = prepared->GetTypes();
 	names = prepared->GetNames();
@@ -578,7 +578,7 @@ static void ProbeExec(ClientContext &context, TableFunctionInput &data, DataChun
 }
 
 TableFunction GlossProbeFunction() {
-	return TableFunction("gloss_probe", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ProbeExec, ProbeBind, ProbeInit);
+	return TableFunction("glossql_probe", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ProbeExec, ProbeBind, ProbeInit);
 }
 
 //===--------------------------------------------------------------------===//
@@ -643,7 +643,7 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 		auto declared =
 		    inner.Scalar("SELECT count(*) FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(scope));
 		if (declared.GetValue<int64_t>() == 0) {
-			throw InvalidInputException("gloss: dataset '%s' is not declared", scope);
+			throw InvalidInputException("glossql: dataset '%s' is not declared", scope);
 		}
 	}
 	if (!returns.IsNull()) {
@@ -690,23 +690,23 @@ static void WitnessExec(ClientContext &context, TableFunctionInput &data, DataCh
 	auto standing = inner.Row("SELECT kind, schema::JSON->>'x-kind' FROM " + inner.Store("aspects") +
 	                          " WHERE name = " + QuoteText(aspect) + " ORDER BY seq DESC LIMIT 1");
 	if (standing.empty()) {
-		throw InvalidInputException("gloss: aspect '%s' is not declared", aspect);
+		throw InvalidInputException("glossql: aspect '%s' is not declared", aspect);
 	}
 	auto &kind = standing[0];
 	if (!standing[1].IsNull() && standing[1].ToString() == "grounding") {
-		throw InvalidInputException("gloss: a witness on grounding schema '%s' is refused: it judges nothing", aspect);
+		throw InvalidInputException("glossql: a witness on grounding schema '%s' is refused: it judges nothing", aspect);
 	}
 	if (kind.ToString() == "MEASUREMENT" && !speakers.empty()) {
-		throw InvalidInputException("gloss: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
+		throw InvalidInputException("glossql: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
 	}
 	if (!detector.IsNull()) {
 		auto row = inner.Row("SELECT returns FROM " + inner.Store("functions") +
 		                     " WHERE name = " + QuoteText(detector.ToString()) + " ORDER BY seq DESC LIMIT 1");
 		if (row.empty()) {
-			throw InvalidInputException("gloss: detector '%s' is not a declared function", detector.ToString());
+			throw InvalidInputException("glossql: detector '%s' is not a declared function", detector.ToString());
 		}
 		if (!row[0].IsNull()) {
-			throw InvalidInputException("gloss: '%s' returns %s: a measurement, not a detector", detector.ToString(),
+			throw InvalidInputException("glossql: '%s' returns %s: a measurement, not a detector", detector.ToString(),
 			                            row[0].ToString());
 		}
 	}
@@ -717,14 +717,14 @@ static void WitnessExec(ClientContext &context, TableFunctionInput &data, DataCh
 }
 
 TableFunction GlossWitnessFunction() {
-	return TableFunction("gloss_declare_witness",
+	return TableFunction("glossql_declare_witness",
 	                     {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR),
 	                      LogicalType::VARCHAR, LogicalType::DOUBLE},
 	                     WitnessExec, OutcomeBind, RunnerInit);
 }
 
 TableFunction GlossFunctionFunction() {
-	return TableFunction("gloss_declare_function",
+	return TableFunction("glossql_declare_function",
 	                     {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                     FunctionExec, OutcomeBind, RunnerInit);
 }
@@ -897,7 +897,7 @@ static unique_ptr<GlobalTableFunctionState> ExtractInit(ClientContext &context, 
 //! The value by result shape: one row and one column is the value, one row is an
 //! object of its columns, many rows are an array of row objects. The call runs
 //! once, into a table of the inner connection's own: a body may be costly or
-//! reach outside the process (gloss_service), and the shape, the count and the
+//! reach outside the process (glossql_service), and the shape, the count and the
 //! value are read off what that one run returned
 static Value ValueOf(Inner &inner, const string &call) {
 	const string once = "__gloss_value";
@@ -934,14 +934,14 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		auto name = call.ToString();
 		auto schema = inner.FunctionSchema(dataset, name);
 		if (schema.empty()) {
-			throw InvalidInputException("gloss: %s is not a declared function for %s", name, dataset);
+			throw InvalidInputException("glossql: %s is not a declared function for %s", name, dataset);
 		}
 		auto scope = schema == "glossql" ? "GLOBAL" : schema;
 		auto returns =
 		    inner.Scalar("SELECT returns FROM " + inner.Store("functions") + " WHERE name = " + QuoteText(name) +
 			             " AND scope = " + QuoteText(scope) + " ORDER BY seq DESC LIMIT 1");
 		if (returns.IsNull()) {
-			throw InvalidInputException("gloss: %s is a detector: it runs at read, through ATTEST()", name);
+			throw InvalidInputException("glossql: %s is a detector: it runs at read, through ATTEST()", name);
 		}
 		output.data[0].Append(Value(name));
 		output.data[1].Append(Value(subject));
@@ -964,12 +964,12 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		auto contract = inner.Scalar("SELECT schema::VARCHAR FROM " + inner.Store("aspects") +
 		                             " WHERE name = " + returns.ToSQLString() + " ORDER BY seq DESC LIMIT 1");
 		if (contract.IsNull()) {
-			throw InvalidInputException("gloss: %s returns %s, which is not a declared aspect", name,
+			throw InvalidInputException("glossql: %s returns %s, which is not a declared aspect", name,
 			                            returns.ToString());
 		}
 		auto error = JsonSchemaCheck(contract.ToString(), value.ToString());
 		if (!error.empty()) {
-			throw InvalidInputException("gloss: the output of %s does not conform to the schema of %s: %s", name,
+			throw InvalidInputException("glossql: the output of %s does not conform to the schema of %s: %s", name,
 			                            returns.ToString(), error);
 		}
 		// landed at its pin, with what it read: the next extraction serves it while those are unchanged
@@ -985,11 +985,11 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 }
 
 TableFunction GlossExtractFunction() {
-	return TableFunction("gloss_extract", {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)}, ExtractExec,
+	return TableFunction("glossql_extract", {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)}, ExtractExec,
 	                     ExtractBind, ExtractInit);
 }
 
-//! gloss_select_or_extract(subject, calls, text): the extract rule captured
+//! glossql_select_or_extract(subject, calls, text): the extract rule captured
 //! SELECT f(), g() FROM subject. It is an extraction when a call names a
 //! declared function; otherwise it is the plain SQL it looks like, parsed with
 //! the stock grammar so the rule does not capture it again.
@@ -1015,12 +1015,12 @@ static unique_ptr<TableRef> SelectOrExtractBindReplace(ClientContext &context, T
 	}
 	children.push_back(make_uniq<FunctionExpression>(Identifier("list_value"), std::move(calls)));
 	auto ref = make_uniq<TableFunctionRef>();
-	ref->function = make_uniq<FunctionExpression>(Identifier("gloss_extract"), std::move(children));
+	ref->function = make_uniq<FunctionExpression>(Identifier("glossql_extract"), std::move(children));
 	return std::move(ref);
 }
 
 static TableFunction GlossSelectOrExtractFunction() {
-	TableFunction function("gloss_select_or_extract",
+	TableFunction function("glossql_select_or_extract",
 	                       {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR), LogicalType::VARCHAR},
 	                       nullptr);
 	function.bind_replace = SelectOrExtractBindReplace;
@@ -1035,7 +1035,7 @@ static unique_ptr<TableRef> SubjectColumnBindReplace(ClientContext &context, Tab
 	auto subject = ResolveSubject(context, input.inputs[0].ToString());
 	auto parts = StringUtil::Split(subject, '.');
 	if (parts.size() != 3) {
-		throw InvalidInputException("gloss: subject_column takes dataset.table.column, got '%s'", subject);
+		throw InvalidInputException("glossql: subject_column takes dataset.table.column, got '%s'", subject);
 	}
 	auto sql = "SELECT " + QuoteName(parts[2]) + " AS v FROM " + QuoteName(LakeName(context)) + "." +
 	           QuoteName(parts[0]) + "." + QuoteName(parts[1]);
@@ -1057,7 +1057,7 @@ static TableFunction SubjectColumnFunction() {
 // within one type only; ci numbers the columns in table order, rn the rows of
 // each table. Nested columns stay out. Generated at bind, like subject_column,
 // over the dataset's own relations (DatasetColumns); a view's rows come from
-// gloss_kept_view, kept once per store version, a table's from the table
+// glossql_kept_view, kept once per store version, a table's from the table
 //===------------------------------------------------------------------===//
 
 static bool IsScalarType(const string &type) {
@@ -1071,7 +1071,7 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	auto subject = ResolveSubject(context, input.inputs[0].ToString());
 	auto parts = StringUtil::Split(subject, '.');
 	if (parts.empty() || parts.size() > 2) {
-		throw InvalidInputException("gloss: dataset_cells takes a dataset or dataset.table, got '%s'", subject);
+		throw InvalidInputException("glossql: dataset_cells takes a dataset or dataset.table, got '%s'", subject);
 	}
 	// a second argument true (or 'all') takes the dataset's views too — a grounding
 	// is one — each bound at bind and skipped when it does not, as a screen skips a
@@ -1087,7 +1087,7 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 			} else if (mode == "all") {
 				views = true;
 			} else if (mode != "tables") {
-				throw InvalidInputException("gloss: dataset_cells takes tables, views or all, got '%s'", mode);
+				throw InvalidInputException("glossql: dataset_cells takes tables, views or all, got '%s'", mode);
 			}
 		} else {
 			views = input.inputs[1].GetValue<bool>();
@@ -1119,7 +1119,7 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	string sql;
 	idx_t ci = 0;
 	for (auto &table : tables) {
-		string from = kept.count(table) ? "gloss_kept_view(" + QuoteText(parts[0]) + ", " + QuoteText(table) + ", " +
+		string from = kept.count(table) ? "glossql_kept_view(" + QuoteText(parts[0]) + ", " + QuoteText(table) + ", " +
 		                                      QuoteText(version) + ")"
 		                                : inner.Table(parts[0], table);
 		// the row number under a name no table's column takes, served as rn
@@ -1170,7 +1170,7 @@ static TableFunctionSet DatasetCellsFunctions() {
 //===--------------------------------------------------------------------===//
 
 //===--------------------------------------------------------------------===//
-// gloss_kit(path): a kit is a script of declarations — aspects, functions,
+// glossql_kit(path): a kit is a script of declarations — aspects, functions,
 // witnesses — read from anything DuckDB's file system opens (a local path, or a
 // URL once httpfs is loaded), run statement by statement on a second
 // connection under the glossql grammar, one row per statement. Each statement
@@ -1250,13 +1250,13 @@ static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk 
 		auto path = data.bind_data->Cast<RunnerBindData>().inputs[0].ToString();
 		auto script = ReadScript(context, path);
 		Inner inner(context);
-		inner.Run("SET active_grammar_extensions = ['gloss']");
+		inner.Run("SET active_grammar_extensions = ['glossql']");
 		auto statements = inner.con.ExtractStatements(script);
 		for (auto &statement : statements) {
 			auto head = FirstLine(statement->query);
 			auto result = inner.con.Query(std::move(statement));
 			if (result->HasError()) {
-				throw InvalidInputException("gloss: kit %s stopped at statement %d (%s): %s", KitName(path),
+				throw InvalidInputException("glossql: kit %s stopped at statement %d (%s): %s", KitName(path),
 				                            state.rows.size() + 1, head, result->GetError());
 			}
 			string outcome = "ok";
@@ -1288,7 +1288,7 @@ static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk 
 }
 
 static TableFunction GlossKitFunction() {
-	return TableFunction("gloss_kit", {LogicalType::VARCHAR}, KitExec, KitBind, KitInit);
+	return TableFunction("glossql_kit", {LogicalType::VARCHAR}, KitExec, KitBind, KitInit);
 }
 
 void RegisterGlossRunner(ExtensionLoader &loader) {

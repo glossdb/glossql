@@ -1,7 +1,7 @@
 #define DUCKDB_EXTENSION_MAIN
 
-#include "gloss_extension.hpp"
-#include "gloss_grammar.hpp"
+#include "glossql_extension.hpp"
+#include "glossql_grammar.hpp"
 
 #include "duckdb/main/extension/extension_loader.hpp"
 
@@ -9,7 +9,7 @@ namespace duckdb {
 
 static void LoadInternal(ExtensionLoader &loader) {
 	// The grammar is registered on the database and activated per connection,
-	// which PRAGMA gloss does beside making the store
+	// which PRAGMA glossql does beside making the store
 	GrammarExtension::Register(loader.GetDatabaseInstance(), make_shared_ptr<GlossGrammar>());
 	RegisterGlossStore(loader);
 	RegisterGlossRunner(loader);
@@ -23,7 +23,7 @@ void GlossExtension::Load(ExtensionLoader &loader) {
 }
 
 std::string GlossExtension::Name() {
-	return "gloss";
+	return "glossql";
 }
 
 std::string GlossExtension::Version() const {
@@ -38,7 +38,7 @@ std::string GlossExtension::Version() const {
 
 extern "C" {
 
-DUCKDB_CPP_EXTENSION_ENTRY(gloss, loader) {
+DUCKDB_CPP_EXTENSION_ENTRY(glossql, loader) {
 	duckdb::LoadInternal(loader);
 }
 }

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 # Set extension name here
-set(TARGET_NAME gloss)
+set(TARGET_NAME glossql)
 
 # DuckDB's extension distribution supports vcpkg. As such, dependencies can be
 # added in ./vcpkg.json and then used in cmake with find_package. Feel free to
@@ -24,13 +24,13 @@ include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/yyjson/include)
 
 set(EXTENSION_SOURCES
-    src/gloss_extension.cpp
-    src/gloss_grammar.cpp
-    src/gloss_store.cpp
-    src/gloss_runner.cpp
-    src/gloss_schema.cpp
-    src/gloss_lineage.cpp
-    src/gloss_service.cpp)
+    src/glossql_extension.cpp
+    src/glossql_grammar.cpp
+    src/glossql_store.cpp
+    src/glossql_runner.cpp
+    src/glossql_schema.cpp
+    src/glossql_lineage.cpp
+    src/glossql_service.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})

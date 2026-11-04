@@ -1,11 +1,11 @@
 ---
-name: gloss-spatial
-description: The spatial kit's vocabulary for a gloss workspace — which columns are geometry and what one stands for, the CRS the coordinates are in, the profile that measures them, how geometry lands. Use after gloss_kit('kits/spatial/kit.sql') when a workspace lands or reads geometry.
+name: glossql-spatial
+description: The spatial kit's vocabulary for a glossql workspace — which columns are geometry and what one stands for, the CRS the coordinates are in, the profile that measures them, how geometry lands. Use after glossql_kit('kits/spatial/kit.sql') when a workspace lands or reads geometry.
 ---
 
 # The spatial kit: what it teaches
 
-For an actor working in a DuckDB that has the gloss extension loaded and
+For an actor working in a DuckDB that has the glossql extension loaded and
 this kit declared. The kit brings DuckDB's spatial extension in, its
 first lines install and load it, and declares two words, one
 measurement and their witnesses.
@@ -13,7 +13,7 @@ measurement and their witnesses.
 ## Load
 
 ```sql
-FROM gloss_kit('kits/spatial/kit.sql');   -- and the same line in the opener
+FROM glossql_kit('kits/spatial/kit.sql');   -- and the same line in the opener
 ```
 
 A DuckDB extension is loaded per process. The opener's replay of the

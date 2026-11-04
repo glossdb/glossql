@@ -1,8 +1,8 @@
-# name: test/sql/gloss_witnesses.test
+# name: test/sql/glossql_witnesses.test
 # description: witnesses adjudicate the slots at read; GLOSSARY() discloses every gap, ATTEST() every verdict
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
@@ -11,13 +11,13 @@ require parquet
 require ducklake
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/gloss_witnesses_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_witnesses_lake/');
 
 statement ok
 USE ws;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 statement ok
 DECLARE DATASET fin SET (purpose: 'witnesses');
@@ -119,13 +119,13 @@ fin.orders.id	behavior	NULL	NULL	NULL	unassessed
 # --- two voices disagree: contested, the value withheld, the verdict says how badly
 
 statement ok
-SET VARIABLE gloss_actor = 'human';
+SET VARIABLE glossql_actor = 'human';
 
 statement ok
 GLOSS behavior ON orders.amount AS $${"value": "stock"}$$;
 
 statement ok
-RESET VARIABLE gloss_actor;
+RESET VARIABLE glossql_actor;
 
 query TTTTT
 SELECT subject, aspect, value, band, state FROM GLOSSARY(orders.amount);
@@ -152,13 +152,13 @@ fin.orders.amount	behavior	FACT	behavior_w	human
 # --- the human re-glosses to agree: the human slot is superseded, current again
 
 statement ok
-SET VARIABLE gloss_actor = 'human';
+SET VARIABLE glossql_actor = 'human';
 
 statement ok
 GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
 
 statement ok
-RESET VARIABLE gloss_actor;
+RESET VARIABLE glossql_actor;
 
 query TTTT
 SELECT subject, value, band, state FROM GLOSSARY(orders.amount);
@@ -207,13 +207,13 @@ GLOSS note ON orders AS $${"value": "x"}$$;
 admits HUMAN, not agent
 
 statement ok
-SET VARIABLE gloss_actor = 'human';
+SET VARIABLE glossql_actor = 'human';
 
 statement ok
 GLOSS note ON orders AS $${"value": "x"}$$;
 
 statement ok
-RESET VARIABLE gloss_actor;
+RESET VARIABLE glossql_actor;
 
 # a witness without a detector judges nothing: the slot serves as current
 query TTTTT

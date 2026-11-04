@@ -1,8 +1,8 @@
-# name: test/sql/gloss_datasets.test
+# name: test/sql/glossql_datasets.test
 # description: datasets are schemas; sources, recipes, probes and imports ride DuckDB's own readers and ATTACH
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
@@ -11,13 +11,13 @@ require parquet
 require ducklake
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/gloss_datasets_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_datasets_lake/');
 
 statement ok
 USE ws;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 # --- DECLARE DATASET: a schema plus a row; DuckDB's own USE binds it
 

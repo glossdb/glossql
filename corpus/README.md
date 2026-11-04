@@ -5,7 +5,7 @@ Each file pairs a **real artifact** — the predecessor production system's
 system's own runs — with its glossql transcription per SPEC.md. These are
 test fixtures, not design docs.
 
-Block tags. `test/sql/gloss_corpus.test` holds every block of SPEC.md
+Block tags. `test/sql/glossql_corpus.test` holds every block of SPEC.md
 and the corpus to the grammar:
 
 - ` ```glossql ` — must parse under `grammar.ebnf`. A failure is a regression.

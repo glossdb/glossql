@@ -28,5 +28,5 @@ FROM nyc.borough_area;
 -- the record
 SELECT subject, aspect, value, state FROM GLOSSARY(zones) WHERE subject LIKE '%.geom';
 SELECT count(*) AS owed FROM GLOSSARY(zones) WHERE state <> 'current';
-FROM gloss_lineage($$SELECT borough, ST_Area(geom) AS a FROM nyc.zones$$);
+FROM glossql_lineage($$SELECT borough, ST_Area(geom) AS a FROM nyc.zones$$);
 SELECT name, statements FROM glossql.kits;

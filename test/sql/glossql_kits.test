@@ -1,8 +1,8 @@
-# name: test/sql/gloss_kits.test
-# description: a kit is a script of declarations gloss_kit() loads; the KPI kit's vocabulary, grounding schema, detector, measurements and witnesses
+# name: test/sql/glossql_kits.test
+# description: a kit is a script of declarations glossql_kit() loads; the KPI kit's vocabulary, grounding schema, detector, measurements and witnesses
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
@@ -11,13 +11,13 @@ require parquet
 require ducklake
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/gloss_kits_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_kits_lake/');
 
 statement ok
 USE ws;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 statement ok
 DECLARE DATASET fin SET (purpose: 'kits');
@@ -30,7 +30,7 @@ CREATE TABLE fin.orders AS SELECT i AS id, i * 1.5 AS amount, 'c' || (i % 2) AS 
 
 # the loader runs the script statement by statement and serves one row each
 statement ok
-CREATE TABLE main.loaded AS FROM gloss_kit('kits/kpi/kit.sql');
+CREATE TABLE main.loaded AS FROM glossql_kit('kits/kpi/kit.sql');
 
 query I
 SELECT count(*) FROM main.loaded;
@@ -54,7 +54,7 @@ SELECT count(*) FROM glossql.aspects;
 
 # a kit run again, as the opener does at start-up, is silent: every declaration unchanged, no new kits row
 query I
-SELECT count(*) FROM (FROM gloss_kit('kits/kpi/kit.sql')) WHERE outcome <> 'ok' AND outcome NOT LIKE '%unchanged: no-op';
+SELECT count(*) FROM (FROM glossql_kit('kits/kpi/kit.sql')) WHERE outcome <> 'ok' AND outcome NOT LIKE '%unchanged: no-op';
 ----
 0
 
@@ -65,7 +65,7 @@ SELECT count(*) FROM glossql.kits;
 
 # a failing statement stops the load; the ones before it stand
 statement error
-FROM gloss_kit('kits/nothing/kit.sql');
+FROM glossql_kit('kits/nothing/kit.sql');
 ----
 nothing
 
@@ -98,13 +98,13 @@ unit	unassessed
 # --- slot_entropy judges the enum claims: the human disagrees, the role is contested, red at 0.7
 
 statement ok
-SET VARIABLE gloss_actor = 'human';
+SET VARIABLE glossql_actor = 'human';
 
 statement ok
 GLOSS role ON orders.amount AS $${"value": "dimension"}$$;
 
 statement ok
-RESET VARIABLE gloss_actor;
+RESET VARIABLE glossql_actor;
 
 query TTR
 SELECT aspect, band, score FROM ATTEST(orders.amount::role);

@@ -8,8 +8,8 @@
 
 namespace duckdb {
 
-//! The glossql grammar (gloss_grammar.cpp): activated per connection with
-//! SET active_grammar_extensions = ['gloss']
+//! The glossql grammar (glossql_grammar.cpp): activated per connection with
+//! SET active_grammar_extensions = ['glossql']
 class GlossGrammar final : public GrammarExtension {
 public:
 	GlossGrammar();
@@ -17,8 +17,8 @@ public:
 };
 
 //! What a glossql statement carries from the parser to the planner. `kind`
-//! picks the table function that executes it (gloss_store.cpp,
-//! gloss_runner.cpp); `row` is its positional input.
+//! picks the table function that executes it (glossql_store.cpp,
+//! glossql_runner.cpp); `row` is its positional input.
 struct GlossStatementData : public ParserExtensionParseData {
 	GlossStatementData(string kind_p, string table_p, vector<Value> row_p, string text_p)
 	    : kind(std::move(kind_p)), table(std::move(table_p)), row(std::move(row_p)), text(std::move(text_p)) {
@@ -44,17 +44,17 @@ struct GlossStatementData : public ParserExtensionParseData {
 //! fallback: the grammar builds the ExtensionStatement itself.
 ParserExtension GlossParserExtension();
 
-//! Registers the store (gloss_store.cpp): the gloss_init pragma, the
+//! Registers the store (glossql_store.cpp): the glossql_init pragma, the
 //! write function and the GLOSSARY() read
 void RegisterGlossStore(ExtensionLoader &loader);
-//! Registers the runner (gloss_runner.cpp): datasets, recipes, probes, imports
+//! Registers the runner (glossql_runner.cpp): datasets, recipes, probes, imports
 void RegisterGlossRunner(ExtensionLoader &loader);
 
 //! A dataset is a schema of the workspace's lake (SPEC §3): the USE'd dataset
 //! is the connection's default schema, and unprefixed subjects resolve against it
 string CurrentDataset(ClientContext &context);
 //! The attached DuckLake this connection works in: the only one, or the one
-//! SET VARIABLE gloss_workspace names
+//! SET VARIABLE glossql_workspace names
 string LakeName(ClientContext &context);
 //! A JSON string literal, escaped
 string JsonString(const string &text);
@@ -72,7 +72,7 @@ string ResolveSubject(ClientContext &context, const string &subject);
 //! counts as a table, so its columns are subjects like a table's); null when
 //! neither stands
 optional_ptr<CatalogEntry> RelationEntry(ClientContext &context, const string &schema, const string &table);
-//! One column of a dataset's relation, as gloss_columns serves it
+//! One column of a dataset's relation, as glossql_columns serves it
 struct RelationColumn {
 	string table;
 	string column;
@@ -84,7 +84,7 @@ struct RelationColumn {
 //! relation name then position; one table's where `table` names it. A view
 //! is bound here for its columns and left out when it does not bind. The
 //! catalog is walked by name: no catalog-wide scan, so no view outside the
-//! dataset is bound for it (gloss_store.cpp)
+//! dataset is bound for it (glossql_store.cpp)
 vector<RelationColumn> DatasetColumns(ClientContext &context, const string &dataset, const string &table, bool views);
 //! Double-quotes a name for SQL text
 string QuoteName(const string &name);
@@ -101,16 +101,16 @@ TableFunction GlossFunctionFunction();
 TableFunction GlossWitnessFunction();
 TableFunction GlossExtractFunction();
 
-//! Registers json_schema_check (gloss_schema.cpp)
+//! Registers json_schema_check (glossql_schema.cpp)
 void RegisterGlossSchema(ExtensionLoader &loader);
-//! Registers gloss_lineage (gloss_lineage.cpp)
+//! Registers glossql_lineage (glossql_lineage.cpp)
 void RegisterGlossLineage(ExtensionLoader &loader);
-// gloss_service(route, body): one call to the model service the instance names (gloss_service.cpp)
+// glossql_service(route, body): one call to the model service the instance names (glossql_service.cpp)
 void RegisterGlossService(ExtensionLoader &loader);
 
 //! The derivation of each output column of a query, in output order: what
 //! computes it, resolved through the bound plan down to the base scans;
-//! `complete` is false when the walk could not follow a step (gloss_lineage.cpp)
+//! `complete` is false when the walk could not follow a step (glossql_lineage.cpp)
 struct QueryLineage {
 	vector<pair<string, string>> columns;
 	bool complete = true;
@@ -159,7 +159,7 @@ struct Workspace {
 //! wrote, altered or dropped it, every live view but the store's own as
 //! <schema>.<view> at the snapshot that defined it, every store relation but
 //! measurements as glossql.<relation> at its highest seq ('-' while empty). A
-//! measurement's pin is these parts joined, sorted, name:version; gloss_store.cpp
+//! measurement's pin is these parts joined, sorted, name:version; glossql_store.cpp
 string LegsSQL(const Workspace &ws);
 //! Whether the measurement row `row` (pin, reads, dataset, function, computed_at)
 //! still stands, as a SQL boolean over a CTE named legs (LegsSQL): the legs its
@@ -168,7 +168,7 @@ string LegsSQL(const Workspace &ws);
 string StandsSQL(const Workspace &ws, const string &row);
 
 //! A second connection to the same database, for SQL run while the calling
-//! connection's context lock is held (gloss_runner.cpp)
+//! connection's context lock is held (glossql_runner.cpp)
 class Inner {
 public:
 	explicit Inner(ClientContext &context);
@@ -196,7 +196,7 @@ public:
 
 //! The store's version — the lake's snapshot and every store relation's
 //! highest seq — that the reads and the kept views are kept under; any write
-//! moves it (gloss_store.cpp)
+//! moves it (glossql_store.cpp)
 string StoreVersion(Inner &inner);
 
 } // namespace duckdb

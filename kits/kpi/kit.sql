@@ -3,7 +3,7 @@
 -- the witnesses that bind them. The core ships no aspect; what an actor
 -- must learn about these words is SKILL.md beside this file. Load it with
 --
---   FROM gloss_kit('kits/kpi/kit.sql');
+--   FROM glossql_kit('kits/kpi/kit.sql');
 --
 -- Every statement is glossql, so a fork is an edit.
 

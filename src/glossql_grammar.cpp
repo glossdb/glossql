@@ -2,8 +2,8 @@
 //
 // Every statement of ../glossql/grammar.ebnf is a rule prepended to
 // `Statement`; its transform builds an ExtensionStatement whose plan is one
-// scan of the table function that executes it (gloss_store.cpp,
-// gloss_runner.cpp). The reads are rules prepended to `InnerTableRef`,
+// scan of the table function that executes it (glossql_store.cpp,
+// glossql_runner.cpp). The reads are rules prepended to `InnerTableRef`,
 // transformed into stock table-function references. Subjects and pair paths
 // are rules of their own, so the stock binder never sees `orders.amount` as
 // a column reference; bodies are the native dollar-quoted string token; new
@@ -11,9 +11,9 @@
 //
 // Syntax is grammar.ebnf; semantics are SPEC.md there. Host SQL (USE,
 // SELECT, DELETE FROM glossql.glossary, ...) is DuckDB's own. The store the
-// statements write to is created by `PRAGMA gloss_init`.
+// statements write to is created by `PRAGMA glossql_init`.
 
-#include "gloss_grammar.hpp"
+#include "glossql_grammar.hpp"
 
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -236,7 +236,7 @@ static arena_ptr<TransformResultValue> MakeWrite(PEGTransformer &transformer, co
 	return MakeStatement(transformer, "write", table, std::move(row), std::move(text));
 }
 
-#define GLOSS_TRANSFORM(START, FINALIZE)                                                                               \
+#define GLOSSQL_TRANSFORM(START, FINALIZE)                                                                               \
 	static arena_ptr<TransformProcess> START(PEGTransformer &transformer, ParseResult &parse_result) {                 \
 		return transformer.MakeProcess<FinalizeTransformProcess>(transformer, parse_result, FINALIZE);                 \
 	}
@@ -250,7 +250,7 @@ static arena_ptr<TransformResultValue> FinalizeGloss(PEGTransformer &transformer
 	return MakeWrite(transformer, "glossary", {Value(subject), Value(aspect), Value(body)},
 	                 "GLOSS " + aspect + " ON " + subject);
 }
-GLOSS_TRANSFORM(StartGloss, FinalizeGloss)
+GLOSSQL_TRANSFORM(StartGloss, FinalizeGloss)
 
 //! GlossDeclareSource <- 'DECLARE' 'SOURCE' Identifier GlossSettings
 static arena_ptr<TransformResultValue> FinalizeDeclareSource(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -259,7 +259,7 @@ static arena_ptr<TransformResultValue> FinalizeDeclareSource(PEGTransformer &tra
 	auto settings = SettingsOf(transformer, list.GetChild(3), SOURCE_SETTINGS, "DECLARE SOURCE");
 	return MakeWrite(transformer, "sources", {Value(name), Value(settings)}, "DECLARE SOURCE " + name);
 }
-GLOSS_TRANSFORM(StartDeclareSource, FinalizeDeclareSource)
+GLOSSQL_TRANSFORM(StartDeclareSource, FinalizeDeclareSource)
 
 //! GlossDeclareDataset <- 'DECLARE' 'DATASET' Identifier GlossSettings
 static arena_ptr<TransformResultValue> FinalizeDeclareDataset(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -268,7 +268,7 @@ static arena_ptr<TransformResultValue> FinalizeDeclareDataset(PEGTransformer &tr
 	auto settings = SettingsOf(transformer, list.GetChild(3), DATASET_SETTINGS, "DECLARE DATASET");
 	return MakeStatement(transformer, "dataset", "", {Value(name), Value(settings)}, "DECLARE DATASET " + name);
 }
-GLOSS_TRANSFORM(StartDeclareDataset, FinalizeDeclareDataset)
+GLOSSQL_TRANSFORM(StartDeclareDataset, FinalizeDeclareDataset)
 
 //! GlossDeclareRecipe <- 'DECLARE' 'RECIPE' Identifier 'ON' Identifier 'FROM' Identifier GlossSettings?
 //!                         'AS' StringLiteral
@@ -287,7 +287,7 @@ static arena_ptr<TransformResultValue> FinalizeDeclareRecipe(PEGTransformer &tra
 	                     {Value(name), Value(dataset), Value(source), Value(settings), Value(sql)},
 	                     "DECLARE RECIPE " + name + " ON " + dataset + " FROM " + source);
 }
-GLOSS_TRANSFORM(StartDeclareRecipe, FinalizeDeclareRecipe)
+GLOSSQL_TRANSFORM(StartDeclareRecipe, FinalizeDeclareRecipe)
 
 //! GlossProbe <- 'PROBE' Identifier 'AS' StringLiteral
 static arena_ptr<TransformResultValue> FinalizeProbe(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -296,7 +296,7 @@ static arena_ptr<TransformResultValue> FinalizeProbe(PEGTransformer &transformer
 	auto sql = Text(transformer, list.GetChild(3));
 	return MakeStatement(transformer, "probe", "", {Value(source), Value(sql)}, "PROBE " + source);
 }
-GLOSS_TRANSFORM(StartProbe, FinalizeProbe)
+GLOSSQL_TRANSFORM(StartProbe, FinalizeProbe)
 
 //! GlossImport <- 'IMPORT' Identifier GlossPathTail?
 static arena_ptr<TransformResultValue> FinalizeImport(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -312,7 +312,7 @@ static arena_ptr<TransformResultValue> FinalizeImport(PEGTransformer &transforme
 	return MakeStatement(transformer, "import", "", {dataset, Value(table)},
 	                     "IMPORT " + (dataset.IsNull() ? table : first + "." + table));
 }
-GLOSS_TRANSFORM(StartImport, FinalizeImport)
+GLOSSQL_TRANSFORM(StartImport, FinalizeImport)
 
 //! GlossDeclareFunction <- 'DECLARE' 'FUNCTION' Identifier 'FOR' GlossFunctionScope 'AS' StringLiteral
 //!                           GlossReturns?
@@ -332,7 +332,7 @@ static arena_ptr<TransformResultValue> FinalizeDeclareFunction(PEGTransformer &t
 	return MakeStatement(transformer, "function", "", {Value(name), Value(scope), Value(script), returns},
 	                     "DECLARE FUNCTION " + name + " FOR " + scope);
 }
-GLOSS_TRANSFORM(StartDeclareFunction, FinalizeDeclareFunction)
+GLOSSQL_TRANSFORM(StartDeclareFunction, FinalizeDeclareFunction)
 
 //! The grammar's expression language has no lookahead, so the end of a
 //! statement is a custom terminal: it succeeds without consuming when the
@@ -367,7 +367,7 @@ public:
 //! GlossExtract <- 'SELECT' List(GlossCall) 'FROM' GlossSubject GlossEnd
 //! GlossCall <- Identifier '(' ')'
 //! Whether this is an extraction or the plain SQL it looks like is the binder's
-//! call: the statement becomes SELECT * FROM gloss_select_or_extract(...)
+//! call: the statement becomes SELECT * FROM glossql_select_or_extract(...)
 static arena_ptr<TransformResultValue> FinalizeExtract(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	vector<unique_ptr<ParsedExpression>> calls;
@@ -385,7 +385,7 @@ static arena_ptr<TransformResultValue> FinalizeExtract(PEGTransformer &transform
 	children.push_back(make_uniq<FunctionExpression>(Identifier("list_value"), std::move(calls)));
 	children.push_back(ConstantExpression::String(text));
 	auto ref = make_uniq<TableFunctionRef>();
-	ref->function = make_uniq<FunctionExpression>(Identifier("gloss_select_or_extract"), std::move(children));
+	ref->function = make_uniq<FunctionExpression>(Identifier("glossql_select_or_extract"), std::move(children));
 	auto node = make_uniq<SelectNode>();
 	node->select_list.push_back(make_uniq<StarExpression>());
 	node->from_table = std::move(ref);
@@ -394,7 +394,7 @@ static arena_ptr<TransformResultValue> FinalizeExtract(PEGTransformer &transform
 	unique_ptr<SQLStatement> statement = std::move(select);
 	return transformer.MakeResult<unique_ptr<SQLStatement>>(std::move(statement));
 }
-GLOSS_TRANSFORM(StartExtract, FinalizeExtract)
+GLOSSQL_TRANSFORM(StartExtract, FinalizeExtract)
 
 //! GlossDeclareWitness <- 'DECLARE' 'WITNESS' Identifier 'ON' Identifier GlossBy? GlossDetector?
 //!                          GlossThreshold?
@@ -435,7 +435,7 @@ static arena_ptr<TransformResultValue> FinalizeDeclareWitness(PEGTransformer &tr
 	    {Value(name), Value(aspect), Value::LIST(LogicalType::VARCHAR, std::move(speakers)), detector, threshold},
 	    "DECLARE WITNESS " + name + " ON " + aspect);
 }
-GLOSS_TRANSFORM(StartDeclareWitness, FinalizeDeclareWitness)
+GLOSSQL_TRANSFORM(StartDeclareWitness, FinalizeDeclareWitness)
 
 //! GlossAspectKind <- GlossKindMeasurement / GlossKindFact / GlossKindQuery
 static string AspectKindText(ParseResult &parse_result) {
@@ -513,7 +513,7 @@ static arena_ptr<TransformResultValue> FinalizeDeclareAspect(PEGTransformer &tra
 	    {Value(name), Value(schema), Value(kind), Value::LIST(LogicalType::VARCHAR, std::move(grains)), condition},
 	    "DECLARE ASPECT " + name);
 }
-GLOSS_TRANSFORM(StartDeclareAspect, FinalizeDeclareAspect)
+GLOSSQL_TRANSFORM(StartDeclareAspect, FinalizeDeclareAspect)
 
 //! GlossDeclareRelationship <- 'DECLARE' 'RELATIONSHIP' GlossRelSide GlossRelOp GlossRelSide
 static arena_ptr<TransformResultValue> FinalizeDeclareRelationship(PEGTransformer &transformer,
@@ -525,11 +525,11 @@ static arena_ptr<TransformResultValue> FinalizeDeclareRelationship(PEGTransforme
 	return MakeWrite(transformer, "relationships", {Value(left), Value(op), Value(right)},
 	                 "DECLARE RELATIONSHIP " + left + " " + op + " " + right);
 }
-GLOSS_TRANSFORM(StartDeclareRelationship, FinalizeDeclareRelationship)
+GLOSSQL_TRANSFORM(StartDeclareRelationship, FinalizeDeclareRelationship)
 
 //===--------------------------------------------------------------------===//
-// Reads: GLOSSARY(...) becomes gloss_glossary(subject, aspect, all) and
-// ATTEST(...) becomes gloss_attest(subject, aspect) — stock table-function
+// Reads: GLOSSARY(...) becomes glossql_glossary(subject, aspect, all) and
+// ATTEST(...) becomes glossql_attest(subject, aspect) — stock table-function
 // references, whose bind plans the read over the store
 //===--------------------------------------------------------------------===//
 
@@ -579,9 +579,9 @@ static arena_ptr<TransformResultValue> FinalizeGlossaryRead(PEGTransformer &tran
 	children.push_back(std::move(subject));
 	children.push_back(std::move(aspect));
 	children.push_back(ConstantExpression::Boolean(all));
-	return ReadRef(transformer, "gloss_glossary", std::move(children), list.Child<OptionalParseResult>(2));
+	return ReadRef(transformer, "glossql_glossary", std::move(children), list.Child<OptionalParseResult>(2));
 }
-GLOSS_TRANSFORM(StartGlossaryRead, FinalizeGlossaryRead)
+GLOSSQL_TRANSFORM(StartGlossaryRead, FinalizeGlossaryRead)
 
 //! GlossAttestRead <- 'ATTEST' Parens(GlossAttestArgs?) TableAlias?
 //! GlossAttestArgs <- GlossSubject GlossAspectNarrow?
@@ -602,16 +602,16 @@ static arena_ptr<TransformResultValue> FinalizeAttestRead(PEGTransformer &transf
 	vector<unique_ptr<ParsedExpression>> children;
 	children.push_back(std::move(subject));
 	children.push_back(std::move(aspect));
-	return ReadRef(transformer, "gloss_attest", std::move(children), list.Child<OptionalParseResult>(2));
+	return ReadRef(transformer, "glossql_attest", std::move(children), list.Child<OptionalParseResult>(2));
 }
-GLOSS_TRANSFORM(StartAttestRead, FinalizeAttestRead)
+GLOSSQL_TRANSFORM(StartAttestRead, FinalizeAttestRead)
 
 //===--------------------------------------------------------------------===//
 // The grammar extension
 //===--------------------------------------------------------------------===//
 
 GlossGrammar::GlossGrammar()
-    : GrammarExtension("gloss", "gloss: the glossql context language over DuckDB — DECLARE, GLOSS, GLOSSARY()") {
+    : GrammarExtension("glossql", "glossql: the context language over DuckDB — DECLARE, GLOSS, GLOSSARY()") {
 }
 
 vector<GrammarChange> GlossGrammar::GetChanges() const {

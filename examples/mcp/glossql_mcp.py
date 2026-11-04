@@ -2,18 +2,18 @@
 # requires-python = ">=3.11"
 # dependencies = ["fastmcp>=4,<5", "duckdb==2.0.0"]
 # ///
-"""The MCP door: a gloss workspace behind one tool, on one DuckDB connection.
+"""The MCP door: a glossql workspace behind one tool, on one DuckDB connection.
 
-A workspace is a directory holding the opener gloss.sql, the lake's
+A workspace is a directory holding the opener glossql.sql, the lake's
 catalog and its data. The server opens one connection through the duckdb
 package, runs the opener's SQL on it (the CLI's dot commands skipped) and
 keeps it for its life: the tool `gloss` runs each call's statements there,
 one after the other, and renders what each returns. The two skills are
 resources and prompts; the opener is a resource.
 
-    uv run examples/mcp/gloss_mcp.py /path/to/workspace
+    uv run examples/mcp/glossql_mcp.py /path/to/workspace
 
-GLOSS_WORKSPACE stands in for the argument. The duckdb package is pinned
+GLOSSQL_WORKSPACE stands in for the argument. The duckdb package is pinned
 to the release the extension is built for.
 """
 
@@ -26,19 +26,19 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 REPO = Path(__file__).resolve().parents[2]
-SKILLS = {"gloss": REPO / "skills/gloss/SKILL.md"}
+SKILLS = {"glossql": REPO / "skills/glossql/SKILL.md"}
 SKILLS.update(
-    {f"gloss-{kit.name}": kit / "SKILL.md" for kit in sorted((REPO / "kits").iterdir()) if (kit / "SKILL.md").is_file()}
+    {f"glossql-{kit.name}": kit / "SKILL.md" for kit in sorted((REPO / "kits").iterdir()) if (kit / "SKILL.md").is_file()}
 )
-WORKSPACE = Path(sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GLOSS_WORKSPACE", ".")).resolve()
-OPENER = WORKSPACE / "gloss.sql"
+WORKSPACE = Path(sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GLOSSQL_WORKSPACE", ".")).resolve()
+OPENER = WORKSPACE / "glossql.sql"
 CELL = 500
 
 
 def open_workspace() -> duckdb.DuckDBPyConnection:
     """One connection, the opener run on it: the extension loaded, the lake attached, the grammar on."""
     if not OPENER.is_file():
-        sys.exit(f"gloss: no opener gloss.sql in {WORKSPACE}")
+        sys.exit(f"glossql: no opener glossql.sql in {WORKSPACE}")
     os.chdir(WORKSPACE)
     con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
     sql = "\n".join(line for line in OPENER.read_text().splitlines() if not line.lstrip().startswith("."))
@@ -79,11 +79,11 @@ def render(con: duckdb.DuckDBPyConnection, max_rows: int, max_cell: int) -> str:
 CON = open_workspace()
 
 mcp = FastMCP(
-    "gloss",
+    "glossql",
     instructions=(
-        "A gloss workspace: DuckDB, a DuckLake and the glossql context language on one connection, "
+        "A glossql workspace: DuckDB, a DuckLake and the glossql context language on one connection, "
         "behind one tool, `gloss`, which runs glossql statements and plain SQL. Read "
-        "skill://gloss/SKILL.md first (the door, the language, the reads, the store), then "
+        "skill://glossql/SKILL.md first (the door, the language, the reads, the store), then "
         "`SELECT * FROM glossql.datasets;`. The other skill resources are the kits' vocabularies, one per "
         "kit under kits/, for a workspace that loaded the kit (`SELECT name FROM glossql.kits;`)."
     ),
@@ -92,7 +92,7 @@ mcp = FastMCP(
 
 # one connection, one statement at a time: the tool runs on the server's loop, so calls queue
 @mcp.tool(run_in_thread=False)
-def gloss(statements: str, max_rows: int = 1000, max_cell: int = CELL) -> str:
+def glossql(statements: str, max_rows: int = 1000, max_cell: int = CELL) -> str:
     """Run glossql statements and plain SQL in the workspace, `;`-separated, on the server's one connection.
 
     The connection lives as long as the server: `USE <dataset>`, variables and the
@@ -133,7 +133,7 @@ for skill_name, skill_path in SKILLS.items():
     serve_skill(skill_name, skill_path)
 
 
-@mcp.resource("workspace://gloss.sql", mime_type="text/plain")
+@mcp.resource("workspace://glossql.sql", mime_type="text/plain")
 def opener() -> str:
     """The workspace's opener: the extension it loads and the lake it attaches."""
     return OPENER.read_text()

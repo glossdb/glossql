@@ -15,15 +15,15 @@ said. A workspace runs kits of its own beside these, loaded after them.
 ## Loading
 
 ```sql
-LOAD gloss;
+LOAD glossql;
 ATTACH 'ducklake:ws.ducklake' AS ws (DATA_PATH 'ws/');   -- the workspace
 USE ws;
-PRAGMA gloss;
-FROM gloss_kit('kits/kpi/kit.sql');
-FROM gloss_kit('kits/quality/kit.sql');     -- after the KPI kit, whose words its screens read against
+PRAGMA glossql;
+FROM glossql_kit('kits/kpi/kit.sql');
+FROM glossql_kit('kits/quality/kit.sql');     -- after the KPI kit, whose words its screens read against
 ```
 
-`gloss_kit(path)` reads the script through DuckDB's file system, so the
+`glossql_kit(path)` reads the script through DuckDB's file system, so the
 path is anything DuckDB opens: a local path, or a URL once `httpfs` is
 loaded (`INSTALL httpfs; LOAD httpfs;` then a raw GitHub, S3 or HTTPS
 URL). It runs the statements one by one on a second connection under the
@@ -88,17 +88,17 @@ on it; the extension records what that connection says.
 import duckdb  # the package's DuckDB version must match the extension's
 
 con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
-con.execute("LOAD 'build/release/extension/gloss/gloss.duckdb_extension'")
-con.execute("SET active_grammar_extensions = ['gloss']")
+con.execute("LOAD 'build/release/extension/glossql/glossql.duckdb_extension'")
+con.execute("SET active_grammar_extensions = ['glossql']")
 con.execute("ATTACH 'ducklake:ws.ducklake' AS ws (DATA_PATH 'ws/')")  # or a Postgres-backed lake every client shares
 con.execute("USE ws")
-con.execute("PRAGMA gloss")
-con.execute("FROM gloss_kit('kits/kpi/kit.sql')")
+con.execute("PRAGMA glossql")
+con.execute("FROM glossql_kit('kits/kpi/kit.sql')")
 
 def say(statement: str, kind: str, who: str) -> list[tuple]:
     """The door: the wrapper knows who speaks, the statement does not."""
-    con.execute("SET VARIABLE gloss_actor = ?", [kind])      # human | agent: what supersession keys on
-    con.execute("SET VARIABLE gloss_actor_id = ?", [who])    # the writer, for the record
+    con.execute("SET VARIABLE glossql_actor = ?", [kind])      # human | agent: what supersession keys on
+    con.execute("SET VARIABLE glossql_actor_id = ?", [who])    # the writer, for the record
     return con.execute(statement).fetchall()
 ```
 

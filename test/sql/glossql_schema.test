@@ -1,8 +1,8 @@
-# name: test/sql/gloss_schema.test
+# name: test/sql/glossql_schema.test
 # description: every body is JSON validated by a JSON Schema; groundings are views; WHEN bounds disclosure
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
@@ -11,13 +11,13 @@ require parquet
 require ducklake
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/gloss_schema_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_schema_lake/');
 
 statement ok
 USE ws;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 statement ok
 DECLARE DATASET fin SET (purpose: 'schemas');
@@ -164,13 +164,13 @@ fin	revenue	flow
 
 # a stop ends the view; the stop serves
 statement ok
-SET VARIABLE gloss_actor = 'human';
+SET VARIABLE glossql_actor = 'human';
 
 statement ok
 GLOSS revenue ON fin AS $${"stopped": "no cost basis landed yet"}$$;
 
 statement ok
-RESET VARIABLE gloss_actor;
+RESET VARIABLE glossql_actor;
 
 query I
 SELECT count(*) FROM duckdb_views() WHERE schema_name = 'fin' AND view_name = 'revenue';

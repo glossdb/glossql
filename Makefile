@@ -1,7 +1,7 @@
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 # Configuration of extension
-EXT_NAME=gloss
+EXT_NAME=glossql
 EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 
 # Include the Makefile from extension-ci-tools
@@ -29,8 +29,8 @@ lint-tools:
 
 lint: release
 	$(LINT_FORMAT) --check
-	ls src/*.cpp | xargs -P 6 -n 1 $(LINT_VENV)/bin/clang-tidy -p build/release -quiet -header-filter='src/include/gloss.*' --extra-arg=-DDUCKDB_CLANG_TIDY $(TIDY_SYSROOT)
-	ls src/*.cpp | xargs -P 6 -n 1 $(LINT_VENV)/bin/clang-tidy -p build/release -quiet --config="{Checks: '-*,misc-include-cleaner', WarningsAsErrors: '*', CheckOptions: {misc-include-cleaner.MissingIncludes: false}}" -header-filter='src/include/gloss.*' --extra-arg=-DDUCKDB_CLANG_TIDY $(TIDY_SYSROOT)
+	ls src/*.cpp | xargs -P 6 -n 1 $(LINT_VENV)/bin/clang-tidy -p build/release -quiet -header-filter='src/include/glossql.*' --extra-arg=-DDUCKDB_CLANG_TIDY $(TIDY_SYSROOT)
+	ls src/*.cpp | xargs -P 6 -n 1 $(LINT_VENV)/bin/clang-tidy -p build/release -quiet --config="{Checks: '-*,misc-include-cleaner', WarningsAsErrors: '*', CheckOptions: {misc-include-cleaner.MissingIncludes: false}}" -header-filter='src/include/glossql.*' --extra-arg=-DDUCKDB_CLANG_TIDY $(TIDY_SYSROOT)
 
 lint-fix:
 	$(LINT_FORMAT) --fix --noconfirm

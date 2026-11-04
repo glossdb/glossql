@@ -1,8 +1,8 @@
-# name: test/sql/gloss_cache.test
+# name: test/sql/glossql_cache.test
 # description: the instance keeps a dataset's read rows while the store and the lake stand still; a write or a definition on any connection moves them
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
@@ -11,13 +11,13 @@ require parquet
 require ducklake
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/gloss_cache_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_cache_lake/');
 
 statement ok
 USE ws;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 statement ok
 DECLARE DATASET fin SET (purpose: 'the read cache');
@@ -50,7 +50,7 @@ fin.orders.amount	meaning	current
 
 # a write on another connection moves the store's version: the next read computes again
 statement ok con1
-PRAGMA gloss;
+PRAGMA glossql;
 
 statement ok con1
 USE ws.fin;
@@ -86,7 +86,7 @@ fin.orders.id	current
 # a view over the read: a catalog scan binds it for its columns while a read
 # is computed, and a read through it serves the rows
 statement ok
-CREATE VIEW fin.standing AS SELECT subject, state FROM gloss_glossary('fin', NULL, false);
+CREATE VIEW fin.standing AS SELECT subject, state FROM glossql_glossary('fin', NULL, false);
 
 query I
 SELECT count(*) FROM information_schema.columns WHERE table_schema = 'fin' AND table_name = 'standing';
@@ -105,12 +105,12 @@ fin.spend.total	stale
 
 # the kept rows are a read's: collapsed, raw or attest
 statement error
-SELECT * FROM gloss_cached('verdicts', 'fin');
+SELECT * FROM glossql_cached('verdicts', 'fin');
 ----
 collapsed, raw or attest, not 'verdicts'
 
 query I
-SELECT count(*) FROM gloss_cached('attest', 'fin');
+SELECT count(*) FROM glossql_cached('attest', 'fin');
 ----
 0
 
@@ -118,19 +118,19 @@ SELECT count(*) FROM gloss_cached('attest', 'fin');
 # both at one version, each served its own rows
 
 statement ok
-ATTACH 'ducklake::memory:' AS a (DATA_PATH '{TEST_DIR}/gloss_cache_lake_a/');
+ATTACH 'ducklake::memory:' AS a (DATA_PATH '{TEST_DIR}/glossql_cache_lake_a/');
 
 statement ok
-ATTACH 'ducklake::memory:' AS b (DATA_PATH '{TEST_DIR}/gloss_cache_lake_b/');
+ATTACH 'ducklake::memory:' AS b (DATA_PATH '{TEST_DIR}/glossql_cache_lake_b/');
 
 statement ok
-SET VARIABLE gloss_workspace = 'a';
+SET VARIABLE glossql_workspace = 'a';
 
 statement ok
 USE a;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 statement ok
 DECLARE DATASET fin SET (purpose: 'lake a');
@@ -148,13 +148,13 @@ statement ok
 GLOSS meaning ON t.x AS $${"value": "lake a"}$$;
 
 statement ok
-SET VARIABLE gloss_workspace = 'b';
+SET VARIABLE glossql_workspace = 'b';
 
 statement ok
 USE b;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 statement ok
 DECLARE DATASET fin SET (purpose: 'lake b');
@@ -177,7 +177,7 @@ SELECT (SELECT id FROM ducklake_current_snapshot('a')) = (SELECT id FROM ducklak
 true
 
 statement ok
-SET VARIABLE gloss_workspace = 'a';
+SET VARIABLE glossql_workspace = 'a';
 
 statement ok
 USE a.fin;
@@ -188,7 +188,7 @@ SELECT subject, value->>'value' FROM GLOSSARY(fin);
 fin.t.x	lake a
 
 statement ok
-SET VARIABLE gloss_workspace = 'b';
+SET VARIABLE glossql_workspace = 'b';
 
 statement ok
 USE b.fin;

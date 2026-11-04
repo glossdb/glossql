@@ -1,8 +1,8 @@
-# name: test/sql/gloss_measurements.test
+# name: test/sql/glossql_measurements.test
 # description: a measurement lands at its pin with what it read; a later extraction serves it while those reads are unchanged, and a function voice is current while they are
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
@@ -11,13 +11,13 @@ require parquet
 require ducklake
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/gloss_measurements_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_measurements_lake/');
 
 statement ok
 USE ws;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 statement ok
 DECLARE DATASET fin SET (purpose: 'measurements');

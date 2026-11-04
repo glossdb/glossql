@@ -11,7 +11,7 @@
 // a slot reads stale once its subject changed after the snapshot it was
 // written at (SPEC §5.2), a join against the lake's column history.
 
-#include "gloss_grammar.hpp"
+#include "glossql_grammar.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -64,7 +64,7 @@ static bool SchemaExists(ClientContext &context, const string &name) {
 }
 
 //! Whether a name is a declared source, a workspace row (SPEC §5.1); read
-//! through the typed view, which stands once PRAGMA gloss ran
+//! through the typed view, which stands once PRAGMA glossql ran
 static bool SourceExists(ClientContext &context, const string &name) {
 	Connection con(*context.db);
 	auto result = con.Query("SELECT count(*) FROM " + QuoteName(LakeName(context)) +
@@ -248,13 +248,13 @@ unique_ptr<SelectStatement> ParseSelect(const string &sql) {
 	Parser parser(options);
 	parser.ParseQuery(sql);
 	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::SELECT_STATEMENT) {
-		throw InternalException("gloss: expected one SELECT, got: %s", sql);
+		throw InternalException("glossql: expected one SELECT, got: %s", sql);
 	}
 	return unique_ptr_cast<SQLStatement, SelectStatement>(std::move(parser.statements[0]));
 }
 
 //===--------------------------------------------------------------------===//
-// gloss_init: the store's DDL, run by PRAGMA gloss
+// glossql_init: the store's DDL, run by PRAGMA glossql
 //===--------------------------------------------------------------------===//
 
 //! The store relations: glossql_<relation> in the lake's metadata catalog,
@@ -321,7 +321,7 @@ static const StoreRelation &RelationOf(const string &name) {
 			return relation;
 		}
 	}
-	throw InternalException("gloss: no store relation '%s'", name);
+	throw InternalException("glossql: no store relation '%s'", name);
 }
 
 //! The newest row per key of a declaration relation: what stands after re-declarations
@@ -403,7 +403,7 @@ static unique_ptr<GlobalTableFunctionState> InitInit(ClientContext &context, Tab
 	return make_uniq<InitState>();
 }
 
-//! gloss_init(): the store tables where missing, and the lake's views over
+//! glossql_init(): the store tables where missing, and the lake's views over
 //! them. A view names the metadata catalog, so a view made under another
 //! alias is made again
 static void InitExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -438,30 +438,30 @@ static void InitExec(ClientContext &context, TableFunctionInput &data, DataChunk
 }
 
 static TableFunction GlossInitFunction() {
-	return TableFunction("gloss_init", {}, InitExec, InitBind, InitInit);
+	return TableFunction("glossql_init", {}, InitExec, InitBind, InitInit);
 }
 
-//! PRAGMA gloss: the one line a connection needs. The grammar becomes active
+//! PRAGMA glossql: the one line a connection needs. The grammar becomes active
 //! for this connection, beside any grammar already active, and the store is
 //! made where missing
 static string GlossQuery(ClientContext &context, const FunctionParameters &parameters) {
 	auto active = ClientConfig::GetConfig(context).active_grammar_extensions;
-	if (std::find(active.begin(), active.end(), "gloss") == active.end()) {
-		active.push_back("gloss");
+	if (std::find(active.begin(), active.end(), "glossql") == active.end()) {
+		active.push_back("glossql");
 		vector<Value> names;
 		for (auto &name : active) {
 			names.emplace_back(name);
 		}
 		ActiveGrammarExtensionsSetting::SetLocal(context, Value::LIST(LogicalType::VARCHAR, names));
 	}
-	return "FROM gloss_init()";
+	return "FROM glossql_init()";
 }
 
 //===--------------------------------------------------------------------===//
-// gloss_write(table, values...): appends one row to a store relation, in
+// glossql_write(table, values...): appends one row to a store relation, in
 // the statement's own transaction. The actor rides the connection (SPEC §1):
-// SET VARIABLE gloss_actor = 'human' is the kind, which supersession keys
-// on; SET VARIABLE gloss_actor_id = 'who' is the writer, for the record
+// SET VARIABLE glossql_actor = 'human' is the kind, which supersession keys
+// on; SET VARIABLE glossql_actor_id = 'who' is the writer, for the record
 //===--------------------------------------------------------------------===//
 
 struct GlossWriteBindData : public FunctionData {
@@ -511,13 +511,13 @@ static Value Variable(ClientContext &context, const char *name) {
 
 //! The actor's kind: agent unless the wrapper said otherwise
 static string ActorKindOf(ClientContext &context) {
-	auto kind = Variable(context, "gloss_actor");
+	auto kind = Variable(context, "glossql_actor");
 	return kind.IsNull() ? string("agent") : kind.ToString();
 }
 
 //! Who the actor is, NULL when the wrapper set none
 static Value ActorIdOf(ClientContext &context) {
-	return Variable(context, "gloss_actor_id");
+	return Variable(context, "glossql_actor_id");
 }
 
 //! An aspect as its newest row stands
@@ -534,7 +534,7 @@ static AspectRow LookupAspect(Inner &inner, const string &name) {
 	auto row = inner.Row("SELECT schema, kind, from_json(grains, '[\"VARCHAR\"]'), schema::JSON->>'x-kind' FROM " +
 	                     inner.Store("aspects") + " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
 	if (row.empty()) {
-		throw InvalidInputException("gloss: aspect '%s' is not declared", name);
+		throw InvalidInputException("glossql: aspect '%s' is not declared", name);
 	}
 	AspectRow result;
 	result.name = name;
@@ -575,12 +575,12 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
                             const string &body, const string &actor) {
 	auto aspect = LookupAspect(inner, aspect_name);
 	if (aspect.kind == "MEASUREMENT") {
-		throw InvalidInputException("gloss: aspect '%s' is a MEASUREMENT: never glossed, its value is its function's",
+		throw InvalidInputException("glossql: aspect '%s' is a MEASUREMENT: never glossed, its value is its function's",
 		                            aspect_name);
 	}
 	if (aspect.flavor == "grounding") {
 		throw InvalidInputException(
-		    "gloss: aspect '%s' is a grounding schema: never glossed, it validates every QUERY gloss", aspect_name);
+		    "glossql: aspect '%s' is a grounding schema: never glossed, it validates every QUERY gloss", aspect_name);
 	}
 	// A QUERY body meets the grounding contract (sql or stopped, assumptions
 	// disclosed), then every grounding schema a kit declared; a FACT body meets
@@ -588,27 +588,27 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 	if (aspect.kind == "QUERY") {
 		auto error = JsonSchemaCheck(GROUNDING_CONTRACT, body);
 		if (!error.empty()) {
-			throw InvalidInputException("gloss: the body of %s does not meet the grounding contract: %s", aspect_name,
+			throw InvalidInputException("glossql: the body of %s does not meet the grounding contract: %s", aspect_name,
 			                            error);
 		}
 		for (auto &schema : GroundingSchemas(inner)) {
 			error = JsonSchemaCheck(schema.second, body);
 			if (!error.empty()) {
-				throw InvalidInputException("gloss: the body of %s does not conform to the grounding schema %s: %s",
+				throw InvalidInputException("glossql: the body of %s does not conform to the grounding schema %s: %s",
 				                            aspect_name, schema.first, error);
 			}
 		}
 	} else {
 		auto error = JsonSchemaCheck(aspect.schema, body);
 		if (!error.empty()) {
-			throw InvalidInputException("gloss: the body of %s does not conform to the aspect's schema: %s",
+			throw InvalidInputException("glossql: the body of %s does not conform to the aspect's schema: %s",
 			                            aspect_name, error);
 		}
 	}
 	auto parts = StringUtil::Split(subject, '.');
 	bool pair = subject.find(" -> ") != string::npos || subject.find(" <-> ") != string::npos;
 	if (aspect.kind == "QUERY" && (parts.size() != 1 || pair)) {
-		throw InvalidInputException("gloss: a QUERY aspect takes the dataset as its subject, not %s", subject);
+		throw InvalidInputException("glossql: a QUERY aspect takes the dataset as its subject, not %s", subject);
 	}
 	// the grain gate (SPEC §5.1): the subject's class is one the aspect declared. A
 	// bare name is a source when one is declared by it, a dataset when a schema is,
@@ -626,17 +626,17 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 		bool admitted =
 		    HasGrain(aspect, grain) || (is_source && SchemaExists(context, subject) && HasGrain(aspect, "DATASET"));
 		if (!admitted) {
-			throw InvalidInputException("gloss: aspect '%s' is declared ON %s; %s is a %s", aspect_name,
+			throw InvalidInputException("glossql: aspect '%s' is declared ON %s; %s is a %s", aspect_name,
 			                            StringUtil::Join(aspect.grains, ", "), subject, StringUtil::Lower(grain));
 		}
 	}
 	if (!pair && parts.size() == 2 && HasGrain(aspect, "TABLE") && !RelationEntry(context, parts[0], parts[1])) {
-		throw InvalidInputException("gloss: %s names no table of %s", subject, parts[0]);
+		throw InvalidInputException("glossql: %s names no table of %s", subject, parts[0]);
 	}
 	if (!pair && parts.size() == 3 && HasGrain(aspect, "COLUMN")) {
 		auto entry = RelationEntry(context, parts[0], parts[1]);
 		if (!entry || ColumnOf(context, *entry, parts[2]).empty()) {
-			throw InvalidInputException("gloss: %s names no column of %s.%s", subject, parts[0], parts[1]);
+			throw InvalidInputException("glossql: %s names no column of %s.%s", subject, parts[0], parts[1]);
 		}
 	}
 	// only declared relationships exist (SPEC §4): a pair path is a subject once declared
@@ -644,7 +644,7 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 		auto declared = inner.Scalar("SELECT count(*) FROM " + inner.Store("relationships") +
 		                             " WHERE left_side || ' ' || op || ' ' || right_side = " + QuoteText(subject));
 		if (declared.GetValue<int64_t>() == 0) {
-			throw InvalidInputException("gloss: %s is not a declared relationship", subject);
+			throw InvalidInputException("glossql: %s is not a declared relationship", subject);
 		}
 	}
 	auto speakers = inner.Scalar("SELECT from_json(speakers, '[\"VARCHAR\"]') FROM " + inner.Store("witnesses") +
@@ -663,7 +663,7 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 			return aspect;
 		}
 	}
-	throw InvalidInputException("gloss: the witness on '%s' admits %s, not %s", aspect_name,
+	throw InvalidInputException("glossql: the witness on '%s' admits %s, not %s", aspect_name,
 	                            StringUtil::Join(names, ", "), actor);
 }
 
@@ -672,11 +672,11 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 static void AdmitEndpoint(ClientContext &context, const string &endpoint) {
 	auto parts = StringUtil::Split(endpoint, '.');
 	if (parts.size() != 3) {
-		throw InvalidInputException("gloss: a relationship endpoint is [dataset.]table.key, not %s", endpoint);
+		throw InvalidInputException("glossql: a relationship endpoint is [dataset.]table.key, not %s", endpoint);
 	}
 	auto entry = RelationEntry(context, parts[0], parts[1]);
 	if (!entry) {
-		throw InvalidInputException("gloss: %s names no table of %s", endpoint, parts[0]);
+		throw InvalidInputException("glossql: %s names no table of %s", endpoint, parts[0]);
 	}
 	vector<string> columns;
 	auto &key = parts[2];
@@ -687,7 +687,7 @@ static void AdmitEndpoint(ClientContext &context, const string &endpoint) {
 	}
 	for (auto &column : columns) {
 		if (ColumnOf(context, *entry, column).empty()) {
-			throw InvalidInputException("gloss: %s names no column %s of %s.%s", endpoint, column, parts[0], parts[1]);
+			throw InvalidInputException("glossql: %s names no column %s of %s.%s", endpoint, column, parts[0], parts[1]);
 		}
 	}
 }
@@ -700,7 +700,7 @@ static void Ground(Inner &inner, const string &dataset, const string &metric, co
 	    inner.Scalar("SELECT count(*) FROM duckdb_tables() WHERE database_name = " + QuoteText(inner.ws.lake) +
 		             " AND schema_name = " + QuoteText(dataset) + " AND table_name = " + QuoteText(metric));
 	if (landed.GetValue<int64_t>() > 0) {
-		throw InvalidInputException("gloss: a grounding on a landed table's name is refused: %s.%s", dataset, metric);
+		throw InvalidInputException("glossql: a grounding on a landed table's name is refused: %s.%s", dataset, metric);
 	}
 	auto sql = JsonStringField(body, "sql");
 	if (sql.empty()) {
@@ -744,7 +744,7 @@ static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 		auto glossed =
 		    inner.Scalar("SELECT count(*) FROM " + inner.Store("glossary") + " WHERE aspect = " + QuoteText(name));
 		if (glossed.GetValue<int64_t>() > 0) {
-			throw InvalidInputException("gloss: aspect '%s' has glosses: delete them before changing it", name);
+			throw InvalidInputException("glossql: aspect '%s' has glosses: delete them before changing it", name);
 		}
 	}
 	if (JsonStringField(row[1].ToString(), "x-kind") == "grounding") {
@@ -758,7 +758,7 @@ static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 			for (idx_t i = 0; i < chunk->size(); i++) {
 				auto error = JsonSchemaCheck(row[1].ToString(), chunk->GetValue(2, i).ToString());
 				if (!error.empty()) {
-					throw InvalidInputException("gloss: grounding schema '%s' would strand the %s gloss on %s: %s",
+					throw InvalidInputException("glossql: grounding schema '%s' would strand the %s gloss on %s: %s",
 					                            name, chunk->GetValue(0, i).ToString(),
 					                            chunk->GetValue(1, i).ToString(), error);
 				}
@@ -770,7 +770,7 @@ static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 		if (JsonStringField(condition, "aspect").empty()) {
 			// WHEN TYPE narrows columns by their data type: the grain is COLUMN alone
 			if (JsonList(row[3]) != "[\"COLUMN\"]") {
-				throw InvalidInputException("gloss: WHEN TYPE narrows columns; aspect '%s' is declared ON %s", name,
+				throw InvalidInputException("glossql: WHEN TYPE narrows columns; aspect '%s' is declared ON %s", name,
 				                            JsonList(row[3]));
 			}
 		} else {
@@ -778,7 +778,7 @@ static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 			auto literal = JsonStringField(condition, "value");
 			auto error = JsonSchemaValueEnumCheck(sibling.schema, literal);
 			if (!error.empty()) {
-				throw InvalidInputException("gloss: WHEN %s = %s: %s", sibling.name, literal, error);
+				throw InvalidInputException("glossql: WHEN %s = %s: %s", sibling.name, literal, error);
 			}
 		}
 	}
@@ -863,7 +863,7 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 		values = {bind.row[0].ToSQLString(), QuoteText(json(bind.row[1]))};
 		outcome = "declared source " + bind.row[0].ToString();
 	} else {
-		throw InternalException("gloss: no write to '%s'", bind.table);
+		throw InternalException("glossql: no write to '%s'", bind.table);
 	}
 	inner.Run("INSERT INTO " + inner.Store(bind.table) + " VALUES (" + inner.Seq(bind.table) + ", " +
 	          StringUtil::Join(values, ", ") + ", now())");
@@ -871,17 +871,17 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 	output.data[0].Append(Value(outcome));
 }
 
-//! gloss_write(table, v1, ..., vN): one overload per store relation width
+//! glossql_write(table, v1, ..., vN): one overload per store relation width
 TableFunction GlossWriteFunction(idx_t width) {
 	vector<LogicalType> arguments {LogicalType::VARCHAR};
 	for (idx_t i = 0; i < width; i++) {
 		arguments.push_back(LogicalType::ANY);
 	}
-	return TableFunction("gloss_write", arguments, GlossWriteExec, GlossWriteBind, GlossWriteInit);
+	return TableFunction("glossql_write", arguments, GlossWriteExec, GlossWriteBind, GlossWriteInit);
 }
 
 static TableFunctionSet GlossWriteFunctions() {
-	TableFunctionSet set("gloss_write");
+	TableFunctionSet set("glossql_write");
 	for (idx_t width = 2; width <= 6; width++) {
 		set.AddFunction(GlossWriteFunction(width));
 	}
@@ -914,7 +914,7 @@ static ParserExtensionPlanResult GlossPlan(ParserExtensionInfo *info, ClientCont
 	} else if (data.kind == "witness") {
 		result.function = GlossWitnessFunction();
 	} else {
-		throw InternalException("gloss: unknown statement kind '%s'", data.kind);
+		throw InternalException("glossql: unknown statement kind '%s'", data.kind);
 	}
 	for (auto &value : data.row) {
 		result.parameters.push_back(value);
@@ -1182,9 +1182,9 @@ static string VerdictsSQL(Inner &inner, const vector<WitnessRow> &witnesses, con
 			continue;
 		}
 		if (!landed) {
-			auto made = inner.con.Query("CREATE OR REPLACE TEMP TABLE gloss_slots AS " + SlotsSQL(scope, ""));
+			auto made = inner.con.Query("CREATE OR REPLACE TEMP TABLE glossql_slots AS " + SlotsSQL(scope, ""));
 			if (made->HasError()) {
-				throw InvalidInputException("gloss: the slots of %s could not be read: %s", scope.dataset,
+				throw InvalidInputException("glossql: the slots of %s could not be read: %s", scope.dataset,
 				                            FirstLine(made->GetError()));
 			}
 			landed = true;
@@ -1195,7 +1195,7 @@ static string VerdictsSQL(Inner &inner, const vector<WitnessRow> &witnesses, con
 		// with its own WITH composes
 		auto result = inner.con.Query(
 		    "SELECT d.subject::VARCHAR, d.band::VARCHAR, d.score::DOUBLE FROM (WITH slots AS (" +
-		    WitnessSlotsSQL("gloss_slots", witness.aspect) + ") SELECT * FROM (" + script + ") AS q) AS d");
+		    WitnessSlotsSQL("glossql_slots", witness.aspect) + ") SELECT * FROM (" + script + ") AS q) AS d");
 		if (result->HasError()) {
 			parts.push_back(ErrorVerdictSQL(head, slots, FirstLine(result->GetError())));
 			continue;
@@ -1245,7 +1245,7 @@ static string OwedSQL(const vector<WitnessRow> &witnesses, const ReadScope &scop
 		}
 		auto aspect = ", " + QuoteText(witness.aspect) + " AS aspect";
 		auto dataset = QuoteText(scope.dataset);
-		auto columns = " FROM gloss_columns(" + dataset + ")";
+		auto columns = " FROM glossql_columns(" + dataset + ")";
 		vector<string> owed;
 		for (auto &grain : grains) {
 			if (grain == "COLUMN") {
@@ -1334,7 +1334,7 @@ static string RawSQL(const ReadScope &scope, const Value &aspect) {
 }
 
 //===--------------------------------------------------------------------===//
-// gloss_columns(subject[, views]): every column of a dataset's tables, or of
+// glossql_columns(subject[, views]): every column of a dataset's tables, or of
 // one table, and of its views unless views is false — (table_name,
 // column_name, column_type, ordinal_position, table_type). What the reads,
 // the kits and the cells read a dataset's shape from: the dataset's own
@@ -1370,7 +1370,7 @@ static unique_ptr<FunctionData> ColumnsBind(ClientContext &context, TableFunctio
 	auto subject = ResolveSubject(context, input.inputs[0].ToString());
 	auto parts = StringUtil::Split(subject, '.');
 	if (parts.empty() || parts.size() > 2) {
-		throw InvalidInputException("gloss: gloss_columns takes a dataset or dataset.table, got '%s'", subject);
+		throw InvalidInputException("glossql: glossql_columns takes a dataset or dataset.table, got '%s'", subject);
 	}
 	auto result = make_uniq<ColumnsBindData>();
 	result->dataset = parts[0];
@@ -1406,9 +1406,9 @@ static void ColumnsExec(ClientContext &context, TableFunctionInput &data, DataCh
 }
 
 static TableFunctionSet GlossColumnsFunctions() {
-	TableFunctionSet set("gloss_columns");
-	set.AddFunction(TableFunction("gloss_columns", {LogicalType::VARCHAR}, ColumnsExec, ColumnsBind, ColumnsInit));
-	set.AddFunction(TableFunction("gloss_columns", {LogicalType::VARCHAR, LogicalType::BOOLEAN}, ColumnsExec,
+	TableFunctionSet set("glossql_columns");
+	set.AddFunction(TableFunction("glossql_columns", {LogicalType::VARCHAR}, ColumnsExec, ColumnsBind, ColumnsInit));
+	set.AddFunction(TableFunction("glossql_columns", {LogicalType::VARCHAR, LogicalType::BOOLEAN}, ColumnsExec,
 	                              ColumnsBind, ColumnsInit));
 	return set;
 }
@@ -1430,7 +1430,7 @@ struct CachedRead : public ObjectCacheEntry {
 	shared_ptr<ColumnDataCollection> rows;
 
 	static string ObjectType() {
-		return "gloss_read";
+		return "glossql_read";
 	}
 	string GetObjectType() override {
 		return ObjectType();
@@ -1442,21 +1442,21 @@ struct CachedRead : public ObjectCacheEntry {
 
 //! The fill mark on the second connection (ClientContextState) while it
 //! computes a read: a gloss read bound meanwhile is the shape of a dataset
-//! view gloss_columns binds, never a read run, and binds as an empty relation
+//! view glossql_columns binds, never a read run, and binds as an empty relation
 //! of the read's columns — a fill never recurses. A read bind opens one
 //! connection, for the version check and the fill, closed with the bind
 struct ReadFill : public ClientContextState {
 	bool filling = false;
 
 	static ReadFill &Of(ClientContext &context) {
-		return *context.registered_state->GetOrCreate<ReadFill>("gloss_read_fill");
+		return *context.registered_state->GetOrCreate<ReadFill>("glossql_read_fill");
 	}
 };
 
 //! A read is kept per lake: two workspaces attached to one instance can hold
 //! a dataset of one name at one version each
 static string CacheKey(const string &lake, const string &kind, const string &dataset) {
-	return "gloss_read|" + lake + "|" + kind + "|" + dataset;
+	return "glossql_read|" + lake + "|" + kind + "|" + dataset;
 }
 
 //! The store's version: the lake's current snapshot and every store relation's
@@ -1493,7 +1493,7 @@ static string ReadSQL(Inner &inner, const string &kind, const ReadScope &whole) 
 		return "WITH " + string(HOISTED) + " AS MATERIALIZED (" + SlotsSQL(whole, "") + ") SELECT " +
 		       string(ATTEST_COLUMNS) + " FROM (" + VerdictsSQL(inner, Witnesses(inner, Value()), whole) + ")";
 	}
-	throw InvalidInputException("gloss_cached serves a read: collapsed, raw or attest, not '%s'", kind);
+	throw InvalidInputException("glossql_cached serves a read: collapsed, raw or attest, not '%s'", kind);
 }
 
 //! One kind of read over a whole dataset: as kept while the store's version
@@ -1520,7 +1520,7 @@ static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const
 	return read;
 }
 
-//! gloss_cached(kind, dataset): a dataset's read as kept, scanned; the reads
+//! glossql_cached(kind, dataset): a dataset's read as kept, scanned; the reads
 //! narrow it in SQL
 struct CachedBindData : public FunctionData {
 	shared_ptr<CachedRead> read;
@@ -1564,7 +1564,7 @@ static void CachedExec(ClientContext &context, TableFunctionInput &data, DataChu
 }
 
 static TableFunction GlossCachedFunction() {
-	return TableFunction("gloss_cached", {LogicalType::VARCHAR, LogicalType::VARCHAR}, CachedExec, CachedBind,
+	return TableFunction("glossql_cached", {LogicalType::VARCHAR, LogicalType::VARCHAR}, CachedExec, CachedBind,
 	                     CachedInit);
 }
 
@@ -1583,10 +1583,10 @@ string StoreVersion(Inner &inner) {
 //===--------------------------------------------------------------------===//
 
 static string ViewKey(const string &lake, const string &dataset, const string &view) {
-	return "gloss_view|" + lake + "|" + dataset + "|" + view;
+	return "glossql_view|" + lake + "|" + dataset + "|" + view;
 }
 
-//! gloss_kept_view(dataset, view, version): the view's rows as kept at that
+//! glossql_kept_view(dataset, view, version): the view's rows as kept at that
 //! version, else computed on the inner connection and kept. The version is
 //! the caller's, read once for every view a cells read binds
 static unique_ptr<FunctionData> KeptViewBind(ClientContext &context, TableFunctionBindInput &input,
@@ -1619,7 +1619,7 @@ static unique_ptr<FunctionData> KeptViewBind(ClientContext &context, TableFuncti
 }
 
 static TableFunction GlossKeptViewFunction() {
-	return TableFunction("gloss_kept_view", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	return TableFunction("glossql_kept_view", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                     CachedExec, KeptViewBind, CachedInit);
 }
 
@@ -1643,7 +1643,7 @@ static unique_ptr<TableRef> Shape(const string &columns) {
 
 //! The narrowing a bind applies over the dataset's kept rows
 static string Narrowed(const string &kind, const ReadScope &scope, const Value &aspect, const string &order) {
-	return "SELECT * FROM gloss_cached(" + QuoteText(kind) + ", " + QuoteText(scope.dataset) + ") WHERE true" +
+	return "SELECT * FROM glossql_cached(" + QuoteText(kind) + ", " + QuoteText(scope.dataset) + ") WHERE true" +
 	       (scope.whole ? string() : " AND " + scope.subjects) + AspectFilter(aspect) + " ORDER BY " + order;
 }
 
@@ -1658,7 +1658,7 @@ static unique_ptr<TableRef> GlossGlossaryBindReplace(ClientContext &context, Tab
 }
 
 static TableFunction GlossGlossaryFunction() {
-	TableFunction function("gloss_glossary", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN},
+	TableFunction function("glossql_glossary", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN},
 	                       nullptr);
 	function.bind_replace = GlossGlossaryBindReplace;
 	return function;
@@ -1673,7 +1673,7 @@ static unique_ptr<TableRef> GlossAttestBindReplace(ClientContext &context, Table
 }
 
 static TableFunction GlossAttestFunction() {
-	TableFunction function("gloss_attest", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr);
+	TableFunction function("glossql_attest", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr);
 	function.bind_replace = GlossAttestBindReplace;
 	return function;
 }
@@ -1684,7 +1684,7 @@ static TableFunction GlossAttestFunction() {
 
 void RegisterGlossStore(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossInitFunction());
-	loader.RegisterFunction(PragmaFunction::PragmaCall("gloss", GlossQuery, {}));
+	loader.RegisterFunction(PragmaFunction::PragmaCall("glossql", GlossQuery, {}));
 	loader.RegisterFunction(GlossWriteFunctions());
 	loader.RegisterFunction(GlossGlossaryFunction());
 	loader.RegisterFunction(GlossAttestFunction());

@@ -6,14 +6,14 @@
 // shaped, so two plans that derive a column the same way read the same and a
 // source whose column arrives under another type reads different.
 //
-//   gloss_lineage(sql) -> (column, derivation, complete)
+//   glossql_lineage(sql) -> (column, derivation, complete)
 //
 // A landing records its recipe's lineage per column on its imports row; a
 // gloss on a column reads stale once the derivation behind it moved, which
 // is SPEC §3's re-derivation, and the row-to-row diff of the imports is the
 // drift record of what the source sends.
 
-#include "gloss_grammar.hpp"
+#include "glossql_grammar.hpp"
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -333,7 +333,7 @@ string LineageJson(const QueryLineage &lineage, const string &sql) {
 }
 
 //===--------------------------------------------------------------------===//
-// gloss_lineage(sql): the derivation of each column of a SELECT, as the
+// glossql_lineage(sql): the derivation of each column of a SELECT, as the
 // session would plan it
 //===--------------------------------------------------------------------===//
 
@@ -377,7 +377,7 @@ static void LineageExec(ClientContext &context, TableFunctionInput &data, DataCh
 	Inner inner(context);
 	auto lineage = LineageOf(*inner.con.context, sql);
 	if (lineage.columns.empty()) {
-		throw InvalidInputException("gloss_lineage takes one SELECT: %s", sql);
+		throw InvalidInputException("glossql_lineage takes one SELECT: %s", sql);
 	}
 	idx_t row = 0;
 	for (auto &column : lineage.columns) {
@@ -390,8 +390,8 @@ static void LineageExec(ClientContext &context, TableFunctionInput &data, DataCh
 }
 
 //===--------------------------------------------------------------------===//
-// gloss_views_lineage(dataset): the derivation of each column of every view
-// of a dataset — a grounding's view among them — as gloss_lineage gives one
+// glossql_views_lineage(dataset): the derivation of each column of every view
+// of a dataset — a grounding's view among them — as glossql_lineage gives one
 // view's; a view that does not plan serves one row naming it, complete
 // false and no column
 //===--------------------------------------------------------------------===//
@@ -431,7 +431,7 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 	    "SELECT table_name FROM information_schema.tables WHERE table_catalog = " + QuoteText(inner.ws.lake) +
 	    " AND table_schema = " + QuoteText(dataset) + " AND table_type = 'VIEW' ORDER BY table_name");
 	if (listed->HasError()) {
-		throw InvalidInputException("gloss_views_lineage: %s", listed->GetError());
+		throw InvalidInputException("glossql_views_lineage: %s", listed->GetError());
 	}
 	while (auto chunk = listed->Fetch()) {
 		for (idx_t i = 0; i < chunk->size(); i++) {
@@ -469,9 +469,9 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 
 void RegisterGlossLineage(ExtensionLoader &loader) {
 	loader.RegisterFunction(
-	    TableFunction("gloss_lineage", {LogicalType::VARCHAR}, LineageExec, LineageBind, LineageInit));
+	    TableFunction("glossql_lineage", {LogicalType::VARCHAR}, LineageExec, LineageBind, LineageInit));
 	loader.RegisterFunction(
-	    TableFunction("gloss_views_lineage", {LogicalType::VARCHAR}, ViewsLineageExec, ViewsLineageBind, LineageInit));
+	    TableFunction("glossql_views_lineage", {LogicalType::VARCHAR}, ViewsLineageExec, ViewsLineageBind, LineageInit));
 }
 
 } // namespace duckdb

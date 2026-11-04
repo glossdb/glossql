@@ -1,8 +1,8 @@
-# name: test/sql/gloss.test
+# name: test/sql/glossql.test
 # description: the glossql grammar as a DuckDB 2.0 grammar extension — spike coverage
 # group: [sql]
 
-require gloss
+require glossql
 
 require json
 
@@ -17,27 +17,27 @@ GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;
 Parser Error
 
 query TT
-SELECT name, description FROM duckdb_grammar_extensions() WHERE name = 'gloss';
+SELECT name, description FROM duckdb_grammar_extensions() WHERE name = 'glossql';
 ----
-gloss	gloss: the glossql context language over DuckDB — DECLARE, GLOSS, GLOSSARY()
+glossql	glossql: the context language over DuckDB — DECLARE, GLOSS, GLOSSARY()
 
-# PRAGMA gloss activates the grammar for this connection beside what is active, and makes the store
+# PRAGMA glossql activates the grammar for this connection beside what is active, and makes the store
 query T
-SELECT list_contains(current_setting('active_grammar_extensions'), 'gloss');
+SELECT list_contains(current_setting('active_grammar_extensions'), 'glossql');
 ----
 false
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/gloss_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_lake/');
 
 statement ok
 USE ws;
 
 statement ok
-PRAGMA gloss;
+PRAGMA glossql;
 
 query T
-SELECT list_contains(current_setting('active_grammar_extensions'), 'gloss');
+SELECT list_contains(current_setting('active_grammar_extensions'), 'glossql');
 ----
 true
 
@@ -75,23 +75,23 @@ statement ok
 GLOSS unit ON orders.amount AS $${"value": "EUR", "source_column": "currency_code"}$$;
 
 statement ok
-SET VARIABLE gloss_actor = 'human';
+SET VARIABLE glossql_actor = 'human';
 
 statement ok
 GLOSS unit ON orders.amount AS $${"value": "USD"}$$;
 
 # who the actor is rides the connection too, for the record; supersession keys on the kind alone
 statement ok
-SET VARIABLE gloss_actor_id = 'philipp';
+SET VARIABLE glossql_actor_id = 'philipp';
 
 statement ok
 GLOSS unit ON orders.amount AS $${"value": "CHF"}$$;
 
 statement ok
-RESET VARIABLE gloss_actor;
+RESET VARIABLE glossql_actor;
 
 statement ok
-RESET VARIABLE gloss_actor_id;
+RESET VARIABLE glossql_actor_id;
 
 query TTTTT
 SELECT dataset, subject, aspect, actor_kind, actor_id FROM glossql.glossary ORDER BY actor_kind, seq;

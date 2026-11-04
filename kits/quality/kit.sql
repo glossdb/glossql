@@ -2,8 +2,8 @@
 -- Loaded after the KPI kit, whose words its readers condition on. What an
 -- actor must learn about these words is SKILL.md beside this file.
 --
---   FROM gloss_kit('kits/kpi/kit.sql');
---   FROM gloss_kit('kits/quality/kit.sql');
+--   FROM glossql_kit('kits/kpi/kit.sql');
+--   FROM glossql_kit('kits/quality/kit.sql');
 --
 -- The screens are table macros over dataset_cells(subject): every cell of a
 -- dataset's tables, or of one table, as (table, column, ci, column_type, rn,
@@ -344,7 +344,7 @@ vcells AS (SELECT * FROM dataset_cells(ds, 'views') WHERE "table" IN (SELECT asp
 vcols AS (SELECT DISTINCT "table", "column", ci, column_type FROM vcells),
 claims AS (
   SELECT split_part(subject, '.', 2) AS aspect, split_part(subject, '.', 3) AS col, g.aspect AS claim, value
-  FROM gloss_glossary(ds, NULL, false) g
+  FROM glossql_glossary(ds, NULL, false) g
   WHERE g.aspect IN ('role', 'behavior') AND state IN ('current', 'stale') AND value IS NOT NULL
     AND len(string_split(subject, '.')) = 3 AND split_part(subject, '.', 2) IN (SELECT aspect FROM groundings)),
 roles AS (
