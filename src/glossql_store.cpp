@@ -687,7 +687,8 @@ static void AdmitEndpoint(ClientContext &context, const string &endpoint) {
 	}
 	for (auto &column : columns) {
 		if (ColumnOf(context, *entry, column).empty()) {
-			throw InvalidInputException("glossql: %s names no column %s of %s.%s", endpoint, column, parts[0], parts[1]);
+			throw InvalidInputException("glossql: %s names no column %s of %s.%s", endpoint, column, parts[0],
+			                            parts[1]);
 		}
 	}
 }

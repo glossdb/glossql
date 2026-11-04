@@ -20,6 +20,20 @@ jobs:
       ci_tools_version: v2.0-cyanoptera
       extension_name: glossql
 
+  # The format is this repository's: the venv's clang-format, pinned in the
+  # Makefile, run here exactly as `make lint-format` runs it on a laptop
+  format-check:
+    name: Format Check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - name: Lint tools
+        run: pipx install uv && make lint-tools
+      - name: Format check
+        run: make lint-format
+
   code-quality-check:
     name: Code Quality Check
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v2.0-cyanoptera
@@ -28,6 +42,5 @@ jobs:
       ci_tools_version: v2.0-cyanoptera
       extension_name: glossql
       # tidy alone: the template's Format Check pins clang-format 11 and takes
-      # no other, while DuckDB 2.0 builds with a C++17 toolchain; the formatter
-      # is the current clang-format that `make lint` runs
+      # no other; the format check above runs this repository's formatter
       format_checks: 'tidy'

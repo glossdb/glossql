@@ -470,8 +470,8 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 void RegisterGlossLineage(ExtensionLoader &loader) {
 	loader.RegisterFunction(
 	    TableFunction("glossql_lineage", {LogicalType::VARCHAR}, LineageExec, LineageBind, LineageInit));
-	loader.RegisterFunction(
-	    TableFunction("glossql_views_lineage", {LogicalType::VARCHAR}, ViewsLineageExec, ViewsLineageBind, LineageInit));
+	loader.RegisterFunction(TableFunction("glossql_views_lineage", {LogicalType::VARCHAR}, ViewsLineageExec,
+	                                      ViewsLineageBind, LineageInit));
 }
 
 } // namespace duckdb

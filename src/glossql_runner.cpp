@@ -578,7 +578,8 @@ static void ProbeExec(ClientContext &context, TableFunctionInput &data, DataChun
 }
 
 TableFunction GlossProbeFunction() {
-	return TableFunction("glossql_probe", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ProbeExec, ProbeBind, ProbeInit);
+	return TableFunction("glossql_probe", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ProbeExec, ProbeBind,
+	                     ProbeInit);
 }
 
 //===--------------------------------------------------------------------===//
@@ -694,7 +695,8 @@ static void WitnessExec(ClientContext &context, TableFunctionInput &data, DataCh
 	}
 	auto &kind = standing[0];
 	if (!standing[1].IsNull() && standing[1].ToString() == "grounding") {
-		throw InvalidInputException("glossql: a witness on grounding schema '%s' is refused: it judges nothing", aspect);
+		throw InvalidInputException("glossql: a witness on grounding schema '%s' is refused: it judges nothing",
+		                            aspect);
 	}
 	if (kind.ToString() == "MEASUREMENT" && !speakers.empty()) {
 		throw InvalidInputException("glossql: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
@@ -985,8 +987,8 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 }
 
 TableFunction GlossExtractFunction() {
-	return TableFunction("glossql_extract", {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)}, ExtractExec,
-	                     ExtractBind, ExtractInit);
+	return TableFunction("glossql_extract", {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)},
+	                     ExtractExec, ExtractBind, ExtractInit);
 }
 
 //! glossql_select_or_extract(subject, calls, text): the extract rule captured

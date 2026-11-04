@@ -137,8 +137,8 @@ void RegisterGlossService(ExtensionLoader &loader) {
 	                          LogicalType::VARCHAR, Value(""), nullptr, SetScope::GLOBAL);
 	config.AddExtensionOption("glossql_service_token", "The bearer sent on every service call; empty sends none",
 	                          LogicalType::VARCHAR, Value(""), nullptr, SetScope::GLOBAL);
-	config.AddExtensionOption("glossql_service_timeout", "Seconds one service call may take, whole", LogicalType::BIGINT,
-	                          Value::BIGINT(600), nullptr, SetScope::GLOBAL);
+	config.AddExtensionOption("glossql_service_timeout", "Seconds one service call may take, whole",
+	                          LogicalType::BIGINT, Value::BIGINT(600), nullptr, SetScope::GLOBAL);
 	ScalarFunctionSet set("glossql_service");
 	ScalarFunction service("glossql_service", {LogicalType::VARCHAR, LogicalType::JSON()}, LogicalType::JSON(),
 	                       ServiceExec);

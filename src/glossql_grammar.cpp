@@ -236,7 +236,7 @@ static arena_ptr<TransformResultValue> MakeWrite(PEGTransformer &transformer, co
 	return MakeStatement(transformer, "write", table, std::move(row), std::move(text));
 }
 
-#define GLOSSQL_TRANSFORM(START, FINALIZE)                                                                               \
+#define GLOSSQL_TRANSFORM(START, FINALIZE)                                                                             \
 	static arena_ptr<TransformProcess> START(PEGTransformer &transformer, ParseResult &parse_result) {                 \
 		return transformer.MakeProcess<FinalizeTransformProcess>(transformer, parse_result, FINALIZE);                 \
 	}
