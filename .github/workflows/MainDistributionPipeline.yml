@@ -27,4 +27,7 @@ jobs:
       duckdb_version: v2.0.0
       ci_tools_version: v2.0-cyanoptera
       extension_name: glossql
-      format_checks: 'format;tidy'
+      # tidy alone: the template's Format Check pins clang-format 11 and takes
+      # no other, while DuckDB 2.0 builds with a C++17 toolchain; the formatter
+      # is the current clang-format that `make lint` runs
+      format_checks: 'tidy'
