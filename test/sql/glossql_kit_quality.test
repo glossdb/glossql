@@ -427,8 +427,8 @@ SELECT subject, band, score FROM ATTEST(orders::ids_present);
 ----
 fin.orders	red	0.2
 
-# the kit run again is silent
-query I
-SELECT count(*) FROM (FROM glossql_kit('kits/quality/kit.sql')) WHERE outcome <> 'ok' AND outcome NOT LIKE '%unchanged: no-op';
+# the kit run again with the same text stands: one row, nothing runs
+query TT
+FROM glossql_kit('kits/quality/kit.sql');
 ----
-0
+quality	stands
