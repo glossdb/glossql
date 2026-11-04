@@ -18,7 +18,6 @@
 #include "glossql_grammar.hpp"
 
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"

@@ -107,6 +107,7 @@ disagreement to resolve by re-glossing with grounds, not to overwrite.
 | `DECLARE RELATIONSHIP dept_emp.emp_no -> employees.emp_no;` | declare a join edge (`<->` both ways; `a.(x, y) -> b.(x, y)` composite) between landed columns |
 | `DECLARE ASPECT name WITH $$json-schema$$ AS FACT\|MEASUREMENT\|QUERY [ON TABLE, COLUMN, DATASET, SOURCE, RELATIONSHIP [WHEN aspect = 'value' \| WHEN TYPE = 'T' \| WHEN TYPE IN ('T', 'U')]];` | add a word; the schema is checked on every body; `ON` is the grain, `WHEN` narrows what is owed: to subjects whose sibling aspect says so, or to columns of a data type (the base type, `DECIMAL` for `DECIMAL(18,2)`; `ON COLUMN` alone) |
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot; a QUERY aspect is glossed on the dataset (`GLOSS revenue ON fin AS …`) and then serves as the view `fin.revenue` |
+| `DELETE FROM glossary WHERE subject = '…' AND aspect = '…';` | take rows out of the record for good; what the newest remaining rows say then serves; `glossql.glossary` and the lake's full name spell the same rows |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context, one row per subject and aspect |
 | `SELECT … FROM GLOSSARY(subject, all => true);` | every slot, raw |
 | `SELECT … FROM ATTEST(subject \| subject::aspect);` | the witnesses' verdicts |

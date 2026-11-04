@@ -1,7 +1,7 @@
 // The glossql store: the workspace is an attached DuckLake, and the store
 // relations are tables in its metadata catalog, glossql_<relation> beside the
-// ducklake_* tables, written by the statements the grammar adds and read by
-// GLOSSARY() and ATTEST().
+// ducklake_* tables, written by the statements the grammar adds, read by
+// GLOSSARY() and ATTEST(), and deleted from by DELETE FROM glossary.
 //
 // A dataset is a schema of the lake (SPEC §3): DECLARE DATASET fin creates
 // schema fin, DuckDB's own USE binds it, and an unprefixed subject resolves
@@ -262,57 +262,63 @@ unique_ptr<SelectStatement> ParseSelect(const string &sql) {
 //! pairs land as one JSON object, `settings`; `key` is the columns a
 //! re-declaration supersedes by, empty for a relation that is history. The
 //! lake's schema `glossql` reads each as a typed view: JSON bodies, lists from
-//! their JSON text
+//! their JSON text. `stamp` is the column that dates a row, the store's
+//! version reading its newest
 struct StoreRelation {
 	const char *name;
 	const char *columns;
 	const char *key;
 	const char *view;
+	const char *stamp;
 };
 
 static const StoreRelation STORE_RELATIONS[] = {
     {"datasets", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL", "name",
-	 "seq, name, settings::JSON AS settings, declared_at"},
+	 "seq, name, settings::JSON AS settings, declared_at", "declared_at"},
     {"kits",
 	 "name VARCHAR NOT NULL, location VARCHAR NOT NULL, statements INTEGER NOT NULL, loaded_at TIMESTAMP NOT NULL", "",
-	 "*"},
+	 "*", "loaded_at"},
     {"sources", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL", "name",
-	 "seq, name, settings::JSON AS settings, declared_at"},
+	 "seq, name, settings::JSON AS settings, declared_at", "declared_at"},
     {"recipes",
 	 "dataset VARCHAR NOT NULL, table_name VARCHAR NOT NULL, source VARCHAR NOT NULL, settings VARCHAR NOT NULL, "
 	 "sql VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL",
-	 "dataset, table_name", "seq, dataset, table_name, source, settings::JSON AS settings, sql, declared_at"},
+	 "dataset, table_name", "seq, dataset, table_name, source, settings::JSON AS settings, sql, declared_at",
+	 "declared_at"},
     {"imports",
 	 "dataset VARCHAR NOT NULL, table_name VARCHAR NOT NULL, mode VARCHAR NOT NULL, rows BIGINT NOT NULL, "
 	 "dropped_rows_count BIGINT, lineage VARCHAR NOT NULL, snapshot_id BIGINT, imported_at TIMESTAMP NOT NULL",
-	 "",
-	 "seq, dataset, table_name, mode, rows, dropped_rows_count, lineage::JSON AS lineage, snapshot_id, imported_at"},
+	 "", "seq, dataset, table_name, mode, rows, dropped_rows_count, lineage::JSON AS lineage, snapshot_id, imported_at",
+	 "imported_at"},
     {"aspects",
 	 "name VARCHAR NOT NULL, kind VARCHAR NOT NULL, grains VARCHAR NOT NULL, condition VARCHAR, "
 	 "schema VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL",
 	 "name",
 	 "seq, name, kind, from_json(grains, '[\"VARCHAR\"]') AS grains, condition::JSON AS condition, "
-	 "schema::JSON AS schema, declared_at"},
+	 "schema::JSON AS schema, declared_at",
+	 "declared_at"},
     {"glossary",
 	 "dataset VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actor_kind VARCHAR NOT NULL, "
 	 "actor_id VARCHAR, body VARCHAR NOT NULL, snapshot_id BIGINT, written_at TIMESTAMP NOT NULL",
-	 "", "seq, dataset, subject, aspect, actor_kind, actor_id, body::JSON AS body, snapshot_id, written_at"},
+	 "", "seq, dataset, subject, aspect, actor_kind, actor_id, body::JSON AS body, snapshot_id, written_at",
+	 "written_at"},
     {"relationships",
 	 "dataset VARCHAR NOT NULL, left_side VARCHAR NOT NULL, op VARCHAR NOT NULL, right_side VARCHAR NOT NULL, "
 	 "declared_at TIMESTAMP NOT NULL",
-	 "", "*"},
+	 "", "*", "declared_at"},
     {"functions",
 	 "name VARCHAR NOT NULL, scope VARCHAR NOT NULL, script VARCHAR NOT NULL, returns VARCHAR, "
 	 "declared_at TIMESTAMP NOT NULL",
-	 "name, scope", "*"},
+	 "name, scope", "*", "declared_at"},
     {"measurements",
 	 "dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, "
 	 "pin VARCHAR, value VARCHAR NOT NULL, computed_at TIMESTAMP NOT NULL, reads VARCHAR",
-	 "", "seq, dataset, function, subject, aspect, pin, value::JSON AS value, computed_at, reads"},
+	 "", "seq, dataset, function, subject, aspect, pin, value::JSON AS value, computed_at, reads", "computed_at"},
     {"witnesses",
 	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, speakers VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
 	 "declared_at TIMESTAMP NOT NULL",
-	 "aspect", "seq, name, aspect, from_json(speakers, '[\"VARCHAR\"]') AS speakers, detector, threshold, declared_at"},
+	 "aspect", "seq, name, aspect, from_json(speakers, '[\"VARCHAR\"]') AS speakers, detector, threshold, declared_at",
+	 "declared_at"},
 };
 
 static const StoreRelation &RelationOf(const string &name) {
@@ -890,6 +896,67 @@ static TableFunctionSet GlossWriteFunctions() {
 }
 
 //===--------------------------------------------------------------------===//
+// DELETE FROM [lake.][glossql.]glossary [alias] [WHERE ...]: SPEC §5.2's
+// removal. The lake reads the store as views, and the engine deletes through
+// a table only, so the statement runs on the store's table, where every write
+// goes. Its result is a DELETE's: the rows removed
+//===--------------------------------------------------------------------===//
+
+struct GlossDeleteBindData : public FunctionData {
+	//! the lake named, the alias and the WHERE as SQL text, each NULL for none
+	Value lake;
+	Value alias;
+	Value where;
+
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<GlossDeleteBindData>();
+		result->lake = lake;
+		result->alias = alias;
+		result->where = where;
+		return std::move(result);
+	}
+	bool Equals(const FunctionData &other_p) const override {
+		auto &other = other_p.Cast<GlossDeleteBindData>();
+		return lake == other.lake && alias == other.alias && where == other.where;
+	}
+};
+
+static unique_ptr<FunctionData> GlossDeleteBind(ClientContext &context, TableFunctionBindInput &input,
+                                                vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto result = make_uniq<GlossDeleteBindData>();
+	result->lake = input.inputs[0];
+	result->alias = input.inputs[1];
+	result->where = input.inputs[2];
+	return_types.push_back(LogicalType::BIGINT);
+	names.emplace_back("Count");
+	return std::move(result);
+}
+
+static void GlossDeleteExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &state = data.global_state->Cast<GlossWriteState>();
+	if (state.done) {
+		return;
+	}
+	state.done = true;
+	auto &bind = data.bind_data->Cast<GlossDeleteBindData>();
+	Inner inner(context);
+	// the lake named is this connection's workspace, whose store it is
+	if (!bind.lake.IsNull() && !StringUtil::CIEquals(bind.lake.ToString(), inner.ws.lake)) {
+		throw InvalidInputException("glossql: the workspace is %s, not %s", inner.ws.lake, bind.lake.ToString());
+	}
+	// the table carries the view's name as its alias, so a WHERE written against the view binds
+	auto alias = bind.alias.IsNull() ? string("glossary") : bind.alias.ToString();
+	auto count = inner.Scalar("DELETE FROM " + inner.Store("glossary") + " AS " + QuoteName(alias) +
+	                          (bind.where.IsNull() ? "" : " WHERE " + bind.where.ToString()));
+	output.data[0].Append(Value::BIGINT(count.GetValue<int64_t>()));
+}
+
+TableFunction GlossDeleteFunction() {
+	return TableFunction("glossql_delete", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                     GlossDeleteExec, GlossDeleteBind, GlossWriteInit);
+}
+
+//===--------------------------------------------------------------------===//
 // The plan: every glossql statement is one scan of its table function
 //===--------------------------------------------------------------------===//
 
@@ -898,9 +965,16 @@ static ParserExtensionPlanResult GlossPlan(ParserExtensionInfo *info, ClientCont
 	auto &data = parse_data->Cast<GlossStatementData>();
 	ParserExtensionPlanResult result;
 	bool modifies = true;
+	auto modification = DatabaseModificationType::INSERT_DATA;
+	result.return_type = StatementReturnType::QUERY_RESULT;
 	if (data.kind == "write") {
 		result.function = GlossWriteFunction(data.row.size());
 		result.parameters.push_back(Value(data.table));
+	} else if (data.kind == "delete") {
+		// a DELETE's statement: its one row is the count a client reads as the rows changed
+		result.function = GlossDeleteFunction();
+		modification = DatabaseModificationType::DELETE_DATA;
+		result.return_type = StatementReturnType::CHANGED_ROWS;
 	} else if (data.kind == "dataset") {
 		result.function = GlossDatasetFunction();
 	} else if (data.kind == "recipe") {
@@ -921,11 +995,9 @@ static ParserExtensionPlanResult GlossPlan(ParserExtensionInfo *info, ClientCont
 		result.parameters.push_back(value);
 	}
 	result.requires_valid_transaction = true;
-	result.return_type = StatementReturnType::QUERY_RESULT;
 	if (modifies) {
 		StatementProperties properties;
-		properties.RegisterDBModify(Catalog::GetCatalog(context, Identifier()), context,
-		                            DatabaseModificationType::INSERT_DATA);
+		properties.RegisterDBModify(Catalog::GetCatalog(context, Identifier()), context, modification);
 		result.modified_databases = properties.modified_databases;
 	}
 	return result;
@@ -1419,8 +1491,8 @@ static TableFunctionSet GlossColumnsFunctions() {
 // the store version it was computed at. An entry of DuckDB's object cache, its
 // bytes reserved in the buffer pool: memory_limit counts it, and pressure
 // evicts it, after which a bind computes it again. Every connection shares
-// it; a write on any connection moves the version, which every bind
-// compares first. A dropped dataset's rows stay until evicted.
+// it; a write or a delete on any connection moves the version, which every
+// bind compares first. A dropped dataset's rows stay until evicted.
 //===--------------------------------------------------------------------===//
 
 //! One read of a dataset as kept: immutable once built, replaced whole
@@ -1460,13 +1532,16 @@ static string CacheKey(const string &lake, const string &kind, const string &dat
 	return "glossql_read|" + lake + "|" + kind + "|" + dataset;
 }
 
-//! The store's version: the lake's current snapshot and every store relation's
-//! highest seq — everything a read's rows depend on, through the stale rule,
-//! the legs, the witnesses and the detectors
+//! The store's version: the lake's current snapshot and, per store relation,
+//! the highest seq, the row count and the newest stamp — everything a read's
+//! rows depend on, through the stale rule, the legs, the witnesses and the
+//! detectors. A write raises the seq; a delete lowers the count, and a row
+//! written after one is stamped later than the row whose seq it takes over
 static string StoreVersionSQL(const Workspace &ws) {
 	string sql = "SELECT (SELECT id FROM ducklake_current_snapshot(" + QuoteText(ws.lake) + "))::VARCHAR";
 	for (auto &relation : STORE_RELATIONS) {
-		sql += " || ':' || (SELECT coalesce(max(seq), 0) FROM " + ws.Store(relation.name) + ")::VARCHAR";
+		sql += " || ':' || (SELECT coalesce(max(seq), 0)::VARCHAR || '/' || count(*)::VARCHAR || '/' || coalesce(max(" +
+		       string(relation.stamp) + ")::VARCHAR, '') FROM " + ws.Store(relation.name) + ")";
 	}
 	return sql;
 }
@@ -1578,7 +1653,7 @@ string StoreVersion(Inner &inner) {
 // kept in the object cache beside the reads, so that a cells read over the
 // dataset's views — a metric's series, a plan's rows — scans what stands
 // instead of computing every view from its tables on each call.
-// The version is the reads' own: any write moves it. A view's rows are a
+// The version is the reads' own: any write or delete moves it. A view's rows are a
 // fraction of its tables' (a metric's series), so the entry is small, and
 // the buffer pool counts and evicts it like a read's
 //===--------------------------------------------------------------------===//
@@ -1687,6 +1762,7 @@ void RegisterGlossStore(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossInitFunction());
 	loader.RegisterFunction(PragmaFunction::PragmaCall("glossql", GlossQuery, {}));
 	loader.RegisterFunction(GlossWriteFunctions());
+	loader.RegisterFunction(GlossDeleteFunction());
 	loader.RegisterFunction(GlossGlossaryFunction());
 	loader.RegisterFunction(GlossAttestFunction());
 	loader.RegisterFunction(GlossCachedFunction());
