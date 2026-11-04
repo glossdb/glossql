@@ -24,9 +24,9 @@ struct GlossStatementData : public ParserExtensionParseData {
 	    : kind(std::move(kind_p)), table(std::move(table_p)), row(std::move(row_p)), text(std::move(text_p)) {
 	}
 
-	//! write | dataset | recipe | probe | import | function | witness
+	//! write | delete | dataset | recipe | probe | import | function | witness
 	string kind;
-	//! the store relation, for a write
+	//! the store relation, for a write or a delete
 	string table;
 	vector<Value> row;
 	string text;
@@ -45,7 +45,7 @@ struct GlossStatementData : public ParserExtensionParseData {
 ParserExtension GlossParserExtension();
 
 //! Registers the store (glossql_store.cpp): the glossql_init pragma, the
-//! write function and the GLOSSARY() read
+//! write and delete functions and the GLOSSARY() read
 void RegisterGlossStore(ExtensionLoader &loader);
 //! Registers the runner (glossql_runner.cpp): datasets, recipes, probes, imports
 void RegisterGlossRunner(ExtensionLoader &loader);
@@ -93,6 +93,7 @@ string QuoteText(const string &text);
 
 //! The table functions the plan function dispatches to
 TableFunction GlossWriteFunction(idx_t width);
+TableFunction GlossDeleteFunction();
 TableFunction GlossDatasetFunction();
 TableFunction GlossRecipeFunction();
 TableFunction GlossProbeFunction();
@@ -195,8 +196,8 @@ public:
 };
 
 //! The store's version — the lake's snapshot and every store relation's
-//! highest seq — that the reads and the kept views are kept under; any write
-//! moves it (glossql_store.cpp)
+//! highest seq, row count and newest stamp — that the reads and the kept views
+//! are kept under; any write or delete moves it (glossql_store.cpp)
 string StoreVersion(Inner &inner);
 
 } // namespace duckdb

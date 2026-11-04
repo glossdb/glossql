@@ -50,7 +50,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | `read.<metric>()` | softened | the view is reached by its bare name under `USE` or as `FROM dataset.metric`, which §5 says plans the same way; no `read` schema, since a schema is lake-wide and metrics are per dataset, and it would be a second door to the one view |
 | supersession key (subject, aspect, actor kind) | holds | the newest slot per key serves |
 | two QUERY glosses of one aspect on different tables coexist | softened | the subject of a QUERY gloss is the dataset, as §5.2 also says; one serving view per metric |
-| `DELETE FROM glossary` | holds | `glossql.glossary` is a table |
+| `DELETE FROM glossary` | holds | the grammar's statement, `DELETE FROM [lake.][glossql.]glossary [alias] [WHERE …]`: the lake reads the store as views, and DuckDB deletes through a table only, so it runs on the store's table in the lake's metadata catalog, where every write goes, and comes back as a DELETE does, the rows removed; the reads' version moves with it |
 | `snapshot_id`, `stale` | holds | every glossary row carries the lake's snapshot at write, NULL for a dataset subject or a pair path; staleness is a join against `ducklake_column`, and against `ducklake_view` for a view or its column, never a guess |
 | `GLOSSARY()` collapsed and raw; `unassessed`, `contested`, `current` | holds | `glossql_glossary()` plans a subquery over the store |
 | `stale` | holds | served and marked: a gloss against its subject's shape, a function voice against what it read |

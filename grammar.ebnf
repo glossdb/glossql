@@ -17,8 +17,8 @@
    so this holds — no custom lexing anywhere.
 
    Substrate SQL is opaque to this grammar: glossql adds statements and table
-   functions to a SQL host (views, SELECT bodies and DELETE FROM glossary
-   are host SQL), it does not re-specify SQL. The actor
+   functions to a SQL host (views and SELECT bodies are host SQL), it does
+   not re-specify SQL. The actor
    (agent_id | human_id) rides the connection — there is no BY-actor clause
    anywhere; the engine stamps writer and actor kind on every statement. *)
 
@@ -30,9 +30,9 @@ statement         = declaration
                   | extract
                   | probe_stmt
                   | import_stmt
+                  | delete_stmt
                   | substrate_sql ;          (* allowlisted: SELECT,
-                                                DROP TABLE, DELETE FROM
-                                                glossary — the rest of
+                                                DROP TABLE — the rest of
                                                 DDL/DML is refused *)
 
 declaration       = "DECLARE", ( source_decl
@@ -59,6 +59,18 @@ import_stmt       = "IMPORT", [ name, "." ], name ;
                        reaches the result — appending the files no
                        landing has read, or replacing the table whole
                        — is its own, and the outcome names it *)
+
+delete_stmt       = "DELETE", "FROM", [ name, "." ], [ "glossql", "." ],
+                    "glossary", [ [ "AS" ], name ], [ "WHERE", expression ] ;
+                    (* DELETE FROM [lake.][glossql.]glossary [alias]
+                       [WHERE <expression>] — the removal of SPEC §5.2;
+                       the expression is the host's, as in its own DELETE.
+                       The host reads the glossary as a view over the
+                       store's table and deletes through a table only, so
+                       the statement runs on that table, where every write
+                       goes; the lake named is the workspace's, or the
+                       statement is refused. The words of the name may be
+                       quoted. The result is a DELETE's: the rows removed *)
 
 (* -- sources ------------------------------------------------------------ *)
 

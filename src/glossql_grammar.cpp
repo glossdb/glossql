@@ -10,8 +10,9 @@
 // words are unreserved keywords, still usable as identifiers.
 //
 // Syntax is grammar.ebnf; semantics are SPEC.md there. Host SQL (USE,
-// SELECT, DELETE FROM glossql.glossary, ...) is DuckDB's own. The store the
-// statements write to is created by `PRAGMA glossql_init`.
+// SELECT, ...) is DuckDB's own; DELETE FROM glossary is a statement here,
+// since the lake reads the store as views and the engine deletes through a
+// table only. The store the statements write to is created by `PRAGMA glossql`.
 
 #include "glossql_grammar.hpp"
 
@@ -364,6 +365,84 @@ public:
 	}
 };
 
+//! One word of the store's name, bare or quoted: a keyword literal sees a
+//! quoted identifier with its quotes, and the lake's view may be spelled so
+class GlossWordMatcher : public AtomicMatcher {
+public:
+	static constexpr MatcherType TYPE = MatcherType::CUSTOM;
+
+public:
+	explicit GlossWordMatcher(string word_p) : AtomicMatcher(TYPE), word(std::move(word_p)) {
+	}
+
+	MatcherResult MatchAtomic(MatchState &state) const override {
+		auto token = state.token_iterator.Current();
+		if (!token) {
+			return MatcherResult::Failure();
+		}
+		auto &text = token->text;
+		auto spelled = text;
+		if (spelled.size() > 2 && (spelled.front() == '"' || spelled.front() == '`') &&
+		    spelled.back() == spelled.front()) {
+			spelled = spelled.substr(1, spelled.size() - 2);
+		}
+		if (!StringUtil::CIEquals(spelled, word)) {
+			return MatcherResult::Failure();
+		}
+		optional_idx offset(token->offset);
+		optional_idx length(token->length);
+		state.token_iterator.Advance();
+		state.UpdateMaxTokenIndex();
+		return state.AllocateParseResult<TokenParseResult>(text, offset, length);
+	}
+
+	SuggestionType AddSuggestionInternal(MatchState &state) const override {
+		return SuggestionType::MANDATORY;
+	}
+
+	string ToString() const override {
+		return "'" + StringUtil::Upper(word) + "'";
+	}
+
+private:
+	string word;
+};
+
+//! GlossDeleteGlossary <- 'DELETE' 'FROM' GlossGlossaryTarget TargetAlias? WhereClause? GlossEnd
+//! GlossGlossaryTarget <- GlossGlossaryInLake / GlossGlossaryInSchema / GlossGlossaryWord
+//! GlossGlossaryInLake <- Identifier '.' GlossSchemaWord '.' GlossGlossaryWord
+//! GlossGlossaryInSchema <- GlossSchemaWord '.' GlossGlossaryWord
+//! SPEC §5.2's removal: the lake reads the store as views, and the engine
+//! deletes through a table only, so the statement runs on the store's table
+//! (glossql_store.cpp). The alias and the WHERE ride as text; the lake named
+//! is held against the workspace's at run
+static arena_ptr<TransformResultValue> FinalizeDeleteGlossary(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list = parse_result.Cast<ListParseResult>();
+	auto &target = GetChoice(list.GetChild(2));
+	Value lake(LogicalType::VARCHAR);
+	string spelled = "glossary";
+	if (IsRule(target, "GlossGlossaryInLake")) {
+		lake = Value(Ident(transformer, target.Cast<ListParseResult>().GetChild(0)));
+		spelled = lake.ToString() + ".glossql.glossary";
+	} else if (IsRule(target, "GlossGlossaryInSchema")) {
+		spelled = "glossql.glossary";
+	}
+	Value alias(LogicalType::VARCHAR);
+	auto &alias_opt = list.Child<OptionalParseResult>(3);
+	if (alias_opt.HasResult()) {
+		alias = Value(transformer.Transform<Identifier>(alias_opt.GetResult()).GetIdentifierName());
+	}
+	Value where(LogicalType::VARCHAR);
+	auto &where_opt = list.Child<OptionalParseResult>(4);
+	if (where_opt.HasResult()) {
+		where = Value(transformer.Transform<unique_ptr<ParsedExpression>>(where_opt.GetResult())->ToString());
+	}
+	auto text = "DELETE FROM " + spelled + (alias.IsNull() ? "" : " AS " + alias.ToString()) +
+	            (where.IsNull() ? "" : " WHERE " + where.ToString());
+	return MakeStatement(transformer, "delete", "glossary", {lake, alias, where}, text);
+}
+GLOSSQL_TRANSFORM(StartDeleteGlossary, FinalizeDeleteGlossary)
+
 //! GlossExtract <- 'SELECT' List(GlossCall) 'FROM' GlossSubject GlossEnd
 //! GlossCall <- Identifier '(' ')'
 //! Whether this is an extraction or the plain SQL it looks like is the binder's
@@ -701,6 +780,22 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	// IMPORT DATABASE its own: a name followed by anything but the end is not ours
 	// (the rule parser ignores a ! lookahead)
 	statement("GlossImport <- 'IMPORT' Identifier GlossPathTail? GlossEnd", StartImport);
+	// DELETE FROM [lake.][glossql.]glossary [alias] [WHERE ...]: the lake reads the
+	// store as views, and the engine deletes through a table only, so the removal
+	// (SPEC §5.2) is a statement here, run on the store's table. The name's words
+	// are custom terminals, since a keyword literal sees a quoted identifier with
+	// its quotes; any other DELETE stays DuckDB's own
+	statement("GlossDeleteGlossary <- 'DELETE' 'FROM' GlossGlossaryTarget TargetAlias? WhereClause? GlossEnd",
+	          StartDeleteGlossary);
+	rule("GlossGlossaryTarget <- GlossGlossaryInLake / GlossGlossaryInSchema / GlossGlossaryWord");
+	rule("GlossGlossaryInLake <- Identifier '.' GlossSchemaWord '.' GlossGlossaryWord");
+	rule("GlossGlossaryInSchema <- GlossSchemaWord '.' GlossGlossaryWord");
+	rule("GlossSchemaWord <- Identifier");
+	rule("GlossGlossaryWord <- Identifier");
+	changes.push_back(GrammarChange::AddTerminalRuleOverride(
+	    "GlossSchemaWord", [](const PEGKeywordHelper &) { return make_uniq<GlossWordMatcher>("glossql"); }));
+	changes.push_back(GrammarChange::AddTerminalRuleOverride(
+	    "GlossGlossaryWord", [](const PEGKeywordHelper &) { return make_uniq<GlossWordMatcher>("glossary"); }));
 
 	// Reads, tried before every stock table reference
 	changes.push_back(GrammarChange::AddRule("GlossGlossaryRead <- 'GLOSSARY' Parens(GlossGlossaryArgs?) TableAlias?",

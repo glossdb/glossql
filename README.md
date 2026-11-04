@@ -69,7 +69,8 @@ FROM glossql_kit('kits/quality/kit.sql');       -- the screens over a dataset's 
 
 | glossql | DuckDB |
 |---|---|
-| statements (`DECLARE …`, `GLOSS`, `PROBE`, `IMPORT`) | rules prepended to `Statement`; each transform builds an `ExtensionStatement` whose plan is one table function |
+| statements (`DECLARE …`, `GLOSS`, `PROBE`, `IMPORT`, `DELETE FROM glossary`) | rules prepended to `Statement`; each transform builds an `ExtensionStatement` whose plan is one table function |
+| `DELETE FROM [lake.][glossql.]glossary [WHERE …]` | the same, run on the store's table in the lake's metadata catalog: `glossql.glossary` is a view over it, and DuckDB deletes through a table only; the result is a DELETE's row count, and the reads' version moves with it |
 | `GLOSSARY()`, `ATTEST()` | rules prepended to `InnerTableRef`, transformed into table-function references whose `bind_replace` serves the dataset's rows, kept by the instance in DuckDB's object cache under the store's version and computed again on the second connection when the store or the lake moved (`glossql_cached`), narrowed to the subject and aspect in SQL |
 | `SELECT f() FROM subject` (extraction) | the same rule shape as plain SQL; a custom terminal matcher marks the end of the statement, and the binder decides: an extraction when `f` is declared, the plain SQL it looks like otherwise |
 | the workspace | an attached DuckLake, one per connection (`SET VARIABLE glossql_workspace` picks among several) |

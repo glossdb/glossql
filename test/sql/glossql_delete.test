@@ -1,0 +1,116 @@
+# name: test/sql/glossql_delete.test
+# description: DELETE FROM glossary — the grammar's statement, run on the store's table behind the lake's view
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_delete_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+CREATE TABLE orders AS SELECT 1 AS id, 2.5 AS amount, 'EUR' AS currency;
+
+statement ok
+DECLARE ASPECT unit WITH $${"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]}$$ AS FACT ON COLUMN;
+
+statement ok
+GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;
+
+statement ok
+SET VARIABLE glossql_actor = 'human';
+
+statement ok
+GLOSS unit ON orders.amount AS $${"value": "USD"}$$;
+
+query TTT
+SELECT subject, aspect, value FROM GLOSSARY(orders.amount);
+----
+main.orders.amount	unit	{"value": "USD"}
+
+# --- DELETE FROM glossary: the lake reads the store as a view, and DuckDB deletes through a table
+# only, so the statement is the grammar's and runs on the store's table; its result is a DELETE's
+
+query I
+DELETE FROM glossary WHERE subject = 'main.orders.amount' AND actor_kind = 'human';
+----
+1
+
+# the agent's slot serves again: the read's version moved with the delete
+query TTT
+SELECT subject, aspect, value FROM GLOSSARY(orders.amount);
+----
+main.orders.amount	unit	{"value": "EUR"}
+
+# a gloss after the delete takes the freed seq; the read serves it, never the read kept before
+statement ok
+GLOSS unit ON orders.amount AS $${"value": "CHF"}$$;
+
+query TTT
+SELECT subject, aspect, value FROM GLOSSARY(orders.amount);
+----
+main.orders.amount	unit	{"value": "CHF"}
+
+statement ok
+GLOSS unit ON orders.currency AS $${"value": "ISO 4217"}$$;
+
+statement ok
+RESET VARIABLE glossql_actor;
+
+query I
+SELECT count(*) FROM glossql.glossary;
+----
+3
+
+# the name may carry the schema, or the lake and the schema, bare or quoted; an alias names the rows
+query I
+DELETE FROM glossql.glossary g WHERE g.subject = 'main.orders.currency';
+----
+1
+
+query I
+DELETE FROM ws."glossql"."glossary" AS g WHERE g.actor_kind = 'human';
+----
+1
+
+query T
+SELECT actor_kind FROM glossql.glossary;
+----
+agent
+
+# no WHERE empties the glossary
+query I
+DELETE FROM glossary;
+----
+1
+
+query I
+SELECT count(*) FROM GLOSSARY(all => true);
+----
+0
+
+# another lake's name is refused: the store is this connection's workspace's
+statement error
+DELETE FROM other.glossql.glossary;
+----
+the workspace is ws, not other
+
+# a dataset's own table keeps DuckDB's DELETE
+statement ok
+DELETE FROM orders WHERE id = 1;
+
+query I
+SELECT count(*) FROM orders;
+----
+0
