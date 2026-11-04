@@ -47,9 +47,9 @@ min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
 # reads names what the body read, by name; the pin is the dataset's tables at the
 # last snapshot that wrote them and the store relations at their highest seq
 query TT
-SELECT reads, pin FROM glossql.measurements;
+SELECT reads, pin FROM measurements;
 ----
-fin.orders	fin.orders:14,fin.other:15,glossql.aspects:1,glossql.datasets:1,glossql.functions:1,glossql.glossary:-,glossql.imports:-,glossql.kits:-,glossql.recipes:-,glossql.relationships:-,glossql.sources:-,glossql.witnesses:-
+fin.orders	fin.orders:13,fin.other:14,main.aspects:1,main.datasets:1,main.functions:1,main.glossary:-,main.imports:-,main.kits:-,main.recipes:-,main.relationships:-,main.sources:-,main.witnesses:-
 
 # --- a repeat is a serve, not a rerun
 
@@ -59,7 +59,7 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	false
 
 query I
-SELECT count(*) FROM glossql.measurements;
+SELECT count(*) FROM measurements;
 ----
 1
 
@@ -90,7 +90,7 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":9.0}	true
 
 query TT
-SELECT value, reads FROM glossql.measurements ORDER BY seq;
+SELECT value, reads FROM measurements ORDER BY seq;
 ----
 {"min":0.0,"max":4.5}	fin.orders
 {"min":0.0,"max":9.0}	fin.orders
@@ -111,7 +111,7 @@ statement ok
 DECLARE ASPECT notes WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
-DECLARE FUNCTION notes FOR fin AS $$ SELECT count(*) AS n FROM glossql.glossary g WHERE g.subject = $subject AND g.aspect = 'note' $$ RETURNS notes;
+DECLARE FUNCTION notes FOR fin AS $$ SELECT count(*) AS n FROM main.glossary g WHERE g.subject = $subject AND g.aspect = 'note' $$ RETURNS notes;
 
 query TTTTT
 SELECT notes() FROM orders.amount;
@@ -119,9 +119,9 @@ SELECT notes() FROM orders.amount;
 notes	fin.orders.amount	notes	1	true
 
 query T
-SELECT reads FROM glossql.measurements WHERE function = 'notes';
+SELECT reads FROM measurements WHERE function = 'notes';
 ----
-glossql.glossary
+main.glossary
 
 statement ok
 INSERT INTO fin.orders VALUES (10, 10.0);
@@ -160,7 +160,7 @@ answer	fin.orders.amount	answer	42	true
 tables	fin.orders.amount	tables	2	true
 
 query TT
-SELECT function, reads FROM glossql.measurements WHERE function IN ('answer', 'tables') ORDER BY function;
+SELECT function, reads FROM measurements WHERE function IN ('answer', 'tables') ORDER BY function;
 ----
 answer	(empty)
 tables	**
@@ -204,7 +204,7 @@ SELECT profile() FROM orders.amount;
 profile	fin.orders.amount	profile	{"n":6}	true
 
 query T
-SELECT value FROM glossql.measurements WHERE function = 'profile';
+SELECT value FROM measurements WHERE function = 'profile';
 ----
 {"summary":{"n":6},"detail":[0.0,1.5,3.0,4.5,9.0,10.0]}
 

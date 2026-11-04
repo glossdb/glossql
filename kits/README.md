@@ -30,7 +30,7 @@ URL). It runs the statements one by one on a second connection under the
 glossql grammar and serves one row per statement, `(statement, outcome)`.
 Each statement commits on its own, as it does from a script: a failing
 statement stops the load with its error, and the statements before it
-stand. The load is recorded in `glossql.kits` with its path and count.
+stand. The load is recorded in `kits` with its path and count.
 
 Loading a kit twice is a no-op for every unchanged aspect, a re-declare
 for functions, and a new row per witness; a changed aspect that has

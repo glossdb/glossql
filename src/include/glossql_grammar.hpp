@@ -162,6 +162,8 @@ struct Workspace {
 //! measurements as glossql.<relation> at its highest seq ('-' while empty). A
 //! measurement's pin is these parts joined, sorted, name:version; glossql_store.cpp
 string LegsSQL(const Workspace &ws);
+//! The store's legs by name, quoted and comma-separated: 'main.aspects', ... (measurements is none)
+string StoreLegNames();
 //! Whether the measurement row `row` (pin, reads, dataset, function, computed_at)
 //! still stands, as a SQL boolean over a CTE named legs (LegsSQL): the legs its
 //! reads name look the same now as in its pin, and its function has not been

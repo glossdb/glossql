@@ -218,7 +218,7 @@ statement ok
 DECLARE ASPECT unit WITH $${"type": "object", "properties": {"value": {"type": "string"}, "source_column": {"type": "string"}}, "required": ["value"], "additionalProperties": false}$$ AS FACT ON COLUMN;
 
 query I
-SELECT count(*) FROM glossql.aspects WHERE name = 'unit';
+SELECT count(*) FROM aspects WHERE name = 'unit';
 ----
 1
 
@@ -246,7 +246,7 @@ statement ok
 DECLARE ASPECT currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'measure';
 
 query TT
-SELECT name, condition FROM glossql.aspects WHERE name = 'currency';
+SELECT name, condition FROM aspects WHERE name = 'currency';
 ----
 currency	{"aspect":"role","value":"measure"}
 
@@ -294,7 +294,7 @@ statement ok
 DECLARE ASPECT identity WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN TYPE = 'bigint';
 
 query TT
-SELECT name, condition FROM glossql.aspects WHERE name IN ('precision', 'identity') ORDER BY name;
+SELECT name, condition FROM aspects WHERE name IN ('precision', 'identity') ORDER BY name;
 ----
 identity	{"type":["BIGINT"]}
 precision	{"type":["DOUBLE","DECIMAL"]}

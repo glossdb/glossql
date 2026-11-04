@@ -17,7 +17,7 @@ declarations, the glossary.
 ```sql
 FROM glossql_kit('kits/kpi/kit.sql');
 FROM glossql_kit('kits/quality/kit.sql');    -- after the KPI kit; the same two lines in the opener
-SELECT name, scope, returns FROM glossql.functions WHERE returns IS NOT NULL;
+SELECT name, scope, returns FROM functions WHERE returns IS NOT NULL;
 ```
 
 ## The screens

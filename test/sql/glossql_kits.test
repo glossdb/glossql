@@ -43,12 +43,12 @@ SELECT statement, outcome FROM main.loaded WHERE statement LIKE 'DECLARE WITNESS
 DECLARE WITNESS role_w ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;	declared witness role_w on role
 
 query TTI
-SELECT name, location, statements FROM glossql.kits;
+SELECT name, location, statements FROM kits;
 ----
 kpi	kits/kpi/kit.sql	19
 
 query I
-SELECT count(*) FROM glossql.aspects;
+SELECT count(*) FROM aspects;
 ----
 10
 
@@ -59,7 +59,7 @@ FROM glossql_kit('kits/kpi/kit.sql');
 kpi	stands
 
 query II
-SELECT count(*), length(max(hash)) FROM glossql.kits;
+SELECT count(*), length(max(hash)) FROM kits;
 ----
 1	32
 
@@ -177,7 +177,7 @@ role	NULL	contested
 
 # the measurement is a table macro too
 query II
-SELECT total, "distinct" FROM glossql.column_profile('fin.orders.id');
+SELECT total, "distinct" FROM main.column_profile('fin.orders.id');
 ----
 4	4
 
@@ -213,6 +213,6 @@ SELECT count(*) FROM (FROM glossql_kit('kits/kpi/kit.sql')) WHERE outcome = 'sta
 0
 
 query TI
-SELECT name, count(*) FROM glossql.kits GROUP BY name;
+SELECT name, count(*) FROM kits GROUP BY name;
 ----
 kpi	3

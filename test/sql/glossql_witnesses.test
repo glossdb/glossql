@@ -50,7 +50,7 @@ DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entro
 witness behavior_w unchanged: no-op
 
 query TTTTR
-SELECT name, aspect, speakers, detector, threshold FROM glossql.witnesses;
+SELECT name, aspect, speakers, detector, threshold FROM witnesses;
 ----
 behavior_w	behavior	[AGENT, HUMAN]	behavior_entropy	0.7
 
@@ -334,7 +334,7 @@ glossed conventions on erp as agent
 
 # the row records the dataset it was deposited in, and carries no catalog snapshot: a source never goes stale
 query TTT
-SELECT dataset, subject, snapshot_id FROM glossql.glossary WHERE aspect = 'conventions';
+SELECT dataset, subject, snapshot_id FROM glossary WHERE aspect = 'conventions';
 ----
 fin	erp	NULL
 

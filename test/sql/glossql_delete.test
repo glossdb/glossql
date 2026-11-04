@@ -69,23 +69,23 @@ statement ok
 RESET VARIABLE glossql_actor;
 
 query I
-SELECT count(*) FROM glossql.glossary;
+SELECT count(*) FROM glossary;
 ----
 3
 
 # the name may carry the schema, or the lake and the schema, bare or quoted; an alias names the rows
 query I
-DELETE FROM glossql.glossary g WHERE g.subject = 'main.orders.currency';
+DELETE FROM main.glossary g WHERE g.subject = 'main.orders.currency';
 ----
 1
 
 query I
-DELETE FROM ws."glossql"."glossary" AS g WHERE g.actor_kind = 'human';
+DELETE FROM ws."main"."glossary" AS g WHERE g.actor_kind = 'human';
 ----
 1
 
 query T
-SELECT actor_kind FROM glossql.glossary;
+SELECT actor_kind FROM glossary;
 ----
 agent
 
@@ -102,7 +102,7 @@ SELECT count(*) FROM GLOSSARY(all => true);
 
 # another lake's name is refused: the store is this connection's workspace's
 statement error
-DELETE FROM other.glossql.glossary;
+DELETE FROM other.main.glossary;
 ----
 the workspace is ws, not other
 
