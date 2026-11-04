@@ -91,7 +91,10 @@ table, versioned on every import. The default recipe is
 `SELECT *`. A recipe may name its table's key, `SET (key: order_id)`
 before `AS`, a column of its result or a comma-separated list of
 them: a keyed recipe's result merges into the table by that key on
-every import; an unkeyed recipe's result is the table. The engine
+every import; an unkeyed recipe's result is the table. A keyed
+recipe's result carries each key once, at every landing; a result
+that carries a key twice is refused, naming the key. Which row stands
+is the recipe's to say. The engine
 keeps one number per import — `dropped_rows_count`,
 source rows minus landed rows — in the declaration's outcome at the
 decision moment and in the `imports` relation for history; which rows

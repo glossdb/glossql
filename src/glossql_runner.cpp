@@ -418,12 +418,38 @@ static Value DroppedRows(Inner &inner, const string &sql) {
 	return Value::BIGINT(0);
 }
 
+//! A keyed recipe's result carries each key once (SPEC §3): the keys the
+//! result carries more than once, counted at the source before anything lands;
+//! the refusal names the key, how many, and one of them. Which row stands is
+//! the recipe's to say, so the result is never deduplicated here
+static void KeyOnce(Inner &inner, const vector<string> &key, const string &sql) {
+	vector<string> columns;
+	vector<string> texts;
+	for (auto &column : key) {
+		columns.push_back(QuoteName(column));
+		texts.push_back(QuoteName(column) + "::VARCHAR");
+	}
+	auto spelled = StringUtil::Join(columns, ", ");
+	auto example = key.size() == 1 ? texts[0] : "'(' || concat_ws(', ', " + StringUtil::Join(texts, ", ") + ") || ')'";
+	auto twice = inner.Row("SELECT count(*), min(" + example + ") FROM (SELECT " + spelled + " FROM (" + sql +
+	                       ") GROUP BY ALL HAVING count(*) > 1)");
+	auto keys = twice[0].GetValue<int64_t>();
+	if (keys > 0) {
+		throw InvalidInputException("glossql: the recipe's result carries key %s more than once: %d keys, %s among "
+		                            "them; a keyed recipe's result carries each key once (SPEC §3)",
+		                            StringUtil::Join(key, ", "), keys, twice[1].ToString());
+	}
+}
+
 //! Runs the recipe at its source and lands the result
 static Landed Land(Inner &inner, const string &dataset, const string &table, const RecipeRow &recipe, bool replace) {
 	auto target = inner.Table(dataset, table);
 	AtSource(inner, LookupSource(inner, recipe.source));
 	Landed landed;
 	auto key = recipe.Key();
+	if (!key.empty()) {
+		KeyOnce(inner, key, recipe.sql);
+	}
 	if (replace || key.empty()) {
 		inner.Run("CREATE OR REPLACE TABLE " + target + " AS " + recipe.sql);
 		landed.mode = "replace";
