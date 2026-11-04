@@ -108,10 +108,19 @@ scoped AS (
          p.dk AS pdk, s.dk AS sdk, s.overlap AS s_overlap, p.k_temporal, s.k_temporal AS s_temporal
   FROM anchors p JOIN admitted s ON s.ft = p.ft AND s.kt = p.kt AND s.fc <> p.fc AND s.kc <> p.kc AND NOT s.k_uniq
   WHERE p.dk * s.dk >= 0.9 * greatest(0, p.kfilled + s.kfilled - p.krows)),
--- a row's two columns side by side, for every ordered column pair of a table
+-- the column pairs the rescue needs: the anchor's and the scope's leg on each
+-- side of every scoped attempt, never every pair of a table (a wide table's
+-- pairs are its rows times its width squared)
+needed AS (
+  SELECT DISTINCT ft AS "table", pf AS c0, sf AS c1 FROM scoped
+  UNION
+  SELECT DISTINCT kt, pk, sk FROM scoped),
+-- a row's two columns side by side, for those pairs
 duo AS (
-  SELECT a."table", a.ci AS c0, b.ci AS c1, a.rn, a.val AS v0, b.val AS v1
-  FROM cells a JOIN cells b ON a."table" = b."table" AND a.rn = b.rn AND a.ci <> b.ci),
+  SELECT n."table", n.c0, n.c1, a.rn, a.val AS v0, b.val AS v1
+  FROM needed n
+  JOIN cells a ON a."table" = n."table" AND a.ci = n.c0
+  JOIN cells b ON b."table" = n."table" AND b.ci = n.c1 AND b.rn = a.rn),
 duo_stats AS (
   SELECT "table", c0, c1, count(*) FILTER (WHERE v0 IS NOT NULL AND v1 IS NOT NULL) AS filled2,
          count(DISTINCT (v0, v1)) FILTER (WHERE v0 IS NOT NULL AND v1 IS NOT NULL) AS distinct2
