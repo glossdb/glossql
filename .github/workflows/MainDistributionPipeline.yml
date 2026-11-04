@@ -21,7 +21,7 @@ jobs:
       extension_name: glossql
 
   # The format is this repository's: the venv's clang-format, pinned in the
-  # Makefile, run here exactly as `make lint-format` runs it on a laptop
+  # Makefile, over the sources, run here as `make lint-format` runs on a laptop
   format-check:
     name: Format Check
     runs-on: ubuntu-24.04
@@ -41,6 +41,5 @@ jobs:
       duckdb_version: v2.0.0
       ci_tools_version: v2.0-cyanoptera
       extension_name: glossql
-      # tidy alone: the template's Format Check pins clang-format 11 and takes
-      # no other; the format check above runs this repository's formatter
+      # tidy alone: the Format Check above runs this repository's formatter
       format_checks: 'tidy'

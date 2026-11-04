@@ -156,7 +156,7 @@ brew install croaring                       # ducklake's one dependency; the pip
 GEN=ninja make                              # build/release/duckdb, build/release/extension/glossql/, ducklake beside it
 ./build/release/test/unittest "test/sql/glossql*"
 ./build/release/duckdb -unsigned           # LOAD 'build/release/extension/glossql/glossql.duckdb_extension'
-make lint-tools                            # once: a project .venv with clang-format, clang-tidy, black, cmake-format (uv)
+make lint-tools                            # once: a project .venv with clang-format and clang-tidy, pinned (uv)
 GEN=ninja make lint                         # the pipeline's format and tidy checks plus unused includes; `make lint-fix` applies the formatter
 ```
 
