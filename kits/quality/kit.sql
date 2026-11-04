@@ -318,28 +318,27 @@ ORDER BY seq;
 -- value, the first date column standing in for the period. The behavior
 -- glossed on the value column folds the month: a flow summed, a stock the
 -- month's last level, a ratio its summed halves re-divided, the columns
--- its numerator and denominator name; none claimed reads as flow. A QUERY
--- aspect flavored x-plan-of names the metric it plans: it stands beside that
--- metric and is never its twin, so it stays out. No groundings is one row
--- with groundings 0.
+-- its numerator and denominator name; none claimed reads as flow. A
+-- collision is two groundings of one flavor, the aspect's x-kind: a
+-- grounding flavored otherwise stands beside a metric and is never its
+-- twin. No groundings is one row with groundings 0.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO grounding_collisions(ds) AS TABLE
 WITH slots AS (
-  SELECT g.aspect, g.subject, g.body,
+  SELECT g.aspect, g.subject, g.body, coalesce(json_extract_string(a.schema, '$."x-kind"'), '') AS flavor,
          row_number() OVER (PARTITION BY g.aspect, g.subject ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 ELSE 1 END, g.seq DESC) AS rk
   FROM glossql.glossary g JOIN glossql.aspects a ON a.name = g.aspect
-  WHERE g.dataset = ds AND a.kind = 'QUERY' AND json_extract_string(g.body, '$.sql') IS NOT NULL
-    AND json_extract(a.schema, '$."x-plan-of"') IS NULL),
-groundings AS (SELECT aspect, subject, json_extract_string(body, '$.sql') AS sql FROM slots WHERE rk = 1),
+  WHERE g.dataset = ds AND a.kind = 'QUERY' AND json_extract_string(g.body, '$.sql') IS NOT NULL),
+groundings AS (SELECT aspect, subject, flavor, json_extract_string(body, '$.sql') AS sql FROM slots WHERE rk = 1),
 canon AS (
-  SELECT aspect, subject, sql,
+  SELECT aspect, subject, flavor, sql,
          lower(coalesce(regexp_replace(json_serialize_sql(sql)::VARCHAR, '"query_location(_length)?":\d+,?', '', 'g'),
                         regexp_replace(trim(sql), '\s+', ' ', 'g'))) AS canon
   FROM groundings),
 sql_hits AS (
   SELECT canon, list(DISTINCT aspect ORDER BY aspect) AS aspects, list(DISTINCT subject ORDER BY subject) AS subjects,
          min(sql) AS sql, count(DISTINCT aspect) AS n
-  FROM canon GROUP BY canon HAVING count(DISTINCT aspect) >= 2),
+  FROM canon GROUP BY canon, flavor HAVING count(DISTINCT aspect) >= 2),
 vcells AS (SELECT * FROM dataset_cells(ds, 'views') WHERE "table" IN (SELECT aspect FROM groundings)),
 vcols AS (SELECT DISTINCT "table", "column", ci, column_type FROM vcells),
 claims AS (
@@ -387,7 +386,7 @@ series_hits AS (
   SELECT fingerprint, list(DISTINCT p.aspect ORDER BY p.aspect) AS aspects,
          list(DISTINCT c.subject ORDER BY c.subject) AS subjects, max(months) AS months
   FROM prints p JOIN canon c USING (aspect)
-  GROUP BY fingerprint HAVING count(DISTINCT p.aspect) >= 2 AND count(DISTINCT c.canon) >= 2),
+  GROUP BY fingerprint, c.flavor HAVING count(DISTINCT p.aspect) >= 2 AND count(DISTINCT c.canon) >= 2),
 hits AS (
   SELECT 0 AS phase, 'sql' AS kind, sql, NULL::BIGINT AS months, aspects, subjects FROM sql_hits
   UNION ALL

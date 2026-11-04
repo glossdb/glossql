@@ -12,8 +12,8 @@
 // error carrying the service's own text, so an agent reads what to repair.
 // glossql_service(route, body, true) is the soft form: a service that refuses
 // or does not answer comes back as {"error": "…"} instead, for a call whose
-// failure a kit can stand without — a lever's own forecast, where the held
-// value serves instead; the refusals before any call goes out stay loud.
+// failure a kit can stand without, a value it holds serving instead; the
+// refusals before any call goes out stay loud.
 
 #include "glossql_grammar.hpp"
 

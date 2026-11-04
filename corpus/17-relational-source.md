@@ -108,7 +108,7 @@ landing's row carries `mode = 'merge'`.
 
 ## Verdicts
 
-- **TRANSCRIBES** — the spine (source with driver, harvest probe,
+- **TRANSCRIBES** — the spine (source, harvest probe,
   at-source recipe, read-back) is existing surface; the run needed no
   new grammar.
 - **INFORMATION LOST** — the temporal *type*: SQLite's wire has no

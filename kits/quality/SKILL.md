@@ -46,14 +46,14 @@ What each line means:
   `lambda` is how much better `to` is predicted knowing `from`.
 - A derivation ships at `match_rate >= 0.95` over twenty supporting rows
   or more.
-- A `sql` collision is two groundings with the same statement once
-  parsed; a `served_series` collision is two groundings whose monthly
-  series agree though their SQL differs. The series is read off the
-  view's claims: the column glossed `role` timestamp is the period, the
-  column glossed `role` measure the value, else the columns named
-  `period` and `value`; the `behavior` glossed on the value column folds
-  the month, a flow summed, a stock at its last level, a ratio its
-  summed halves re-divided.
+- A collision is two groundings of one flavor, the aspect's `x-kind`: a
+  `sql` collision two with the same statement once parsed, a
+  `served_series` collision two whose monthly series agree though their
+  SQL differs. The series is read off the view's claims: the column
+  glossed `role` timestamp is the period, the column glossed `role`
+  measure the value, else the columns named `period` and `value`; the
+  `behavior` glossed on the value column folds the month, a flow summed,
+  a stock at its last level, a ratio its summed halves re-divided.
 - `applicable: false` with a `reason` is a screen that could not run:
   an empty table, too few columns of the right kind, no declared
   relationships, no groundings. Examined, nothing to say.

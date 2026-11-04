@@ -13,24 +13,24 @@ SELECT current_setting('glossql_service_url');
 (empty)
 
 statement error
-SELECT glossql_service('/forecast', '{}');
+SELECT glossql_service('/judge', '{}');
 ----
-no service is named for /forecast
+no service is named for /judge
 
 statement ok
 SET GLOBAL glossql_service_url = 'http://127.0.0.1:1';
 
 # DuckDB's built-in HTTP client speaks GET alone: a POST needs httpfs, and the refusal says so
 statement error
-SELECT glossql_service('/forecast', '{}');
+SELECT glossql_service('/judge', '{}');
 ----
-speaks GET alone: LOAD httpfs, and the call to /forecast can go out
+speaks GET alone: LOAD httpfs, and the call to /judge can go out
 
 # the soft form answers a refusing or absent service as a JSON error; the refusals before any call stay loud
 statement error
-SELECT glossql_service('/forecast', '{}', true);
+SELECT glossql_service('/judge', '{}', true);
 ----
-speaks GET alone: LOAD httpfs, and the call to /forecast can go out
+speaks GET alone: LOAD httpfs, and the call to /judge can go out
 
 query II
 SELECT current_setting('glossql_service_token'), current_setting('glossql_service_timeout');
