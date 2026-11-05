@@ -68,6 +68,9 @@ string DatasetOf(const string &subject);
 string DatasetOf(ClientContext &context, const string &subject);
 //! Resolves a subject or pair path to its dataset-qualified form
 string ResolveSubject(ClientContext &context, const string &subject);
+//! A resolved subject's parts: the dataset, the table, and the column as all that
+//! follows the second dot, since a column's name may hold a dot (SPEC §4)
+vector<string> SubjectParts(const string &subject);
 //! A relation of the lake by name, a landed table or a view (SPEC §3: a view
 //! counts as a table, so its columns are subjects like a table's); null when
 //! neither stands

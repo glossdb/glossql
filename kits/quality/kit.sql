@@ -351,10 +351,12 @@ sql_hits AS (
 vcells AS (SELECT * FROM dataset_cells(ds, 'views') WHERE "table" IN (SELECT aspect FROM groundings)),
 vcols AS (SELECT DISTINCT "table", "column", ci, column_type FROM vcells),
 claims AS (
-  SELECT split_part(subject, '.', 2) AS aspect, split_part(subject, '.', 3) AS col, g.aspect AS claim, value
+  SELECT split_part(subject, '.', 2) AS aspect,
+         substr(subject, length(split_part(subject, '.', 1)) + length(split_part(subject, '.', 2)) + 3) AS col,
+         g.aspect AS claim, value
   FROM glossql_glossary(ds, NULL, false) g
   WHERE g.aspect IN ('role', 'behavior') AND state IN ('current', 'stale') AND value IS NOT NULL
-    AND len(string_split(subject, '.')) = 3 AND split_part(subject, '.', 2) IN (SELECT aspect FROM groundings)),
+    AND len(string_split(subject, '.')) >= 3 AND split_part(subject, '.', 2) IN (SELECT aspect FROM groundings)),
 roles AS (
   SELECT aspect, value->>'value' AS role,
          list(col ORDER BY CASE WHEN col IN ('period', 'value') THEN 0 ELSE 1 END, col) AS cols
