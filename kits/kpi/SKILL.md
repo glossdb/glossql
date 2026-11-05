@@ -30,7 +30,7 @@ SELECT name, kind, grains FROM aspects;
 | `dimension` | dimension columns | `value`: `primary`, `supporting`, `none`; `grounds` | whether reports slice by it |
 | `entity` | table | `value`: what one row is; `role`; `grain`; `time_axis`; `identity_columns` | the identity every aggregate stands on |
 | `conventions` | source | any object | fiscal calendar, signs, what nulls mean |
-| `definitions` | dataset | `definitions`: one object per metric name | the handbook: meaning, unit, owner, source of each metric |
+| `definitions` | dataset | `definitions`: one object per metric name | the handbook: meaning, unit, owner, source of each metric, and a derived metric's `formula` over its siblings, text a person corrects, never computed |
 
 `role`, `behavior` and `unit` are judged by `slot_entropy`: when the
 agent's and the human's values differ, the claim is `contested`, its

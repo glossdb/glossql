@@ -66,8 +66,9 @@ DECLARE ASPECT entity WITH $${
 DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
 
 -- The handbook: a metric's aspect stays thin (title, x-kind), and what the
--- company revises (meaning, unit, owner, source) lives here, keyed by the
--- metric's name, where a correction supersedes with actor and time.
+-- company revises (meaning, unit, owner, source, and a derived metric's
+-- formula over its siblings) lives here, keyed by the metric's name, where a
+-- correction supersedes with actor and time.
 
 DECLARE ASPECT definitions WITH $${
   "type": "object", "properties": {"definitions": {"type": "object"}}

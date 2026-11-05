@@ -1150,8 +1150,12 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 		return make_uniq<SubqueryRef>(ParseSelect(empty));
 	}
 	// cells := n bounds what a screen reads: a table whose scalar columns times its
-	// rows would pass the bound is read as a repeatable sample of its rows, the
-	// bound divided by its width, and rn numbers the rows read (SPEC §6)
+	// rows would pass the bound is read as a sample of its rows, the bound divided
+	// by its width as the share of the rows kept, and rn numbers the rows read
+	// (SPEC §6). A row is kept by the hash of its columns, so the sample is the
+	// same rows every run under any thread count; DuckDB's seeded sampling is
+	// repeatable on one thread only. Its size is the share of the rows, about
+	// the bound, and rn says what it was
 	int64_t cells = 0;
 	auto bound = input.named_parameters.find("cells");
 	if (bound != input.named_parameters.end() && !bound->second.IsNull()) {
@@ -1168,14 +1172,6 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 		string from = kept.count(table) ? "glossql_kept_view(" + QuoteText(parts[0]) + ", " + QuoteText(table) + ", " +
 		                                      QuoteText(version) + ")"
 		                                : inner.Table(parts[0], table);
-		if (cells > 0) {
-			int64_t width = 0;
-			for (auto &column : columns[table]) {
-				width += IsScalarType(column.second) ? 1 : 0;
-			}
-			auto rows = std::max<int64_t>(1, cells / std::max<int64_t>(1, width));
-			from = "(SELECT * FROM " + from + " USING SAMPLE reservoir(" + to_string(rows) + " ROWS) REPEATABLE (1))";
-		}
 		// the row number under a name no table's column takes, served as rn
 		string select = "SELECT row_number() OVER () AS __gloss_rn";
 		string names;
@@ -1193,6 +1189,16 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 		}
 		if (names.empty()) {
 			continue;
+		}
+		if (cells > 0) {
+			int64_t width = 0;
+			for (auto &column : columns[table]) {
+				width += IsScalarType(column.second) ? 1 : 0;
+			}
+			auto rows = std::max<int64_t>(1, cells / std::max<int64_t>(1, width));
+			from = "(SELECT * FROM " + from + " WHERE (hash(" + names +
+			       ") % 1000000)::BIGINT < (SELECT least(1000000.0, " + to_string(rows) +
+			       " * 1000000.0 / greatest(count(*), 1)) FROM " + from + "))";
 		}
 		sql += (sql.empty() ? "" : " UNION ALL ") + string("SELECT ") + QuoteText(table) +
 		       " AS \"table\", u.\"column\", m.ci, m.column_type, u.__gloss_rn AS rn, u.val FROM (FROM (" + select +
@@ -1663,6 +1669,23 @@ static string ReasonBranch(const string &reason) {
 	                   "");
 }
 
+//! An alignment's two labels: the measure side's key, which the measure cells
+//! carry, and the whole alignment as the anchor names it
+static pair<string, string> AlignLabels(const string &table, const string &ev, const Align &al) {
+	auto m_align = (al.via.set ? al.via.table + ">" : "") + ColsLabel(al.m_cols);
+	string align_label;
+	if (al.via.set) {
+		align_label =
+		    table + " via " + al.via.table + "." + ColsLabel(al.m_cols) + " = " + ev + "." + ColsLabel(al.e_cols);
+	} else if (al.e_via.set) {
+		align_label =
+		    table + "." + ColsLabel(al.m_cols) + " = " + ev + " via " + al.e_via.table + "." + ColsLabel(al.e_cols);
+	} else {
+		align_label = table + "." + ColsLabel(al.m_cols) + " = " + ev + "." + ColsLabel(al.e_cols);
+	}
+	return {m_align, align_label};
+}
+
 static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	Inner inner(context);
 	auto subject = ResolveSubject(context, input.inputs[0].ToString());
@@ -1727,10 +1750,36 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 			legs.insert({p.dst_t, c});
 		}
 	}
+	// the measure column screened as the event side's columns are: a declared leg
+	// is an identifier, no measure; a key-shaped integer is judged by the screen
+	// on its distinct share, which the subject row below carries
+	if (legs.count({table, column})) {
+		return reason(subject + " is a leg of a declared relationship: an identifier, no measure");
+	}
 	auto axes = TimeAxes(tables, schemas, pointers);
 	auto &m_axes = axes[table];
 	if (m_axes.empty()) {
 		return reason("no period axis: no date column on " + table + " or one declared hop away");
+	}
+	// the movement pool is what the record says is a measure: the columns whose
+	// role claim stands, current or stale, read collapsed. Nothing is guessed from
+	// a type; an event table with no measure glossed abstains and names the gloss
+	std::map<string, std::set<string>> measures;
+	std::set<string> roled;
+	auto roles = inner.Run("SELECT subject, value->>'value' FROM glossql_glossary(" + QuoteText(dataset) +
+	                       ", NULL, false) WHERE aspect = 'role' AND state IN ('current', 'stale')");
+	while (auto chunk = roles->Fetch()) {
+		for (idx_t i = 0; i < chunk->size(); i++) {
+			auto claimed = SubjectParts(chunk->GetValue(0, i).ToString());
+			if (claimed.size() != 3) {
+				continue;
+			}
+			roled.insert(claimed[1]);
+			auto role = chunk->GetValue(1, i);
+			if (!role.IsNull() && role.ToString() == "measure") {
+				measures[claimed[1]].insert(claimed[2]);
+			}
+		}
 	}
 	bool owns = OwnsEntity(pointers, table);
 	vector<string> branches;
@@ -1744,17 +1793,45 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 		if (aligns.empty() || e_axes.empty()) {
 			continue;
 		}
-		// the movement pool: the event table's numeric columns that are no declared leg
+		// the movement pool: the event table's numeric columns glossed a measure that are no declared leg
 		vector<pair<string, string>> numeric;
 		vector<string> pool;
+		idx_t candidates = 0;
 		for (auto &c : schemas[ev]) {
 			if (!IsNumericType(c.second)) {
 				continue;
 			}
 			numeric.push_back(c);
-			if (!legs.count({ev, c.first})) {
+			if (legs.count({ev, c.first})) {
+				continue;
+			}
+			candidates++;
+			if (measures[ev].count(c.first)) {
 				pool.push_back(c.first);
 			}
+		}
+		if (candidates == 0) {
+			// nothing numeric beyond its legs: no movement to name, nothing owed
+			continue;
+		}
+		if (pool.empty()) {
+			// every anchor on this event table abstains, one row per alignment and axis pair
+			string why = roled.count(ev)
+			                 ? "no measure among " + ev + "'s roles: gloss role measure on its movement columns"
+			                 : "no role glossed on " + ev + ": gloss role on its columns";
+			for (auto &al : aligns) {
+				auto labels = AlignLabels(table, ev, al);
+				for (auto &eaxis : e_axes) {
+					for (auto &maxis : m_axes) {
+						branches.push_back(CellsBranch({"'unglossed'", QuoteText(ev), QuoteText(labels.second),
+						                                QuoteText(labels.first), QuoteText(eaxis.label),
+						                                QuoteText(maxis.label), "NULL::BOOLEAN", "NULL::VARCHAR",
+						                                "NULL::TIMESTAMP", "NULL::DOUBLE", QuoteText(why)},
+						                               ""));
+					}
+				}
+			}
+			continue;
 		}
 		bool emitted = false;
 		for (auto &al : aligns) {
@@ -1768,17 +1845,9 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 				continue;
 			}
 			emitted = true;
-			auto m_align = (al.via.set ? al.via.table + ">" : "") + ColsLabel(al.m_cols);
-			string align_label;
-			if (al.via.set) {
-				align_label = table + " via " + al.via.table + "." + ColsLabel(al.m_cols) + " = " + ev + "." +
-				              ColsLabel(al.e_cols);
-			} else if (al.e_via.set) {
-				align_label = table + "." + ColsLabel(al.m_cols) + " = " + ev + " via " + al.e_via.table + "." +
-				              ColsLabel(al.e_cols);
-			} else {
-				align_label = table + "." + ColsLabel(al.m_cols) + " = " + ev + "." + ColsLabel(al.e_cols);
-			}
+			auto labels = AlignLabels(table, ev, al);
+			auto &m_align = labels.first;
+			auto &align_label = labels.second;
 			// the measure side, once per axis and alignment key
 			for (auto &maxis : m_axes) {
 				if (!measured.insert(maxis.label + "|" + m_align).second) {
@@ -1844,6 +1913,17 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	}
 	if (branches.empty()) {
 		return reason("no declared relationships connect " + table + " to an event table with a time axis");
+	}
+	// the subject row: an integer measure's distinct share over its filled rows
+	if (IsIntegerType(type)) {
+		auto q = QuoteName(column);
+		branches.push_back(
+		    CellsBranch({"'subject'", QuoteText(table), "NULL::VARCHAR", "NULL::VARCHAR", "NULL::VARCHAR",
+			             QuoteText(column), "false", "NULL::VARCHAR", "NULL::TIMESTAMP",
+			             "CASE WHEN count(" + q + ") > 0 AND approx_count_distinct(" + q +
+			                 ") >= 2 THEN approx_count_distinct(" + q + ")::DOUBLE / count(" + q + ") END",
+			             "NULL::VARCHAR"},
+			            inner.Table(dataset, table)));
 	}
 	return make_uniq<SubqueryRef>(ParseSelect(StringUtil::Join(branches, " UNION ALL ")));
 }

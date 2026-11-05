@@ -62,8 +62,9 @@ SELECT count(*) FROM dataset_cells('fin.orders');
 ----
 10
 
-# cells := n bounds a read: a table whose cells would pass the bound is read as a repeatable sample of its
-# rows, the bound divided by the table's width, and rn numbers the rows read (SPEC §6)
+# cells := n bounds a read: a table whose cells would pass the bound is read as a sample of its rows kept by
+# the hash of each row, the same rows every run, about the bound divided by the table's width, and rn numbers
+# the rows read (SPEC §6)
 statement ok
 DECLARE DATASET bound SET (purpose: 'the cells bound');
 
@@ -73,7 +74,7 @@ CREATE TABLE bound.wide AS SELECT i AS a, i % 7 AS b, i % 3 AS c, 'x' || i AS d 
 query II
 SELECT count(*), max(rn) FROM dataset_cells('bound.wide', cells := 400);
 ----
-400	100
+376	94
 
 query II
 SELECT count(*), max(rn) FROM dataset_cells('bound.wide', cells := 40000);
@@ -465,7 +466,7 @@ statement ok
 USE beh;
 
 statement ok
-CREATE TABLE beh.accounts AS SELECT * FROM (VALUES (1, 'cash'), (2, 'bank'), (3, 'card')) t(id, name);
+CREATE TABLE beh.accounts AS SELECT * FROM (VALUES (1, 'cash', 10), (2, 'bank', 20), (3, 'card', 30)) t(id, name, rating);
 
 # signed daily postings per account over six months
 statement ok
@@ -498,9 +499,26 @@ DECLARE RELATIONSHIP balances.account_id -> accounts.id;
 statement ok
 DECLARE RELATIONSHIP totals.account_id -> accounts.id;
 
+# no role glossed on the event tables: every anchor abstains and names the gloss to make
+query TT
+SELECT DISTINCT verdict, reason FROM behavior_anchors('beh.balances.balance') ORDER BY reason;
+----
+abstain	no role glossed on postings: gloss role on its columns
+abstain	no role glossed on totals: gloss role on its columns
+
+statement ok
+GLOSS role ON postings.amount AS $${"value": "measure"}$$;
+
+statement ok
+GLOSS role ON totals.total AS $${"value": "measure"}$$;
+
+statement ok
+GLOSS role ON balances.balance AS $${"value": "measure"}$$;
+
 # the edges meet at the account. At the month, the coarser of the two sides' native grains, each account's postings sum
 # to the balance's change: stock, r_stock 0; at the day only the month-end days align and nothing fits. The monotone
-# reading abstains, since signed postings move the level both ways. posting_id is key-shaped and leaves the movement pool
+# reading abstains, since signed postings move the level both ways. The movements are the glossed measures; posting_id
+# is an identifier, served as one
 query ITTTTTIRRRT
 SELECT seq, event, grain, scope, verdict, convention, voted, round(support, 4), round(r_flow, 2), r_stock, reason FROM behavior_anchors('beh.balances.balance') ORDER BY seq;
 ----
@@ -550,12 +568,23 @@ SELECT applicable, reason FROM behavior_anchors('beh.accounts.name');
 false	beh.accounts.name is VARCHAR, not a number: the evidence reads a numeric measure
 
 statement ok
-SELECT behavior_evidence() FROM accounts.id;
+SELECT behavior_evidence() FROM accounts.rating;
 
 query TT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') FROM GLOSSARY(beh.accounts.id::behavior_evidence);
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') FROM GLOSSARY(beh.accounts.rating::behavior_evidence);
 ----
 false	no period axis: no date column on accounts or one declared hop away
+
+# an identifier is no measure: a leg of a declared relationship at bind, a key-shaped integer by its distinct share
+query TT
+SELECT applicable, reason FROM behavior_anchors('beh.postings.account_id');
+----
+false	beh.postings.account_id is a leg of a declared relationship: an identifier, no measure
+
+query TT
+SELECT applicable, reason FROM behavior_anchors('beh.postings.posting_id');
+----
+false	the column is key-shaped: 100 distinct values in 100 filled rows, an identifier, no measure; gloss role key
 
 # --- the other alignment shapes, one dataset each: the same signed postings and month-end levels, keyed differently
 
@@ -579,6 +608,23 @@ CREATE TABLE direct.balances AS
 
 statement ok
 DECLARE RELATIONSHIP postings.account_id -> balances.account_id;
+
+# no role, then a role that is no measure, then the measure: the abstention names the act each time
+query TT
+SELECT DISTINCT verdict, reason FROM behavior_anchors('direct.balances.balance');
+----
+abstain	no role glossed on postings: gloss role on its columns
+
+statement ok
+GLOSS role ON postings.amount AS $${"value": "attribute"}$$;
+
+query TT
+SELECT DISTINCT verdict, reason FROM behavior_anchors('direct.balances.balance');
+----
+abstain	no measure among postings's roles: gloss role measure on its movement columns
+
+statement ok
+GLOSS role ON postings.amount AS $${"value": "measure"}$$;
 
 query TTTTTT
 SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('direct.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
@@ -626,6 +672,12 @@ DECLARE RELATIONSHIP invoices.customer_id -> customers.id;
 
 statement ok
 DECLARE RELATIONSHIP payments.customer_id -> customers.id;
+
+statement ok
+GLOSS role ON payments.amount AS $${"value": "measure"}$$;
+
+statement ok
+GLOSS role ON received.received_to_date AS $${"value": "measure"}$$;
 
 query TTTTTT
 SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('viadoc.received.received_to_date') WHERE verdict <> 'abstain' ORDER BY seq;
@@ -680,6 +732,9 @@ DECLARE RELATIONSHIP payments.customer_id -> customers.id;
 
 statement ok
 DECLARE RELATIONSHIP balances.customer_id -> customers.id;
+
+statement ok
+GLOSS role ON payment_lines.amount AS $${"value": "measure"}$$;
 
 query TTTTTT
 SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('viamaster.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
