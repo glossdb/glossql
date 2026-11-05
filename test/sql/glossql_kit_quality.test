@@ -62,6 +62,35 @@ SELECT count(*) FROM dataset_cells('fin.orders');
 ----
 10
 
+# cells := n bounds a read: a table whose cells would pass the bound is read as a repeatable sample of its
+# rows, the bound divided by the table's width, and rn numbers the rows read (SPEC §6)
+statement ok
+DECLARE DATASET bound SET (purpose: 'the cells bound');
+
+statement ok
+CREATE TABLE bound.wide AS SELECT i AS a, i % 7 AS b, i % 3 AS c, 'x' || i AS d FROM range(1000) t(i);
+
+query II
+SELECT count(*), max(rn) FROM dataset_cells('bound.wide', cells := 400);
+----
+400	100
+
+query II
+SELECT count(*), max(rn) FROM dataset_cells('bound.wide', cells := 40000);
+----
+4000	1000
+
+query I
+SELECT (SELECT list(val ORDER BY rn) FROM dataset_cells('bound.wide', cells := 40) WHERE "column" = 'a')
+     = (SELECT list(val ORDER BY rn) FROM dataset_cells('bound.wide', cells := 40) WHERE "column" = 'a');
+----
+true
+
+statement error
+SELECT count(*) FROM dataset_cells('bound.wide', cells := 0);
+----
+positive cells bound
+
 # a table's own columns named rn, val or column are cells like any other: the row number is the read's, under its own name
 statement ok
 CREATE TABLE fin.odd AS SELECT 1 AS rn, 'a' AS val, 'x' AS "column";
