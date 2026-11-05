@@ -180,6 +180,12 @@ FROM GLOSSARY(fin::relationship_coherence);
 ----
 true	2	3
 
+# the bind read the record's edges beside the plan, and the row names them with the tables the edges read
+query T
+SELECT reads FROM main.measurements WHERE function = 'relationship_coherence';
+----
+fin.invoices,fin.payments,main.relationships
+
 # --- hierarchy_candidates: the two planted dependencies, the exclusions, the measurement's ship line
 
 statement ok
@@ -496,8 +502,22 @@ DECLARE RELATIONSHIP postings.account_id -> accounts.id;
 statement ok
 DECLARE RELATIONSHIP balances.account_id -> accounts.id;
 
+# a measurement over the edges, then a third edge declared: the record it read moved, and the repeat computes
+statement ok
+SELECT relationship_coherence() FROM beh;
+
 statement ok
 DECLARE RELATIONSHIP totals.account_id -> accounts.id;
+
+statement ok
+SELECT relationship_coherence() FROM beh;
+
+query TI
+SELECT json_extract_string(value, '$.relationships[2].relationship'),
+       (SELECT count(*) FROM main.measurements WHERE function = 'relationship_coherence' AND dataset = 'beh')
+FROM GLOSSARY(beh::relationship_coherence);
+----
+beh.totals.account_id -> beh.accounts.id	2
 
 # no role glossed on the event tables: every anchor abstains and names the gloss to make
 query TT
@@ -505,6 +525,17 @@ SELECT DISTINCT verdict, reason FROM behavior_anchors('beh.balances.balance') OR
 ----
 abstain	no role glossed on postings: gloss role on its columns
 abstain	no role glossed on totals: gloss role on its columns
+
+# the abstention is a measurement row: it names the roles it read, and the roles glossed below make the repeat compute
+statement ok
+SELECT behavior_evidence() FROM balances.balance;
+
+query TT
+SELECT json_extract_string(g.value, '$.summary.verdict'), m.reads
+FROM GLOSSARY(beh.balances.balance::behavior_evidence) g, main.measurements m
+WHERE m.subject = 'beh.balances.balance';
+----
+abstain	beh.accounts,beh.balances,beh.postings,beh.totals,main.glossary,main.relationships
 
 statement ok
 GLOSS role ON postings.amount AS $${"value": "measure"}$$;
@@ -538,17 +569,18 @@ SELECT identifier_columns::VARCHAR, align, entities, viable_entities, sign_prima
 ----
 [account_id, posting_id]	balances.account_id = postings.account_id	3	3	3
 
-# the measurement: the election's summary, the anchors read back whole
+# the measurement: the election's summary, the anchors read back whole; the second row on the subject
 statement ok
 SELECT behavior_evidence() FROM balances.balance;
 
-query TTTTTT
+query TTTTTTI
 SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'), json_extract_string(value, '$.summary.event'),
        json_extract_string(value, '$.summary.grain'), json_extract_string(value, '$.summary.tiebreak'),
-       json_extract_string(value, '$.anchors_n') || '/' || json_extract_string(value, '$.decided') || '/' || json_array_length(value, '$.anchors')
+       json_extract_string(value, '$.anchors_n') || '/' || json_extract_string(value, '$.decided') || '/' || json_array_length(value, '$.anchors'),
+       (SELECT count(*) FROM main.measurements WHERE subject = 'beh.balances.balance')
 FROM GLOSSARY(beh.balances.balance::behavior_evidence);
 ----
-stock	amount	postings	month	event-name	10/4/10
+stock	amount	postings	month	event-name	10/4/10	2
 
 # the monthly sums match the postings' movement as they stand: flow
 statement ok
@@ -585,6 +617,24 @@ query TT
 SELECT applicable, reason FROM behavior_anchors('beh.postings.posting_id');
 ----
 false	beh.postings.posting_id is key-shaped: 546 distinct values in 546 filled rows, an identifier, no measure; gloss role key
+
+# the refusal is a measurement row keyed to the table it counted: rows appended, the repeat computes with the counts now
+statement ok
+SELECT behavior_evidence() FROM postings.posting_id;
+
+statement ok
+INSERT INTO beh.postings SELECT 546 + i, 1, DATE '2024-07-01' + (i % 30)::INTEGER, 1.0 FROM range(1, 201) t(i);
+
+query TTTTT
+SELECT behavior_evidence() FROM postings.posting_id;
+----
+behavior_evidence	beh.postings.posting_id	behavior_evidence	{"applicable":false,"reason":"beh.postings.posting_id is key-shaped: 746 distinct values in 746 filled rows, an identifier, no measure; gloss role key","anchors_n":null,"decided":null,"summary":null,"anchors":null}	true
+
+query T
+SELECT reads FROM main.measurements WHERE subject = 'beh.postings.posting_id' ORDER BY seq;
+----
+beh.accounts,beh.balances,beh.postings,beh.totals,main.relationships
+beh.accounts,beh.balances,beh.postings,beh.totals,main.relationships
 
 # --- the other alignment shapes, one dataset each: the same signed postings and month-end levels, keyed differently
 
