@@ -71,8 +71,9 @@ static void ServiceRun(DataChunk &args, ExpressionState &state, Vector &result, 
 	run([&](string_t route_t, string_t body_t, bool soft) {
 		auto route = route_t.GetString();
 		if (base.empty()) {
-			throw InvalidInputException("no service is named for %s: set glossql_service_url (GLOSSQL_SERVICE_URL) "
-			                            "to the model service, and the call goes out",
+			// the setting is the engine's; what names it in a host's environment is the host's to say
+			throw InvalidInputException("no service is named for %s: set glossql_service_url to the model service, "
+			                            "and the call goes out",
 			                            route);
 		}
 		if (get_only) {
