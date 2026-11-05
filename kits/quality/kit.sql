@@ -11,7 +11,10 @@
 -- side by side, a join on val matches values across columns, within one
 -- stored type. The engine's primitives, dataset_cells,
 -- glossql_relationship_checks and glossql_behavior_cells, are what names a
--- column; a screen is SQL over them. A screen that pairs a
+-- column; a screen is SQL over them. A primitive names what its bind read
+-- beside the plan, the record's edges and roles and the tables' shapes, so a
+-- measurement over a screen is served while those stand and computes when one
+-- moves, as when a table it read moves. A screen that pairs a
 -- table's columns reads it under a bound of cells (SPEC §6): a larger table
 -- is read as a sample of its rows kept by the hash of each row, the same
 -- rows every run, and `rows` says how many were read. Each screen's measurement function reads the screen, keeps what

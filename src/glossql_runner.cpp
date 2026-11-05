@@ -870,18 +870,41 @@ static void ViewsOf(ClientContext &context, const Workspace &ws, const string &s
 	ParsedExpressionIterator::EnumerateQueryNodeChildren(*query->Cast<SelectStatement>().node, expressions, refs);
 }
 
+//! What a bind read beside the plan (ClientContextState): a primitive whose
+//! bind reads the record and the tables' shapes to write its SQL, or one
+//! column's counts to refuse, names those inputs here, since the plan it
+//! leaves cannot; the measurement's reads take them with the plan's, so the
+//! row misses when one of them moves, as it does when a table the plan reads
+//! moves
+struct BindReads : public ClientContextState {
+	std::set<string> names;
+
+	static BindReads &Of(ClientContext &context) {
+		return *context.registered_state->GetOrCreate<BindReads>("glossql_bind_reads");
+	}
+};
+
+//! A bind names an input it read: a lake relation as dataset.table, a store
+//! relation as main.name, the dataset's every relation as *
+static void BindRead(ClientContext &context, const string &name) {
+	BindReads::Of(context).names.insert(name);
+}
+
 //! The reads of a call on a subject, enumerated from its bound plan: views
 //! expand to their tables, subject_column() to the subject's, before any
 //! optimizer touches it; the views the subject stands on are named beside,
-//! their definitions being legs too
+//! their definitions being legs too, and so is what a bind read beside the plan
 static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 	Reads reads;
 	auto &context = *inner.con.context;
+	auto &side = BindReads::Of(context);
+	side.names.clear();
 	unique_ptr<SQLStatement> statement = ParseSelect("SELECT * FROM " + call);
 	context.RunFunctionInTransaction([&]() {
 		Planner planner(context);
 		planner.CreatePlan(std::move(statement));
 		CollectReads(*planner.plan, inner.ws, reads);
+		reads.names.insert(side.names.begin(), side.names.end());
 		auto parts = StringUtil::Split(subject, '.');
 		if (parts.size() >= 2 && subject.find(" -> ") == string::npos && subject.find(" <-> ") == string::npos) {
 			std::set<string> views;
@@ -1108,6 +1131,8 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	if (parts.empty() || parts.size() > 2) {
 		throw InvalidInputException("glossql: dataset_cells takes a dataset or dataset.table, got '%s'", subject);
 	}
+	// the relations are listed at bind: one landed or dropped is a change the plan cannot name
+	BindRead(context, parts.size() == 1 ? "*" : parts[0] + "." + parts[1]);
 	// a second argument true (or 'all') takes the dataset's views too — a grounding
 	// is one — each bound at bind and skipped when it does not, as a screen skips a
 	// grounding that fails; 'views' takes the views alone, so that a read over the
@@ -1344,6 +1369,7 @@ static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const stri
 static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	Inner inner(context);
 	auto dataset = ResolveSubject(context, input.inputs[0].ToString());
+	BindRead(context, "main.relationships");
 	vector<string> edges;
 	auto rows = inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
 	                      " WHERE dataset = " + QuoteText(dataset) + " ORDER BY seq");
@@ -1402,8 +1428,11 @@ static TableFunction RelationshipChecksFunction() {
 // event table that aligns no other way keys through its master. A side's time
 // axis is each of its own date columns, else one borrowed over an edge. A
 // column that is not numeric, a table with no axis, or no alignment at all is
-// one row that says why. Rows: (side, event, align, measure_align, axis, term,
-// identifier, entity, period, value, reason)
+// one row that says why. What the bind reads beside the plan, the subject's
+// table, the record's edges and roles and the tables the edges connect, it
+// names as reads, so a measurement over it misses when one of them moves.
+// Rows: (side, event, align, measure_align, axis, term, identifier, entity,
+// period, value, reason)
 //===--------------------------------------------------------------------===//
 
 static bool IsIntegerType(const string &type) {
@@ -1696,6 +1725,7 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	auto &dataset = parts[0];
 	auto &table = parts[1];
 	auto &column = parts[2];
+	BindRead(context, dataset + "." + table);
 	auto reason = [](const string &text) {
 		return make_uniq<SubqueryRef>(ParseSelect(ReasonBranch(text)));
 	};
@@ -1725,6 +1755,7 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	}
 	// the dataset's declared edges as pointers, both ways for <->, over tables it has
 	vector<Pointer> pointers;
+	BindRead(context, "main.relationships");
 	auto rows = inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
 	                      " WHERE dataset = " + QuoteText(dataset) + " ORDER BY seq");
 	while (auto chunk = rows->Fetch()) {
@@ -1743,6 +1774,8 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	}
 	std::set<pair<string, string>> legs;
 	for (auto &p : pointers) {
+		BindRead(context, dataset + "." + p.src_t);
+		BindRead(context, dataset + "." + p.dst_t);
 		for (auto &c : p.src_cols) {
 			legs.insert({p.src_t, c});
 		}
@@ -1778,6 +1811,7 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	// a type; an event table with no measure glossed abstains and names the gloss
 	std::map<string, std::set<string>> measures;
 	std::set<string> roled;
+	BindRead(context, "main.glossary");
 	auto roles = inner.Run("SELECT subject, value->>'value' FROM glossql_glossary(" + QuoteText(dataset) +
 	                       ", NULL, false) WHERE aspect = 'role' AND state IN ('current', 'stale')");
 	while (auto chunk = roles->Fetch()) {
