@@ -584,7 +584,7 @@ false	beh.postings.account_id is a leg of a declared relationship: an identifier
 query TT
 SELECT applicable, reason FROM behavior_anchors('beh.postings.posting_id');
 ----
-false	the column is key-shaped: 100 distinct values in 100 filled rows, an identifier, no measure; gloss role key
+false	beh.postings.posting_id is key-shaped: 546 distinct values in 546 filled rows, an identifier, no measure; gloss role key
 
 # --- the other alignment shapes, one dataset each: the same signed postings and month-end levels, keyed differently
 

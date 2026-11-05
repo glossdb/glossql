@@ -375,7 +375,10 @@ ORDER BY seq;
 -- record says are measures, a role claim standing, minus the legs of
 -- declared edges, and every ordered pair difference of them on a pool of
 -- eight terms or fewer; nothing is guessed from a type, and an event table
--- with no measure glossed abstains and names the gloss to make. Per entity the two
+-- with no measure glossed abstains and names the gloss to make. The event
+-- side is summed for the entities the measure side can align, those with
+-- four days or more, so a wide, long event table costs what the alignment
+-- needs. Per entity the two
 -- residuals are Σ|y − m| / Σ|m| and Σ|Δy − m| / Σ|m| over the periods both
 -- sides carry; an entity votes when the winner is under 0.05 and the loser
 -- stands off by a third of their sum, and abstains on fewer than four
@@ -429,9 +432,9 @@ coords AS (
   SELECT ev.event, ev.align, ev.measure_align, ma.axis AS measure_time, ev.axis AS event_time, ma.grain AS m_native,
          CASE WHEN 'year' IN (ma.grain, ea.grain) THEN 'year' WHEN 'quarter' IN (ma.grain, ea.grain) THEN 'quarter'
               WHEN 'month' IN (ma.grain, ea.grain) THEN 'month' ELSE 'day' END AS native
-  FROM (SELECT DISTINCT event, align, measure_align, axis FROM cells WHERE side = 'event') ev
-  JOIN native ea ON ea.side = 'event' AND ea.event = ev.event AND ea.align = ev.align AND ea.axis = ev.axis
-  JOIN native ma ON ma.side = 'measure' AND ma.align = ev.measure_align),
+  FROM (SELECT event, align, measure_align, axis FROM cells WHERE side = 'alignment') ev
+  JOIN native ma ON ma.side = 'measure' AND ma.align = ev.measure_align
+  LEFT JOIN native ea ON ea.side = 'event' AND ea.event = ev.event AND ea.align = ev.align AND ea.axis = ev.axis),
 grained AS (SELECT c.*, unnest(CASE WHEN c.native = 'day' THEN ['day', 'month'] ELSE [c.native] END) AS grain FROM coords c),
 scoped AS (SELECT g.*, unnest(CASE WHEN g.grain = 'year' THEN ['none'] ELSE ['none', 'year'] END) AS scope FROM grained g),
 anchors AS (
@@ -612,12 +615,8 @@ unglossed AS (
 numbered AS (
   SELECT *, row_number() OVER (ORDER BY measure_time, event, align, event_time, kind, grain, scope) - 1 AS seq
   FROM (SELECT * FROM recon UNION ALL SELECT * FROM mono UNION ALL SELECT * FROM unglossed)),
--- what refuses the column: the primitive's reason, or a key-shaped measure
-refused AS (
-  SELECT reason FROM cells WHERE side = 'reason'
-  UNION ALL
-  SELECT 'the column is key-shaped: ' || round(value * 100)::INTEGER || ' distinct values in 100 filled rows, an identifier, no measure; gloss role key'
-  FROM cells WHERE side = 'subject' AND value >= 0.9)
+-- what refuses the column: the primitive's reason
+refused AS (SELECT reason FROM cells WHERE side = 'reason')
 SELECT true AS applicable, reason, seq, event, align, measure_time, event_time, grain, scope, entities, viable_entities,
        identifier_columns, verdict, convention, voted, agreement, support, r_flow, r_stock, sign_primary, sign_mirror, sign_both, alternatives
 FROM numbered WHERE NOT EXISTS (SELECT 1 FROM refused)
