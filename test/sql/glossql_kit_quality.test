@@ -499,9 +499,26 @@ DECLARE RELATIONSHIP balances.account_id -> accounts.id;
 statement ok
 DECLARE RELATIONSHIP totals.account_id -> accounts.id;
 
+# no role glossed on the event tables: every anchor abstains and names the gloss to make
+query TT
+SELECT DISTINCT verdict, reason FROM behavior_anchors('beh.balances.balance') ORDER BY reason;
+----
+abstain	no role glossed on postings: gloss role on its columns
+abstain	no role glossed on totals: gloss role on its columns
+
+statement ok
+GLOSS role ON postings.amount AS $${"value": "measure"}$$;
+
+statement ok
+GLOSS role ON totals.total AS $${"value": "measure"}$$;
+
+statement ok
+GLOSS role ON balances.balance AS $${"value": "measure"}$$;
+
 # the edges meet at the account. At the month, the coarser of the two sides' native grains, each account's postings sum
 # to the balance's change: stock, r_stock 0; at the day only the month-end days align and nothing fits. The monotone
-# reading abstains, since signed postings move the level both ways. posting_id is key-shaped and leaves the movement pool
+# reading abstains, since signed postings move the level both ways. The movements are the glossed measures; posting_id
+# is an identifier, served as one
 query ITTTTTIRRRT
 SELECT seq, event, grain, scope, verdict, convention, voted, round(support, 4), round(r_flow, 2), r_stock, reason FROM behavior_anchors('beh.balances.balance') ORDER BY seq;
 ----
@@ -592,6 +609,23 @@ CREATE TABLE direct.balances AS
 statement ok
 DECLARE RELATIONSHIP postings.account_id -> balances.account_id;
 
+# no role, then a role that is no measure, then the measure: the abstention names the act each time
+query TT
+SELECT DISTINCT verdict, reason FROM behavior_anchors('direct.balances.balance');
+----
+abstain	no role glossed on postings: gloss role on its columns
+
+statement ok
+GLOSS role ON postings.amount AS $${"value": "attribute"}$$;
+
+query TT
+SELECT DISTINCT verdict, reason FROM behavior_anchors('direct.balances.balance');
+----
+abstain	no measure among postings's roles: gloss role measure on its movement columns
+
+statement ok
+GLOSS role ON postings.amount AS $${"value": "measure"}$$;
+
 query TTTTTT
 SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('direct.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
 ----
@@ -638,6 +672,12 @@ DECLARE RELATIONSHIP invoices.customer_id -> customers.id;
 
 statement ok
 DECLARE RELATIONSHIP payments.customer_id -> customers.id;
+
+statement ok
+GLOSS role ON payments.amount AS $${"value": "measure"}$$;
+
+statement ok
+GLOSS role ON received.received_to_date AS $${"value": "measure"}$$;
 
 query TTTTTT
 SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('viadoc.received.received_to_date') WHERE verdict <> 'abstain' ORDER BY seq;
@@ -692,6 +732,9 @@ DECLARE RELATIONSHIP payments.customer_id -> customers.id;
 
 statement ok
 DECLARE RELATIONSHIP balances.customer_id -> customers.id;
+
+statement ok
+GLOSS role ON payment_lines.amount AS $${"value": "measure"}$$;
 
 query TTTTTT
 SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('viamaster.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;

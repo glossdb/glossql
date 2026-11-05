@@ -371,10 +371,11 @@ ORDER BY seq;
 -- day, folded to the anchor's grain, the coarser of the two sides' native
 -- grains, a day-native alignment serving a month beside the day, and scoped
 -- by year where the grain allows, since a cumulative that resets is a stock
--- only inside its year. Movement terms are the event table's numeric
--- columns minus its identifiers, the legs of declared edges and integers
--- distinct on nine filled rows in ten, and every ordered pair difference of
--- them; above sixty-four columns the anchor abstains. Per entity the two
+-- only inside its year. Movement terms are the event table's columns the
+-- record says are measures, a role claim standing, minus the legs of
+-- declared edges, and every ordered pair difference of them on a pool of
+-- eight terms or fewer; nothing is guessed from a type, and an event table
+-- with no measure glossed abstains and names the gloss to make. Per entity the two
 -- residuals are Σ|y − m| / Σ|m| and Σ|Δy − m| / Σ|m| over the periods both
 -- sides carry; an entity votes when the winner is under 0.05 and the loser
 -- stands off by a third of their sum, and abstains on fewer than four
@@ -418,8 +419,7 @@ native AS (
               WHEN bool_and(period = date_trunc('quarter', period)) THEN 'quarter'
               WHEN bool_and(period = date_trunc('month', period)) THEN 'month' ELSE 'day' END AS grain
   FROM cells WHERE side IN ('measure', 'event') GROUP BY ALL),
--- the event tables' identifiers: declared legs and key-shaped integers, which leave the movement pool
-keyish AS (SELECT event, term FROM cells WHERE side = 'column' AND NOT identifier AND value >= 0.9),
+-- the event tables' identifiers, served beside each anchor: declared legs and key-shaped integers
 identifiers AS (
   SELECT event, coalesce(list(term ORDER BY term) FILTER (WHERE identifier OR value >= 0.9), []) AS identifier_columns
   FROM cells WHERE side = 'column' GROUP BY event),
@@ -447,7 +447,6 @@ e_series AS (
          date_trunc(k.grain, e.period) AS b, e.term, sum(e.value) AS m
   FROM anchors k
   JOIN cells e ON e.side = 'event' AND e.event = k.event AND e.align = k.align AND e.axis = k.event_time
-  ANTI JOIN keyish x ON x.event = e.event AND x.term = e.term
   GROUP BY ALL),
 terms AS (SELECT anchor_id, count(DISTINCT term) AS terms FROM e_series GROUP BY anchor_id),
 viable AS (
@@ -459,8 +458,8 @@ common AS (
   GROUP BY anchor_id),
 runnable AS (
   SELECT k.anchor_id FROM anchors k JOIN viable v ON v.anchor_id = k.anchor_id JOIN terms t ON t.anchor_id = k.anchor_id
-  WHERE v.viable_entities >= 2 AND t.terms <= 64),
--- the cells both sides carry, under every convention: each term, and every ordered pair difference
+  WHERE v.viable_entities >= 2),
+-- the cells both sides carry, under every convention: each term, and every ordered pair difference on a pool of eight or fewer
 aligned AS (
   SELECT y.anchor_id, y.entity, y.b, y.y, e.term, e.m
   FROM m_series y JOIN e_series e ON e.anchor_id = y.anchor_id AND e.entity = y.entity AND e.b = y.b
@@ -469,7 +468,8 @@ conv AS (
   SELECT anchor_id, entity, b, y, term AS convention, 1 AS terms, m FROM aligned
   UNION ALL
   SELECT a.anchor_id, a.entity, a.b, a.y, a.term || ' - ' || o.term, 2, a.m - o.m
-  FROM aligned a JOIN aligned o ON o.anchor_id = a.anchor_id AND o.entity = a.entity AND o.b = a.b AND o.term <> a.term),
+  FROM aligned a JOIN aligned o ON o.anchor_id = a.anchor_id AND o.entity = a.entity AND o.b = a.b AND o.term <> a.term
+  JOIN terms t ON t.anchor_id = a.anchor_id AND t.terms <= 8),
 stepped AS (
   SELECT *, y - lag(y) OVER w AS dy, row_number() OVER w AS t
   FROM conv WINDOW w AS (PARTITION BY anchor_id, convention, entity ORDER BY b)),
@@ -539,19 +539,19 @@ anyvote AS (SELECT anchor_id, bool_or(voted > 0) AS any_votes FROM summaries GRO
 recon AS (
   SELECT k.event, k.align, k.measure_time, k.event_time, k.grain, k.scope,
          CASE WHEN r.anchor_id IS NOT NULL THEN coalesce(c.entities, 0) END AS entities,
-         CASE WHEN coalesce(t.terms, 0) <= 64 THEN coalesce(v.viable_entities, 0) END AS viable_entities,
+         coalesce(v.viable_entities, 0) AS viable_entities,
          i.identifier_columns,
          CASE WHEN r.anchor_id IS NULL OR w.anchor_id IS NULL THEN 'abstain' ELSE w.verdict END AS verdict,
          w.convention, coalesce(w.voted, f.voted) AS voted, w.agreement, w.support,
          CASE WHEN w.verdict <> 'abstain' THEN w.r_flow END AS r_flow, CASE WHEN w.verdict <> 'abstain' THEN w.r_stock END AS r_stock,
          w.sign_primary, w.sign_mirror, w.sign_both,
          coalesce(al.alternatives, []::STRUCT(convention VARCHAR, verdict VARCHAR, voted BIGINT, support DOUBLE)[]) AS alternatives,
-         CASE WHEN coalesce(t.terms, 0) > 64 THEN t.terms || ' movement terms on ' || k.event || ', above the 64 one reconciliation takes'
-              WHEN coalesce(v.viable_entities, 0) < 2 THEN 'fewer than two entities carry 4+ periods on this alignment'
+         CASE WHEN coalesce(v.viable_entities, 0) < 2 THEN 'fewer than two entities carry 4+ periods on this alignment'
               WHEN w.anchor_id IS NULL THEN
                 CASE WHEN f.anchor_id IS NOT NULL THEN f.winners || ' of ' || f.entities || ' common entities voted ' || f.verdict || ': under the majority floor'
                      WHEN coalesce(av.any_votes, false) THEN 'votes below the candidacy floor (2 voters, 0.8 agreement)'
-                     ELSE 'no entity series reconciled: wrong anchor, short series, or dead values' END END AS reason,
+                     ELSE 'no entity series reconciled: wrong anchor, short series, or dead values' END
+                || CASE WHEN coalesce(t.terms, 0) > 8 THEN '; pairs not scored above 8 terms' ELSE '' END END AS reason,
          0 AS kind
   FROM anchors k
   LEFT JOIN terms t ON t.anchor_id = k.anchor_id
@@ -601,9 +601,17 @@ mono AS (
   FROM mono_keys mk
   LEFT JOIN mono_read r ON r.event = mk.event AND r.measure_align = mk.measure_align AND r.scope = mk.scope
   LEFT JOIN identifiers i ON i.event = mk.event),
+-- an event table with no measure glossed: one abstaining row per alignment and axis pair, naming the gloss
+unglossed AS (
+  SELECT u.event, u.align, u.term AS measure_time, u.axis AS event_time, NULL::VARCHAR AS grain, NULL::VARCHAR AS scope,
+         NULL::BIGINT AS entities, NULL::BIGINT AS viable_entities, i.identifier_columns, 'abstain' AS verdict,
+         NULL::VARCHAR AS convention, NULL::BIGINT AS voted, NULL::DOUBLE AS agreement, NULL::DOUBLE AS support,
+         NULL::DOUBLE AS r_flow, NULL::DOUBLE AS r_stock, NULL::BIGINT AS sign_primary, NULL::BIGINT AS sign_mirror, NULL::BIGINT AS sign_both,
+         []::STRUCT(convention VARCHAR, verdict VARCHAR, voted BIGINT, support DOUBLE)[] AS alternatives, u.reason, 0 AS kind
+  FROM cells u LEFT JOIN identifiers i ON i.event = u.event WHERE u.side = 'unglossed'),
 numbered AS (
   SELECT *, row_number() OVER (ORDER BY measure_time, event, align, event_time, kind, grain, scope) - 1 AS seq
-  FROM (SELECT * FROM recon UNION ALL SELECT * FROM mono)),
+  FROM (SELECT * FROM recon UNION ALL SELECT * FROM mono UNION ALL SELECT * FROM unglossed)),
 -- what refuses the column: the primitive's reason, or a key-shaped measure
 refused AS (
   SELECT reason FROM cells WHERE side = 'reason'

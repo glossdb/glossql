@@ -1669,6 +1669,23 @@ static string ReasonBranch(const string &reason) {
 	                   "");
 }
 
+//! An alignment's two labels: the measure side's key, which the measure cells
+//! carry, and the whole alignment as the anchor names it
+static pair<string, string> AlignLabels(const string &table, const string &ev, const Align &al) {
+	auto m_align = (al.via.set ? al.via.table + ">" : "") + ColsLabel(al.m_cols);
+	string align_label;
+	if (al.via.set) {
+		align_label =
+		    table + " via " + al.via.table + "." + ColsLabel(al.m_cols) + " = " + ev + "." + ColsLabel(al.e_cols);
+	} else if (al.e_via.set) {
+		align_label =
+		    table + "." + ColsLabel(al.m_cols) + " = " + ev + " via " + al.e_via.table + "." + ColsLabel(al.e_cols);
+	} else {
+		align_label = table + "." + ColsLabel(al.m_cols) + " = " + ev + "." + ColsLabel(al.e_cols);
+	}
+	return {m_align, align_label};
+}
+
 static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	Inner inner(context);
 	auto subject = ResolveSubject(context, input.inputs[0].ToString());
@@ -1744,6 +1761,26 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	if (m_axes.empty()) {
 		return reason("no period axis: no date column on " + table + " or one declared hop away");
 	}
+	// the movement pool is what the record says is a measure: the columns whose
+	// role claim stands, current or stale, read collapsed. Nothing is guessed from
+	// a type; an event table with no measure glossed abstains and names the gloss
+	std::map<string, std::set<string>> measures;
+	std::set<string> roled;
+	auto roles = inner.Run("SELECT subject, value->>'value' FROM glossql_glossary(" + QuoteText(dataset) +
+	                       ", NULL, false) WHERE aspect = 'role' AND state IN ('current', 'stale')");
+	while (auto chunk = roles->Fetch()) {
+		for (idx_t i = 0; i < chunk->size(); i++) {
+			auto claimed = SubjectParts(chunk->GetValue(0, i).ToString());
+			if (claimed.size() != 3) {
+				continue;
+			}
+			roled.insert(claimed[1]);
+			auto role = chunk->GetValue(1, i);
+			if (!role.IsNull() && role.ToString() == "measure") {
+				measures[claimed[1]].insert(claimed[2]);
+			}
+		}
+	}
 	bool owns = OwnsEntity(pointers, table);
 	vector<string> branches;
 	std::set<string> measured;
@@ -1756,17 +1793,45 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 		if (aligns.empty() || e_axes.empty()) {
 			continue;
 		}
-		// the movement pool: the event table's numeric columns that are no declared leg
+		// the movement pool: the event table's numeric columns glossed a measure that are no declared leg
 		vector<pair<string, string>> numeric;
 		vector<string> pool;
+		idx_t candidates = 0;
 		for (auto &c : schemas[ev]) {
 			if (!IsNumericType(c.second)) {
 				continue;
 			}
 			numeric.push_back(c);
-			if (!legs.count({ev, c.first})) {
+			if (legs.count({ev, c.first})) {
+				continue;
+			}
+			candidates++;
+			if (measures[ev].count(c.first)) {
 				pool.push_back(c.first);
 			}
+		}
+		if (candidates == 0) {
+			// nothing numeric beyond its legs: no movement to name, nothing owed
+			continue;
+		}
+		if (pool.empty()) {
+			// every anchor on this event table abstains, one row per alignment and axis pair
+			string why = roled.count(ev)
+			                 ? "no measure among " + ev + "'s roles: gloss role measure on its movement columns"
+			                 : "no role glossed on " + ev + ": gloss role on its columns";
+			for (auto &al : aligns) {
+				auto labels = AlignLabels(table, ev, al);
+				for (auto &eaxis : e_axes) {
+					for (auto &maxis : m_axes) {
+						branches.push_back(CellsBranch({"'unglossed'", QuoteText(ev), QuoteText(labels.second),
+						                                QuoteText(labels.first), QuoteText(eaxis.label),
+						                                QuoteText(maxis.label), "NULL::BOOLEAN", "NULL::VARCHAR",
+						                                "NULL::TIMESTAMP", "NULL::DOUBLE", QuoteText(why)},
+						                               ""));
+					}
+				}
+			}
+			continue;
 		}
 		bool emitted = false;
 		for (auto &al : aligns) {
@@ -1780,17 +1845,9 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 				continue;
 			}
 			emitted = true;
-			auto m_align = (al.via.set ? al.via.table + ">" : "") + ColsLabel(al.m_cols);
-			string align_label;
-			if (al.via.set) {
-				align_label = table + " via " + al.via.table + "." + ColsLabel(al.m_cols) + " = " + ev + "." +
-				              ColsLabel(al.e_cols);
-			} else if (al.e_via.set) {
-				align_label = table + "." + ColsLabel(al.m_cols) + " = " + ev + " via " + al.e_via.table + "." +
-				              ColsLabel(al.e_cols);
-			} else {
-				align_label = table + "." + ColsLabel(al.m_cols) + " = " + ev + "." + ColsLabel(al.e_cols);
-			}
+			auto labels = AlignLabels(table, ev, al);
+			auto &m_align = labels.first;
+			auto &align_label = labels.second;
 			// the measure side, once per axis and alignment key
 			for (auto &maxis : m_axes) {
 				if (!measured.insert(maxis.label + "|" + m_align).second) {

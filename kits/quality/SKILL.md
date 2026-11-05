@@ -61,7 +61,10 @@ What each line means:
   cross-table: a movement summed per entity and period from an event
   table a declared relationship aligns with the column's table, scored
   against both readings, flow where the level matches the movement,
-  stock where its change does. An anchor is one event table, alignment,
+  stock where its change does. The movements are the event table's
+  columns glossed `role` measure, nothing guessed from a type; an event
+  table with no measure glossed abstains and names the gloss to make,
+  so gloss roles on the event tables first. An anchor is one event table, alignment,
   time axis on each side, grain and scope; its `convention` is the
   movement column, or a difference of two, that reconciled, `monotone`
   the one anchor per alignment that reads the measure's own shape, a
@@ -95,9 +98,10 @@ What each line means:
    fin.geo;`; per table with three numeric columns or more, `SELECT
    detect_derivations() FROM fin.lines;`. Cite a found edge or
    derivation in the `grounds` of the gloss it supports.
-5. Per measure column, after the edges are declared, `SELECT
-   behavior_evidence() FROM fin.balances.amount;`: stock or flow, with the
-   anchor that decided. Gloss `behavior` with the anchor as grounds.
+5. Per measure column, after the edges are declared and the event
+   tables' measures carry `role`, `SELECT behavior_evidence() FROM
+   fin.balances.amount;`: stock or flow, with the anchor that decided.
+   Gloss `behavior` with the anchor as grounds.
 6. After grounding metrics, `SELECT detect_grounding_collisions() FROM
    fin;`: two names for one number is a definition to settle, not two
    metrics.
