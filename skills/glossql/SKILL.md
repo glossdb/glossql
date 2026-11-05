@@ -7,7 +7,8 @@ description: Speak glossql in a DuckDB workspace through the duckdb CLI — the 
 
 glossql is one SQL-shaped surface for a workspace's data and its
 context. Data lands in tables of a DuckLake; context is JSON attached
-to subjects (`dataset`, `table`, `table.column`) under declared aspects.
+to subjects (`dataset`, `table`, `table.column`; a column named with a
+  dot or a space is spelled quoted, `table."a.b"`) under declared aspects.
 The `gloss` extension gives DuckDB the grammar and the store; a kit
 gives the words (`kits/kpi/SKILL.md` teaches the KPI kit's,
 `kits/quality/SKILL.md` the quality kit's screens). Everything

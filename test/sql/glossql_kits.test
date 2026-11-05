@@ -196,6 +196,48 @@ SELECT subject, state FROM GLOSSARY(cased) WHERE aspect = 'meaning' AND subject 
 ----
 fin.cased.OrderId	current
 
+# --- a column's name may hold a dot, spelled quoted: the column is what follows the second dot (SPEC §4);
+# a dataset's and a table's name carry none
+
+statement ok
+CREATE TABLE fin.dotted AS SELECT 1 AS "a.b", 2 AS c;
+
+query T
+GLOSS meaning ON dotted."a.b" AS $${"value": "dotted"}$$;
+----
+glossed meaning on fin.dotted.a.b as agent
+
+query TT
+SELECT subject, state FROM GLOSSARY(dotted."a.b") WHERE aspect = 'meaning';
+----
+fin.dotted.a.b	current
+
+statement ok
+SELECT column_profile() FROM dotted."a.b";
+
+query T
+SELECT value->>'total' FROM measurements WHERE function = 'column_profile' AND subject = 'fin.dotted.a.b';
+----
+1
+
+statement ok
+CREATE OR REPLACE TABLE fin.dotted AS SELECT 2 AS c;
+
+query TT
+SELECT subject, state FROM GLOSSARY(dotted."a.b") WHERE aspect = 'meaning';
+----
+fin.dotted.a.b	stale
+
+statement error
+DECLARE DATASET "a.b" SET (purpose: 'none');
+----
+a dataset's name carries no dot
+
+statement error
+DECLARE RECIPE "a.b" ON fin FROM nowhere AS $$SELECT 1$$;
+----
+a table's name carries no dot
+
 # --- a kit's name under a changed text runs whole and lands a new kits row; the original text is then not the
 # newest row's for the name, so it runs again
 

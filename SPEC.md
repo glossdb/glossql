@@ -163,6 +163,9 @@ A **subject** is what a gloss, a function SELECT, or a witness attaches to:
   pair path (relationships have no names). An endpoint is a column or a
   column tuple: `table.(a, b)` — the tuple is the key.
 
+A dataset's name and a table's name carry no dot; a column's may,
+spelled quoted, and the column is what follows the second dot.
+
 ```sql
 DECLARE RELATIONSHIP orders.customer_id -> customers.id;
 DECLARE RELATIONSHIP invoices.order_id <-> orders.id;

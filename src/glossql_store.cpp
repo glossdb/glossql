@@ -53,6 +53,24 @@ string QuoteText(const string &text) {
 	return "'" + StringUtil::Replace(text, "'", "''") + "'";
 }
 
+vector<string> SubjectParts(const string &subject) {
+	vector<string> parts;
+	auto first = subject.find('.');
+	if (first == string::npos) {
+		parts.push_back(subject);
+		return parts;
+	}
+	parts.push_back(subject.substr(0, first));
+	auto second = subject.find('.', first + 1);
+	if (second == string::npos) {
+		parts.push_back(subject.substr(first + 1));
+		return parts;
+	}
+	parts.push_back(subject.substr(first + 1, second - first - 1));
+	parts.push_back(subject.substr(second + 1));
+	return parts;
+}
+
 string CurrentDataset(ClientContext &context) {
 	auto &entry = ClientData::Get(context).catalog_search_path->GetDefault();
 	return entry.GetSchema().GetIdentifierName();
@@ -196,28 +214,29 @@ static string Canonical(ClientContext &context, const string &schema, const stri
 //! extraction hands its resolved subject to subject_column)
 static string ResolvePath(ClientContext &context, const string &path) {
 	auto dataset = CurrentDataset(context);
-	auto parts = StringUtil::Split(path, '.');
-	if (parts.size() == 1) {
+	auto first = path.find('.');
+	if (first == string::npos) {
 		// one name is a dataset or a declared source, the workspace's own rows
 		// (SPEC §5.1), else a table of the USE'd dataset
 		return SchemaExists(context, path) || SourceExists(context, path) ? path : dataset + "." + path;
 	}
-	if (parts.size() == 3) {
-		return SchemaExists(context, parts[0]) ? Canonical(context, parts[0], parts[1], parts[2])
-		                                       : dataset + "." + path;
-	}
-	if (parts.size() > 3) {
-		return SchemaExists(context, parts[0]) ? path : dataset + "." + path;
+	// a dataset's and a table's name carry no dot; a column's may (SPEC §4), so the
+	// first two dots are the separators and the column is all that follows
+	auto head = path.substr(0, first);
+	auto rest = path.substr(first + 1);
+	auto second = rest.find('.');
+	if (second != string::npos && SchemaExists(context, head)) {
+		return Canonical(context, head, rest.substr(0, second), rest.substr(second + 1));
 	}
 	// two names: table.column of the USE'd dataset, or dataset.table. A landed
 	// table of the USE'd dataset wins over a dataset of the same name (SPEC §3)
 	// when it holds the column; a dataset holding the table wins otherwise
-	if (TableExists(context, dataset, parts[0]) &&
-	    (ColumnExists(context, dataset, parts[0], parts[1]) || !SchemaExists(context, parts[0]))) {
-		return Canonical(context, dataset, parts[0], parts[1]);
+	if (TableExists(context, dataset, head) &&
+	    (ColumnExists(context, dataset, head, rest) || !SchemaExists(context, head))) {
+		return Canonical(context, dataset, head, rest);
 	}
-	if (SchemaExists(context, parts[0])) {
-		return Canonical(context, parts[0], parts[1], "");
+	if (second == string::npos && SchemaExists(context, head)) {
+		return Canonical(context, head, rest, "");
 	}
 	return dataset + "." + path;
 }
@@ -635,7 +654,7 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 			                            aspect_name, error);
 		}
 	}
-	auto parts = StringUtil::Split(subject, '.');
+	auto parts = SubjectParts(subject);
 	bool pair = subject.find(" -> ") != string::npos || subject.find(" <-> ") != string::npos;
 	if (aspect.kind == "QUERY" && (parts.size() != 1 || pair)) {
 		throw InvalidInputException("glossql: a QUERY aspect takes the dataset as its subject, not %s", subject);
@@ -700,7 +719,7 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 //! A relationship endpoint is a column, or a column tuple, of a landed table
 //! (SPEC §4): naming a table or column the dataset does not have is refused
 static void AdmitEndpoint(ClientContext &context, const string &endpoint) {
-	auto parts = StringUtil::Split(endpoint, '.');
+	auto parts = SubjectParts(endpoint);
 	if (parts.size() != 3) {
 		throw InvalidInputException("glossql: a relationship endpoint is [dataset.]table.key, not %s", endpoint);
 	}
@@ -1111,7 +1130,10 @@ static string LandingsSQL(const Workspace &ws) {
 //! replaced or dropped. Dataset subjects and pair paths never do
 static string StaleSQL() {
 	string at = " WHERE schema_name = split_part(g.subject, '.', 1) AND table_name = split_part(g.subject, '.', 2)";
-	string column = at + " AND column_name = split_part(g.subject, '.', 3)";
+	// the column is all that follows the second dot: its name may hold one (SPEC §4)
+	string column_of =
+	    "substr(g.subject, length(split_part(g.subject, '.', 1)) + length(split_part(g.subject, '.', 2)) + 3)";
+	string column = at + " AND column_name = " + column_of;
 	string then_live =
 	    " AND begin_snapshot <= g.snapshot_id AND (end_snapshot IS NULL OR end_snapshot > g.snapshot_id)";
 	string then_type = "(SELECT column_type FROM cols" + column + then_live + " LIMIT 1)";
@@ -1140,13 +1162,13 @@ static string StaleSQL() {
 	                    " AND (v.end_snapshot IS NULL OR v.end_snapshot > g.snapshot_id)) AND NOT EXISTS (SELECT 1" +
 	                    view_at + " AND v.end_snapshot IS NULL))";
 	string landed_twice = then_lineage + " IS NOT NULL AND " + now_lineage + " IS NOT NULL";
-	string column_rederived = "(" + landed_twice + " AND " + derivation(then_lineage, "split_part(g.subject, '.', 3)") +
-	                          " IS DISTINCT FROM " + derivation(now_lineage, "split_part(g.subject, '.', 3)") + ")";
+	string column_rederived = "(" + landed_twice + " AND " + derivation(then_lineage, column_of) +
+	                          " IS DISTINCT FROM " + derivation(now_lineage, column_of) + ")";
 	string table_rederived = "(" + landed_twice + " AND EXISTS (SELECT 1 FROM (SELECT unnest(json_keys(" +
 	                         then_lineage + ")) AS k) WHERE " + derivation(then_lineage, "k") + " IS DISTINCT FROM " +
 	                         derivation(now_lineage, "k") + "))";
 	return "CASE WHEN g.snapshot_id IS NULL OR g.subject LIKE '% -> %' OR g.subject LIKE '% <-> %' THEN false"
-	       " WHEN len(string_split(g.subject, '.')) = 3 THEN (" +
+	       " WHEN len(string_split(g.subject, '.')) >= 3 THEN (" +
 	       column_stale + ") OR " + column_rederived + " OR " + view_stale +
 	       " WHEN len(string_split(g.subject, '.')) = 2 THEN " + table_stale + " OR " + table_rederived + " OR " +
 	       view_stale + " ELSE false END";

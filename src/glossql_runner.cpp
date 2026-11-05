@@ -324,6 +324,9 @@ static void DatasetExec(ClientContext &context, TableFunctionInput &data, DataCh
 	state.done = true;
 	auto &inputs = data.bind_data->Cast<RunnerBindData>().inputs;
 	auto name = inputs[0].ToString();
+	if (name.find('.') != string::npos) {
+		throw InvalidInputException("glossql: a dataset's name carries no dot (SPEC §4): %s", name);
+	}
 
 	// the schema is the lake's and the row the store's: two catalogs, two commits;
 	// an unchanged re-declaration is a no-op (SPEC §3)
@@ -498,6 +501,9 @@ static void RecipeExec(ClientContext &context, TableFunctionInput &data, DataChu
 	auto &inputs = data.bind_data->Cast<RunnerBindData>().inputs;
 	auto name = inputs[0].ToString();
 	auto dataset = inputs[1].ToString();
+	if (name.find('.') != string::npos) {
+		throw InvalidInputException("glossql: a table's name carries no dot (SPEC §4): %s", name);
+	}
 	RecipeRow recipe {inputs[2].ToString(), inputs[3].ToString(), inputs[4].ToString()};
 
 	Inner inner(context);
@@ -1062,7 +1068,7 @@ static TableFunction GlossSelectOrExtractFunction() {
 
 static unique_ptr<TableRef> SubjectColumnBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	auto subject = ResolveSubject(context, input.inputs[0].ToString());
-	auto parts = StringUtil::Split(subject, '.');
+	auto parts = SubjectParts(subject);
 	if (parts.size() != 3) {
 		throw InvalidInputException("glossql: subject_column takes dataset.table.column, got '%s'", subject);
 	}
