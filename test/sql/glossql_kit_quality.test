@@ -35,7 +35,7 @@ query TTI
 SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
-quality	kits/quality/kit.sql	18
+quality	kits/quality/kit.sql	23
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
 
@@ -455,6 +455,107 @@ query TTR
 SELECT subject, band, score FROM ATTEST(orders::ids_present);
 ----
 fin.orders	red	0.2
+
+# --- behavior_evidence: the stock/flow evidence over declared edges; a level an event table's movements reconcile reads stock, a sum of them flow
+
+statement ok
+DECLARE DATASET beh SET (purpose: 'behavior');
+
+statement ok
+USE beh;
+
+statement ok
+CREATE TABLE beh.accounts AS SELECT * FROM (VALUES (1, 'cash'), (2, 'bank'), (3, 'card')) t(id, name);
+
+# signed daily postings per account over six months
+statement ok
+CREATE TABLE beh.postings AS
+  SELECT row_number() OVER () AS posting_id, a.id AS account_id, d::DATE AS posted, ((dayofyear(d) * a.id) % 7 - 3)::DOUBLE AS amount
+  FROM generate_series(DATE '2024-01-01', DATE '2024-06-30', INTERVAL 1 DAY) g(d), beh.accounts a;
+
+# month-end levels: an opening balance plus the postings to date; and the postings' monthly sums
+statement ok
+CREATE TABLE beh.balances AS
+  SELECT account_id, last_day(date_trunc('month', posted))::DATE AS as_of,
+         100.0 * account_id + sum(sum(amount)) OVER (PARTITION BY account_id ORDER BY date_trunc('month', posted)) AS balance
+  FROM beh.postings GROUP BY account_id, date_trunc('month', posted);
+
+statement ok
+CREATE TABLE beh.totals AS SELECT account_id, date_trunc('month', posted)::DATE AS month, sum(amount) AS total FROM beh.postings GROUP BY ALL;
+
+# no declared edge: nothing aligns, and the screen says why
+query TT
+SELECT applicable, reason FROM behavior_anchors('beh.balances.balance');
+----
+false	no declared relationships connect balances to an event table with a time axis
+
+statement ok
+DECLARE RELATIONSHIP postings.account_id -> accounts.id;
+
+statement ok
+DECLARE RELATIONSHIP balances.account_id -> accounts.id;
+
+statement ok
+DECLARE RELATIONSHIP totals.account_id -> accounts.id;
+
+# the edges meet at the account. At the month, the coarser of the two sides' native grains, each account's postings sum
+# to the balance's change: stock, r_stock 0; at the day only the month-end days align and nothing fits. The monotone
+# reading abstains, since signed postings move the level both ways. posting_id is key-shaped and leaves the movement pool
+query ITTTTTIRRRT
+SELECT seq, event, grain, scope, verdict, convention, voted, round(support, 4), round(r_flow, 2), r_stock, reason FROM behavior_anchors('beh.balances.balance') ORDER BY seq;
+----
+0	postings	day	none	abstain	NULL	NULL	NULL	NULL	NULL	no entity series reconciled: wrong anchor, short series, or dead values
+1	postings	day	year	abstain	NULL	NULL	NULL	NULL	NULL	no entity series reconciled: wrong anchor, short series, or dead values
+2	postings	month	none	stock	amount	3	0.4385	129.36	0.0	NULL
+3	postings	month	year	stock	amount	3	0.4385	129.36	0.0	NULL
+4	postings	day	none	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
+5	postings	day	year	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
+6	totals	month	none	stock	total	3	0.4385	129.36	0.0	NULL
+7	totals	month	year	stock	total	3	0.4385	129.36	0.0	NULL
+8	totals	day	none	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
+9	totals	day	year	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
+
+query TTIII
+SELECT identifier_columns::VARCHAR, align, entities, viable_entities, sign_primary FROM behavior_anchors('beh.balances.balance') WHERE seq = 2;
+----
+[account_id, posting_id]	balances.account_id = postings.account_id	3	3	3
+
+# the measurement: the election's summary, the anchors read back whole
+statement ok
+SELECT behavior_evidence() FROM balances.balance;
+
+query TTTTTT
+SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'), json_extract_string(value, '$.summary.event'),
+       json_extract_string(value, '$.summary.grain'), json_extract_string(value, '$.summary.tiebreak'),
+       json_extract_string(value, '$.anchors_n') || '/' || json_extract_string(value, '$.decided') || '/' || json_array_length(value, '$.anchors')
+FROM GLOSSARY(beh.balances.balance::behavior_evidence);
+----
+stock	amount	postings	month	event-name	10/4/10
+
+# the monthly sums match the postings' movement as they stand: flow
+statement ok
+SELECT behavior_evidence() FROM totals.total;
+
+query TTTT
+SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'),
+       json_extract_string(value, '$.summary.r_flow'), json_extract_string(value, '$.summary.sign.primary')
+FROM GLOSSARY(beh.totals.total::behavior_evidence);
+----
+flow	amount	0.0	3
+
+# no number, no time axis: examined, nothing to say
+query TT
+SELECT applicable, reason FROM behavior_anchors('beh.accounts.name');
+----
+false	beh.accounts.name is VARCHAR, not a number: the evidence reads a numeric measure
+
+statement ok
+SELECT behavior_evidence() FROM accounts.id;
+
+query TT
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') FROM GLOSSARY(beh.accounts.id::behavior_evidence);
+----
+false	no period axis: no date column on accounts or one declared hop away
 
 # the kit run again with the same text stands: one row, nothing runs
 query TT

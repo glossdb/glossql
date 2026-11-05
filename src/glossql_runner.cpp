@@ -1379,6 +1379,482 @@ static TableFunction RelationshipChecksFunction() {
 }
 
 //===--------------------------------------------------------------------===//
+// glossql_behavior_cells(column): the cells the stock/flow evidence reads; the
+// quality kit's behavior_anchors is the screen over them. A column's own
+// trajectory cannot decide stock from flow; the evidence is a movement an
+// event table carries per entity and period, aligned with the column's table
+// over the declared relationships. Per alignment, both sides as cells at the
+// day: the measure side, entity and period to the column's sum, once per
+// measure axis and alignment key; the event side, entity and period to each
+// movement column's sum, the event table's numeric columns minus the legs of
+// declared edges, once per event axis. Beside them one row per numeric column
+// of each event table, a declared leg flagged, an integer with its distinct
+// share over its filled rows, so the screen sets the key-shaped ones aside.
+// An alignment is a declared edge between the two tables, two edges meeting
+// at one dimension key, or an entity borrowed one hop: a measure table whose
+// every edge lands on a document keys on the document's dimension, and an
+// event table that aligns no other way keys through its master. A side's time
+// axis is each of its own date columns, else one borrowed over an edge. A
+// column that is not numeric, a table with no axis, or no alignment at all is
+// one row that says why. Rows: (side, event, align, measure_align, axis, term,
+// identifier, entity, period, value, reason)
+//===--------------------------------------------------------------------===//
+
+static bool IsIntegerType(const string &type) {
+	static const std::set<string> INTEGERS = {"TINYINT",  "SMALLINT",  "INTEGER",  "BIGINT",  "HUGEINT",
+	                                          "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT"};
+	return INTEGERS.count(type) > 0;
+}
+
+static bool IsNumericType(const string &type) {
+	return IsIntegerType(type) || type == "FLOAT" || type == "DOUBLE" || StringUtil::StartsWith(type, "DECIMAL");
+}
+
+static bool IsTemporalType(const string &type) {
+	return type == "DATE" || StringUtil::StartsWith(type, "TIMESTAMP");
+}
+
+//! One direction of a declared relationship: the child table and its legs onto the parent's
+struct Pointer {
+	string src_t;
+	vector<string> src_cols;
+	string dst_t;
+	vector<string> dst_cols;
+};
+
+//! A join one hop away: this table's legs onto the hop table's key
+struct Hop {
+	bool set = false;
+	string table;
+	vector<string> fk;
+	vector<string> key;
+};
+
+//! A side's time axis: its own date column, or one borrowed over an edge
+struct Axis {
+	string label;
+	string column;
+	Hop borrowed;
+};
+
+//! How the measure table and an event table key the same entity: the legs on
+//! each side, and the document each side borrows its entity through, if any
+struct Align {
+	vector<string> m_cols;
+	vector<string> e_cols;
+	Hop via;
+	Hop e_via;
+};
+
+//! A table's columns with their types, by table
+using Schemas = std::map<string, vector<pair<string, string>>>;
+
+static string ColsLabel(const vector<string> &cols) {
+	return cols.size() == 1 ? cols[0] : "(" + StringUtil::Join(cols, ", ") + ")";
+}
+
+//! The entity as text: one column cast, legs joined by a bar
+static string EntityExpr(const string &base, const vector<string> &cols) {
+	vector<string> parts;
+	for (auto &column : cols) {
+		parts.push_back("CAST(" + base + "." + QuoteName(column) + " AS VARCHAR)");
+	}
+	return StringUtil::Join(parts, " || '|' || ");
+}
+
+static string NotNullGuard(const string &base, const vector<string> &cols) {
+	vector<string> parts;
+	for (auto &column : cols) {
+		parts.push_back(base + "." + QuoteName(column) + " IS NOT NULL");
+	}
+	return StringUtil::Join(parts, " AND ");
+}
+
+static string JoinOn(const string &left, const vector<string> &lcols, const string &right,
+                     const vector<string> &rcols) {
+	vector<string> parts;
+	for (idx_t i = 0; i < lcols.size() && i < rcols.size(); i++) {
+		parts.push_back(left + "." + QuoteName(lcols[i]) + " = " + right + "." + QuoteName(rcols[i]));
+	}
+	return StringUtil::Join(parts, " AND ");
+}
+
+//! Whether the table owns an entity key: an edge onto a leaf, a table with no
+//! edges of its own. A table that does never borrows one through a document
+static bool OwnsEntity(const vector<Pointer> &pointers, const string &table) {
+	std::set<string> documents;
+	for (auto &p : pointers) {
+		documents.insert(p.src_t);
+	}
+	for (auto &p : pointers) {
+		if (p.src_t == table && p.dst_t != table && !documents.count(p.dst_t)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+//! Every table's time axes: its own date columns; only a table with none
+//! borrows one declared hop away
+static std::map<string, vector<Axis>> TimeAxes(const vector<string> &tables, const Schemas &schemas,
+                                               const vector<Pointer> &pointers) {
+	std::map<string, vector<Axis>> all;
+	for (auto &table : tables) {
+		vector<Axis> axes;
+		for (auto &column : schemas.at(table)) {
+			if (IsTemporalType(column.second)) {
+				axes.push_back(Axis {table + "." + column.first, column.first, Hop()});
+			}
+		}
+		if (axes.empty()) {
+			for (auto &p : pointers) {
+				if (p.src_t != table || p.dst_t == table) {
+					continue;
+				}
+				for (auto &column : schemas.at(p.dst_t)) {
+					if (!IsTemporalType(column.second)) {
+						continue;
+					}
+					auto label = p.dst_t + "." + column.first + " via " + ColsLabel(p.src_cols);
+					bool seen = false;
+					for (auto &axis : axes) {
+						seen = seen || axis.label == label;
+					}
+					if (!seen) {
+						axes.push_back(Axis {label, column.first, Hop {true, p.dst_t, p.src_cols, p.dst_cols}});
+					}
+				}
+			}
+		}
+		all[table] = axes;
+	}
+	return all;
+}
+
+//! The entity alignments between the measure table and one event table: a
+//! declared edge between the two, two edges meeting at the same dimension key,
+//! then the two borrowed shapes, each under its own gate; deduplicated by what
+//! they join on
+static vector<Align> Alignments(const string &table, const string &ev, const vector<Pointer> &pointers,
+                                bool owns_entity) {
+	vector<Align> aligns;
+	for (auto &p : pointers) {
+		if (p.src_t == table && p.dst_t == ev) {
+			aligns.push_back(Align {p.src_cols, p.dst_cols, Hop(), Hop()});
+		}
+		if (p.src_t == ev && p.dst_t == table) {
+			aligns.push_back(Align {p.dst_cols, p.src_cols, Hop(), Hop()});
+		}
+	}
+	for (auto &p : pointers) {
+		if (p.src_t != table) {
+			continue;
+		}
+		for (auto &q : pointers) {
+			if (q.src_t == ev && q.dst_t == p.dst_t && q.dst_cols == p.dst_cols && p.dst_t != table && p.dst_t != ev) {
+				aligns.push_back(Align {p.src_cols, q.src_cols, Hop(), Hop()});
+			}
+		}
+	}
+	// a borrowed entity, measure side: only for a measure table whose every edge
+	// lands on a document; it joins the document and keys on the document's
+	// dimension column, which the event side carries on a direct edge of its own
+	if (!owns_entity) {
+		for (auto &p1 : pointers) {
+			if (p1.src_t != table || p1.dst_t == table) {
+				continue;
+			}
+			for (auto &p2 : pointers) {
+				if (p2.src_t != p1.dst_t || p2.dst_t == table || p2.dst_t == ev) {
+					continue;
+				}
+				for (auto &q : pointers) {
+					if (q.src_t == ev && q.dst_t == p2.dst_t && q.dst_cols == p2.dst_cols) {
+						aligns.push_back(
+						    Align {p2.src_cols, q.src_cols, Hop {true, p1.dst_t, p1.src_cols, p1.dst_cols}, Hop()});
+					}
+				}
+			}
+		}
+	}
+	// a borrowed entity, event side: only when the event table aligned no other
+	// way; a document-keyed event table joins its master and keys on the
+	// master's columns, which meet the measure's dimension key or the measure
+	// table itself
+	if (aligns.empty()) {
+		for (auto &q1 : pointers) {
+			if (q1.src_t != ev || q1.dst_t == ev || q1.dst_t == table) {
+				continue;
+			}
+			for (auto &q2 : pointers) {
+				if (q2.src_t != q1.dst_t || q2.dst_t == ev) {
+					continue;
+				}
+				Hop e_via {true, q1.dst_t, q1.src_cols, q1.dst_cols};
+				if (q2.dst_t == table) {
+					aligns.push_back(Align {q2.dst_cols, q2.src_cols, Hop(), e_via});
+					continue;
+				}
+				for (auto &p : pointers) {
+					if (p.src_t == table && p.dst_t == q2.dst_t && p.dst_cols == q2.dst_cols) {
+						aligns.push_back(Align {p.src_cols, q2.src_cols, Hop(), e_via});
+					}
+				}
+			}
+		}
+	}
+	std::set<string> seen;
+	vector<Align> deduped;
+	for (auto &a : aligns) {
+		auto key = (a.via.set ? a.via.table + ">" : "") + (a.e_via.set ? ">" + a.e_via.table : "") +
+		           StringUtil::Join(a.m_cols, ",") + "=" + StringUtil::Join(a.e_cols, ",");
+		if (seen.insert(key).second) {
+			deduped.push_back(a);
+		}
+	}
+	return deduped;
+}
+
+//! One side of an alignment as its cells read it: the FROM clause with the
+//! time table and the document joined where borrowed, the time expression, the
+//! entity as text and the guard that every leg and the time are present
+struct SideSQL {
+	string from;
+	string texpr;
+	string entity;
+	string guard;
+};
+
+static SideSQL SideOf(Inner &inner, const string &dataset, const string &table, const Axis &axis, const Hop &hop,
+                      const vector<string> &cols) {
+	SideSQL side;
+	side.from = inner.Table(dataset, table) + " s";
+	if (axis.borrowed.set) {
+		side.from += " JOIN " + inner.Table(dataset, axis.borrowed.table) + " tt ON " +
+		             JoinOn("s", axis.borrowed.fk, "tt", axis.borrowed.key);
+		side.texpr = "tt." + QuoteName(axis.column);
+	} else {
+		side.texpr = "s." + QuoteName(axis.column);
+	}
+	string base = "s";
+	if (hop.set) {
+		side.from += " JOIN " + inner.Table(dataset, hop.table) + " dd ON " + JoinOn("s", hop.fk, "dd", hop.key);
+		base = "dd";
+	}
+	side.entity = EntityExpr(base, cols);
+	side.guard = NotNullGuard(base, cols) + " AND " + side.texpr + " IS NOT NULL";
+	return side;
+}
+
+//! One branch of the cells relation: its eleven columns as SQL expressions over a FROM clause
+static string CellsBranch(const vector<string> &columns, const string &from) {
+	static const vector<string> NAMES = {"side",       "event",  "align",  "measure_align", "axis",  "term",
+	                                     "identifier", "entity", "period", "value",         "reason"};
+	string sql = "SELECT ";
+	for (idx_t i = 0; i < NAMES.size(); i++) {
+		sql += (i == 0 ? "" : ", ") + columns[i] + " AS " + NAMES[i];
+	}
+	return sql + (from.empty() ? "" : " FROM " + from);
+}
+
+static string ReasonBranch(const string &reason) {
+	return CellsBranch({"'reason'", "NULL::VARCHAR", "NULL::VARCHAR", "NULL::VARCHAR", "NULL::VARCHAR", "NULL::VARCHAR",
+	                    "NULL::BOOLEAN", "NULL::VARCHAR", "NULL::TIMESTAMP", "NULL::DOUBLE", QuoteText(reason)},
+	                   "");
+}
+
+static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	Inner inner(context);
+	auto subject = ResolveSubject(context, input.inputs[0].ToString());
+	auto parts = SubjectParts(subject);
+	if (parts.size() != 3) {
+		throw InvalidInputException("glossql: glossql_behavior_cells takes dataset.table.column, got '%s'", subject);
+	}
+	auto &dataset = parts[0];
+	auto &table = parts[1];
+	auto &column = parts[2];
+	auto reason = [](const string &text) {
+		return make_uniq<SubqueryRef>(ParseSelect(ReasonBranch(text)));
+	};
+	// the dataset's landed tables and their columns, by name
+	vector<string> tables;
+	Schemas schemas;
+	for (auto &c : DatasetColumns(context, dataset, string(), false)) {
+		if (schemas.find(c.table) == schemas.end()) {
+			tables.push_back(c.table);
+		}
+		schemas[c.table].emplace_back(c.column, c.type);
+	}
+	std::sort(tables.begin(), tables.end());
+	string type;
+	if (schemas.count(table)) {
+		for (auto &c : schemas[table]) {
+			if (c.first == column) {
+				type = c.second;
+			}
+		}
+	}
+	if (type.empty()) {
+		return reason("no column " + subject + " on a landed table: the evidence reads a table's column");
+	}
+	if (!IsNumericType(type)) {
+		return reason(subject + " is " + type + ", not a number: the evidence reads a numeric measure");
+	}
+	// the dataset's declared edges as pointers, both ways for <->, over tables it has
+	vector<Pointer> pointers;
+	auto rows = inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
+	                      " WHERE dataset = " + QuoteText(dataset) + " ORDER BY seq");
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t i = 0; i < chunk->size(); i++) {
+			auto child = ParseSide(context, dataset, chunk->GetValue(0, i).ToString());
+			auto parent = ParseSide(context, dataset, chunk->GetValue(2, i).ToString());
+			if (child.legs.empty() || child.legs.size() != parent.legs.size() || !schemas.count(child.table) ||
+			    !schemas.count(parent.table)) {
+				continue;
+			}
+			pointers.push_back(Pointer {child.table, child.legs, parent.table, parent.legs});
+			if (chunk->GetValue(1, i).ToString() == "<->") {
+				pointers.push_back(Pointer {parent.table, parent.legs, child.table, child.legs});
+			}
+		}
+	}
+	std::set<pair<string, string>> legs;
+	for (auto &p : pointers) {
+		for (auto &c : p.src_cols) {
+			legs.insert({p.src_t, c});
+		}
+		for (auto &c : p.dst_cols) {
+			legs.insert({p.dst_t, c});
+		}
+	}
+	auto axes = TimeAxes(tables, schemas, pointers);
+	auto &m_axes = axes[table];
+	if (m_axes.empty()) {
+		return reason("no period axis: no date column on " + table + " or one declared hop away");
+	}
+	bool owns = OwnsEntity(pointers, table);
+	vector<string> branches;
+	std::set<string> measured;
+	for (auto &ev : tables) {
+		if (ev == table) {
+			continue;
+		}
+		auto aligns = Alignments(table, ev, pointers, owns);
+		auto &e_axes = axes[ev];
+		if (aligns.empty() || e_axes.empty()) {
+			continue;
+		}
+		// the movement pool: the event table's numeric columns that are no declared leg
+		vector<pair<string, string>> numeric;
+		vector<string> pool;
+		for (auto &c : schemas[ev]) {
+			if (!IsNumericType(c.second)) {
+				continue;
+			}
+			numeric.push_back(c);
+			if (!legs.count({ev, c.first})) {
+				pool.push_back(c.first);
+			}
+		}
+		bool emitted = false;
+		for (auto &al : aligns) {
+			vector<string> terms;
+			for (auto &c : pool) {
+				if (std::find(al.e_cols.begin(), al.e_cols.end(), c) == al.e_cols.end()) {
+					terms.push_back(c);
+				}
+			}
+			if (terms.empty()) {
+				continue;
+			}
+			emitted = true;
+			auto m_align = (al.via.set ? al.via.table + ">" : "") + ColsLabel(al.m_cols);
+			string align_label;
+			if (al.via.set) {
+				align_label = table + " via " + al.via.table + "." + ColsLabel(al.m_cols) + " = " + ev + "." +
+				              ColsLabel(al.e_cols);
+			} else if (al.e_via.set) {
+				align_label = table + "." + ColsLabel(al.m_cols) + " = " + ev + " via " + al.e_via.table + "." +
+				              ColsLabel(al.e_cols);
+			} else {
+				align_label = table + "." + ColsLabel(al.m_cols) + " = " + ev + "." + ColsLabel(al.e_cols);
+			}
+			// the measure side, once per axis and alignment key
+			for (auto &maxis : m_axes) {
+				if (!measured.insert(maxis.label + "|" + m_align).second) {
+					continue;
+				}
+				auto side = SideOf(inner, dataset, table, maxis, al.via, al.m_cols);
+				auto from = "(SELECT " + side.entity + " AS __gloss_entity, date_trunc('day', CAST(" + side.texpr +
+				            " AS TIMESTAMP)) AS __gloss_period, SUM(CAST(s." + QuoteName(column) +
+				            " AS DOUBLE)) AS __gloss_value FROM " + side.from + " WHERE " + side.guard + " AND s." +
+				            QuoteName(column) + " IS NOT NULL GROUP BY 1, 2)";
+				branches.push_back(CellsBranch({"'measure'", "NULL::VARCHAR", QuoteText(m_align), "NULL::VARCHAR",
+				                                QuoteText(maxis.label), "NULL::VARCHAR", "NULL::BOOLEAN",
+				                                "__gloss_entity", "__gloss_period", "__gloss_value", "NULL::VARCHAR"},
+				                               from));
+			}
+			// the event side, once per event axis: every term's sum per entity and day, unpivoted
+			string sums;
+			string names;
+			for (auto &t : terms) {
+				sums += ", SUM(CAST(s." + QuoteName(t) + " AS DOUBLE)) AS " + QuoteName(t);
+				names += (names.empty() ? "" : ", ") + QuoteName(t);
+			}
+			for (auto &eaxis : e_axes) {
+				auto side = SideOf(inner, dataset, ev, eaxis, al.e_via, al.e_cols);
+				auto from = "(FROM (SELECT " + side.entity + " AS __gloss_entity, date_trunc('day', CAST(" +
+				            side.texpr + " AS TIMESTAMP)) AS __gloss_period" + sums + " FROM " + side.from + " WHERE " +
+				            side.guard + " GROUP BY 1, 2) UNPIVOT (__gloss_value FOR __gloss_term IN (" + names +
+				            "))) u";
+				branches.push_back(
+				    CellsBranch({"'event'", QuoteText(ev), QuoteText(align_label), QuoteText(m_align),
+					             QuoteText(eaxis.label), "u.__gloss_term", "NULL::BOOLEAN", "u.__gloss_entity",
+					             "u.__gloss_period", "u.__gloss_value", "NULL::VARCHAR"},
+					            from));
+			}
+		}
+		if (!emitted) {
+			continue;
+		}
+		// the event table's numeric columns: a leg flagged, an integer with its distinct share
+		string aggs;
+		string names;
+		string flags;
+		for (auto &c : numeric) {
+			auto q = QuoteName(c.first);
+			bool leg = legs.count({ev, c.first}) > 0;
+			string agg = "NULL::DOUBLE";
+			if (!leg && IsIntegerType(c.second)) {
+				agg = "CASE WHEN count(" + q + ") > 0 AND approx_count_distinct(" + q +
+				      ") >= 2 THEN approx_count_distinct(" + q + ")::DOUBLE / count(" + q + ") END";
+			}
+			aggs += (aggs.empty() ? "" : ", ") + agg + " AS " + q;
+			names += (names.empty() ? "" : ", ") + q;
+			flags +=
+			    (flags.empty() ? "" : ", ") + string("(") + QuoteText(c.first) + ", " + (leg ? "true" : "false") + ")";
+		}
+		auto from = "(FROM (SELECT " + aggs + " FROM " + inner.Table(dataset, ev) +
+		            ") UNPIVOT INCLUDE NULLS (__gloss_value FOR __gloss_term IN (" + names + "))) u JOIN (VALUES " +
+		            flags + ") v(__gloss_term, __gloss_identifier) USING (__gloss_term)";
+		branches.push_back(CellsBranch({"'column'", QuoteText(ev), "NULL::VARCHAR", "NULL::VARCHAR", "NULL::VARCHAR",
+		                                "u.__gloss_term", "v.__gloss_identifier", "NULL::VARCHAR", "NULL::TIMESTAMP",
+		                                "u.__gloss_value", "NULL::VARCHAR"},
+		                               from));
+	}
+	if (branches.empty()) {
+		return reason("no declared relationships connect " + table + " to an event table with a time axis");
+	}
+	return make_uniq<SubqueryRef>(ParseSelect(StringUtil::Join(branches, " UNION ALL ")));
+}
+
+static TableFunction BehaviorCellsFunction() {
+	TableFunction function("glossql_behavior_cells", {LogicalType::VARCHAR}, nullptr);
+	function.bind_replace = BehaviorCellsBindReplace;
+	return function;
+}
+
+//===--------------------------------------------------------------------===//
 // Registration
 //===--------------------------------------------------------------------===//
 
@@ -1535,6 +2011,7 @@ void RegisterGlossRunner(ExtensionLoader &loader) {
 	loader.RegisterFunction(SubjectColumnFunction());
 	loader.RegisterFunction(DatasetCellsFunctions());
 	loader.RegisterFunction(RelationshipChecksFunction());
+	loader.RegisterFunction(BehaviorCellsFunction());
 }
 
 } // namespace duckdb
