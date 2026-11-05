@@ -1751,8 +1751,9 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 		}
 	}
 	// the measure column screened as the event side's columns are: a declared leg
-	// is an identifier, no measure; a key-shaped integer is judged by the screen
-	// on its distinct share, which the subject row below carries
+	// is an identifier, no measure; so is an integer distinct on nine filled rows
+	// in ten, read exactly here, the one read of data at bind, since it spares
+	// every cell the screen would otherwise build before refusing
 	if (legs.count({table, column})) {
 		return reason(subject + " is a leg of a declared relationship: an identifier, no measure");
 	}
@@ -1760,6 +1761,17 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	auto &m_axes = axes[table];
 	if (m_axes.empty()) {
 		return reason("no period axis: no date column on " + table + " or one declared hop away");
+	}
+	if (IsIntegerType(type)) {
+		auto q = QuoteName(column);
+		auto shape =
+		    inner.Row("SELECT count(" + q + "), count(DISTINCT " + q + ") FROM " + inner.Table(dataset, table));
+		auto filled = shape.empty() ? 0 : shape[0].GetValue<int64_t>();
+		auto distinct = shape.empty() ? 0 : shape[1].GetValue<int64_t>();
+		if (filled > 0 && distinct >= 2 && distinct * 10 >= filled * 9) {
+			return reason(subject + " is key-shaped: " + to_string(distinct) + " distinct values in " +
+			              to_string(filled) + " filled rows, an identifier, no measure; gloss role key");
+		}
 	}
 	// the movement pool is what the record says is a measure: the columns whose
 	// role claim stands, current or stale, read collapsed. Nothing is guessed from
@@ -1863,7 +1875,20 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 				                                "__gloss_entity", "__gloss_period", "__gloss_value", "NULL::VARCHAR"},
 				                               from));
 			}
-			// the event side, once per event axis: every term's sum per entity and day, unpivoted
+			// the entities the measure side can align: those with four days or more on
+			// any measure axis, a superset of the viable at every grain. The event side
+			// is summed for them alone, so an event table far wider and longer than the
+			// measure's costs what the alignment needs and nothing more
+			string viable;
+			for (auto &maxis : m_axes) {
+				auto side = SideOf(inner, dataset, table, maxis, al.via, al.m_cols);
+				viable += (viable.empty() ? "" : " UNION ") + string("SELECT ") + side.entity + " AS __gloss_e FROM " +
+				          side.from + " WHERE " + side.guard + " AND s." + QuoteName(column) +
+				          " IS NOT NULL GROUP BY 1 HAVING count(DISTINCT date_trunc('day', CAST(" + side.texpr +
+				          " AS TIMESTAMP))) >= 4";
+			}
+			// the event side, once per event axis: every term's sum per entity and day,
+			// unpivoted, beside one alignment row that stands whether or not any cell does
 			string sums;
 			string names;
 			for (auto &t : terms) {
@@ -1871,11 +1896,16 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 				names += (names.empty() ? "" : ", ") + QuoteName(t);
 			}
 			for (auto &eaxis : e_axes) {
+				branches.push_back(
+				    CellsBranch({"'alignment'", QuoteText(ev), QuoteText(align_label), QuoteText(m_align),
+					             QuoteText(eaxis.label), "NULL::VARCHAR", "NULL::BOOLEAN", "NULL::VARCHAR",
+					             "NULL::TIMESTAMP", "NULL::DOUBLE", "NULL::VARCHAR"},
+					            ""));
 				auto side = SideOf(inner, dataset, ev, eaxis, al.e_via, al.e_cols);
 				auto from = "(FROM (SELECT " + side.entity + " AS __gloss_entity, date_trunc('day', CAST(" +
 				            side.texpr + " AS TIMESTAMP)) AS __gloss_period" + sums + " FROM " + side.from + " WHERE " +
-				            side.guard + " GROUP BY 1, 2) UNPIVOT (__gloss_value FOR __gloss_term IN (" + names +
-				            "))) u";
+				            side.guard + " AND " + side.entity + " IN (SELECT __gloss_e FROM (" + viable +
+				            ")) GROUP BY 1, 2) UNPIVOT (__gloss_value FOR __gloss_term IN (" + names + "))) u";
 				branches.push_back(
 				    CellsBranch({"'event'", QuoteText(ev), QuoteText(align_label), QuoteText(m_align),
 					             QuoteText(eaxis.label), "u.__gloss_term", "NULL::BOOLEAN", "u.__gloss_entity",
@@ -1913,17 +1943,6 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	}
 	if (branches.empty()) {
 		return reason("no declared relationships connect " + table + " to an event table with a time axis");
-	}
-	// the subject row: an integer measure's distinct share over its filled rows
-	if (IsIntegerType(type)) {
-		auto q = QuoteName(column);
-		branches.push_back(
-		    CellsBranch({"'subject'", QuoteText(table), "NULL::VARCHAR", "NULL::VARCHAR", "NULL::VARCHAR",
-			             QuoteText(column), "false", "NULL::VARCHAR", "NULL::TIMESTAMP",
-			             "CASE WHEN count(" + q + ") > 0 AND approx_count_distinct(" + q +
-			                 ") >= 2 THEN approx_count_distinct(" + q + ")::DOUBLE / count(" + q + ") END",
-			             "NULL::VARCHAR"},
-			            inner.Table(dataset, table)));
 	}
 	return make_uniq<SubqueryRef>(ParseSelect(StringUtil::Join(branches, " UNION ALL ")));
 }
