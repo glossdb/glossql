@@ -1356,12 +1356,12 @@ static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context
 		}
 	}
 	if (edges.empty()) {
-		return make_uniq<SubqueryRef>(ParseSelect(
-		    "SELECT false AS applicable, 'no declared relationships' AS reason, NULL::BIGINT AS seq, NULL::VARCHAR AS "
-		    "relationship, NULL::BIGINT AS filled, NULL::BIGINT AS orphans, NULL::DOUBLE AS orphan_rate, NULL::BIGINT "
-			"AS "
-		    "pair_seq, NULL::VARCHAR AS child_column, NULL::VARCHAR AS parent_column, NULL::BIGINT AS joined, "
-		    "NULL::BIGINT AS precedes, NULL::DOUBLE AS precedes_rate"));
+		return make_uniq<SubqueryRef>(
+		    ParseSelect("SELECT false AS applicable, 'no declared relationships' AS reason, NULL::BIGINT AS seq,"
+			            " NULL::VARCHAR AS relationship, NULL::BIGINT AS filled, NULL::BIGINT AS orphans,"
+			            " NULL::DOUBLE AS orphan_rate, NULL::BIGINT AS pair_seq, NULL::VARCHAR AS child_column,"
+			            " NULL::VARCHAR AS parent_column, NULL::BIGINT AS joined, NULL::BIGINT AS precedes,"
+			            " NULL::DOUBLE AS precedes_rate"));
 	}
 	string sql =
 	    "SELECT true AS applicable, NULL::VARCHAR AS reason, seq, relationship, filled, orphans, CASE WHEN filled "
