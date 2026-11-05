@@ -557,6 +557,136 @@ SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$
 ----
 false	no period axis: no date column on accounts or one declared hop away
 
+# --- the other alignment shapes, one dataset each: the same signed postings and month-end levels, keyed differently
+
+# a direct edge between the event table and the measure table, no dimension table between them
+statement ok
+DECLARE DATASET direct SET (purpose: 'shape');
+
+statement ok
+USE direct;
+
+statement ok
+CREATE TABLE direct.postings AS
+  SELECT row_number() OVER () AS posting_id, a AS account_id, d::DATE AS posted, ((dayofyear(d) * a) % 7 - 3)::DOUBLE AS amount
+  FROM generate_series(DATE '2024-01-01', DATE '2024-06-30', INTERVAL 1 DAY) g(d), range(1, 4) t(a);
+
+statement ok
+CREATE TABLE direct.balances AS
+  SELECT account_id, last_day(date_trunc('month', posted))::DATE AS as_of,
+         100.0 * account_id + sum(sum(amount)) OVER (PARTITION BY account_id ORDER BY date_trunc('month', posted)) AS balance
+  FROM direct.postings GROUP BY account_id, date_trunc('month', posted);
+
+statement ok
+DECLARE RELATIONSHIP postings.account_id -> balances.account_id;
+
+query TTTTTT
+SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('direct.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
+----
+balances.account_id = postings.account_id	month	none	stock	amount	[account_id, posting_id]
+balances.account_id = postings.account_id	month	year	stock	amount	[account_id, posting_id]
+
+# the measure side borrows its entity through a document: the levels are per invoice, the invoice names the customer,
+# and the payments key on the customer; a measure table whose every edge lands on a document keys on the document's dimension
+statement ok
+DECLARE DATASET viadoc SET (purpose: 'shape');
+
+statement ok
+USE viadoc;
+
+statement ok
+CREATE TABLE viadoc.customers AS SELECT i AS id, 'c' || i AS name FROM range(1, 4) t(i);
+
+statement ok
+CREATE TABLE viadoc.invoices AS SELECT i AS invoice_id, i AS customer_id, DATE '2023-12-31' AS issued FROM range(1, 4) t(i);
+
+statement ok
+CREATE TABLE viadoc.payments AS
+  SELECT row_number() OVER () AS payment_id, c AS customer_id, d::DATE AS paid, ((dayofyear(d) * c) % 7 - 3)::DOUBLE AS amount
+  FROM generate_series(DATE '2024-01-01', DATE '2024-06-30', INTERVAL 1 DAY) g(d), range(1, 4) t(c);
+
+statement ok
+CREATE TABLE viadoc.received AS
+  SELECT customer_id AS invoice_id, last_day(date_trunc('month', paid))::DATE AS as_of,
+         100.0 * customer_id + sum(sum(amount)) OVER (PARTITION BY customer_id ORDER BY date_trunc('month', paid)) AS received_to_date
+  FROM viadoc.payments GROUP BY customer_id, date_trunc('month', paid);
+
+# a table with no date column of its own: its axis is borrowed one hop away
+statement ok
+CREATE TABLE viadoc.lines AS SELECT i AS line_id, i AS invoice_id, 10.0 * i AS amount FROM range(1, 4) t(i);
+
+statement ok
+DECLARE RELATIONSHIP received.invoice_id -> invoices.invoice_id;
+
+statement ok
+DECLARE RELATIONSHIP lines.invoice_id -> invoices.invoice_id;
+
+statement ok
+DECLARE RELATIONSHIP invoices.customer_id -> customers.id;
+
+statement ok
+DECLARE RELATIONSHIP payments.customer_id -> customers.id;
+
+query TTTTTT
+SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('viadoc.received.received_to_date') WHERE verdict <> 'abstain' ORDER BY seq;
+----
+received via invoices.customer_id = payments.customer_id	month	none	stock	amount	[customer_id, payment_id]
+received via invoices.customer_id = payments.customer_id	month	year	stock	amount	[customer_id, payment_id]
+
+# the borrowed axis names the hop, on both alignments the lines have: meeting received at the invoice, and the
+# customer borrowed through the invoice; one issue date per invoice is one period, so every anchor abstains on viability
+query TTT
+SELECT DISTINCT side, axis, align FROM glossql_behavior_cells('viadoc.lines.amount') WHERE side = 'measure' ORDER BY align;
+----
+measure	invoices.issued via invoice_id	invoice_id
+measure	invoices.issued via invoice_id	invoices>customer_id
+
+query TTI
+SELECT measure_time, reason, viable_entities FROM behavior_anchors('viadoc.lines.amount') WHERE convention IS NULL ORDER BY seq LIMIT 1;
+----
+invoices.issued via invoice_id	fewer than two entities carry 4+ periods on this alignment	0
+
+# the event side keys through its master: payment lines name the payment, the payment names the customer,
+# and the measure keys on the customer directly; an event table that aligns no other way borrows through its document
+statement ok
+DECLARE DATASET viamaster SET (purpose: 'shape');
+
+statement ok
+USE viamaster;
+
+statement ok
+CREATE TABLE viamaster.customers AS SELECT i AS id, 'c' || i AS name FROM range(1, 4) t(i);
+
+statement ok
+CREATE TABLE viamaster.payments AS
+  SELECT row_number() OVER () AS payment_id, c AS customer_id, d::DATE AS paid
+  FROM generate_series(DATE '2024-01-01', DATE '2024-06-30', INTERVAL 1 DAY) g(d), range(1, 4) t(c);
+
+statement ok
+CREATE TABLE viamaster.payment_lines AS
+  SELECT payment_id AS line_id, payment_id, paid AS booked, ((dayofyear(paid) * customer_id) % 7 - 3)::DOUBLE AS amount FROM viamaster.payments;
+
+statement ok
+CREATE TABLE viamaster.balances AS
+  SELECT p.customer_id, last_day(date_trunc('month', l.booked))::DATE AS as_of,
+         100.0 * p.customer_id + sum(sum(l.amount)) OVER (PARTITION BY p.customer_id ORDER BY date_trunc('month', l.booked)) AS balance
+  FROM viamaster.payment_lines l JOIN viamaster.payments p USING (payment_id) GROUP BY p.customer_id, date_trunc('month', l.booked);
+
+statement ok
+DECLARE RELATIONSHIP payment_lines.payment_id -> payments.payment_id;
+
+statement ok
+DECLARE RELATIONSHIP payments.customer_id -> customers.id;
+
+statement ok
+DECLARE RELATIONSHIP balances.customer_id -> customers.id;
+
+query TTTTTT
+SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('viamaster.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
+----
+balances.customer_id = payment_lines via payments.customer_id	month	none	stock	amount	[line_id, payment_id]
+balances.customer_id = payment_lines via payments.customer_id	month	year	stock	amount	[line_id, payment_id]
+
 # the kit run again with the same text stands: one row, nothing runs
 query TT
 FROM glossql_kit('kits/quality/kit.sql');
