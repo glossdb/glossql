@@ -1150,8 +1150,12 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 		return make_uniq<SubqueryRef>(ParseSelect(empty));
 	}
 	// cells := n bounds what a screen reads: a table whose scalar columns times its
-	// rows would pass the bound is read as a repeatable sample of its rows, the
-	// bound divided by its width, and rn numbers the rows read (SPEC §6)
+	// rows would pass the bound is read as a sample of its rows, the bound divided
+	// by its width as the share of the rows kept, and rn numbers the rows read
+	// (SPEC §6). A row is kept by the hash of its columns, so the sample is the
+	// same rows every run under any thread count; DuckDB's seeded sampling is
+	// repeatable on one thread only. Its size is the share of the rows, about
+	// the bound, and rn says what it was
 	int64_t cells = 0;
 	auto bound = input.named_parameters.find("cells");
 	if (bound != input.named_parameters.end() && !bound->second.IsNull()) {
@@ -1168,14 +1172,6 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 		string from = kept.count(table) ? "glossql_kept_view(" + QuoteText(parts[0]) + ", " + QuoteText(table) + ", " +
 		                                      QuoteText(version) + ")"
 		                                : inner.Table(parts[0], table);
-		if (cells > 0) {
-			int64_t width = 0;
-			for (auto &column : columns[table]) {
-				width += IsScalarType(column.second) ? 1 : 0;
-			}
-			auto rows = std::max<int64_t>(1, cells / std::max<int64_t>(1, width));
-			from = "(SELECT * FROM " + from + " USING SAMPLE reservoir(" + to_string(rows) + " ROWS) REPEATABLE (1))";
-		}
 		// the row number under a name no table's column takes, served as rn
 		string select = "SELECT row_number() OVER () AS __gloss_rn";
 		string names;
@@ -1193,6 +1189,16 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 		}
 		if (names.empty()) {
 			continue;
+		}
+		if (cells > 0) {
+			int64_t width = 0;
+			for (auto &column : columns[table]) {
+				width += IsScalarType(column.second) ? 1 : 0;
+			}
+			auto rows = std::max<int64_t>(1, cells / std::max<int64_t>(1, width));
+			from = "(SELECT * FROM " + from + " WHERE (hash(" + names +
+			       ") % 1000000)::BIGINT < (SELECT least(1000000.0, " + to_string(rows) +
+			       " * 1000000.0 / greatest(count(*), 1)) FROM " + from + "))";
 		}
 		sql += (sql.empty() ? "" : " UNION ALL ") + string("SELECT ") + QuoteText(table) +
 		       " AS \"table\", u.\"column\", m.ci, m.column_type, u.__gloss_rn AS rn, u.val FROM (FROM (" + select +
@@ -1727,6 +1733,12 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 			legs.insert({p.dst_t, c});
 		}
 	}
+	// the measure column screened as the event side's columns are: a declared leg
+	// is an identifier, no measure; a key-shaped integer is judged by the screen
+	// on its distinct share, which the subject row below carries
+	if (legs.count({table, column})) {
+		return reason(subject + " is a leg of a declared relationship: an identifier, no measure");
+	}
 	auto axes = TimeAxes(tables, schemas, pointers);
 	auto &m_axes = axes[table];
 	if (m_axes.empty()) {
@@ -1844,6 +1856,17 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	}
 	if (branches.empty()) {
 		return reason("no declared relationships connect " + table + " to an event table with a time axis");
+	}
+	// the subject row: an integer measure's distinct share over its filled rows
+	if (IsIntegerType(type)) {
+		auto q = QuoteName(column);
+		branches.push_back(
+		    CellsBranch({"'subject'", QuoteText(table), "NULL::VARCHAR", "NULL::VARCHAR", "NULL::VARCHAR",
+			             QuoteText(column), "false", "NULL::VARCHAR", "NULL::TIMESTAMP",
+			             "CASE WHEN count(" + q + ") > 0 AND approx_count_distinct(" + q +
+			                 ") >= 2 THEN approx_count_distinct(" + q + ")::DOUBLE / count(" + q + ") END",
+			             "NULL::VARCHAR"},
+			            inner.Table(dataset, table)));
 	}
 	return make_uniq<SubqueryRef>(ParseSelect(StringUtil::Join(branches, " UNION ALL ")));
 }

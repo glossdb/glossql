@@ -62,8 +62,9 @@ SELECT count(*) FROM dataset_cells('fin.orders');
 ----
 10
 
-# cells := n bounds a read: a table whose cells would pass the bound is read as a repeatable sample of its
-# rows, the bound divided by the table's width, and rn numbers the rows read (SPEC §6)
+# cells := n bounds a read: a table whose cells would pass the bound is read as a sample of its rows kept by
+# the hash of each row, the same rows every run, about the bound divided by the table's width, and rn numbers
+# the rows read (SPEC §6)
 statement ok
 DECLARE DATASET bound SET (purpose: 'the cells bound');
 
@@ -73,7 +74,7 @@ CREATE TABLE bound.wide AS SELECT i AS a, i % 7 AS b, i % 3 AS c, 'x' || i AS d 
 query II
 SELECT count(*), max(rn) FROM dataset_cells('bound.wide', cells := 400);
 ----
-400	100
+376	94
 
 query II
 SELECT count(*), max(rn) FROM dataset_cells('bound.wide', cells := 40000);
@@ -465,7 +466,7 @@ statement ok
 USE beh;
 
 statement ok
-CREATE TABLE beh.accounts AS SELECT * FROM (VALUES (1, 'cash'), (2, 'bank'), (3, 'card')) t(id, name);
+CREATE TABLE beh.accounts AS SELECT * FROM (VALUES (1, 'cash', 10), (2, 'bank', 20), (3, 'card', 30)) t(id, name, rating);
 
 # signed daily postings per account over six months
 statement ok
@@ -550,12 +551,23 @@ SELECT applicable, reason FROM behavior_anchors('beh.accounts.name');
 false	beh.accounts.name is VARCHAR, not a number: the evidence reads a numeric measure
 
 statement ok
-SELECT behavior_evidence() FROM accounts.id;
+SELECT behavior_evidence() FROM accounts.rating;
 
 query TT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') FROM GLOSSARY(beh.accounts.id::behavior_evidence);
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') FROM GLOSSARY(beh.accounts.rating::behavior_evidence);
 ----
 false	no period axis: no date column on accounts or one declared hop away
+
+# an identifier is no measure: a leg of a declared relationship at bind, a key-shaped integer by its distinct share
+query TT
+SELECT applicable, reason FROM behavior_anchors('beh.postings.account_id');
+----
+false	beh.postings.account_id is a leg of a declared relationship: an identifier, no measure
+
+query TT
+SELECT applicable, reason FROM behavior_anchors('beh.postings.posting_id');
+----
+false	the column is key-shaped: 100 distinct values in 100 filled rows, an identifier, no measure; gloss role key
 
 # --- the other alignment shapes, one dataset each: the same signed postings and month-end levels, keyed differently
 

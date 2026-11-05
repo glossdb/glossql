@@ -13,8 +13,8 @@
 -- glossql_relationship_checks and glossql_behavior_cells, are what names a
 -- column; a screen is SQL over them. A screen that pairs a
 -- table's columns reads it under a bound of cells (SPEC §6): a larger table
--- is read as a repeatable sample of its rows, and `rows` says how many were
--- read. Each screen's measurement function reads the screen, keeps what
+-- is read as a sample of its rows kept by the hash of each row, the same
+-- rows every run, and `rows` says how many were read. Each screen's measurement function reads the screen, keeps what
 -- crosses its line, and lands the aspect; the thresholds are the function's,
 -- the counts the screen's. A key a screen did not reach is null, and the
 -- schemas say so.
@@ -388,8 +388,11 @@ ORDER BY seq;
 -- entities that never decrease over four periods or more at the native
 -- grain vote stock under the convention monotone, movers only. The verdict
 -- is evidence the judge reads before glossing behavior, never a voice in its
--- slots. A column that is not numeric, a table with no time axis or no
--- declared edge to an event table is one row that says why.
+-- slots. A column that is not numeric, an identifier (a leg of a declared
+-- relationship, or an integer distinct on nine filled rows in ten, which is
+-- what the monotone reading would otherwise read as a cumulative), a table
+-- with no time axis or no declared edge to an event table is one row that
+-- says why.
 --===------------------------------------------------------------------===--
 
 -- Wilson's lower bound on s successes in n at 95%: the rank of a vote rate under small n
@@ -600,14 +603,20 @@ mono AS (
   LEFT JOIN identifiers i ON i.event = mk.event),
 numbered AS (
   SELECT *, row_number() OVER (ORDER BY measure_time, event, align, event_time, kind, grain, scope) - 1 AS seq
-  FROM (SELECT * FROM recon UNION ALL SELECT * FROM mono))
+  FROM (SELECT * FROM recon UNION ALL SELECT * FROM mono)),
+-- what refuses the column: the primitive's reason, or a key-shaped measure
+refused AS (
+  SELECT reason FROM cells WHERE side = 'reason'
+  UNION ALL
+  SELECT 'the column is key-shaped: ' || round(value * 100)::INTEGER || ' distinct values in 100 filled rows, an identifier, no measure; gloss role key'
+  FROM cells WHERE side = 'subject' AND value >= 0.9)
 SELECT true AS applicable, reason, seq, event, align, measure_time, event_time, grain, scope, entities, viable_entities,
        identifier_columns, verdict, convention, voted, agreement, support, r_flow, r_stock, sign_primary, sign_mirror, sign_both, alternatives
-FROM numbered
+FROM numbered WHERE NOT EXISTS (SELECT 1 FROM refused)
 UNION ALL
-SELECT false, coalesce((SELECT min(reason) FROM cells WHERE side = 'reason'), 'no anchor aligned: no cells on the measure side or the event side'),
+SELECT false, coalesce((SELECT min(reason) FROM refused), 'no anchor aligned: no cells on the measure side or the event side'),
        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-WHERE NOT EXISTS (SELECT 1 FROM numbered)
+WHERE NOT EXISTS (SELECT 1 FROM numbered) OR EXISTS (SELECT 1 FROM refused)
 ORDER BY seq;
 
 --===------------------------------------------------------------------===--

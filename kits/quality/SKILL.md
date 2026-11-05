@@ -74,8 +74,10 @@ What each line means:
   verdict is evidence, never a voice in the slots.
 - `applicable: false` with a `reason` is a screen that could not run:
   an empty table, too few columns of the right kind, no declared
-  relationships, no groundings, a column that is no number, a table
-  with no time axis. Examined, nothing to say.
+  relationships, no groundings, a column that is no number or an
+  identifier (a leg of a declared relationship, or an integer distinct
+  on nine filled rows in ten), a table with no time axis. Examined,
+  nothing to say.
 
 ## The order
 
