@@ -9,10 +9,15 @@
 -- dataset's tables, or of one table, as (table, column, ci, column_type, rn,
 -- val). A screen is SQL over that relation: a join on rn puts a row's columns
 -- side by side, a join on val matches values across columns, within one
--- stored type. Nothing outside SQL names a column. Each screen's measurement
--- function reads the screen, keeps what crosses its line, and lands the
--- aspect; the thresholds are the function's, the counts the screen's. A
--- key a screen did not reach is null, and the schemas say so.
+-- stored type. The engine's primitives, dataset_cells and
+-- glossql_relationship_checks, are what names a column; a screen is SQL over
+-- them. A screen that pairs a
+-- table's columns reads it under a bound of cells (SPEC §6): a larger table
+-- is read as a repeatable sample of its rows, and `rows` says how many were
+-- read. Each screen's measurement function reads the screen, keeps what
+-- crosses its line, and lands the aspect; the thresholds are the function's,
+-- the counts the screen's. A key a screen did not reach is null, and the
+-- schemas say so.
 
 --===------------------------------------------------------------------===--
 -- hierarchy_candidates(table): functional dependencies between a table's
@@ -22,10 +27,12 @@
 -- g3 is the share of rows that break from → to, g3_reverse the other way,
 -- gk_lambda Goodman–Kruskal's lambda for predicting `to` from `from`,
 -- rows_per_value the evidence per from-value. Fewer than two such columns,
--- or no rows, is served as one row that says why.
+-- or no rows, is served as one row that says why. Read under two million
+-- cells: on a table of a hundred columns that is eighteen thousand rows,
+-- and the pairs a second.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO hierarchy_candidates(tbl) AS TABLE
-WITH cells AS (SELECT * FROM dataset_cells(tbl)),
+WITH cells AS (SELECT * FROM dataset_cells(tbl, cells := 2000000)),
 stats AS (
   SELECT ci, "column", count(*) AS total, count(val) AS filled, count(DISTINCT val) AS distinct_vals,
          count(DISTINCT val) + (count(*) > count(val))::INTEGER AS groups
@@ -37,10 +44,18 @@ n AS (SELECT max(total) AS rows FROM stats),
 reason AS (
   SELECT CASE WHEN (SELECT count(*) FROM cells) = 0 THEN 'empty table'
               WHEN (SELECT count(*) FROM pool) < 2 THEN 'fewer than two dimension-like columns' END AS why),
+-- a pool column's values as dense integer ids, NULL one of them: the pairs then
+-- group on four integers, where grouping on the values' text took seventy
+-- times as long on a wide table
+ids AS (
+  SELECT ci, v, dense_rank() OVER (PARTITION BY ci ORDER BY v) AS vid
+  FROM (SELECT DISTINCT ci, coalesce(val, chr(1)) AS v FROM cells WHERE ci IN (SELECT ci FROM pool))),
+pc AS (
+  SELECT c.ci, c.rn, i.vid FROM cells c JOIN ids i ON i.ci = c.ci AND i.v = coalesce(c.val, chr(1))
+  WHERE c.ci IN (SELECT ci FROM pool)),
 pairs AS (
-  SELECT a.ci AS fi, b.ci AS ti, a.val AS fv, b.val AS tv, count(*) AS c
-  FROM cells a JOIN cells b ON a.rn = b.rn AND a.ci <> b.ci
-  WHERE a.ci IN (SELECT ci FROM pool) AND b.ci IN (SELECT ci FROM pool)
+  SELECT a.ci AS fi, b.ci AS ti, a.vid AS fv, b.vid AS tv, count(*) AS c
+  FROM pc a JOIN pc b ON a.rn = b.rn AND a.ci <> b.ci
   GROUP BY ALL),
 per_from AS (SELECT fi, ti, fv, max(c) AS mx, count(*) AS ng FROM pairs GROUP BY ALL),
 per_to AS (SELECT fi, ti, tv, sum(c) AS n_t FROM pairs GROUP BY ALL),
@@ -176,91 +191,19 @@ WHERE NOT EXISTS (SELECT 1 FROM found)
 ORDER BY seq;
 
 --===------------------------------------------------------------------===--
--- relationship_checks(dataset): whether the declared relationships hold.
--- Per edge: filled rows, the orphans (child values no parent row carries;
--- inside one table, child values that reach more than one parent), and
--- for an edge across two tables the temporal pairs: the first three date
--- columns of each side, joined on the edge, how often the child's date
--- precedes the parent's. Legs are one column or a pair; an endpoint is
--- spelled as the record stores it, dataset.table.column. No declared
--- relationships is one row that says so.
+-- relationship_checks(dataset): whether the declared relationships hold,
+-- the engine's glossql_relationship_checks: per edge, over its own two or
+-- four columns, typed and linear in the rows, where a screen over the cells
+-- pivoted every cell of a table back into rows per edge. Per edge: filled
+-- rows, the orphans (child values no parent row carries; inside one table,
+-- child values that reach more than one parent), and for an edge across two
+-- tables the temporal pairs: the first three date columns of each side,
+-- joined on the edge, how often the child's date precedes the parent's. Legs
+-- are one column or a pair. No declared relationships is one row that says
+-- so.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO relationship_checks(ds) AS TABLE
-WITH cells AS (SELECT * FROM dataset_cells(ds)),
-edges AS (
-  SELECT row_number() OVER (ORDER BY seq) - 1 AS seq,
-         left_side || ' ' || op || ' ' || right_side AS relationship,
-         split_part(left_side, '.', 2) AS ct, split_part(right_side, '.', 2) AS pt,
-         CASE WHEN left_side LIKE '%(%' THEN string_split(regexp_extract(left_side, '\((.*)\)', 1), ', ')
-              ELSE [substr(left_side, length(ds) + length(split_part(left_side, '.', 2)) + 3)] END AS cl,
-         CASE WHEN right_side LIKE '%(%' THEN string_split(regexp_extract(right_side, '\((.*)\)', 1), ', ')
-              ELSE [substr(right_side, length(ds) + length(split_part(right_side, '.', 2)) + 3)] END AS pl
-  FROM main.relationships WHERE dataset = ds),
-legs AS (SELECT * FROM edges WHERE len(cl) = len(pl) AND len(cl) BETWEEN 1 AND 2),
--- each side's rows pivoted onto the edge's legs
-child AS (
-  SELECT e.seq, c.rn,
-         max(CASE WHEN c."column" = e.cl[1] THEN c.val END) AS k1,
-         max(CASE WHEN len(e.cl) = 2 AND c."column" = e.cl[2] THEN c.val END) AS k2
-  FROM legs e JOIN cells c ON c."table" = e.ct
-  GROUP BY e.seq, c.rn),
-parent AS (
-  SELECT e.seq, c.rn,
-         max(CASE WHEN c."column" = e.pl[1] THEN c.val END) AS k1,
-         max(CASE WHEN len(e.pl) = 2 AND c."column" = e.pl[2] THEN c.val END) AS k2
-  FROM legs e JOIN cells c ON c."table" = e.pt
-  GROUP BY e.seq, c.rn),
-cfull AS (SELECT c.* FROM child c JOIN legs e USING (seq) WHERE k1 IS NOT NULL AND (len(e.cl) = 1 OR k2 IS NOT NULL)),
-pfull AS (SELECT p.* FROM parent p JOIN legs e USING (seq) WHERE k1 IS NOT NULL AND (len(e.pl) = 1 OR k2 IS NOT NULL)),
-filled AS (SELECT seq, count(*) AS filled FROM cfull GROUP BY seq),
-nested AS (
-  SELECT e.seq, count(DISTINCT (p.k1, p.k2)) <> count(*) AS is_nest
-  FROM legs e JOIN pfull p USING (seq) WHERE e.ct = e.pt GROUP BY e.seq),
-nest_orphans AS (
-  SELECT seq, coalesce(sum(n) FILTER (WHERE k > 1), 0) AS orphans
-  FROM (SELECT seq, k1, k2, count(DISTINCT (p1, p2)) AS k, count(*) AS n
-        FROM (SELECT c.seq, c.k1, c.k2, p.k1 AS p1, p.k2 AS p2 FROM cfull c JOIN pfull p ON p.seq = c.seq AND p.rn = c.rn)
-        GROUP BY seq, k1, k2)
-  GROUP BY seq),
-join_orphans AS (
-  SELECT c.seq, count(*) AS orphans
-  FROM cfull c
-  WHERE NOT EXISTS (SELECT 1 FROM pfull p WHERE p.seq = c.seq AND p.k1 = c.k1 AND p.k2 IS NOT DISTINCT FROM c.k2)
-  GROUP BY c.seq),
-per_edge AS (
-  SELECT e.seq, e.relationship, coalesce(f.filled, 0) AS filled,
-         CASE WHEN coalesce(n.is_nest, false) THEN coalesce(no.orphans, 0) ELSE coalesce(jo.orphans, 0) END AS orphans,
-         e.ct, e.pt
-  FROM legs e LEFT JOIN filled f USING (seq) LEFT JOIN nested n USING (seq)
-  LEFT JOIN nest_orphans no USING (seq) LEFT JOIN join_orphans jo USING (seq)),
-dates AS (
-  SELECT "table", "column", ci, row_number() OVER (PARTITION BY "table" ORDER BY ci) AS nth
-  FROM (SELECT DISTINCT "table", "column", ci FROM cells WHERE column_type = 'DATE' OR column_type LIKE 'TIMESTAMP%')),
-date_pairs AS (
-  SELECT e.seq, cd."column" AS child_column, pd."column" AS parent_column,
-         row_number() OVER (PARTITION BY e.seq ORDER BY cd.nth, pd.nth) AS pair_seq, cd.ci AS cci, pd.ci AS pci
-  FROM legs e JOIN dates cd ON cd."table" = e.ct AND cd.nth <= 3 JOIN dates pd ON pd."table" = e.pt AND pd.nth <= 3
-  WHERE e.ct <> e.pt),
-temporal AS (
-  SELECT dp.seq, dp.pair_seq, dp.child_column, dp.parent_column,
-         count(*) FILTER (WHERE cdv.val IS NOT NULL AND pdv.val IS NOT NULL) AS joined,
-         count(*) FILTER (WHERE cdv.val::TIMESTAMP < pdv.val::TIMESTAMP) AS precedes
-  FROM date_pairs dp
-  JOIN cfull c ON c.seq = dp.seq
-  JOIN pfull p ON p.seq = c.seq AND p.k1 = c.k1 AND p.k2 IS NOT DISTINCT FROM c.k2
-  JOIN legs e ON e.seq = dp.seq
-  JOIN cells cdv ON cdv."table" = e.ct AND cdv.rn = c.rn AND cdv.ci = dp.cci
-  JOIN cells pdv ON pdv."table" = e.pt AND pdv.rn = p.rn AND pdv.ci = dp.pci
-  GROUP BY ALL HAVING count(*) FILTER (WHERE cdv.val IS NOT NULL AND pdv.val IS NOT NULL) > 0)
-SELECT true AS applicable, NULL::VARCHAR AS reason, pe.seq, pe.relationship, pe.filled, pe.orphans,
-       CASE WHEN pe.filled = 0 THEN 0.0 ELSE pe.orphans / pe.filled::DOUBLE END AS orphan_rate,
-       t.pair_seq, t.child_column, t.parent_column, t.joined, t.precedes,
-       CASE WHEN t.joined IS NULL THEN NULL ELSE t.precedes / t.joined::DOUBLE END AS precedes_rate
-FROM per_edge pe LEFT JOIN temporal t USING (seq)
-UNION ALL
-SELECT false, 'no declared relationships', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-WHERE NOT EXISTS (SELECT 1 FROM legs)
-ORDER BY seq, pair_seq;
+SELECT * FROM glossql_relationship_checks(ds);
 
 --===------------------------------------------------------------------===--
 -- derivation_candidates(table): which numeric column is another two
@@ -271,7 +214,7 @@ ORDER BY seq, pair_seq;
 -- target misses the form by more than 0.011 or a millionth of itself.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO derivation_candidates(tbl) AS TABLE
-WITH cells AS (SELECT * FROM dataset_cells(tbl)),
+WITH cells AS (SELECT * FROM dataset_cells(tbl, cells := 2000000)),
 numeric AS (
   SELECT ci, "column", count(val) AS filled, avg(abs(TRY_CAST(val AS DOUBLE))) AS mag, count(*) AS total,
          row_number() OVER (ORDER BY ci) AS nth
@@ -283,7 +226,8 @@ numeric AS (
 capped AS (SELECT * FROM numeric WHERE nth <= 12),
 facts AS (SELECT count(*) AS numeric_columns, bool_or(nth > 12) AS truncated, max(filled) AS rows FROM numeric),
 triples AS (
-  SELECT a.ci AS ai, a."column" AS target, b.ci AS bi, b."column" AS operand_1, c.ci AS ci2, c."column" AS operand_2, form
+  SELECT a.ci AS ai, a.nth AS an, a."column" AS target, b.ci AS bi, b.nth AS bn, b."column" AS operand_1,
+         c.ci AS ci2, c.nth AS cn, c."column" AS operand_2, form
   FROM capped a, capped b, capped c, (SELECT unnest(['product', 'sum']) AS form)
   WHERE b.nth < c.nth AND a.ci <> b.ci AND a.ci <> c.ci AND a.filled >= 20 AND b.filled >= 20 AND c.filled >= 20
     AND CASE form
@@ -291,11 +235,15 @@ triples AS (
                              AND b.mag * c.mag < 30 * a.mag AND a.mag < 30 * b.mag * c.mag
           ELSE coalesce(b.mag, 0) + coalesce(c.mag, 0) > 0 AND coalesce(a.mag, 0) > 0
                AND b.mag + c.mag < 30 * a.mag AND a.mag < 30 * (b.mag + c.mag) END),
+-- a row's capped values once, in the capped columns' order, so a triple reads a
+-- row by position: three joins of the cells with themselves planned badly on a
+-- wide table, minutes for thousands of rows
+rowvals AS (
+  SELECT rn, list(TRY_CAST(val AS DOUBLE) ORDER BY ci) AS v
+  FROM cells WHERE ci IN (SELECT ci FROM capped) GROUP BY rn),
 rows3 AS (
-  SELECT t.ai, t.bi, t.ci2, t.form, t.target, t.operand_1, t.operand_2,
-         TRY_CAST(a.val AS DOUBLE) AS av, TRY_CAST(b.val AS DOUBLE) AS bv, TRY_CAST(c.val AS DOUBLE) AS cv
-  FROM triples t
-  JOIN cells a ON a.ci = t.ai JOIN cells b ON b.ci = t.bi AND b.rn = a.rn JOIN cells c ON c.ci = t.ci2 AND c.rn = a.rn),
+  SELECT t.ai, t.bi, t.ci2, t.form, t.target, t.operand_1, t.operand_2, r.v[t.an] AS av, r.v[t.bn] AS bv, r.v[t.cn] AS cv
+  FROM triples t, rowvals r),
 measured AS (
   SELECT target, form, operand_1, operand_2, ai, bi, ci2,
          count(*) FILTER (WHERE av IS NOT NULL AND bv IS NOT NULL AND cv IS NOT NULL) AS support,

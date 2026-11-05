@@ -30,8 +30,8 @@ to look; extract its measurement to land what it found.
 |---|---|---|---|
 | `detect_relationships()` | dataset | `relationship_candidates(dataset)` | `candidates`: `from`, `to`, `cardinality`, `overlap`, `matched`, `orphans`, `to_unique`, `to_temporal`, `key_columns`; `summary`: the count, the top 16, a note |
 | `relationship_coherence()` | dataset | `relationship_checks(dataset)` | `relationships`: per declared edge `filled`, `orphans`, `orphan_rate`, `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
-| `detect_hierarchies()` | table | `hierarchy_candidates(table)` | `candidates`: `from`, `to`, `g3`, `lambda`, `kind` (`edge` or `alias`), `rows` |
-| `detect_derivations()` | table | `derivation_candidates(table)` | `candidates`: `target`, `form` (`product` or `sum`), `operands`, `support`, `violations`, `match_rate`; `truncated` |
+| `detect_hierarchies()` | table | `hierarchy_candidates(table)` | `candidates`: `from`, `to`, `g3`, `lambda`, `kind` (`edge` or `alias`); `rows`, the rows read: a sample of a larger table, so the rates are estimates |
+| `detect_derivations()` | table | `derivation_candidates(table)` | `candidates`: `target`, `form` (`product` or `sum`), `operands`, `support`, `violations`, `match_rate`; `truncated`; `rows`, the rows read: a sample of a larger table |
 | `detect_grounding_collisions()` | dataset | `grounding_collisions(dataset)` | `groundings`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |
 
 What each line means:

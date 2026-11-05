@@ -1149,6 +1149,17 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	if (tables.empty()) {
 		return make_uniq<SubqueryRef>(ParseSelect(empty));
 	}
+	// cells := n bounds what a screen reads: a table whose scalar columns times its
+	// rows would pass the bound is read as a repeatable sample of its rows, the
+	// bound divided by its width, and rn numbers the rows read (SPEC §6)
+	int64_t cells = 0;
+	auto bound = input.named_parameters.find("cells");
+	if (bound != input.named_parameters.end() && !bound->second.IsNull()) {
+		cells = bound->second.GetValue<int64_t>();
+		if (cells <= 0) {
+			throw InvalidInputException("glossql: dataset_cells takes a positive cells bound, got %d", cells);
+		}
+	}
 	// the version every kept view is read under, once for the bind
 	string version = kept.empty() ? string() : StoreVersion(inner);
 	string sql;
@@ -1157,6 +1168,14 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 		string from = kept.count(table) ? "glossql_kept_view(" + QuoteText(parts[0]) + ", " + QuoteText(table) + ", " +
 		                                      QuoteText(version) + ")"
 		                                : inner.Table(parts[0], table);
+		if (cells > 0) {
+			int64_t width = 0;
+			for (auto &column : columns[table]) {
+				width += IsScalarType(column.second) ? 1 : 0;
+			}
+			auto rows = std::max<int64_t>(1, cells / std::max<int64_t>(1, width));
+			from = "(SELECT * FROM " + from + " USING SAMPLE reservoir(" + to_string(rows) + " ROWS) REPEATABLE (1))";
+		}
 		// the row number under a name no table's column takes, served as rn
 		string select = "SELECT row_number() OVER () AS __gloss_rn";
 		string names;
@@ -1190,14 +1209,173 @@ static TableFunctionSet DatasetCellsFunctions() {
 	TableFunctionSet set("dataset_cells");
 	TableFunction tables("dataset_cells", {LogicalType::VARCHAR}, nullptr);
 	tables.bind_replace = DatasetCellsBindReplace;
+	tables.GetSignature().WithTypedKwargs("options",
+	                                      [](TypedKwargs &options) { options.Add("cells", LogicalType::BIGINT); });
 	set.AddFunction(tables);
 	TableFunction with_views("dataset_cells", {LogicalType::VARCHAR, LogicalType::BOOLEAN}, nullptr);
 	with_views.bind_replace = DatasetCellsBindReplace;
+	with_views.GetSignature().WithTypedKwargs("options",
+	                                          [](TypedKwargs &options) { options.Add("cells", LogicalType::BIGINT); });
 	set.AddFunction(with_views);
 	TableFunction which("dataset_cells", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr);
 	which.bind_replace = DatasetCellsBindReplace;
+	which.GetSignature().WithTypedKwargs("options",
+	                                     [](TypedKwargs &options) { options.Add("cells", LogicalType::BIGINT); });
 	set.AddFunction(which);
 	return set;
+}
+
+//===--------------------------------------------------------------------===//
+// glossql_relationship_checks(dataset): whether the declared relationships
+// hold, per edge over its own columns. The quality kit's relationship_checks
+// wraps it. An edge's legs are read from the two tables directly, typed and
+// linear in their rows, where a screen over dataset_cells pivoted every cell
+// of a table back into rows per edge. Per edge: the filled child rows (every
+// leg present), the orphans (child keys no parent row carries; inside one
+// table, child keys that reach more than one parent key on the same rows),
+// and for an edge across two tables the temporal pairs: the first three date
+// columns of each side, joined on the edge, how often the child's date
+// precedes the parent's. Keys compare as text, as the cells did
+//===--------------------------------------------------------------------===//
+
+struct EdgeSide {
+	string table;
+	vector<string> legs;
+	//! the first three date columns, in the table's order
+	vector<string> dates;
+};
+
+//! [dataset.]table.column or [dataset.]table.(a, b), as the store spells a side
+static EdgeSide ParseSide(ClientContext &context, const string &dataset, const string &side) {
+	auto parts = SubjectParts(side);
+	EdgeSide result;
+	if (parts.size() != 3) {
+		return result;
+	}
+	result.table = parts[1];
+	auto &key = parts[2];
+	if (key.size() > 2 && key.front() == '(' && key.back() == ')') {
+		result.legs = StringUtil::Split(key.substr(1, key.size() - 2), ", ");
+	} else {
+		result.legs.push_back(key);
+	}
+	for (auto &column : DatasetColumns(context, dataset, result.table, false)) {
+		if (result.dates.size() < 3 && (column.type == "DATE" || StringUtil::StartsWith(column.type, "TIMESTAMP"))) {
+			result.dates.push_back(column.column);
+		}
+	}
+	return result;
+}
+
+//! One edge's rows: (seq, relationship, filled, orphans, pair_seq, child_column, parent_column, joined, precedes)
+static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const string &relationship, const EdgeSide &child,
+                      const EdgeSide &parent) {
+	bool two = child.legs.size() == 2;
+	auto keys = [&](const EdgeSide &s, const string &k1, const string &k2) {
+		return QuoteName(s.legs[0]) + "::VARCHAR AS " + k1 + ", " +
+		       (two ? QuoteName(s.legs[1]) + "::VARCHAR" : "NULL::VARCHAR") + " AS " + k2;
+	};
+	auto present = [&](const EdgeSide &s) {
+		return QuoteName(s.legs[0]) + " IS NOT NULL" + (two ? " AND " + QuoteName(s.legs[1]) + " IS NOT NULL" : "");
+	};
+	auto dates = [&](const EdgeSide &s, const string &prefix) {
+		string out;
+		for (idx_t i = 0; i < s.dates.size(); i++) {
+			out += ", CAST(" + QuoteName(s.dates[i]) + " AS TIMESTAMP) AS " + prefix + to_string(i + 1);
+		}
+		return out;
+	};
+	string sql = "(WITH c AS (SELECT " + keys(child, "k1", "k2") + dates(child, "d") + " FROM " +
+	             inner.Table(dataset, child.table) + " WHERE " + present(child) + "), p AS (SELECT " +
+	             keys(parent, "k1", "k2") + dates(parent, "d") + " FROM " + inner.Table(dataset, parent.table) +
+	             " WHERE " + present(parent) + ")";
+	string join_orphans = "(SELECT count(*) FROM c WHERE NOT EXISTS (SELECT 1 FROM p WHERE p.k1 = c.k1 AND p.k2 IS NOT "
+	                      "DISTINCT FROM c.k2))";
+	string orphans = join_orphans;
+	if (child.table == parent.table) {
+		// a nest: the parent legs do not key the table, and a child key is orphaned by
+		// reaching more than one parent key on the rows it sits on
+		sql += ", same_rows AS (SELECT " + keys(child, "k1", "k2") + ", " + keys(parent, "p1", "p2") + " FROM " +
+		       inner.Table(dataset, child.table) + " WHERE " + present(child) + " AND " + present(parent) + ")";
+		orphans = "CASE WHEN (SELECT count(DISTINCT (k1, k2)) <> count(*) FROM p) THEN (SELECT coalesce(sum(n) FILTER "
+		          "(WHERE k > 1), 0)::BIGINT FROM (SELECT k1, k2, count(DISTINCT (p1, p2)) AS k, count(*) AS n FROM "
+		          "same_rows "
+		          "GROUP BY k1, k2)) ELSE " +
+		          join_orphans + " END";
+	}
+	sql += ", e AS (SELECT (SELECT count(*) FROM c) AS filled, " + orphans + " AS orphans)";
+	const string no_pairs = "SELECT NULL::BIGINT AS pair_seq, NULL::VARCHAR AS child_column, NULL::VARCHAR AS "
+	                        "parent_column, NULL::BIGINT AS joined, NULL::BIGINT AS precedes WHERE false";
+	if (child.table == parent.table || child.dates.empty() || parent.dates.empty()) {
+		sql += ", t AS (" + no_pairs + ")";
+	} else {
+		// every date pair counted over one join, then one row per pair that joined
+		string counts;
+		string rows;
+		idx_t pair_seq = 0;
+		for (idx_t i = 0; i < child.dates.size(); i++) {
+			for (idx_t j = 0; j < parent.dates.size(); j++) {
+				pair_seq++;
+				auto cd = "c.d" + to_string(i + 1);
+				auto pd = "p.d" + to_string(j + 1);
+				auto n = to_string(pair_seq);
+				counts += (counts.empty() ? "" : ", ") + string("count(*) FILTER (WHERE ") + cd + " IS NOT NULL AND " +
+				          pd + " IS NOT NULL) AS j" + n + ", count(*) FILTER (WHERE " + cd + " < " + pd + ") AS p" + n;
+				rows += (rows.empty() ? "" : " UNION ALL ") + string("SELECT ") + n + "::BIGINT AS pair_seq, " +
+				        QuoteText(child.dates[i]) + " AS child_column, " + QuoteText(parent.dates[j]) +
+				        " AS parent_column, j" + n + " AS joined, p" + n + " AS precedes FROM pairs";
+			}
+		}
+		sql += ", pairs AS MATERIALIZED (SELECT " + counts +
+		       " FROM c JOIN p ON p.k1 = c.k1 AND p.k2 IS NOT DISTINCT FROM c.k2), t AS (" + rows + ")";
+	}
+	sql += " SELECT " + to_string(seq) + "::BIGINT AS seq, " + QuoteText(relationship) +
+	       " AS relationship, e.filled, e.orphans, t.pair_seq, t.child_column, t.parent_column, t.joined, t.precedes "
+	       "FROM e LEFT JOIN (SELECT * FROM t WHERE joined > 0) t ON true)";
+	return sql;
+}
+
+static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	Inner inner(context);
+	auto dataset = ResolveSubject(context, input.inputs[0].ToString());
+	vector<string> edges;
+	auto rows = inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
+	                      " WHERE dataset = " + QuoteText(dataset) + " ORDER BY seq");
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t i = 0; i < chunk->size(); i++) {
+			auto left = chunk->GetValue(0, i).ToString();
+			auto op = chunk->GetValue(1, i).ToString();
+			auto right = chunk->GetValue(2, i).ToString();
+			auto child = ParseSide(context, dataset, left);
+			auto parent = ParseSide(context, dataset, right);
+			// legs are one column or a pair, the same count on both sides
+			if (child.legs.empty() || child.legs.size() != parent.legs.size() || child.legs.size() > 2) {
+				continue;
+			}
+			edges.push_back(EdgeSQL(inner, dataset, edges.size(), left + " " + op + " " + right, child, parent));
+		}
+	}
+	if (edges.empty()) {
+		return make_uniq<SubqueryRef>(ParseSelect(
+		    "SELECT false AS applicable, 'no declared relationships' AS reason, NULL::BIGINT AS seq, NULL::VARCHAR AS "
+		    "relationship, NULL::BIGINT AS filled, NULL::BIGINT AS orphans, NULL::DOUBLE AS orphan_rate, NULL::BIGINT "
+			"AS "
+		    "pair_seq, NULL::VARCHAR AS child_column, NULL::VARCHAR AS parent_column, NULL::BIGINT AS joined, "
+		    "NULL::BIGINT AS precedes, NULL::DOUBLE AS precedes_rate"));
+	}
+	string sql =
+	    "SELECT true AS applicable, NULL::VARCHAR AS reason, seq, relationship, filled, orphans, CASE WHEN filled "
+	    "= 0 THEN 0.0 ELSE orphans / filled::DOUBLE END AS orphan_rate, pair_seq, child_column, parent_column, "
+	    "joined, precedes, CASE WHEN joined IS NULL THEN NULL ELSE precedes / joined::DOUBLE END AS "
+	    "precedes_rate FROM (" +
+	    StringUtil::Join(edges, " UNION ALL ") + ") ORDER BY seq, pair_seq";
+	return make_uniq<SubqueryRef>(ParseSelect(sql));
+}
+
+static TableFunction RelationshipChecksFunction() {
+	TableFunction function("glossql_relationship_checks", {LogicalType::VARCHAR}, nullptr);
+	function.bind_replace = RelationshipChecksBindReplace;
+	return function;
 }
 
 //===--------------------------------------------------------------------===//
@@ -1356,6 +1534,7 @@ void RegisterGlossRunner(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossSelectOrExtractFunction());
 	loader.RegisterFunction(SubjectColumnFunction());
 	loader.RegisterFunction(DatasetCellsFunctions());
+	loader.RegisterFunction(RelationshipChecksFunction());
 }
 
 } // namespace duckdb

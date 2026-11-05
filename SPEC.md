@@ -468,6 +468,10 @@ $$;
   glossed value is a read over the glossary, a landed value a read over
   `measurements`, a statistic the same aggregate computed in place. A
   declaration relation reads as a table, which needs no naming.
+- **A bound screen is an estimate.** A kit's screen may read a table
+  up to a bound of cells; a larger table is read as a repeatable
+  sample of its rows, and the measurement says how many rows it read.
+  Such a value is an estimate.
 - `RETURNS` names the aspect the function's output fills; the aspect's
   schema is the one contract — output is validated against it at
   extraction, and `GLOSSARY()` serves it as-is. A MEASUREMENT aspect has
