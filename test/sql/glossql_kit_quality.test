@@ -35,7 +35,7 @@ query TTI
 SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
-quality	kits/quality/kit.sql	18
+quality	kits/quality/kit.sql	23
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
 
@@ -455,6 +455,237 @@ query TTR
 SELECT subject, band, score FROM ATTEST(orders::ids_present);
 ----
 fin.orders	red	0.2
+
+# --- behavior_evidence: the stock/flow evidence over declared edges; a level an event table's movements reconcile reads stock, a sum of them flow
+
+statement ok
+DECLARE DATASET beh SET (purpose: 'behavior');
+
+statement ok
+USE beh;
+
+statement ok
+CREATE TABLE beh.accounts AS SELECT * FROM (VALUES (1, 'cash'), (2, 'bank'), (3, 'card')) t(id, name);
+
+# signed daily postings per account over six months
+statement ok
+CREATE TABLE beh.postings AS
+  SELECT row_number() OVER () AS posting_id, a.id AS account_id, d::DATE AS posted, ((dayofyear(d) * a.id) % 7 - 3)::DOUBLE AS amount
+  FROM generate_series(DATE '2024-01-01', DATE '2024-06-30', INTERVAL 1 DAY) g(d), beh.accounts a;
+
+# month-end levels: an opening balance plus the postings to date; and the postings' monthly sums
+statement ok
+CREATE TABLE beh.balances AS
+  SELECT account_id, last_day(date_trunc('month', posted))::DATE AS as_of,
+         100.0 * account_id + sum(sum(amount)) OVER (PARTITION BY account_id ORDER BY date_trunc('month', posted)) AS balance
+  FROM beh.postings GROUP BY account_id, date_trunc('month', posted);
+
+statement ok
+CREATE TABLE beh.totals AS SELECT account_id, date_trunc('month', posted)::DATE AS month, sum(amount) AS total FROM beh.postings GROUP BY ALL;
+
+# no declared edge: nothing aligns, and the screen says why
+query TT
+SELECT applicable, reason FROM behavior_anchors('beh.balances.balance');
+----
+false	no declared relationships connect balances to an event table with a time axis
+
+statement ok
+DECLARE RELATIONSHIP postings.account_id -> accounts.id;
+
+statement ok
+DECLARE RELATIONSHIP balances.account_id -> accounts.id;
+
+statement ok
+DECLARE RELATIONSHIP totals.account_id -> accounts.id;
+
+# the edges meet at the account. At the month, the coarser of the two sides' native grains, each account's postings sum
+# to the balance's change: stock, r_stock 0; at the day only the month-end days align and nothing fits. The monotone
+# reading abstains, since signed postings move the level both ways. posting_id is key-shaped and leaves the movement pool
+query ITTTTTIRRRT
+SELECT seq, event, grain, scope, verdict, convention, voted, round(support, 4), round(r_flow, 2), r_stock, reason FROM behavior_anchors('beh.balances.balance') ORDER BY seq;
+----
+0	postings	day	none	abstain	NULL	NULL	NULL	NULL	NULL	no entity series reconciled: wrong anchor, short series, or dead values
+1	postings	day	year	abstain	NULL	NULL	NULL	NULL	NULL	no entity series reconciled: wrong anchor, short series, or dead values
+2	postings	month	none	stock	amount	3	0.4385	129.36	0.0	NULL
+3	postings	month	year	stock	amount	3	0.4385	129.36	0.0	NULL
+4	postings	day	none	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
+5	postings	day	year	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
+6	totals	month	none	stock	total	3	0.4385	129.36	0.0	NULL
+7	totals	month	year	stock	total	3	0.4385	129.36	0.0	NULL
+8	totals	day	none	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
+9	totals	day	year	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
+
+query TTIII
+SELECT identifier_columns::VARCHAR, align, entities, viable_entities, sign_primary FROM behavior_anchors('beh.balances.balance') WHERE seq = 2;
+----
+[account_id, posting_id]	balances.account_id = postings.account_id	3	3	3
+
+# the measurement: the election's summary, the anchors read back whole
+statement ok
+SELECT behavior_evidence() FROM balances.balance;
+
+query TTTTTT
+SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'), json_extract_string(value, '$.summary.event'),
+       json_extract_string(value, '$.summary.grain'), json_extract_string(value, '$.summary.tiebreak'),
+       json_extract_string(value, '$.anchors_n') || '/' || json_extract_string(value, '$.decided') || '/' || json_array_length(value, '$.anchors')
+FROM GLOSSARY(beh.balances.balance::behavior_evidence);
+----
+stock	amount	postings	month	event-name	10/4/10
+
+# the monthly sums match the postings' movement as they stand: flow
+statement ok
+SELECT behavior_evidence() FROM totals.total;
+
+query TTTT
+SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'),
+       json_extract_string(value, '$.summary.r_flow'), json_extract_string(value, '$.summary.sign.primary')
+FROM GLOSSARY(beh.totals.total::behavior_evidence);
+----
+flow	amount	0.0	3
+
+# no number, no time axis: examined, nothing to say
+query TT
+SELECT applicable, reason FROM behavior_anchors('beh.accounts.name');
+----
+false	beh.accounts.name is VARCHAR, not a number: the evidence reads a numeric measure
+
+statement ok
+SELECT behavior_evidence() FROM accounts.id;
+
+query TT
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') FROM GLOSSARY(beh.accounts.id::behavior_evidence);
+----
+false	no period axis: no date column on accounts or one declared hop away
+
+# --- the other alignment shapes, one dataset each: the same signed postings and month-end levels, keyed differently
+
+# a direct edge between the event table and the measure table, no dimension table between them
+statement ok
+DECLARE DATASET direct SET (purpose: 'shape');
+
+statement ok
+USE direct;
+
+statement ok
+CREATE TABLE direct.postings AS
+  SELECT row_number() OVER () AS posting_id, a AS account_id, d::DATE AS posted, ((dayofyear(d) * a) % 7 - 3)::DOUBLE AS amount
+  FROM generate_series(DATE '2024-01-01', DATE '2024-06-30', INTERVAL 1 DAY) g(d), range(1, 4) t(a);
+
+statement ok
+CREATE TABLE direct.balances AS
+  SELECT account_id, last_day(date_trunc('month', posted))::DATE AS as_of,
+         100.0 * account_id + sum(sum(amount)) OVER (PARTITION BY account_id ORDER BY date_trunc('month', posted)) AS balance
+  FROM direct.postings GROUP BY account_id, date_trunc('month', posted);
+
+statement ok
+DECLARE RELATIONSHIP postings.account_id -> balances.account_id;
+
+query TTTTTT
+SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('direct.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
+----
+balances.account_id = postings.account_id	month	none	stock	amount	[account_id, posting_id]
+balances.account_id = postings.account_id	month	year	stock	amount	[account_id, posting_id]
+
+# the measure side borrows its entity through a document: the levels are per invoice, the invoice names the customer,
+# and the payments key on the customer; a measure table whose every edge lands on a document keys on the document's dimension
+statement ok
+DECLARE DATASET viadoc SET (purpose: 'shape');
+
+statement ok
+USE viadoc;
+
+statement ok
+CREATE TABLE viadoc.customers AS SELECT i AS id, 'c' || i AS name FROM range(1, 4) t(i);
+
+statement ok
+CREATE TABLE viadoc.invoices AS SELECT i AS invoice_id, i AS customer_id, DATE '2023-12-31' AS issued FROM range(1, 4) t(i);
+
+statement ok
+CREATE TABLE viadoc.payments AS
+  SELECT row_number() OVER () AS payment_id, c AS customer_id, d::DATE AS paid, ((dayofyear(d) * c) % 7 - 3)::DOUBLE AS amount
+  FROM generate_series(DATE '2024-01-01', DATE '2024-06-30', INTERVAL 1 DAY) g(d), range(1, 4) t(c);
+
+statement ok
+CREATE TABLE viadoc.received AS
+  SELECT customer_id AS invoice_id, last_day(date_trunc('month', paid))::DATE AS as_of,
+         100.0 * customer_id + sum(sum(amount)) OVER (PARTITION BY customer_id ORDER BY date_trunc('month', paid)) AS received_to_date
+  FROM viadoc.payments GROUP BY customer_id, date_trunc('month', paid);
+
+# a table with no date column of its own: its axis is borrowed one hop away
+statement ok
+CREATE TABLE viadoc.lines AS SELECT i AS line_id, i AS invoice_id, 10.0 * i AS amount FROM range(1, 4) t(i);
+
+statement ok
+DECLARE RELATIONSHIP received.invoice_id -> invoices.invoice_id;
+
+statement ok
+DECLARE RELATIONSHIP lines.invoice_id -> invoices.invoice_id;
+
+statement ok
+DECLARE RELATIONSHIP invoices.customer_id -> customers.id;
+
+statement ok
+DECLARE RELATIONSHIP payments.customer_id -> customers.id;
+
+query TTTTTT
+SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('viadoc.received.received_to_date') WHERE verdict <> 'abstain' ORDER BY seq;
+----
+received via invoices.customer_id = payments.customer_id	month	none	stock	amount	[customer_id, payment_id]
+received via invoices.customer_id = payments.customer_id	month	year	stock	amount	[customer_id, payment_id]
+
+# the borrowed axis names the hop, on both alignments the lines have: meeting received at the invoice, and the
+# customer borrowed through the invoice; one issue date per invoice is one period, so every anchor abstains on viability
+query TTT
+SELECT DISTINCT side, axis, align FROM glossql_behavior_cells('viadoc.lines.amount') WHERE side = 'measure' ORDER BY align;
+----
+measure	invoices.issued via invoice_id	invoice_id
+measure	invoices.issued via invoice_id	invoices>customer_id
+
+query TTI
+SELECT measure_time, reason, viable_entities FROM behavior_anchors('viadoc.lines.amount') WHERE convention IS NULL ORDER BY seq LIMIT 1;
+----
+invoices.issued via invoice_id	fewer than two entities carry 4+ periods on this alignment	0
+
+# the event side keys through its master: payment lines name the payment, the payment names the customer,
+# and the measure keys on the customer directly; an event table that aligns no other way borrows through its document
+statement ok
+DECLARE DATASET viamaster SET (purpose: 'shape');
+
+statement ok
+USE viamaster;
+
+statement ok
+CREATE TABLE viamaster.customers AS SELECT i AS id, 'c' || i AS name FROM range(1, 4) t(i);
+
+statement ok
+CREATE TABLE viamaster.payments AS
+  SELECT row_number() OVER () AS payment_id, c AS customer_id, d::DATE AS paid
+  FROM generate_series(DATE '2024-01-01', DATE '2024-06-30', INTERVAL 1 DAY) g(d), range(1, 4) t(c);
+
+statement ok
+CREATE TABLE viamaster.payment_lines AS
+  SELECT payment_id AS line_id, payment_id, paid AS booked, ((dayofyear(paid) * customer_id) % 7 - 3)::DOUBLE AS amount FROM viamaster.payments;
+
+statement ok
+CREATE TABLE viamaster.balances AS
+  SELECT p.customer_id, last_day(date_trunc('month', l.booked))::DATE AS as_of,
+         100.0 * p.customer_id + sum(sum(l.amount)) OVER (PARTITION BY p.customer_id ORDER BY date_trunc('month', l.booked)) AS balance
+  FROM viamaster.payment_lines l JOIN viamaster.payments p USING (payment_id) GROUP BY p.customer_id, date_trunc('month', l.booked);
+
+statement ok
+DECLARE RELATIONSHIP payment_lines.payment_id -> payments.payment_id;
+
+statement ok
+DECLARE RELATIONSHIP payments.customer_id -> customers.id;
+
+statement ok
+DECLARE RELATIONSHIP balances.customer_id -> customers.id;
+
+query TTTTTT
+SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('viamaster.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
+----
+balances.customer_id = payment_lines via payments.customer_id	month	none	stock	amount	[line_id, payment_id]
+balances.customer_id = payment_lines via payments.customer_id	month	year	stock	amount	[line_id, payment_id]
 
 # the kit run again with the same text stands: one row, nothing runs
 query TT

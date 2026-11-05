@@ -46,7 +46,11 @@ value withheld, the verdict `red` above 0.7. `meaning`, `entity` and
    as roles land.
 3. Extract before claiming. `SELECT column_profile() FROM orders.amount;`
    and `SELECT outlier_profile() FROM orders.amount;` land evidence that
-   `GLOSSARY()` serves beside the glosses; cite it in `grounds`.
+   `GLOSSARY()` serves beside the glosses; cite it in `grounds`. With the
+   quality kit loaded and the edges declared, `SELECT behavior_evidence()
+   FROM orders.amount;` lands the stock/flow evidence: read its verdict
+   and the anchor that decided before glossing `behavior`. It is
+   evidence, never a voice.
 4. Gloss with grounds: `GLOSS behavior ON orders.amount AS $${"value":
    "flow", "grounds": "sums over orders, never a balance"}$$;`. You speak
    as `agent`. A person's ruling arrives as `human`, which the wrapper

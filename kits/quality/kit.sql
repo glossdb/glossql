@@ -9,9 +9,9 @@
 -- dataset's tables, or of one table, as (table, column, ci, column_type, rn,
 -- val). A screen is SQL over that relation: a join on rn puts a row's columns
 -- side by side, a join on val matches values across columns, within one
--- stored type. The engine's primitives, dataset_cells and
--- glossql_relationship_checks, are what names a column; a screen is SQL over
--- them. A screen that pairs a
+-- stored type. The engine's primitives, dataset_cells,
+-- glossql_relationship_checks and glossql_behavior_cells, are what names a
+-- column; a screen is SQL over them. A screen that pairs a
 -- table's columns reads it under a bound of cells (SPEC §6): a larger table
 -- is read as a repeatable sample of its rows, and `rows` says how many were
 -- read. Each screen's measurement function reads the screen, keeps what
@@ -31,7 +31,7 @@
 -- cells: on a table of a hundred columns that is eighteen thousand rows,
 -- and the pairs a second.
 --===------------------------------------------------------------------===--
-CREATE OR REPLACE MACRO hierarchy_candidates(tbl) AS TABLE
+CREATE OR REPLACE MACRO main.hierarchy_candidates(tbl) AS TABLE
 WITH cells AS (SELECT * FROM dataset_cells(tbl, cells := 2000000)),
 stats AS (
   SELECT ci, "column", count(*) AS total, count(val) AS filled, count(DISTINCT val) AS distinct_vals,
@@ -93,7 +93,7 @@ ORDER BY seq;
 -- scope the first: the composite rescue, served with key_columns. One all-
 -- NULL row where nothing is found.
 --===------------------------------------------------------------------===--
-CREATE OR REPLACE MACRO relationship_candidates(ds) AS TABLE
+CREATE OR REPLACE MACRO main.relationship_candidates(ds) AS TABLE
 WITH cells AS (SELECT * FROM dataset_cells(ds)),
 cols AS (
   SELECT "table", "column", ci, column_type, count(*) AS rows, count(val) AS filled, count(DISTINCT val) AS distinct_vals
@@ -202,7 +202,7 @@ ORDER BY seq;
 -- are one column or a pair. No declared relationships is one row that says
 -- so.
 --===------------------------------------------------------------------===--
-CREATE OR REPLACE MACRO relationship_checks(ds) AS TABLE
+CREATE OR REPLACE MACRO main.relationship_checks(ds) AS TABLE
 SELECT * FROM glossql_relationship_checks(ds);
 
 --===------------------------------------------------------------------===--
@@ -213,7 +213,7 @@ SELECT * FROM glossql_relationship_checks(ds);
 -- supports a triple when all three are filled and violates it when the
 -- target misses the form by more than 0.011 or a millionth of itself.
 --===------------------------------------------------------------------===--
-CREATE OR REPLACE MACRO derivation_candidates(tbl) AS TABLE
+CREATE OR REPLACE MACRO main.derivation_candidates(tbl) AS TABLE
 WITH cells AS (SELECT * FROM dataset_cells(tbl, cells := 2000000)),
 numeric AS (
   SELECT ci, "column", count(val) AS filled, avg(abs(TRY_CAST(val AS DOUBLE))) AS mag, count(*) AS total,
@@ -280,7 +280,7 @@ ORDER BY seq;
 -- grounding flavored otherwise stands beside a metric and is never its
 -- twin. No groundings is one row with groundings 0.
 --===------------------------------------------------------------------===--
-CREATE OR REPLACE MACRO grounding_collisions(ds) AS TABLE
+CREATE OR REPLACE MACRO main.grounding_collisions(ds) AS TABLE
 WITH slots AS (
   SELECT g.aspect, g.subject, g.body, coalesce(json_extract_string(a.schema, '$."x-kind"'), '') AS flavor,
          row_number() OVER (PARTITION BY g.aspect, g.subject ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 ELSE 1 END, g.seq DESC) AS rk
@@ -356,6 +356,258 @@ FROM hits
 UNION ALL
 SELECT (SELECT count(*) FROM groundings), NULL, NULL, NULL, NULL, NULL, NULL
 WHERE NOT EXISTS (SELECT 1 FROM hits)
+ORDER BY seq;
+
+--===------------------------------------------------------------------===--
+-- behavior_anchors(column): whether a numeric column behaves as a stock, a
+-- level correct at a point in time, or a flow, a movement that sums over a
+-- period. A column's own trajectory cannot decide it: a trending flow and a
+-- mean-reverting stock look alike. The evidence is cross-table: a movement
+-- summed per entity and period from an event table the declared
+-- relationships align with the column's table, scored against both readings
+-- with scale-free residuals, flow where y ≈ m, stock where Δy ≈ m. One row
+-- per anchor: an event table, an alignment, a time axis on each side, a
+-- grain and a scope. Over glossql_behavior_cells(column), both sides at the
+-- day, folded to the anchor's grain, the coarser of the two sides' native
+-- grains, a day-native alignment serving a month beside the day, and scoped
+-- by year where the grain allows, since a cumulative that resets is a stock
+-- only inside its year. Movement terms are the event table's numeric
+-- columns minus its identifiers, the legs of declared edges and integers
+-- distinct on nine filled rows in ten, and every ordered pair difference of
+-- them; above sixty-four columns the anchor abstains. Per entity the two
+-- residuals are Σ|y − m| / Σ|m| and Σ|Δy − m| / Σ|m| over the periods both
+-- sides carry; an entity votes when the winner is under 0.05 and the loser
+-- stands off by a third of their sum, and abstains on fewer than four
+-- periods, a flat level or a dead movement. A convention decides when two
+-- entities or more voted, four in five agree, and the winners are a majority
+-- of the entities on both sides; Wilson's lower bound over those entities
+-- ranks the conventions, a support tie going to the fewer terms unless the
+-- pair's fit is decisive, ΔBIC over 10. The sign partition says how many
+-- voters fire only under the negated movement, the ledger-signed reading.
+-- One anchor per alignment and scope reads the measure's own shape instead:
+-- entities that never decrease over four periods or more at the native
+-- grain vote stock under the convention monotone, movers only. The verdict
+-- is evidence the judge reads before glossing behavior, never a voice in its
+-- slots. A column that is not numeric, a table with no time axis or no
+-- declared edge to an event table is one row that says why.
+--===------------------------------------------------------------------===--
+
+-- Wilson's lower bound on s successes in n at 95%: the rank of a vote rate under small n
+CREATE OR REPLACE MACRO main.wilson_lower(s, n) AS
+  CASE WHEN n <= 0 THEN 0.0
+       ELSE greatest(0.0, (s / n::DOUBLE + 1.9208 / n - 1.96 * sqrt((s / n::DOUBLE) * (1.0 - s / n::DOUBLE) / n + 0.9604 / (n::DOUBLE * n)))
+                          / (1.0 + 3.8416 / n)) END;
+
+-- One entity's vote under a convention from its two residuals: stock, flow, or NULL for an abstention
+CREATE OR REPLACE MACRO main.behavior_vote(n, flat, moving, nan, rf, rs) AS
+  CASE WHEN n < 4 OR flat OR NOT moving OR nan THEN NULL
+       WHEN least(rf, rs) > 0.05 THEN NULL
+       WHEN (CASE WHEN isinf(least(rf, rs)) THEN 0.0 WHEN isinf(greatest(rf, rs)) THEN 1.0
+                  WHEN rf + rs = 0.0 THEN 0.0 ELSE (greatest(rf, rs) - least(rf, rs)) / (rf + rs) END) < 1.0 / 3.0 THEN NULL
+       WHEN rs < rf THEN 'stock' ELSE 'flow' END;
+
+CREATE OR REPLACE MACRO main.behavior_anchors(col) AS TABLE
+WITH cells AS MATERIALIZED (SELECT * FROM glossql_behavior_cells(col)),
+-- the native grain of each side's axis: the coarsest named grain every period is already truncated to
+native AS (
+  SELECT side, event, align, axis,
+         CASE WHEN bool_and(period = date_trunc('year', period)) THEN 'year'
+              WHEN bool_and(period = date_trunc('quarter', period)) THEN 'quarter'
+              WHEN bool_and(period = date_trunc('month', period)) THEN 'month' ELSE 'day' END AS grain
+  FROM cells WHERE side IN ('measure', 'event') GROUP BY ALL),
+-- the event tables' identifiers: declared legs and key-shaped integers, which leave the movement pool
+keyish AS (SELECT event, term FROM cells WHERE side = 'column' AND NOT identifier AND value >= 0.9),
+identifiers AS (
+  SELECT event, coalesce(list(term ORDER BY term) FILTER (WHERE identifier OR value >= 0.9), []) AS identifier_columns
+  FROM cells WHERE side = 'column' GROUP BY event),
+-- the anchors: every measure axis against every event alignment it keys, at the coarser native grain,
+-- a month beside a day, each scope the grain allows
+coords AS (
+  SELECT ev.event, ev.align, ev.measure_align, ma.axis AS measure_time, ev.axis AS event_time, ma.grain AS m_native,
+         CASE WHEN 'year' IN (ma.grain, ea.grain) THEN 'year' WHEN 'quarter' IN (ma.grain, ea.grain) THEN 'quarter'
+              WHEN 'month' IN (ma.grain, ea.grain) THEN 'month' ELSE 'day' END AS native
+  FROM (SELECT DISTINCT event, align, measure_align, axis FROM cells WHERE side = 'event') ev
+  JOIN native ea ON ea.side = 'event' AND ea.event = ev.event AND ea.align = ev.align AND ea.axis = ev.axis
+  JOIN native ma ON ma.side = 'measure' AND ma.align = ev.measure_align),
+grained AS (SELECT c.*, unnest(CASE WHEN c.native = 'day' THEN ['day', 'month'] ELSE [c.native] END) AS grain FROM coords c),
+scoped AS (SELECT g.*, unnest(CASE WHEN g.grain = 'year' THEN ['none'] ELSE ['none', 'year'] END) AS scope FROM grained g),
+anchors AS (
+  SELECT *, row_number() OVER (ORDER BY measure_time, event, align, event_time, grain, scope) AS anchor_id FROM scoped),
+-- the two series per anchor: the level and each term's movement, per entity and period, the year scope on the entity
+m_series AS (
+  SELECT k.anchor_id, m.entity || CASE WHEN k.scope = 'year' THEN '@' || year(m.period)::VARCHAR ELSE '' END AS entity,
+         date_trunc(k.grain, m.period) AS b, sum(m.value) AS y
+  FROM anchors k JOIN cells m ON m.side = 'measure' AND m.align = k.measure_align AND m.axis = k.measure_time
+  GROUP BY ALL),
+e_series AS (
+  SELECT k.anchor_id, e.entity || CASE WHEN k.scope = 'year' THEN '@' || year(e.period)::VARCHAR ELSE '' END AS entity,
+         date_trunc(k.grain, e.period) AS b, e.term, sum(e.value) AS m
+  FROM anchors k
+  JOIN cells e ON e.side = 'event' AND e.event = k.event AND e.align = k.align AND e.axis = k.event_time
+  ANTI JOIN keyish x ON x.event = e.event AND x.term = e.term
+  GROUP BY ALL),
+terms AS (SELECT anchor_id, count(DISTINCT term) AS terms FROM e_series GROUP BY anchor_id),
+viable AS (
+  SELECT anchor_id, count(*) AS viable_entities
+  FROM (SELECT anchor_id, entity FROM m_series GROUP BY anchor_id, entity HAVING count(*) >= 4) GROUP BY anchor_id),
+common AS (
+  SELECT anchor_id, count(*) AS entities
+  FROM (SELECT DISTINCT anchor_id, entity FROM m_series INTERSECT SELECT DISTINCT anchor_id, entity FROM e_series)
+  GROUP BY anchor_id),
+runnable AS (
+  SELECT k.anchor_id FROM anchors k JOIN viable v ON v.anchor_id = k.anchor_id JOIN terms t ON t.anchor_id = k.anchor_id
+  WHERE v.viable_entities >= 2 AND t.terms <= 64),
+-- the cells both sides carry, under every convention: each term, and every ordered pair difference
+aligned AS (
+  SELECT y.anchor_id, y.entity, y.b, y.y, e.term, e.m
+  FROM m_series y JOIN e_series e ON e.anchor_id = y.anchor_id AND e.entity = y.entity AND e.b = y.b
+  WHERE y.anchor_id IN (SELECT anchor_id FROM runnable)),
+conv AS (
+  SELECT anchor_id, entity, b, y, term AS convention, 1 AS terms, m FROM aligned
+  UNION ALL
+  SELECT a.anchor_id, a.entity, a.b, a.y, a.term || ' - ' || o.term, 2, a.m - o.m
+  FROM aligned a JOIN aligned o ON o.anchor_id = a.anchor_id AND o.entity = a.entity AND o.b = a.b AND o.term <> a.term),
+stepped AS (
+  SELECT *, y - lag(y) OVER w AS dy, row_number() OVER w AS t
+  FROM conv WINDOW w AS (PARTITION BY anchor_id, convention, entity ORDER BY b)),
+per_entity AS (
+  SELECT anchor_id, convention, terms, entity, count(*) AS n,
+         min(y) = max(y) AS flat, bool_or(m <> 0.0) AS moving, bool_or(isnan(y) OR isnan(m)) AS nan,
+         sum(abs(y - m)) AS nf, sum(abs(m)) AS df,
+         sum(abs(dy - m)) FILTER (WHERE t > 1) AS ns, sum(abs(m)) FILTER (WHERE t > 1) AS ds,
+         sum(abs(y + m)) AS nf_neg, sum(abs(dy + m)) FILTER (WHERE t > 1) AS ns_neg
+  FROM stepped GROUP BY ALL),
+voters AS (
+  SELECT anchor_id, convention, terms, entity, r_flow, r_stock,
+         behavior_vote(n, flat, moving, nan, r_flow, r_stock) AS vote,
+         behavior_vote(n, flat, moving, nan, r_flow_neg, r_stock_neg) AS mirror
+  FROM (SELECT *,
+               CASE WHEN df > 0 THEN nf / df ELSE 'infinity'::DOUBLE END AS r_flow,
+               CASE WHEN ds > 0 THEN ns / ds ELSE 'infinity'::DOUBLE END AS r_stock,
+               CASE WHEN df > 0 THEN nf_neg / df ELSE 'infinity'::DOUBLE END AS r_flow_neg,
+               CASE WHEN ds > 0 THEN ns_neg / ds ELSE 'infinity'::DOUBLE END AS r_stock_neg
+        FROM per_entity)),
+-- per convention: the votes, the winning label, its diagnostics over the winning voters, the support over the common entities
+counts AS (
+  SELECT anchor_id, convention, terms, count(vote) AS voted,
+         count(*) FILTER (WHERE vote = 'stock') AS stock, count(*) FILTER (WHERE vote = 'flow') AS flow
+  FROM voters GROUP BY ALL),
+winning AS (SELECT *, CASE WHEN stock > flow THEN 'stock' ELSE 'flow' END AS label, greatest(stock, flow) AS winners FROM counts),
+diag AS (
+  SELECT w.anchor_id, w.convention,
+         median(v.r_flow) FILTER (WHERE v.vote = w.label) AS r_flow, median(v.r_stock) FILTER (WHERE v.vote = w.label) AS r_stock,
+         count(*) FILTER (WHERE v.vote = w.label AND v.mirror IS DISTINCT FROM w.label) AS sign_primary,
+         count(*) FILTER (WHERE v.vote IS DISTINCT FROM w.label AND v.mirror = w.label) AS sign_mirror,
+         count(*) FILTER (WHERE v.vote = w.label AND v.mirror = w.label) AS sign_both,
+         sum(least(v.r_flow, v.r_stock) ** 2) FILTER (WHERE v.vote = w.label) AS rss, count(*) FILTER (WHERE v.vote = w.label) AS fired
+  FROM winning w JOIN voters v ON v.anchor_id = w.anchor_id AND v.convention = w.convention GROUP BY ALL),
+summaries AS (
+  SELECT w.anchor_id, w.convention, w.terms, w.voted, w.winners, w.label, c.entities,
+         CASE WHEN w.voted > 0 THEN w.winners / w.voted::DOUBLE ELSE 0.0 END AS agreement,
+         CASE WHEN w.voted >= 2 AND w.winners / w.voted::DOUBLE >= 0.8 THEN w.label ELSE 'abstain' END AS verdict,
+         d.r_flow, d.r_stock, d.sign_primary, d.sign_mirror, d.sign_both,
+         CASE WHEN d.fired > 0 THEN d.fired * ln(greatest(d.rss, 1e-12) / d.fired) + w.terms * ln(d.fired) END AS bic,
+         wilson_lower(w.winners, c.entities) AS support
+  FROM winning w JOIN diag d ON d.anchor_id = w.anchor_id AND d.convention = w.convention
+  JOIN common c ON c.anchor_id = w.anchor_id),
+-- the anchor's winner: among the conventions that decide, support first, a tie to the fewer terms unless ΔBIC > 10
+deciders AS (SELECT * FROM summaries WHERE verdict <> 'abstain' AND winners >= 0.5 * greatest(entities, 1)),
+simple AS (SELECT anchor_id, round(support, 8) AS tie, min(bic) AS bic FROM deciders WHERE terms = 1 GROUP BY ALL),
+ranked AS (
+  SELECT d.*, row_number() OVER (PARTITION BY d.anchor_id ORDER BY round(d.support, 8) DESC,
+           CASE WHEN d.terms = 1 THEN 1 WHEN s.bic IS NOT NULL AND d.bic IS NOT NULL AND s.bic - d.bic > 10.0 THEN 0 ELSE 2 END,
+           d.convention) AS rank
+  FROM deciders d LEFT JOIN simple s ON s.anchor_id = d.anchor_id AND s.tie = round(d.support, 8)),
+winner AS (SELECT * FROM ranked WHERE rank = 1),
+alts AS (
+  SELECT s.anchor_id,
+         list_slice(list({'convention': s.convention, 'verdict': CASE WHEN d.convention IS NOT NULL THEN s.verdict ELSE 'abstain' END,
+                          'voted': s.voted, 'support': s.support} ORDER BY s.voted DESC, s.support DESC, s.convention), 1, 4) AS alternatives
+  FROM summaries s
+  LEFT JOIN winner w ON w.anchor_id = s.anchor_id
+  LEFT JOIN deciders d ON d.anchor_id = s.anchor_id AND d.convention = s.convention
+  WHERE w.convention IS DISTINCT FROM s.convention
+  GROUP BY s.anchor_id),
+floored AS (
+  SELECT anchor_id, verdict, voted, winners, entities,
+         row_number() OVER (PARTITION BY anchor_id ORDER BY winners / greatest(entities, 1)::DOUBLE DESC, convention) AS rn
+  FROM summaries WHERE verdict <> 'abstain'),
+anyvote AS (SELECT anchor_id, bool_or(voted > 0) AS any_votes FROM summaries GROUP BY anchor_id),
+recon AS (
+  SELECT k.event, k.align, k.measure_time, k.event_time, k.grain, k.scope,
+         CASE WHEN r.anchor_id IS NOT NULL THEN coalesce(c.entities, 0) END AS entities,
+         CASE WHEN coalesce(t.terms, 0) <= 64 THEN coalesce(v.viable_entities, 0) END AS viable_entities,
+         i.identifier_columns,
+         CASE WHEN r.anchor_id IS NULL OR w.anchor_id IS NULL THEN 'abstain' ELSE w.verdict END AS verdict,
+         w.convention, coalesce(w.voted, f.voted) AS voted, w.agreement, w.support,
+         CASE WHEN w.verdict <> 'abstain' THEN w.r_flow END AS r_flow, CASE WHEN w.verdict <> 'abstain' THEN w.r_stock END AS r_stock,
+         w.sign_primary, w.sign_mirror, w.sign_both,
+         coalesce(al.alternatives, []::STRUCT(convention VARCHAR, verdict VARCHAR, voted BIGINT, support DOUBLE)[]) AS alternatives,
+         CASE WHEN coalesce(t.terms, 0) > 64 THEN t.terms || ' movement terms on ' || k.event || ', above the 64 one reconciliation takes'
+              WHEN coalesce(v.viable_entities, 0) < 2 THEN 'fewer than two entities carry 4+ periods on this alignment'
+              WHEN w.anchor_id IS NULL THEN
+                CASE WHEN f.anchor_id IS NOT NULL THEN f.winners || ' of ' || f.entities || ' common entities voted ' || f.verdict || ': under the majority floor'
+                     WHEN coalesce(av.any_votes, false) THEN 'votes below the candidacy floor (2 voters, 0.8 agreement)'
+                     ELSE 'no entity series reconciled: wrong anchor, short series, or dead values' END END AS reason,
+         0 AS kind
+  FROM anchors k
+  LEFT JOIN terms t ON t.anchor_id = k.anchor_id
+  LEFT JOIN viable v ON v.anchor_id = k.anchor_id
+  LEFT JOIN common c ON c.anchor_id = k.anchor_id
+  LEFT JOIN runnable r ON r.anchor_id = k.anchor_id
+  LEFT JOIN winner w ON w.anchor_id = k.anchor_id
+  LEFT JOIN alts al ON al.anchor_id = k.anchor_id
+  LEFT JOIN floored f ON f.anchor_id = k.anchor_id AND f.rn = 1
+  LEFT JOIN anyvote av ON av.anchor_id = k.anchor_id
+  LEFT JOIN identifiers i ON i.event = k.event),
+-- the monotone anchor, once per event alignment and scope, at the measure axis's native grain
+mono_keys AS (
+  SELECT event, measure_align, scope, min(measure_time) AS measure_time, arg_min(m_native, measure_time) AS grain,
+         min(align) AS align, min(event_time) AS event_time
+  FROM anchors GROUP BY ALL),
+mono_series AS (
+  SELECT mk.event, mk.measure_align, mk.scope,
+         m.entity || CASE WHEN mk.scope = 'year' THEN '@' || year(m.period)::VARCHAR ELSE '' END AS entity,
+         date_trunc(mk.grain, m.period) AS b, sum(m.value) AS y
+  FROM mono_keys mk JOIN cells m ON m.side = 'measure' AND m.align = mk.measure_align AND m.axis = mk.measure_time
+  GROUP BY ALL),
+mono_entities AS (
+  SELECT event, measure_align, scope, entity, count(*) AS steps,
+         count(*) FILTER (WHERE y < prev) AS decreases, count(*) FILTER (WHERE y > prev) AS increases
+  FROM (SELECT *, lag(y) OVER (PARTITION BY event, measure_align, scope, entity ORDER BY b) AS prev FROM mono_series)
+  WHERE prev IS NOT NULL GROUP BY ALL HAVING count(*) >= 3),
+mono_read AS (
+  SELECT event, measure_align, scope, count(*) AS considered,
+         count(*) FILTER (WHERE decreases = 0 AND increases > 0) AS monotone,
+         count(*) FILTER (WHERE increases > 0 OR decreases > 0) AS movers, sum(steps) AS steps
+  FROM mono_entities GROUP BY ALL),
+mono AS (
+  SELECT mk.event, mk.align, mk.measure_time, mk.event_time, mk.grain, mk.scope,
+         coalesce(r.considered, 0) AS entities, coalesce(r.considered, 0) AS viable_entities, i.identifier_columns,
+         CASE WHEN coalesce(r.considered, 0) < 2 OR coalesce(r.movers, 0) < 2 OR r.monotone * 2 < r.movers THEN 'abstain' ELSE 'stock' END AS verdict,
+         'monotone' AS convention,
+         CASE WHEN r.considered >= 2 AND r.movers >= 2 THEN r.movers END AS voted,
+         CASE WHEN r.considered >= 2 AND r.movers >= 2 THEN r.monotone / r.movers::DOUBLE END AS agreement,
+         CASE WHEN r.considered >= 2 AND r.movers >= 2 THEN wilson_lower(r.monotone, r.movers) END AS support,
+         NULL::DOUBLE AS r_flow, NULL::DOUBLE AS r_stock, NULL::BIGINT AS sign_primary, NULL::BIGINT AS sign_mirror, NULL::BIGINT AS sign_both,
+         []::STRUCT(convention VARCHAR, verdict VARCHAR, voted BIGINT, support DOUBLE)[] AS alternatives,
+         CASE WHEN coalesce(r.considered, 0) < 2 THEN 'fewer than two entities carry 4+ periods at the native grain'
+              WHEN r.movers < 2 THEN r.movers || ' of ' || r.considered || ' entities move within the scope: no monotone evidence'
+              WHEN r.monotone * 2 < r.movers THEN (r.movers - r.monotone) || ' of ' || r.movers || ' moving entities decrease within the scope over ' || r.steps || ' steps: not a cumulative here' END AS reason,
+         1 AS kind
+  FROM mono_keys mk
+  LEFT JOIN mono_read r ON r.event = mk.event AND r.measure_align = mk.measure_align AND r.scope = mk.scope
+  LEFT JOIN identifiers i ON i.event = mk.event),
+numbered AS (
+  SELECT *, row_number() OVER (ORDER BY measure_time, event, align, event_time, kind, grain, scope) - 1 AS seq
+  FROM (SELECT * FROM recon UNION ALL SELECT * FROM mono))
+SELECT true AS applicable, reason, seq, event, align, measure_time, event_time, grain, scope, entities, viable_entities,
+       identifier_columns, verdict, convention, voted, agreement, support, r_flow, r_stock, sign_primary, sign_mirror, sign_both, alternatives
+FROM numbered
+UNION ALL
+SELECT false, coalesce((SELECT min(reason) FROM cells WHERE side = 'reason'), 'no anchor aligned: no cells on the measure side or the event side'),
+       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+WHERE NOT EXISTS (SELECT 1 FROM numbered)
 ORDER BY seq;
 
 --===------------------------------------------------------------------===--
@@ -477,6 +729,63 @@ DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$
                        ORDER BY seq) FILTER (WHERE kind IS NOT NULL), []) AS collisions
   FROM grounding_collisions($subject)
 $$ RETURNS grounding_collisions;
+
+-- The stock/flow evidence on a measure column: the anchors' election. Support
+-- first within a billionth, then a reconciliation over the monotone reading
+-- (the movement explains the level), then the wider vote, then the event's
+-- name; a support tie names the layer that decided. When every anchor
+-- abstains the summary carries the reason of the one that came closest: a
+-- reconciliation over the monotone reading, one that aligned over one that
+-- did not, the most votes. Extraction serves the summary; the anchors read
+-- back through GLOSSARY(column::behavior_evidence).
+DECLARE ASPECT behavior_evidence WITH $${
+  "type": "object", "required": ["applicable"],
+  "properties": {"applicable": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
+                 "anchors_n": {"type": ["integer", "null"]}, "decided": {"type": ["integer", "null"]},
+                 "summary": {"type": ["object", "null"],
+                   "properties": {"verdict": {"enum": ["stock", "flow", "abstain"]},
+                                  "convention": {"type": ["string", "null"]}, "support": {"type": ["number", "null"]},
+                                  "voted": {"type": ["integer", "null"]}, "event": {"type": ["string", "null"]},
+                                  "align": {"type": ["string", "null"]}, "grain": {"type": ["string", "null"]},
+                                  "scope": {"type": ["string", "null"]}, "r_flow": {"type": ["number", "null"]},
+                                  "r_stock": {"type": ["number", "null"]}, "sign": {"type": ["object", "null"]},
+                                  "tiebreak": {"type": ["string", "null"]}, "reason": {"type": ["string", "null"]}}},
+                 "anchors": {"type": ["array", "null"], "items": {"type": "object"}}}
+}$$ AS MEASUREMENT ON COLUMN WHEN role = 'measure';
+
+DECLARE FUNCTION behavior_evidence FOR GLOBAL AS $$
+  WITH a AS (SELECT * FROM behavior_anchors($subject)),
+  ranked AS (
+    SELECT *, convention = 'monotone' AS monotone,
+           row_number() OVER (ORDER BY round(support, 8) DESC, convention = 'monotone', voted DESC, event, align) AS rank
+    FROM a WHERE applicable AND verdict <> 'abstain'),
+  top AS (SELECT * FROM ranked WHERE rank = 1),
+  runner AS (SELECT * FROM ranked WHERE rank = 2),
+  quiet AS (
+    SELECT reason FROM a WHERE applicable
+    ORDER BY convention = 'monotone', entities IS NULL, voted DESC NULLS LAST, seq LIMIT 1),
+  elected AS (
+    SELECT {'verdict': coalesce(t.verdict, 'abstain'), 'event': t.event, 'align': t.align, 'grain': t.grain, 'scope': t.scope,
+            'convention': t.convention, 'support': t.support, 'voted': t.voted, 'r_flow': t.r_flow, 'r_stock': t.r_stock,
+            'sign': CASE WHEN t.sign_primary IS NOT NULL THEN {'primary': t.sign_primary, 'mirror': t.sign_mirror, 'both': t.sign_both} END,
+            'tiebreak': CASE WHEN r.support IS NOT NULL AND abs(t.support - r.support) <= 1e-9
+                             THEN CASE WHEN t.monotone <> r.monotone THEN 'reconciliation-over-monotone'
+                                       WHEN t.voted <> r.voted THEN 'voted' ELSE 'event-name' END END,
+            'reason': CASE WHEN t.verdict IS NULL THEN q.reason END} AS summary
+    FROM (SELECT 1) one LEFT JOIN top t ON true LEFT JOIN runner r ON true LEFT JOIN quiet q ON true)
+  SELECT bool_and(a.applicable) AS applicable, min(a.reason) FILTER (WHERE NOT a.applicable) AS reason,
+         CASE WHEN bool_and(a.applicable) THEN count(*) END AS anchors_n,
+         CASE WHEN bool_and(a.applicable) THEN (SELECT count(*) FROM ranked) END AS decided,
+         CASE WHEN bool_and(a.applicable) THEN (SELECT summary FROM elected) END AS summary,
+         CASE WHEN bool_and(a.applicable) THEN list({
+           'seq': a.seq, 'event': a.event, 'align': a.align, 'measure_time': a.measure_time, 'event_time': a.event_time,
+           'grain': a.grain, 'scope': a.scope, 'entities': a.entities, 'viable_entities': a.viable_entities,
+           'identifier_columns': a.identifier_columns, 'verdict': a.verdict, 'convention': a.convention, 'voted': a.voted,
+           'agreement': a.agreement, 'support': a.support, 'r_flow': a.r_flow, 'r_stock': a.r_stock,
+           'sign_primary': a.sign_primary, 'sign_mirror': a.sign_mirror, 'sign_both': a.sign_both,
+           'alternatives': a.alternatives, 'reason': a.reason} ORDER BY a.seq) END AS anchors
+  FROM a
+$$ RETURNS behavior_evidence;
 
 --===------------------------------------------------------------------===--
 -- The temporal profile: a date column's window, cadence, completeness and
