@@ -1,29 +1,89 @@
 # glossql
 
-The [glossql](https://github.com/glossdb/glossql) context language as a
-DuckDB 2.0 extension, built on the PEG parser's grammar extension API.
+**The language for writing data harnesses.** It declares what must be
+known about data, how it's measured and checked, and who may say it, and
+keeps the record of what was said.
 
-Status: every statement and read of `grammar.ebnf` parses and runs; the semantics of `SPEC.md` are implemented where DuckDB
-has the primitive: the section-by-section account is `CONFORMANCE.md`.
-`SPEC.md`, `grammar.ebnf` and the corpus (`corpus/`: transcriptions of real
-artifacts, the language's record) live here with the parser;
-`test/sql/glossql_corpus.test` holds every block of the record to the grammar.
-The workspace is a DuckLake: datasets are its schemas, landings its
-snapshots, and the store lives in its catalog, so a gloss carries the
-snapshot it was written at,
-a measurement the versions of what it read, and each reads `stale` once
-that changed. The core ships no vocabulary; a kit does (`kits/`: KPI,
-quality and spatial, loaded with `glossql_kit()`). The research behind it,
-with what each round
-confirmed, is `duckdb-2.0-research.md`. The suites under `test/sql/` are
-the acceptance record (fourteen suites, 1453 assertions).
+glossql is a DuckDB extension. It adds a handful of statements and two
+table functions to DuckDB SQL, and keeps its catalog in a DuckLake beside
+the lake's own catalog tables, so what is known about the data is
+versioned with the data.
+
+## Declare what must be known
+
+```sql
+-- with the kpi kit loaded, which declares `role`
+DECLARE ASPECT currency WITH $${"type": "object", "required": ["value"],
+  "properties": {"value": {"type": "string", "pattern": "^[A-Z]{3}$"}}}$$
+  AS FACT ON COLUMN WHEN role = 'measure';           -- required on every measure column
+DECLARE WITNESS currency_w ON currency BY (AGENT, HUMAN)
+  DETECTOR slot_entropy THRESHOLD 0.7;              -- who may gloss it; how disagreement is scored
+DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$
+  AS MEASUREMENT ON COLUMN;
+DECLARE FUNCTION min_max FOR GLOBAL AS
+  $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
+```
+
+- An **aspect** is a property of the harness schema: a JSON Schema for its
+  values, the assets it applies to (dataset, table, column, relationship,
+  source), and when it is required. It is asserted (`FACT`), computed
+  (`MEASUREMENT`), or a metric definition (`QUERY`, served as a SQL view).
+- A **function** is one SQL query: a measurement (profiling, relationship
+  discovery, quality screens) or a detector that scores a check.
+- A **witness** is the check on an aspect, named after the observers in
+  the Dawid–Skene method: which actors may gloss it, and which detector
+  judges their agreement.
+- **Grants** (planned) give each actor the statements and datasets it
+  needs, as in SQL.
+- Sources, load queries (`RECIPE`), datasets and relationships are
+  declared the same way. A **kit** packages a domain's declarations with
+  a skill that teaches them.
+
+## Record what is
+
+A **gloss** is an assertion: an aspect's value on an asset, from one
+actor.
+
+```sql
+GLOSS currency ON orders.amount AS $${"value": "EUR"}$$;  -- validated, stored with its actor and the data version
+SELECT min_max() FROM orders.amount;                     -- a measurement, stored with the versions it read
+IMPORT orders;                                           -- a load: a new DuckLake snapshot with its row account and column lineage
+```
+
+## Read it
+
+```sql
+SELECT * FROM GLOSSARY(orders);  -- what is known: one row per asset and aspect, state current | stale | contested | unassessed
+SELECT * FROM ATTEST(orders);    -- the checks: a status and a score per asset and aspect
+```
+
+`stale` means the data changed after the gloss; `contested`, that actors
+disagree beyond the check's threshold; `unassessed`, that the aspect is
+required and nobody has glossed it. Everything else is plain SQL over the
+catalog tables.
+
+## Kits
+
+The extension ships three kits: `kpi` (the semantic layer's vocabulary),
+`quality` (data quality screens), and `spatial`, a small example of a
+domain kit. Each kit's `SKILL.md` teaches an actor what its words mean
+([kits](kits/README.md)).
+
+```sql
+FROM glossql_kit('kits/kpi/kit.sql');           -- vocabulary, functions, witnesses: one row per statement
+FROM glossql_kit('kits/quality/kit.sql');       -- the screens over a dataset's cells, after the KPI kit
+```
+
+## A whole session
+
+From an empty lake to a served metric, declaring its own words instead of
+loading a kit:
 
 ```sql
 LOAD glossql;
-PRAGMA glossql;                                   -- the grammar for this connection, the store where missing   -- opt-in per connection
 ATTACH 'ducklake:ws.ducklake' AS ws (DATA_PATH 'ws/');   -- the workspace is a DuckLake
 USE ws;
-PRAGMA glossql;                            -- the store: glossql_* tables in the lake's catalog, read as views in ws.main
+PRAGMA glossql;                                   -- the grammar for this connection, and the store: glossql_* tables in the lake's catalog, read as views in ws.main
 
 DECLARE DATASET fin SET (purpose: 'working-capital analysis');
 USE fin;                                        -- a dataset is a schema of the lake; DuckDB's USE binds it
@@ -56,14 +116,20 @@ FROM fin.revenue;                               -- a grounding is a view, and a 
 GLOSS behavior ON revenue.revenue AS $${"value": "flow"}$$;  -- its columns are subjects: a reader of the numbers finds its words there
 ```
 
-The session above declares its own words. A fresh workspace takes them
-from a kit instead, and the kit's `SKILL.md` teaches the actor what they
-mean:
+## Status
 
-```sql
-FROM glossql_kit('kits/kpi/kit.sql');           -- vocabulary, functions, witnesses: one row per statement
-FROM glossql_kit('kits/quality/kit.sql');       -- the screens over a dataset's cells, after the KPI kit
-```
+Every statement and read of `grammar.ebnf` parses and runs; the
+semantics of `SPEC.md` are implemented where DuckDB has the primitive:
+the section-by-section account is `CONFORMANCE.md`. `SPEC.md`,
+`grammar.ebnf` and the corpus (`corpus/`: transcriptions of real
+artifacts, the language's record) live here with the parser;
+`test/sql/glossql_corpus.test` holds every block of the record to the
+grammar. The workspace is a DuckLake: datasets are its schemas, landings
+its snapshots, and the store lives in its catalog, so a gloss carries the
+snapshot it was written at, a measurement the versions of what it read,
+and each reads `stale` once that changed. The research behind it, with
+what each round confirmed, is `duckdb-2.0-research.md`. The suites under
+`test/sql/` are the acceptance record.
 
 ## How glossql maps onto DuckDB
 
@@ -103,6 +169,9 @@ reached by the bare name under `USE` or as `dataset.metric`, which SPEC
 door to it.
 
 ## The CLI door
+
+A door is the interface an actor works through; two ship here, the
+DuckDB CLI and a small MCP server.
 
 Claude Code, the released `duckdb` and this extension are a door: no
 wrapper, no server. A workspace is a directory holding an opener,
