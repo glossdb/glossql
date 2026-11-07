@@ -1,6 +1,6 @@
 ---
 name: glossql-kpi
-description: The KPI kit's vocabulary for a glossql workspace — what each aspect means, the order of a round, the keys a metric's grounding carries. Use after glossql_kit('kits/kpi/kit.sql') when glossing columns, tables, sources and metrics.
+description: The KPI kit's vocabulary for a glossql workspace — what each aspect means, the order of a round, the keys a metric definition carries. Use after glossql_kit('kits/kpi/kit.sql') when glossing columns, tables, sources and metrics.
 ---
 
 # The KPI kit: what it teaches
@@ -8,7 +8,7 @@ description: The KPI kit's vocabulary for a glossql workspace — what each aspe
 For an actor working in a DuckDB that has the glossql extension loaded and
 this kit declared. The extension knows the grammar and the store; this
 file is the vocabulary, the order of a round, and the keys a metric's
-grounding carries. Everything live is read through the language, never
+metric definition carries. Everything live is read through the language, never
 taught: the tables, the declarations, the glossary.
 
 ## Load and check
@@ -28,42 +28,42 @@ SELECT name, kind, grains FROM aspects;
 | `behavior` | measure columns | `value`: `stock`, `flow`, `ratio`, `none`; `numerator` and `denominator` for a ratio; `grounds` | how the number combines over periods and members; `none`: examined, does not apply |
 | `unit` | measure columns | `value`: the unit; `source_column`: where a row's unit sits | what the number counts |
 | `dimension` | dimension columns | `value`: `primary`, `supporting`, `none`; `grounds` | whether reports slice by it |
-| `entity` | table | `value`: what one row is; `role`; `grain`; `time_axis`; `identity_columns` | the identity every aggregate stands on |
+| `entity` | table | `value`: what one row is; `role`; `grain`; `time_axis`; `identity_columns` | the identity every aggregate holds on |
 | `conventions` | source | any object | fiscal calendar, signs, what nulls mean |
 | `definitions` | dataset | `definitions`: one object per metric name | the handbook: meaning, unit, owner, source of each metric, and a derived metric's `formula` over its siblings, text a person corrects, never computed |
 
 `role`, `behavior` and `unit` are judged by `slot_entropy`: when the
 agent's and the human's values differ, the claim is `contested`, its
-value withheld, the verdict `red` above 0.7. `meaning`, `entity` and
+value withheld, the result `red` above 0.7. `meaning`, `entity` and
 `dimension` take both kinds of actor without a detector.
 
 ## The order of a round
 
-1. Read what is owed. Every gap is a row, never an omission:
+1. Read what is required. Every gap is a row, never an omission:
    `SELECT * FROM GLOSSARY(orders) WHERE state <> 'current';`
-2. Gloss `role` on every column first. `behavior` and `unit` are owed
+2. Gloss `role` on every column first. `behavior` and `unit` are required
    only on measures, `dimension` only on dimensions, so the backlog opens
    as roles land.
 3. Extract before claiming. `SELECT column_profile() FROM orders.amount;`
    and `SELECT outlier_profile() FROM orders.amount;` land evidence that
    `GLOSSARY()` serves beside the glosses; cite it in `grounds`. With the
    quality kit loaded and the edges declared, `SELECT behavior_evidence()
-   FROM orders.amount;` lands the stock/flow evidence: read its verdict
+   FROM orders.amount;` writes the stock/flow evidence: read its result
    and the anchor that decided before glossing `behavior`. It is
-   evidence, never a voice.
+   evidence, never a value.
 4. Gloss with grounds: `GLOSS behavior ON orders.amount AS $${"value":
    "flow", "grounds": "sums over orders, never a balance"}$$;`. You speak
-   as `agent`. A person's ruling arrives as `human`, which the wrapper
+   as `agent`. A person's review decision arrives as `human`, which the wrapper
    sets with `SET VARIABLE glossql_actor = 'human'`; never set it yourself.
-5. Read the verdicts: `SELECT * FROM TESTS(orders.amount::role);`. A red
+5. Read the results: `SELECT * FROM TESTS(orders.amount::role);`. A red
    band is a disagreement to resolve by re-glossing, not to overwrite.
 
 ## Metrics
 
 A metric is a VIEW aspect, declared thin and grounded by a gloss on the
-dataset. The grounding is served as a view under the metric's name, and
+dataset. The metric definition is served as a view under the metric's name, and
 the view is a table of the dataset: its columns take this kit's words
-like a landed table's columns do, and that is where a reader of the
+like a loaded table's columns do, and that is where a reader of the
 numbers finds what it needs — never in the body.
 
 ```sql
@@ -95,7 +95,7 @@ summed halves the view serves under the names `numerator` and
 series slices by it; `entity` on the view says what one row is and its
 `grain`. A kit that serves the series reads them.
 
-Re-glossing supersedes your own slot; a human's slot stands beside it.
+Re-glossing supersedes your own value; a human's value holds beside it.
 What the company revises, the metric's meaning, unit, owner or source,
 goes into `definitions` on the dataset, never into the declaration: a
 declaration cannot change once anything is glossed on it.
@@ -103,5 +103,5 @@ declaration cannot change once anything is glossed on it.
 ## What this kit does not do
 
 It records the words and ships no reader of the numbers: a metrics
-kit serves the series over the view and its columns' claims. Doors and
+kit serves the series over the view and its columns' claims. Interfaces and
 identity stay outside.

@@ -23,9 +23,9 @@ PREVIEW books AS $$SELECT "table", "from", "to"
 FROM pragma_foreign_key_list('master_txn_table')$$;
 ```
 
-Six declared FKs came back. Two survived judging against the landed
+Six declared FKs came back. Two survived judging against the stored
 data — a declared key describes the source's tables, not the tables a
-recipe lands, so harvested keys enter the relationship judge as
+recipe is stored, so harvested keys enter the relationship judge as
 evidence only.
 
 ## The recipe runs at the source, in the source's dialect
@@ -49,7 +49,7 @@ Two dialect facts the run paid for, both now in the add-source skill:
   50,000 rows); `CAST(x AS REAL)` in the recipe fixes the storage
   class so the wire carries a numeric.
 - **The cast trap.** `CAST(date(x) AS DATE)` does not fail — `DATE`
-  takes NUMERIC affinity, and `'2010-12-27'` lands as int64 `2010`.
+  takes NUMERIC affinity, and `'2010-12-27'` is stored as int64 `2010`.
   Measured through the source:
 
 ```glossql
@@ -62,7 +62,7 @@ PREVIEW books AS $$SELECT date('2010-12-27')              AS iso,
 as int64 `1293408000`. The honest spellings land untyped; the typed
 read is at read time.
 
-## Read back what landed
+## Read back what was stored
 
 ```glossql
 DESCRIBE ledger;
@@ -83,7 +83,7 @@ The recipe runs again at the source and the table becomes its result,
 replaced in one commit: a relational source computes the whole result
 itself, so there is no file for the engine to leave out. The outcome
 says so (`replaced: the source computes the whole result`), and the
-landing's row in `imports` carries `mode = 'replace'`.
+load's row in `imports` carries `mode = 'replace'`.
 
 A million-row ledger is not re-read whole every night. The owner
 fences the source into a view of what changed, and the recipe names
@@ -102,20 +102,20 @@ IMPORT ledger;
 
 Every import merges the view's rows into the table by `id`: a row
 with a known key replaces it, a new key joins, every other row
-stands. A row the view never shows cannot be merged, so a source that
+holds. A row the view never shows cannot be merged, so a source that
 deletes is fenced with the deletes as rows carrying a flag. The
-landing's row carries `mode = 'merge'`.
+load's row carries `mode = 'merge'`.
 
-## Verdicts
+## Results
 
 - **TRANSCRIBES** — the spine (source, harvest probe,
   at-source recipe, read-back) is existing surface; the run needed no
   new grammar.
 - **INFORMATION LOST** — the temporal *type*: SQLite's wire has no
-  temporal storage class, so no recipe spelling lands a Date/Timestamp
+  temporal storage class, so no recipe spelling writes a Date/Timestamp
   column from this dialect. `temporal()` names the gap in its
   abstention reason; `behavior_evidence()` abstains dataset-wide
   without a typed period axis. A typed backend (PostgreSQL) does not
-  share the loss — the recipe cast lands temporal there. Ruled:
-  no landing-side machinery; the dialect teaching carries
+  share the loss — the recipe cast is stored temporal there. Decided:
+  no load-side machinery; the dialect teaching carries
   it, and SQLite stays a cheap ADBC test, not a product target.

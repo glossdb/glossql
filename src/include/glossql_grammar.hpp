@@ -71,9 +71,9 @@ string ResolveSubject(ClientContext &context, const string &subject);
 //! A resolved subject's parts: the dataset, the table, and the column as all that
 //! follows the second dot, since a column's name may hold a dot (SPEC §4)
 vector<string> SubjectParts(const string &subject);
-//! A relation of the lake by name, a landed table or a view (SPEC §3: a view
+//! A relation of the lake by name, a loaded table or a view (SPEC §3: a view
 //! counts as a table, so its columns are subjects like a table's); null when
-//! neither stands
+//! neither holds
 optional_ptr<CatalogEntry> RelationEntry(ClientContext &context, const string &schema, const string &table);
 //! One column of a dataset's relation, as glossql_columns serves it
 struct RelationColumn {
@@ -129,12 +129,12 @@ string JsonSchemaCheck(const string &schema, const string &document);
 string JsonSchemaValueEnumCheck(const string &schema, const string &literal);
 //! A top-level string field of a JSON object, empty when absent
 string JsonStringField(const string &document, const string &field);
-//! The grounding contract: sql or stopped, assumptions disclosed; every other key is a kit's
+//! The metric definition contract: sql or stopped, assumptions disclosed; every other key is a kit's
 extern const char *const GROUNDING_CONTRACT;
 
 //! Parses plain SQL with the stock grammar into one SELECT
 unique_ptr<SelectStatement> ParseSelect(const string &sql);
-//! Replaces $name with the replacement where $name stands as a whole word
+//! Replaces $name with the replacement where $name holds as a whole word
 string ReplacePlaceholder(const string &sql, const string &name, const string &replacement);
 //! The first line of a text, trimmed
 string FirstLine(const string &text);
@@ -168,7 +168,7 @@ string LegsSQL(const Workspace &ws);
 //! The store's legs by name, quoted and comma-separated: 'main.aspects', ... (measurements is none)
 string StoreLegNames();
 //! Whether the measurement row `row` (pin, reads, dataset, function, computed_at)
-//! still stands, as a SQL boolean over a CTE named legs (LegsSQL): the legs its
+//! still holds, as a SQL boolean over a CTE named legs (LegsSQL): the legs its
 //! reads name look the same now as in its pin, and its function has not been
 //! re-declared since
 string StandsSQL(const Workspace &ws, const string &row);

@@ -26,7 +26,7 @@ A screen is a table macro over `dataset_cells(subject)`, every cell of a
 dataset's tables, or of one table, as one relation. Run a screen directly
 to look; extract its measurement to land what it found.
 
-| Measurement | On | Reads | Lands |
+| Measurement | On | Reads | Is stored |
 |---|---|---|---|
 | `detect_relationships()` | dataset | `relationship_candidates(dataset)` | `candidates`: `from`, `to`, `cardinality`, `overlap`, `matched`, `orphans`, `to_unique`, `to_temporal`, `key_columns`; `summary`: the count, the top 16, a note |
 | `relationship_coherence()` | dataset | `relationship_checks(dataset)` | `relationships`: per declared edge `filled`, `orphans`, `orphan_rate`, `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
@@ -47,7 +47,7 @@ What each line means:
   `lambda` is how much better `to` is predicted knowing `from`.
 - A derivation ships at `match_rate >= 0.95` over twenty supporting rows
   or more.
-- A collision is two groundings of one flavor, the aspect's `x-kind`: a
+- A collision is two metric definitions of one flavor, the aspect's `x-kind`: a
   `sql` collision two with the same statement once parsed, a
   `served_series` collision two whose monthly series agree though their
   SQL differs. The series is read off the view's claims: the column
@@ -74,10 +74,10 @@ What each line means:
   negated movement, the ledger-signed reading. An anchor abstains with
   its reason: short series, no fit, under the majority. Read the
   summary, then gloss `behavior` citing the anchor in `grounds`; the
-  verdict is evidence, never a voice in the slots.
+  result is evidence, never a value in the values.
 - `applicable: false` with a `reason` is a screen that could not run:
   an empty table, too few columns of the right kind, no declared
-  relationships, no groundings, a column that is no number or an
+  relationships, no metric definitions, a column that is no number or an
   identifier (a leg of a declared relationship, or an integer distinct
   on nine filled rows in ten), a table with no time axis. Examined,
   nothing to say.
@@ -92,8 +92,8 @@ What each line means:
    Declare what holds: `DECLARE RELATIONSHIP orders.customer_id ->
    customers.id;`. A candidate is evidence, never a declaration.
 3. `SELECT relationship_coherence() FROM fin;` after declaring, and
-   after every landing: orphans and dates out of order are what a
-   declared edge owes.
+   after every load: orphans and dates out of order are what a
+   declared edge requires.
 4. Per table with dimension columns, `SELECT detect_hierarchies() FROM
    fin.geo;`; per table with three numeric columns or more, `SELECT
    detect_derivations() FROM fin.lines;`. Cite a found edge or
@@ -102,18 +102,18 @@ What each line means:
    tables' measures carry `role`, `SELECT behavior_evidence() FROM
    fin.balances.amount;`: stock or flow, with the anchor that decided.
    Gloss `behavior` with the anchor as grounds.
-6. After grounding metrics, `SELECT detect_grounding_collisions() FROM
+6. After metric definition metrics, `SELECT detect_grounding_collisions() FROM
    fin;`: two names for one number is a definition to settle, not two
    metrics.
 
-A measurement lands with what it read; a repeat serves the landed row
+A measurement is stored with what it read; a repeat serves the stored row
 while that is unchanged and computes once a table moved.
 
 ## A check of your own
 
 A validation is a FACT aspect whose schema carries `tolerance` and
 `breach_rate`. Gloss the expectation with the tolerance you measured at
-landing, never an assumed zero. Declare a function that returns the
+load, never an assumed zero. Declare a function that returns the
 same aspect and measures the violation share as `breach_rate`, 0.0
 passing. A test on the aspect names the kit's detector:
 
@@ -124,7 +124,7 @@ DECLARE TEST ids_w ON ids_present BY (AGENT, HUMAN)
 
 `TESTS()` bands each subject: yellow while no check has spoken, green
 at or under the tolerance, red above it. The human's tolerance outranks
-the agent's; the test's threshold stands in while no gloss carries
+the agent's; the test's threshold holds in while no gloss carries
 one. The detector is one-sided: a source whose expected dirt must not
 be cleaned away declares its own, red on both sides.
 

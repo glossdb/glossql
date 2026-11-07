@@ -1,4 +1,4 @@
-# 06 · Claim tests + reliabilities — slots TRANSCRIBE · calibration DROPPED BY DESIGN
+# 06 · Claim tests + reliabilities — values TRANSCRIBE · calibration DROPPED BY DESIGN
 
 Source: `claim_tests` (engine schema.sql):
 
@@ -34,9 +34,9 @@ corpus_version, estimator, per_class_accuracy, brier, sample sizes, dates.
 
 ## Transcription
 
-The slot model replaces distributions-with-weights: per (subject, aspect) one
+The value model replaces distributions-with-weights: per (subject, aspect) one
 current value per speaker — the function's cached output, the agent's gloss,
-the human's gloss. The detector adjudicates across slots and returns band +
+the human's gloss. The detector scores across values and returns band +
 score; TESTS serves it.
 
 ```glossql
@@ -61,10 +61,10 @@ SELECT * FROM TESTS(orders.amount::behavior);
 
 ## Findings
 
-- **Slots TRANSCRIBE.** target→subject, claim_field→aspect, the detector's
-  verdict→(band, score). A human re-gloss supersedes the human slot; a
+- **Values TRANSCRIBE.** target→subject, claim_field→aspect, the detector's
+  result→(band, score). A human re-gloss supersedes the human value; a
   contested state is a red/orange band, not a flag.
-- **The data-grounded voice is a `RETURNS` binding** (respelled
+- **The data-grounded value is a `RETURNS` binding** (respelled
   2026-08-04): `temporal_behavior` speaks the `behavior` aspect by
   returning it — v0.3's `structural_reconciliation` test, made a typed
   function instead of a `BY (FUNCTION …)` entry. Its output validates
@@ -74,7 +74,7 @@ SELECT * FROM TESTS(orders.amount::behavior);
   is superseded (2026-08-05): a trajectory read of behavior was falsified
   (a trending flow and a mean-reverting stock look alike), and the shipped
   wiring serves `behavior_evidence` as a MEASUREMENT the agent reads
-  before glossing. The voice mechanism itself lives on — fixture 16 §5's
+  before glossing. The value mechanism itself lives on — fixture 16 §5's
   validation checks speak their aspects exactly this way.*
 - **DROPPED BY DESIGN — the calibration theater.** Per-test calibrated
   reliabilities, calibration provenance (corpus id, estimator, Brier),

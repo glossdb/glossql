@@ -17,7 +17,7 @@ Pack envelope around it (same file): `name: financial_reporting`,
 ## Transcription
 
 Each concept is its own aspect; the ontology entry rides the `WITH` schema as
-annotations. `AS VIEW` makes its glosses groundings (fixture 07).
+annotations. `AS VIEW` makes its glosses metric definitions (fixture 07).
 
 ```glossql
 DECLARE ASPECT revenue WITH $${

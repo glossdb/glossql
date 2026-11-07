@@ -1,25 +1,25 @@
-# 24 · Functions carry their own body — the run-4 verdict
+# 24 · Functions carry their own body — the run-4 result
 
 Source: our own test run, driven through the MCP
-door alone. Two validations were judged, authored and left half-built:
+interface alone. Two validations were judged, authored and left half-built:
 the inventory roll-forward closed exactly on 5,280 of 5,280
 product-location-months, and the AP mismatch analysis settled that a
-payment settles its bill in full. Both landed as expectation glosses
-with their tolerances. Neither got a measuring voice, because a
+payment settles its bill in full. Both stored as expectation glosses
+with their tolerances. Neither got a measuring value, because a
 function's body lived on disk and **an agent connected over MCP has
 statements, not a filesystem**.
 
-The same wall stands in front of reading one. The reference library is
+The same wall holds in front of reading one. The reference library is
 fifteen worked examples that ship in every workspace, and the skill
 that taught function authoring said "read the one closest to your task
-before writing" — pointing at a directory the door cannot open:
+before writing" — pointing at a directory the interface cannot open:
 
 ```sql
 SELECT name, script FROM functions
 -- band_breach | functions/band_breach.rhai
 ```
 
-Ruled: **a function's body is data.** `FROM 'path'` is
+Decided: **a function's body is data.** `FROM 'path'` is
 replaced by `AS $$…$$`, the store keeps the script itself, and the
 `functions/` directory retires. Writing a function and reading one
 become the same two statements every other kind of knowledge uses.
@@ -55,7 +55,7 @@ DECLARE TEST inventory_rollforward_w ON inventory_rollforward
 ## Reading a shipped one is the same statement it always was
 
 The exemplar set becomes readable the moment the body is the column,
-so the authoring instruction stops pointing outside the door:
+so the authoring instruction stops pointing outside the interface:
 
 ```sql
 SELECT script FROM functions WHERE name = 'rate_tolerance'
@@ -75,12 +75,12 @@ DECLARE FUNCTION outliers FOR GLOBAL FROM 'functions/outliers.rhai'
   untouched. A declaration that named a path now carries what the path
   pointed at.
 - **Two capabilities arrive with it, and neither is new grammar.**
-  Authoring: the check half of a validation is writable over the door,
+  Authoring: the check half of a validation is writable over the interface,
   which run 4 could not do. Reading: `SELECT script FROM functions`
   serves the reference library as fifteen worked examples instead of
   fifteen paths, so a skill can say "read the closest one" and mean it.
 - **`FROM` and `AS` did not both survive.** Two homes for one body is
-  the staleness the `x-unit` ruling was written against —
+  the staleness the `x-unit` review decision was written against —
   the copies disagree and nothing says which wins. The path form is
   retired rather than deprecated; the gap block above is its epitaph.
 - The workspace `functions/` directory retires with it. Bootstrap

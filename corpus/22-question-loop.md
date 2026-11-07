@@ -1,18 +1,18 @@
-# 22 · The question loop — RULED: no question object; GLOSS + actor kind is the whole record
+# 22 · The question loop — DECIDED: no question object; GLOSS + actor kind is the whole record
 
 Source: our own runs. The agenda half is a pin-queue onboarding run;
 the answer half is the elicitation spike (Claude Code rendered the
-door's form via MRTR and the accepted answer
-landed as a HUMAN gloss). The fork this fixture carried (A agenda
+interface's form via MRTR and the accepted answer
+stored as a HUMAN gloss). The fork this fixture carried (A agenda
 gloss · B per-subject gloss · C `ASK` statement · D alternatives in
-bodies) closed by the project lead's verdict: **all four
-were ledgers.** The ruled model:
+bodies) closed by the project lead's result: **all four
+were ledgers.** The decided model:
 
 - `GLOSS` is the only write.
-- Every slot logs its speaker — `actor_kind`, `actor_id` — and human
+- Every value logs its speaker — `actor_kind`, `actor_id` — and human
   outranks agent at every collapsed read. Already true.
 - **No additional ledger for questions or answers.** A question is
-  ephemeral: it rides the interaction transport (the door's
+  ephemeral: it rides the interaction transport (the interface's
   elicitation form, or the agent's own chat surface) and vanishes.
   That a `GLOSS` was logged as `human` is the entire record of an
   answer.
@@ -26,10 +26,10 @@ GLOSS definitions ON fin AS $${"definitions": {
 }}$$;
 ```
 
-TRANSCRIBES — spoken on the human channel, this slot outranks the
+TRANSCRIBES — spoken on the human channel, this value outranks the
 agent's at every read, and any surface that wants "what is still
-open" derives it: agent slots the human has not spoken over, using
-only what slots already carry (`confidence`, `grounds`, as taught).
+open" derives it: agent values the human has not spoken over, using
+only what values already carry (`confidence`, `grounds`, as taught).
 Nothing is declared to make that read possible.
 
 ## What the fork record established, kept as evidence
@@ -46,7 +46,7 @@ ASK definitions ON fin WITH $${"question": "revenue scope: which accounts?"}$$;
 ```
 
 - **Agenda artifacts are pin-shaped.** The dataset-grain
-  `pin_questions` array existed so a queue frame had one slot to
+  `pin_questions` array existed so a queue frame had one value to
   render; the body-per-option existed so a pin button had a prepared
   statement to post. Both retired with the pin surface.
 

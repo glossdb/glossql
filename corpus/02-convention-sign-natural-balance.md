@@ -56,7 +56,7 @@ GLOSS conventions ON fin AS $${
 ## Findings
 
 - **TRANSCRIBES, multiplicity-in-blob.** The `targets` consumer routing that
-  the old spec deferred for two sprints lands trivially as a blob field —
+  the old spec deferred for two sprints is stored trivially as a blob field —
   consumers filter it themselves.
 - Lost vs. today: declaration-time membership checking of group members
   (engine lint `concept_edge_store.py:78-90`); a dangling group member is

@@ -48,7 +48,7 @@ A rejected candidate is not declared — it stays visible in the measurement
 (fixture 07); a human's earlier declarations are already in the log, so
 "materialize overlays" is nothing: both actor kinds write the same statement.
 
-Composite keys are tuple endpoints (ruled 2026-08-05, fixture 14 — the
+Composite keys are tuple endpoints (decided 2026-08-05, fixture 14 — the
 derived-column cure was retired when a live run showed it required the
 view surface §3 closes):
 

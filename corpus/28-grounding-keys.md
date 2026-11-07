@@ -1,19 +1,19 @@
-# 28 · Grounding keys: behaviour, row identity, slices — RULED (C: the grounding contract, the claims as glosses on the view's columns)
+# 28 · Metric definition keys: behaviour, row identity, slices — DECIDED (C: the metric definition contract, the claims as glosses on the view's columns)
 
 Source: three artifacts the corpus and the docs already hold, and one
 host. The City of Baton Rouge revised budget (fixture 27): a flow booked
 in the month it was authorized, sliced by fund and by object
-(`segment2`); its grounding in `docs/methods/plan.md` carries
+(`segment2`); its metric definition in `docs/methods/plan.md` carries
 `behavior` and `axes`. The finance integration run's `ar_balance`
 (fixture 26): a stock, its row identity declared as `grain`. The
 harmonisation demo's service level: the share of a system's rows that
 keep their required fields, by system of record — a ratio, neither
 stock nor flow, which the fixed enum cannot say. The host is the DuckDB
-extension (this repository), where a grounding is a view in the catalog and
+extension (this repository), where a metric definition is a view in the catalog and
 a view and its columns are subjects like a table's, glossed, measured
-and owed (its views suite).
+and required (its views suite).
 
-What the engine reads of a grounding: `sql` or `stopped`, to build or
+What the engine reads of a metric definition: `sql` or `stopped`, to build or
 end the view; `assumptions`, for disclosure and the question round.
 What reads `behavior`, `grain` and `axes`: the cube alone
 (`crates/session/src/cube.rs`), to combine the view's rows over periods
@@ -24,7 +24,7 @@ and members and to validate the frame against its row identity.
 Three forms for the same artifacts. All parse; the fork is where a
 claim about the view lives.
 
-**A. The fixed schema holds.** Six keys, closed, as §5.2 stands. The
+**A. The fixed schema holds.** Six keys, closed, as §5.2 holds. The
 budget as the docs spell it:
 
 ```glossql
@@ -38,7 +38,7 @@ GLOSS revised_budget ON brla AS $${
 The service level carries no key the enum holds: `ratio` is refused at
 admission, so its author writes nothing, or `flow`, which is wrong.
 
-**B. The contract, and a grounding schema the kit declares**
+**B. The contract, and a metric definition schema the kit declares**
 (`.claude/plans/grounding.md`). The body validates against the
 contract, `sql` or `stopped` and `assumptions`, then against every
 aspect flavored `x-kind: grounding`; the KPI kit declares today's three
@@ -59,12 +59,12 @@ DECLARE ASPECT kpi_grounding WITH $${
 ```
 
 The budget's statement is A's, unchanged. The claim still rides the
-body: one slot holds `sql` and `behavior` together.
+body: one value holds `sql` and `behavior` together.
 
 **C. The contract, and the claims as glosses on the view's columns.**
 The body is `sql` or `stopped` and `assumptions`. The view is a table
 of its dataset (§3), and its columns carry the kit's column vocabulary,
-the words a landed table's columns carry:
+the words a loaded table's columns carry:
 
 ```glossql
 GLOSS revised_budget ON brla AS $${
@@ -128,15 +128,15 @@ DECLARE ASPECT behavior WITH $${
 ## Findings
 
 - **A and B key a claim about one column of the view by the whole
-  grounding.** One slot holds `sql` and `behavior`: a human's ruling on
+  metric definition.** One value holds `sql` and `behavior`: a human's review decision on
   the behaviour supersedes the agent's `sql` with it, no test bands
   the behaviour alone, no measurement sits beside it as evidence, and
-  a metric read as another grounding's source carries none of a
+  a metric read as another metric definition's source carries none of a
   table's facts.
-- **C gives each claim the slot a landed column's claim has.** The
+- **C gives each claim the value a stored column's claim has.** The
   test on `behavior` bands it, the behaviour evidence is a
-  measurement on the column, a ruling lands on the one fact, `next`
-  routes what a new metric's columns owe, and the ratio is sayable
+  measurement on the column, a review decision is stored on the one fact, `next`
+  routes what a new metric's columns require, and the ratio is sayable
   with its halves. The cost is statements: nine where A wrote one.
   Most are proposed rather than written: a detector reads the view's
   sources through lineage and proposes its columns' roles, and the
@@ -148,12 +148,12 @@ DECLARE ASPECT behavior WITH $${
 - **The SPEC diff under C.** §5.1: "the standard grounding schema"
   becomes "the grounding contract". §5.2: the block keeps `oneOf`,
   `sql`, `stopped` and `assumptions`; the three bullets go, and one
-  stands in their place: a grounding's view is a table of its dataset,
+  holds in their place: a metric definition's view is a table of its dataset,
   its columns carry the claims a reader needs under the aspects a kit
   declares, and a reader that combines its rows refuses while the
   claim it needs is unglossed, naming the gloss. B's sentence on a
-  kit-declared grounding schema stays for a key a body truly needs;
+  kit-declared metric definition schema stays for a key a body truly needs;
   the KPI kit declares none. Fixtures 07 and 26 and the corpus README
   rows read "grounding contract".
-- **Ruled: C.** It is the structure the metrics kit is built on
+- **Decided: C.** It is the structure the metrics kit is built on
   (`.claude/plans/modules-design.md` §7.1).

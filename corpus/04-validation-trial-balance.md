@@ -25,7 +25,7 @@ expected_outcome: >
 ## Transcription
 
 The authored expectation is a FACT gloss; the check is a function; the test
-binds them; TESTS is the verdict surface. No validation construct exists.
+binds them; TESTS is the result surface. No validation construct exists.
 
 ```glossql
 DECLARE ASPECT trial_balance WITH $${
@@ -74,9 +74,9 @@ SELECT * FROM TESTS(fin.trial_balance);
   transcription had `trial_balance_check` doubling as value function and
   detector, legal because its RETURNS transcribed the test-results schema. With
   `RETURNS` an aspect reference, the roles separate: the check is a
-  *voice* — `RETURNS trial_balance`, full SQL door, its verdict lands as a
-  slot beside the human's expectation — and `balance_bands` (no RETURNS)
-  is the detector that reads both slots and bands. The test-results schema left
+  *value* — `RETURNS trial_balance`, full SQL interface, its result is stored as a
+  value beside the human's expectation — and `balance_bands` (no RETURNS)
+  is the detector that reads both values and bands. The test-results schema left
   the author's hands: it is the engine's contract, no longer transcribed.
 - **INFORMATION LOST (accepted):** category, tags, version — browsing
   metadata, same relocation as fixture 03.

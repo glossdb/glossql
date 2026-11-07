@@ -1,7 +1,7 @@
-# 26 · Grounding grain / stock serving shape — TRANSCRIBES (grain key; since fixture 28 the row identity is the `entity` gloss on the view)
+# 26 · Metric definition grain / stock serving shape — TRANSCRIBES (grain key; since fixture 28 the row identity is the `entity` gloss on the view)
 
 Source: the 2026-08 finance integration-run harvest — an agent's
-`ar_balance` grounding, a running balance of signed events marked
+`ar_balance` metric definition, a running balance of signed events marked
 `"behavior": "stock"`. Every row carried the exact cumulative level
 (9,946,340.30 against a ground truth of 9,946,340.31), and the cube
 published ~56× the true value.
@@ -40,18 +40,18 @@ the entity and the entity served as a column.
 
 ## Findings
 
-- **TRANSCRIBES.** `grain` enters the standard grounding schema:
+- **TRANSCRIBES.** `grain` enters the standard metric definition schema:
   optional, an array of served column names whose combination
   identifies a row, `minItems` 1.
-- **Why nothing below the grounding could catch it.** A stock frame
+- **Why nothing below the metric definition could catch it.** A stock frame
   may legitimately carry several rows per period — one per account —
-  and the cube's stock verb must sum what stands at the bucket's
+  and the cube's stock verb must sum what holds at the bucket's
   latest date (that is how a multi-account balance totals).
   Duplication is indistinguishable from multi-entity at that layer;
   only a declaration separates them. The artifact's own downstream
   consumers read the frame correctly (`last_value` per window) — the
   served relation is what breaks every aggregating reader.
-- **Ruling.** A declared grain is validated where the frame is built:
+- **Review decision.** A declared grain is validated where the frame is built:
   a frame that breaks it abstains, the reason naming the columns and
   the road out. Absent, the shape is undeclared and disclosed as
   such — never refused.

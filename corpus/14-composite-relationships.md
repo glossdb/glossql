@@ -1,4 +1,4 @@
-# 14 · Composite relationships — the finance_2 verdict
+# 14 · Composite relationships — the finance_2 result
 
 Source: our own test run (2026-08-05) on the BookSQL export (`finance_2`:
 `master_txn` 810,059 rows, seven tables, 27 trading businesses). The first
@@ -6,7 +6,7 @@ fixture transcribed from a glossql run rather than a v0.3 artifact. The
 detector proposed, the agent judged in full — and could not declare: every
 surviving edge is composite on `business_id`, and the grammar's cure
 (materialize a key column in a view) required exactly the surface §3
-closes. Ruled 2026-08-05: **the tuple is the key**; the derived-column
+closes. Decided 2026-08-05: **the tuple is the key**; the derived-column
 cure is retired.
 
 ## The declarations the run could not make

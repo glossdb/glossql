@@ -161,7 +161,7 @@ static string SubjectText(PEGTransformer &transformer, ParseResult &parse_result
 }
 
 //===--------------------------------------------------------------------===//
-// Settings: SET (key: value, ...) lands as one JSON object, the pairs verbatim;
+// Settings: SET (key: value, ...) is stored as one JSON object, the pairs verbatim;
 // which keys a statement takes is a JSON Schema the extension holds, checked
 // here, at parse
 //===--------------------------------------------------------------------===//
@@ -180,7 +180,7 @@ static constexpr const char *RECIPE_SETTINGS =
     R"({"type": "object", "additionalProperties": false, "properties": {"key": {"type": "string"}}})";
 
 //! GlossPair <- Identifier ':' GlossPairValue ; GlossPairValue <- StringLiteral / NumberLiteral / Identifier
-//! The value as JSON: a string or a name is a JSON string, a number stands as written
+//! The value as JSON: a string or a name is a JSON string, a number holds as written
 static pair<string, string> PairOf(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	auto key = StringUtil::Lower(Ident(transformer, list.GetChild(0)));
@@ -552,7 +552,7 @@ static arena_ptr<TransformResultValue> FinalizeDeclareAspect(PEGTransformer &tra
 	auto schema = Text(transformer, list.GetChild(4));
 	auto kind = AspectKindText(list.GetChild(6));
 	vector<Value> grains;
-	// the WHEN as JSON: the sibling aspect and the literal its winning slot carries, or the
+	// the WHEN as JSON: the sibling aspect and the literal its winning value carries, or the
 	// columns' data types, upper-cased as DuckDB names them
 	Value condition(LogicalType::VARCHAR);
 	auto &grain_clause = list.Child<OptionalParseResult>(7);

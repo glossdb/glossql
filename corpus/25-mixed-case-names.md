@@ -1,14 +1,14 @@
-# 25 · Mixed-case names (avito run) — RULED: an unquoted name folds to lowercase
+# 25 · Mixed-case names (avito run) — DECIDED: an unquoted name folds to lowercase
 
 Source: our own sealed runs on the Avito export, whose files and
 columns carry capitals (`AdsInfo.tsv`, `SearchStream.tsv`, `AdID`).
-The agent landed the tables under the file names and read them back
+The agent stored the tables under the file names and read them back
 unquoted; the statement had kept `AdsInfo` and the engine looked for
-`adsinfo`. Ruled: glossql names fold as the host's do (SPEC.md §1) —
+`adsinfo`. Decided: glossql names fold as the host's do (SPEC.md §1) —
 an unquoted name is lowercased at the declaration and at the read, a
 double-quoted one keeps its case.
 
-## 1. Landed under the file's name, read back unquoted
+## 1. Stored under the file's name, read back unquoted
 
 ```glossql
 USE avito;
@@ -38,7 +38,7 @@ Unquoted, `SearchStream` folds to `searchstream` and misses. The
 quotes are the whole difference — in the declaration, the read and
 the subject alike.
 
-## 3. A column lands spelled as the export spelled it
+## 3. A column is stored spelled as the export spelled it
 
 ```glossql
 USE avito;
@@ -49,12 +49,12 @@ SELECT count(*) FROM location WHERE "RegionID" = 3;
 GLOSS role ON location.LocationID AS $${"value": "key"}$$;
 ```
 
-The recipe lands the export's columns as spelled — `LocationID`,
+The recipe writes the export's columns as spelled — `LocationID`,
 `RegionID` — and nobody declared them here. Unquoted, `RegionID` folds
 to `regionid`, which no column of `location` is, and exactly one
 column differs from it by case alone: both reads reach `"RegionID"`,
-and the gloss lands under `location.LocationID`. Two columns that
+and the gloss is stored under `location.LocationID`. Two columns that
 differ by case alone — an `Amount` beside an `AMOUNT` — refuse the
-unquoted name and name both; there the quotes decide. Ruled: a table
+unquoted name and name both; there the quotes decide. Decided: a table
 is named here and folds as declared (§1, §2); a column is named by the
 export and is reached as the export spelled it (SPEC.md §1).

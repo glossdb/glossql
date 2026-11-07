@@ -241,7 +241,7 @@ string Inner::FunctionSchema(const string &dataset, const string &name) {
 	return "";
 }
 
-//! A declared source, as its newest row stands
+//! A declared source, as its newest row holds
 struct SourceInfo {
 	string name;
 	string type;
@@ -349,7 +349,7 @@ TableFunction GlossDatasetFunction() {
 }
 
 //===--------------------------------------------------------------------===//
-// Landing: the recipe SQL becomes the table, whole or merged by key
+// Load: the recipe SQL becomes the table, whole or merged by key
 //===--------------------------------------------------------------------===//
 
 struct RecipeRow {
@@ -380,7 +380,7 @@ static RecipeRow NewestRecipe(Inner &inner, const string &dataset, const string 
 	return RecipeRow {row[0].ToString(), row[1].ToString(), row[2].ToString()};
 }
 
-//! What a landing wrote: the table's rows, how they joined it (`mode`: replace
+//! What a load wrote: the table's rows, how they joined it (`mode`: replace
 //! or merge, the key being the recipe's), and the rows dropped on the way
 //! (SPEC §3), NULL where the host cannot count them
 struct Landed {
@@ -389,7 +389,7 @@ struct Landed {
 	//! the outcome's wording of the mode
 	string how;
 	Value dropped;
-	//! the lake's snapshot the landing made
+	//! the lake's snapshot the load made
 	Value snapshot;
 
 	//! The outcome's row accounting, sized to what the counts can say
@@ -402,13 +402,13 @@ struct Landed {
 	}
 };
 
-//! The recipe is the landing: what its SQL yields is what the table gets, so
+//! The recipe is the load: what its SQL yields is what the table gets, so
 //! nothing is lost between source and table. The one reader that drops rows
-//! is one told to ignore errors; when it stores its rejects, the landing's
+//! is one told to ignore errors; when it stores its rejects, the load's
 //! connection holds them and the count is theirs, one per line; when it does
 //! not, the host cannot count what it skipped
 static Value DroppedRows(Inner &inner, const string &sql) {
-	// looked up, never probed: a failing statement would abort the landing's transaction
+	// looked up, never probed: a failing statement would abort the load's transaction
 	auto stored = inner.Scalar("SELECT count(*) FROM information_schema.tables WHERE table_catalog = 'temp'"
 	                           " AND table_schema = 'main' AND table_name = 'reject_errors'");
 	if (stored.GetValue<int64_t>() > 0) {
@@ -422,8 +422,8 @@ static Value DroppedRows(Inner &inner, const string &sql) {
 }
 
 //! A keyed recipe's result carries each key once (SPEC §3): the keys the
-//! result carries more than once, counted at the source before anything lands;
-//! the refusal names the key, how many, and one of them. Which row stands is
+//! result carries more than once, counted at the source before anything is stored;
+//! the refusal names the key, how many, and one of them. Which row holds is
 //! the recipe's to say, so the result is never deduplicated here
 static void KeyOnce(Inner &inner, const vector<string> &key, const string &sql) {
 	vector<string> columns;
@@ -444,7 +444,7 @@ static void KeyOnce(Inner &inner, const vector<string> &key, const string &sql) 
 	}
 }
 
-//! Runs the recipe at its source and lands the result
+//! Runs the recipe at its source and writes the result
 static Landed Land(Inner &inner, const string &dataset, const string &table, const RecipeRow &recipe, bool replace) {
 	auto target = inner.Table(dataset, table);
 	AtSource(inner, LookupSource(inner, recipe.source));
@@ -471,15 +471,15 @@ static Landed Land(Inner &inner, const string &dataset, const string &table, con
 	landed.dropped = DroppedRows(inner, recipe.sql);
 	landed.snapshot = inner.Snapshot();
 	// what computed each column, read off the recipe's plan at the source: the
-	// re-derivation rule compares landings by it (SPEC §3), and the landings' diff
+	// re-derivation rule compares loads by it (SPEC §3), and the loads' diff
 	// is the drift record of what the source sends
 	string lineage = "{}";
 	try {
 		lineage = LineageJson(LineageOf(*inner.con.context, recipe.sql), recipe.sql);
 	} catch (std::exception &) {
-		// a recipe the planner will not walk again lands without its lineage
+		// a recipe the planner will not walk again is stored without its lineage
 	}
-	// the landing is the lake's commit, one snapshot; its row in the store follows it
+	// the load is the lake's commit, one snapshot; its row in the store follows it
 	inner.Run("INSERT INTO " + inner.Store("imports") + " VALUES (" + inner.Seq("imports") + ", " + QuoteText(dataset) +
 	          ", " + QuoteText(table) + ", " + QuoteText(landed.mode) + ", " + to_string(landed.rows) + ", " +
 	          landed.dropped.ToSQLString() + ", " + QuoteText(lineage) + ", " + landed.snapshot.ToSQLString() +
@@ -563,7 +563,7 @@ TableFunction GlossImportFunction() {
 }
 
 //===--------------------------------------------------------------------===//
-// PREVIEW source AS $$sql$$: the recipe rehearsal, landing nothing
+// PREVIEW source AS $$sql$$: the recipe rehearsal, load nothing
 //===--------------------------------------------------------------------===//
 
 struct PreviewState : public GlobalTableFunctionState {
@@ -689,7 +689,7 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 	inner.Run("INSERT INTO " + inner.Store("functions") + " VALUES (" + inner.Seq("functions") + ", " +
 	          QuoteText(name) + ", " + QuoteText(scope) + ", " + QuoteText(script) + ", " + returns.ToSQLString() +
 	          ", now())");
-	// a detector's body is run by TESTS() over its test's slots, $threshold bound there
+	// a detector's body is run by TESTS() over its test's values, $threshold bound there
 	Outcome(output, returns.IsNull() ? "declared detector " + name + " for " + scope
 	                                 : "declared measurement " + schema + "." + name + "($subject)");
 }
@@ -766,7 +766,7 @@ TableFunction GlossFunctionFunction() {
 
 //===--------------------------------------------------------------------===//
 // SELECT f(), g() FROM subject: extraction computes each measurement for the
-// subject and lands one measurements row per call (SPEC §6)
+// subject and writes one measurements row per call (SPEC §6)
 //===--------------------------------------------------------------------===//
 
 struct ExtractState : public GlobalTableFunctionState {
@@ -783,7 +783,7 @@ static unique_ptr<FunctionData> ExtractBind(ClientContext &context, TableFunctio
 	}
 	return_types.push_back(LogicalType::JSON());
 	names.emplace_back("value");
-	// true when this call computed the measurement, false when the landed row served
+	// true when this call computed the measurement, false when the stored row served
 	return_types.push_back(LogicalType::BOOLEAN);
 	names.emplace_back("computed");
 	return std::move(result);
@@ -835,7 +835,7 @@ static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads)
 	}
 }
 
-//! The views a relation stands on: itself when it is a view, and the views its
+//! The views a relation holds on: itself when it is a view, and the views its
 //! query reads, through views over views — legs the plan does not name, since
 //! it expands a view to its tables. A name resolves as the binder resolves it,
 //! an unqualified one in the view's own schema
@@ -871,7 +871,7 @@ static void ViewsOf(ClientContext &context, const Workspace &ws, const string &s
 }
 
 //! What a bind read beside the plan (ClientContextState): a primitive whose
-//! bind reads the record and the tables' shapes to write its SQL, or one
+//! bind reads the catalog and the tables' shapes to write its SQL, or one
 //! column's counts to refuse, names those inputs here, since the plan it
 //! leaves cannot; the measurement's reads take them with the plan's, so the
 //! row misses when one of them moves, as it does when a table the plan reads
@@ -892,7 +892,7 @@ static void BindRead(ClientContext &context, const string &name) {
 
 //! The reads of a call on a subject, enumerated from its bound plan: views
 //! expand to their tables, subject_column() to the subject's, before any
-//! optimizer touches it; the views the subject stands on are named beside,
+//! optimizer touches it; the views the subject holds on are named beside,
 //! their definitions being legs too, and so is what a bind read beside the plan
 static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 	Reads reads;
@@ -915,7 +915,7 @@ static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 	return reads.Text();
 }
 
-//! The pin a computation lands at: the dataset's tables, the store relations
+//! The pin a computation is stored at: the dataset's tables, the store relations
 //! and whatever else the reads named, each at its version now
 static string PinOf(Inner &inner, const string &dataset, const string &reads) {
 	vector<string> named;
@@ -930,7 +930,7 @@ static string PinOf(Inner &inner, const string &dataset, const string &reads) {
 	    .ToString();
 }
 
-//! The newest landed row for the call while what it read is unchanged, else NULL
+//! The newest stored row for the call while what it read is unchanged, else NULL
 static Value ServedValue(Inner &inner, const string &dataset, const string &name, const string &subject) {
 	return inner.Scalar("SELECT value FROM (WITH legs AS (" + LegsSQL(inner.ws) + ") SELECT m.value, " +
 	                    StandsSQL(inner.ws, "m") + " AS stands FROM " + inner.Store("measurements") +
@@ -1030,7 +1030,7 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 			throw InvalidInputException("glossql: the output of %s does not conform to the schema of %s: %s", name,
 			                            returns.ToString(), error);
 		}
-		// landed at its pin, with what it read: the next extraction serves it while those are unchanged
+		// stored at its pin, with what it read: the next extraction serves it while those are unchanged
 		inner.Run("INSERT INTO " + inner.Store("measurements") + " VALUES (" + inner.Seq("measurements") + ", " +
 		          QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) + ", " +
 		          returns.ToSQLString() + ", " + QuoteText(PinOf(inner, dataset, reads)) + ", " +
@@ -1131,12 +1131,12 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	if (parts.empty() || parts.size() > 2) {
 		throw InvalidInputException("glossql: dataset_cells takes a dataset or dataset.table, got '%s'", subject);
 	}
-	// the relations are listed at bind: one landed or dropped is a change the plan cannot name
+	// the relations are listed at bind: one stored or dropped is a change the plan cannot name
 	BindRead(context, parts.size() == 1 ? "*" : parts[0] + "." + parts[1]);
-	// a second argument true (or 'all') takes the dataset's views too — a grounding
+	// a second argument true (or 'all') takes the dataset's views too — a metric definition
 	// is one — each bound at bind and skipped when it does not, as a screen skips a
-	// grounding that fails; 'views' takes the views alone, so that a read over the
-	// groundings — a metric's series, a plan's rows — binds no table
+	// metric definition that fails; 'views' takes the views alone, so that a read over the
+	// metric definitions — a metric's series, a plan's rows — binds no table
 	bool views = false;
 	bool only_views = false;
 	if (input.inputs.size() > 1 && !input.inputs[1].IsNull()) {
@@ -1424,12 +1424,12 @@ static TableFunction RelationshipChecksFunction() {
 // share over its filled rows, so the screen sets the key-shaped ones aside.
 // An alignment is a declared edge between the two tables, two edges meeting
 // at one dimension key, or an entity borrowed one hop: a measure table whose
-// every edge lands on a document keys on the document's dimension, and an
+// every edge is stored on a document keys on the document's dimension, and an
 // event table that aligns no other way keys through its master. A side's time
 // axis is each of its own date columns, else one borrowed over an edge. A
 // column that is not numeric, a table with no axis, or no alignment at all is
 // one row that says why. What the bind reads beside the plan, the subject's
-// table, the record's edges and roles and the tables the edges connect, it
+// table, the catalog's edges and roles and the tables the edges connect, it
 // names as reads, so a measurement over it misses when one of them moves.
 // Rows: (side, event, align, measure_align, axis, term, identifier, entity,
 // period, value, reason)
@@ -1592,7 +1592,7 @@ static vector<Align> Alignments(const string &table, const string &ev, const vec
 		}
 	}
 	// a borrowed entity, measure side: only for a measure table whose every edge
-	// lands on a document; it joins the document and keys on the document's
+	// is stored on a document; it joins the document and keys on the document's
 	// dimension column, which the event side carries on a direct edge of its own
 	if (!owns_entity) {
 		for (auto &p1 : pointers) {
@@ -1729,7 +1729,7 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	auto reason = [](const string &text) {
 		return make_uniq<SubqueryRef>(ParseSelect(ReasonBranch(text)));
 	};
-	// the dataset's landed tables and their columns, by name
+	// the dataset's loaded tables and their columns, by name
 	vector<string> tables;
 	Schemas schemas;
 	for (auto &c : DatasetColumns(context, dataset, string(), false)) {
@@ -1806,8 +1806,8 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 			              to_string(filled) + " filled rows, an identifier, no measure; gloss role key");
 		}
 	}
-	// the movement pool is what the record says is a measure: the columns whose
-	// role claim stands, current or stale, read collapsed. Nothing is guessed from
+	// the movement pool is what the catalog says is a measure: the columns whose
+	// role claim holds, current or stale, read collapsed. Nothing is guessed from
 	// a type; an event table with no measure glossed abstains and names the gloss
 	std::map<string, std::set<string>> measures;
 	std::set<string> roled;
@@ -1857,7 +1857,7 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 			}
 		}
 		if (candidates == 0) {
-			// nothing numeric beyond its legs: no movement to name, nothing owed
+			// nothing numeric beyond its legs: no movement to name, nothing required
 			continue;
 		}
 		if (pool.empty()) {
@@ -1922,7 +1922,7 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 				          " AS TIMESTAMP))) >= 4";
 			}
 			// the event side, once per event axis: every term's sum per entity and day,
-			// unpivoted, beside one alignment row that stands whether or not any cell does
+			// unpivoted, beside one alignment row that holds whether or not any cell does
 			string sums;
 			string names;
 			for (auto &t : terms) {
@@ -1998,11 +1998,11 @@ static TableFunction BehaviorCellsFunction() {
 // statement on a second connection under the glossql grammar, one row per
 // statement. Each statement commits on its own, as it does from a script; a
 // failing statement stops the load, the ones before it stand and no kits row
-// lands, so the next load runs the kit again. A kit that ran lands a kits row
+// is stored, so the next load runs the kit again. A kit that ran writes a kits row
 // with the hash of its text. Run again with that text, as the opener does at
-// every start-up, the kit stands: what it declared and created is in the lake,
+// every start-up, the kit holds: what it declared and created is in the lake,
 // so one row says so and only its LOAD and INSTALL lines run, which bring an
-// extension into the process. A changed text runs whole and lands a new row
+// extension into the process. A changed text runs whole and writes a new row
 //===--------------------------------------------------------------------===//
 
 struct KitState : public GlobalTableFunctionState {

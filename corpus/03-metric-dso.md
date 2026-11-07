@@ -46,11 +46,11 @@ interpretation:
 ## Transcription
 
 A metric is a **concept** — a VIEW aspect, declared like `revenue`
-(fixture 01) and grounded in SQL like any grounding (fixture 07). The
+(fixture 01) and grounded in SQL like any metric definition (fixture 07). The
 running system says so: metrics move through declare → compose → execute,
-where compose is an agent writing SQL over the input concepts' groundings
+where compose is an agent writing SQL over the input concepts' metric definitions
 and execute runs that SQL (`pipeline/phases/metrics_phase.py`; the working
-SQL lands as `sql_snippets`). The value is never returned by a function —
+SQL is stored as `sql_snippets`). The value is never returned by a function —
 it materializes by running the metric's SQL.
 
 ```glossql

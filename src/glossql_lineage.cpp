@@ -8,7 +8,7 @@
 //
 //   glossql_lineage(sql) -> (column, derivation, complete)
 //
-// A landing records its recipe's lineage per column on its imports row; a
+// A load records its recipe's lineage per column on its imports row; a
 // gloss on a column reads stale once the derivation behind it moved, which
 // is SPEC §3's re-derivation, and the row-to-row diff of the imports is the
 // drift record of what the source sends.
@@ -391,7 +391,7 @@ static void LineageExec(ClientContext &context, TableFunctionInput &data, DataCh
 
 //===--------------------------------------------------------------------===//
 // glossql_views_lineage(dataset): the derivation of each column of every view
-// of a dataset — a grounding's view among them — as glossql_lineage gives one
+// of a dataset — a metric definition's view among them — as glossql_lineage gives one
 // view's; a view that does not plan serves one row naming it, complete
 // false and no column
 //===--------------------------------------------------------------------===//

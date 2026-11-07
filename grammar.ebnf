@@ -46,7 +46,7 @@ declaration       = "DECLARE", ( source_decl
 preview_stmt        = "PREVIEW", name, "AS", dollar ;
                     (* PREVIEW source AS $$ <sql> $$ — the recipe
                        rehearsal: same SQL surface, same path
-                       resolution, executed at the source, landing nothing.
+                       resolution, executed at the source, load nothing.
                        The result always carries its schema; LIMIT 0
                        rehearses the identity a DECLARE RECIPE would stamp *)
 
@@ -54,10 +54,10 @@ import_stmt       = "IMPORT", [ name, "." ], name ;
                     (* IMPORT [dataset.]table — a data update: the
                        table's recipe runs again over its source and
                        the table becomes the result as the source
-                       stands now, in one commit. The schema is the
+                       holds now, in one commit. The schema is the
                        table's or the import errors; how the engine
                        reaches the result — appending the files no
-                       landing has read, or replacing the table whole
+                       load has read, or replacing the table whole
                        — is its own, and the outcome names it *)
 
 delete_stmt       = "DELETE", "FROM", [ name, "." ], [ "main", "." ],
@@ -91,11 +91,11 @@ recipe_decl       = "RECIPE", name, "ON", name, "FROM", name,
                        try_strptime parsing dates. Dollar-quoted so
                        foreign-dialect text never meets the host tokenizer.
                        The recipe carries the casts:
-                       the result lands as table r, the typed table —
+                       the result is stored as table r, the typed table —
                        no derived view, no raw twin. Identity is content
                        (SQL + produced schema): unchanged re-declaration
                        is a no-op, changed supersedes and re-lands — the
-                       old landing drops, the table lands fresh, glosses
+                       old load drops, the table is stored fresh, glosses
                        stay; DROP TABLE removes whole and refuses on data
                        or glosses. SET (key: col[, col]) names the table's
                        key: a keyed recipe's result merges into the table
@@ -109,7 +109,7 @@ dataset_decl      = "DATASET", name, "SET", "(", pair, { ",", pair }, ")" ;
 
 use               = "USE", name ;
                     (* unprefixed paths resolve against the USE'd dataset;
-                       a landed table of it wins over a dataset of the
+                       a loaded table of it wins over a dataset of the
                        same name at the head of a two-part path *)
 
 (* -- relationships ------------------------------------------------------ *)
@@ -136,7 +136,7 @@ pair_path         = rel_side, rel_op, rel_side ;
 
 aspect_decl       = "ASPECT", name, "WITH", json, "AS", aspect_kind ;
 aspect_kind       = "VIEW"                  (* SQL-grounded; glosses validate
-                                                against the standard grounding
+                                                against the standard metric definition
                                                 schema; WITH schema carries the
                                                 ontology entry; grounded on the
                                                 dataset, so it takes no grain
@@ -153,22 +153,22 @@ grain_clause      = "ON", grain, { ",", grain },
 grain             = "DATASET" | "TABLE" | "COLUMN" | "RELATIONSHIP" | "SOURCE" ;
                     (* the subject classes glosses may attach to;
                        absent = all. WHEN names a sibling aspect and a
-                       value: the aspect is owed on a
+                       value: the aspect is required on a
                        subject only while that aspect's collapsed body
                        carries `value` = the literal — bounds
                        `unassessed` disclosure and every count derived
                        from it; writes stay gated by grain alone, and a
-                       spoken slot outside its condition serves
+                       spoken value outside its condition serves
                        normally. WHEN TYPE, on a grain list of COLUMN
                        alone, names data types instead: the aspect is
-                       owed on the columns whose base type (the name
+                       required on the columns whose base type (the name
                        before any parenthesis, DECIMAL for
                        DECIMAL(18,2)) is one of them. *)
 
 gloss             = "GLOSS", name, "ON", subject, "AS", json ;
                     (* body admission by declared kind:
                        FACT -> the aspect's WITH schema,
-                       VIEW -> the standard grounding schema,
+                       VIEW -> the standard metric definition schema,
                        MEASUREMENT -> rejected.
                        supersession key: (subject, aspect, actor kind) *)
 
@@ -185,7 +185,7 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                        `SELECT script FROM functions` serves the library as
                        examples. `FROM 'path'` is retired, not deprecated —
                        two homes for one body is the staleness the registry
-                       rulings exist against. Every body is one SQL query
+                       review decisions exist against. Every body is one SQL query
                        the engine plans — read-only: a RETURNS body runs
                        over data at the statement's pin; a detector body
                        runs over its test's `slots` relation.
@@ -194,7 +194,7 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                        the aspect the output fills,
                        validated against that aspect's schema; a MEASUREMENT
                        aspect has one returning function, a FACT aspect's
-                       returning functions are voices in its slots. No RETURNS
+                       returning functions are values in its values. No RETURNS
                        declares a detector — role by shape; the test-results
                        contract is the engine's. Results land in the
                        measurements relation *)
@@ -203,7 +203,7 @@ extract           = "SELECT", call, { ",", call }, "FROM", subject ;
 call              = name, "(", ")" ;
                     (* calls are bare — settings are context,
                        never arguments.
-                       extraction computes at the read's pin and lands a
+                       extraction computes at the read's pin and writes a
                        measurements row; the same pin serves it back, any
                        input moving recomputes — there is no REFRESH.
                        Functions never write the glossary. *)
@@ -217,7 +217,7 @@ test_decl      = "TEST", name, "ON", name,
 speaker           = "AGENT"                  (* admits agent glosses *)
                   | "HUMAN" ;                (* admits human glosses *)
                     (* declared per aspect, dataset-wide; one current value per
-                       (subject, aspect) per speaker — function voices arrive
+                       (subject, aspect) per speaker — function values arrive
                        via RETURNS (function_decl), never through the gate.
                        BY or DETECTOR must be named (checked at admission);
                        on a MEASUREMENT aspect BY is refused. DETECTOR names

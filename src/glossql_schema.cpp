@@ -324,12 +324,12 @@ string JsonStringField(const string &document_text, const string &field) {
 	return result;
 }
 
-//! The grounding contract: what the engine reads of a VIEW gloss — the sql it
+//! The metric definition contract: what the engine reads of a VIEW gloss — the sql it
 //! serves as a view, or the stop that ends one — and the disclosure key every
 //! reader may rely on. What a reader needs of the view's rows — the period, the
 //! measure and its behavior, the slices — is glossed on the view's columns under
 //! a kit's aspects (SPEC §5.2); a kit that needs a body key of its own declares
-//! a schema for it, flavored x-kind: grounding, validated after this one.
+//! a schema for it, flavored `x-kind: grounding`, validated after this one.
 const char *const GROUNDING_CONTRACT = R"JSON({
   "type": "object",
   "oneOf": [{"required": ["sql"]}, {"required": ["stopped"]}],
