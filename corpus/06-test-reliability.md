@@ -50,7 +50,7 @@ DECLARE FUNCTION temporal_behavior FOR GLOBAL AS $$/* stock/flow from a column's
 
 DECLARE FUNCTION behavior_entropy FOR GLOBAL AS $$/* detector: spread across the behavior slots */$$;
 
-DECLARE TEST behavior_w ON behavior BY (AGENT, HUMAN)
+DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN)
   DETECTOR behavior_entropy THRESHOLD 0.7;
 
 SELECT * FROM TESTS(orders.amount::behavior);

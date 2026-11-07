@@ -215,9 +215,9 @@ DECLARE FUNCTION reconciliation_check FOR fin
   RETURNS bank_reconciliation;
 DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
 
-DECLARE TEST journal_balanced_w ON journal_balanced BY (AGENT, HUMAN)
+DECLARE TEST journal_balanced_test ON journal_balanced BY (AGENT, HUMAN)
   DETECTOR balance_bands THRESHOLD 0.5;
-DECLARE TEST bank_reconciliation_w ON bank_reconciliation BY (AGENT, HUMAN)
+DECLARE TEST bank_reconciliation_test ON bank_reconciliation BY (AGENT, HUMAN)
   DETECTOR balance_bands THRESHOLD 0.5;
 
 SELECT journal_balance_check() FROM journal_lines;

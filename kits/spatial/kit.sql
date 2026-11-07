@@ -42,5 +42,5 @@ DECLARE FUNCTION geometry_profile FOR GLOBAL AS $$
   FROM subject_column($subject)
 $$ RETURNS geometry_profile;
 
-DECLARE TEST shape_w ON shape BY (AGENT, HUMAN);
-DECLARE TEST crs_w ON crs BY (AGENT, HUMAN);
+DECLARE TEST shape_test ON shape BY (AGENT, HUMAN);
+DECLARE TEST crs_test ON crs BY (AGENT, HUMAN);

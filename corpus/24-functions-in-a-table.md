@@ -48,7 +48,7 @@ DECLARE FUNCTION ar_settles_in_full_check FOR fin AS $$
   FROM ar_settlement
 $$ RETURNS ar_settles_in_full;
 
-DECLARE TEST inventory_rollforward_w ON inventory_rollforward
+DECLARE TEST inventory_rollforward_test ON inventory_rollforward
   BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;
 ```
 

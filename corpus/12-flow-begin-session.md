@@ -84,7 +84,7 @@ DECLARE ASPECT reconciliation WITH $${
 DECLARE FUNCTION reconcile_aggregates FOR fin AS $$/* aggregate against its detail, residual per key */$$
   RETURNS reconciliation;
 DECLARE FUNCTION reconcile_bands FOR fin AS $$/* detector: bands the reconciliation slots */$$;
-DECLARE TEST reconciliation_w ON reconciliation
+DECLARE TEST reconciliation_test ON reconciliation
   DETECTOR reconcile_bands THRESHOLD 0.5;
 
 SELECT reconcile_aggregates() FROM fin;

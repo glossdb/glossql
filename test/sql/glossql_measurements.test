@@ -219,7 +219,7 @@ statement ok
 DECLARE FUNCTION all_current FOR fin AS $$ SELECT subject, CASE WHEN bool_and(current) THEN 'green' ELSE 'red' END AS band, 0.0 AS score FROM slots GROUP BY subject $$;
 
 statement ok
-DECLARE TEST min_max_w ON min_max DETECTOR all_current THRESHOLD 0.5;
+DECLARE TEST min_max_test ON min_max DETECTOR all_current THRESHOLD 0.5;
 
 query TTTTT
 SELECT min_max() FROM orders.amount;
@@ -276,7 +276,7 @@ SELECT value, band, state FROM GLOSSARY(orders.amount::min_max);
 # a gloss's own staleness is the subject's shape (SPEC §5.2), a voice's is its reads: a landing ages the voice only
 
 statement ok
-DECLARE TEST note_w ON note BY (AGENT, HUMAN);
+DECLARE TEST note_test ON note BY (AGENT, HUMAN);
 
 query TTT
 SELECT aspect, actor, current FROM GLOSSARY(orders.amount, all => true) ORDER BY aspect, actor;

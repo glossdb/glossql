@@ -38,9 +38,9 @@ SELECT count(*) FROM main.loaded;
 19
 
 query TT
-SELECT statement, outcome FROM main.loaded WHERE statement LIKE 'DECLARE TEST role_w%';
+SELECT statement, outcome FROM main.loaded WHERE statement LIKE 'DECLARE TEST role_test%';
 ----
-DECLARE TEST role_w ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;	declared test role_w on role
+DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;	declared test role_test on role
 
 query TTI
 SELECT name, location, statements FROM kits;

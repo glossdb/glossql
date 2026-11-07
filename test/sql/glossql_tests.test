@@ -41,18 +41,18 @@ DECLARE FUNCTION behavior_entropy FOR fin AS $$
 $$;
 
 statement ok
-DECLARE TEST behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
+DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
 
 # an unchanged re-declaration is a no-op
 query T
-DECLARE TEST behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
+DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
 ----
-test behavior_w unchanged: no-op
+test behavior_test unchanged: no-op
 
 query TTTTR
 SELECT name, aspect, actors, detector, threshold FROM tests;
 ----
-behavior_w	behavior	[AGENT, HUMAN]	behavior_entropy	0.7
+behavior_test	behavior	[AGENT, HUMAN]	behavior_entropy	0.7
 
 # --- what a test refuses
 
@@ -135,19 +135,19 @@ fin.orders.amount	behavior	NULL	red	contested
 query TTTTR
 SELECT subject, aspect, test, band, score FROM TESTS(orders.amount::behavior);
 ----
-fin.orders.amount	behavior	behavior_w	red	1.0
+fin.orders.amount	behavior	behavior_test	red	1.0
 
 query TTTTT
 SELECT subject, aspect, test, band, current FROM TESTS() WHERE band = 'red';
 ----
-fin.orders.amount	behavior	behavior_w	red	true
+fin.orders.amount	behavior	behavior_test	red	true
 
 # the raw read shows every slot with its aspect's kind and its test
 query TTTTT
 SELECT subject, aspect, kind, test, actor FROM GLOSSARY(orders.amount, all => true) ORDER BY actor;
 ----
-fin.orders.amount	behavior	FACT	behavior_w	agent
-fin.orders.amount	behavior	FACT	behavior_w	human
+fin.orders.amount	behavior	FACT	behavior_test	agent
+fin.orders.amount	behavior	FACT	behavior_test	human
 
 # --- the human re-glosses to agree: the human slot is superseded, current again
 
@@ -199,7 +199,7 @@ statement ok
 DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON TABLE;
 
 statement ok
-DECLARE TEST note_w ON note BY (HUMAN);
+DECLARE TEST note_test ON note BY (HUMAN);
 
 statement error
 GLOSS note ON orders AS $${"value": "x"}$$;
@@ -230,7 +230,7 @@ statement ok
 DECLARE FUNCTION broken FOR fin AS $$ SELECT subject, no_such_column AS band, 0.0 AS score FROM slots $$;
 
 statement ok
-DECLARE TEST role_w ON role DETECTOR broken;
+DECLARE TEST role_test ON role DETECTOR broken;
 
 statement ok
 GLOSS role ON orders.id AS $${"value": "key"}$$;
@@ -239,7 +239,7 @@ GLOSS role ON orders.id AS $${"value": "key"}$$;
 query TTTR
 SELECT test, band, error, score FROM TESTS(orders.id::role);
 ----
-role_w	error	Binder Error: Referenced column "no_such_column" not found in FROM clause!	0.0
+role_test	error	Binder Error: Referenced column "no_such_column" not found in FROM clause!	0.0
 
 # an error is not a judgment: the collapse serves the value, never withholds on it
 query TTTT
@@ -251,8 +251,8 @@ fin.orders.id	{"value": "key"}	error	current
 query TTTT
 SELECT subject, test, band, error FROM TESTS(orders);
 ----
-fin.orders.amount	behavior_w	green	NULL
-fin.orders.id	role_w	error	Binder Error: Referenced column "no_such_column" not found in FROM clause!
+fin.orders.amount	behavior_test	green	NULL
+fin.orders.id	role_test	error	Binder Error: Referenced column "no_such_column" not found in FROM clause!
 
 # a run the engine refuses
 statement ok
@@ -287,7 +287,7 @@ statement ok
 DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
 
 statement ok
-DECLARE TEST conventions_w ON conventions BY (AGENT, HUMAN);
+DECLARE TEST conventions_test ON conventions BY (AGENT, HUMAN);
 
 # owed in the dataset's sweep, as the bare name; a narrowed read keeps to its subject
 query TTT

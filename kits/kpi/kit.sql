@@ -144,9 +144,9 @@ $$ RETURNS outlier_profile;
 -- The tests, last: a test names an aspect and a detector that stand.
 -- BY says who may speak; slot_entropy judges the enum claims.
 
-DECLARE TEST meaning_w ON meaning BY (AGENT, HUMAN);
-DECLARE TEST entity_w ON entity BY (AGENT, HUMAN);
-DECLARE TEST role_w ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE TEST behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE TEST unit_w ON unit BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE TEST dimension_w ON dimension BY (AGENT, HUMAN);
+DECLARE TEST meaning_test ON meaning BY (AGENT, HUMAN);
+DECLARE TEST entity_test ON entity BY (AGENT, HUMAN);
+DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE TEST unit_test ON unit BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE TEST dimension_test ON dimension BY (AGENT, HUMAN);

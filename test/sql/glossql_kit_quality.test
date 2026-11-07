@@ -421,7 +421,7 @@ statement ok
 DECLARE ASPECT ids_present WITH $${"type": "object", "required": ["outcome"], "properties": {"outcome": {"type": "string"}, "tolerance": {"type": "number"}, "breach_rate": {"type": "number"}}}$$ AS FACT ON TABLE;
 
 statement ok
-DECLARE TEST ids_w ON ids_present BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;
+DECLARE TEST ids_test ON ids_present BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;
 
 statement ok
 GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "tolerance": 0.2}$$;

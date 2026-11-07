@@ -251,7 +251,7 @@ SELECT name, condition FROM aspects WHERE name = 'currency';
 currency	{"aspect":"role","value":"measure"}
 
 statement ok
-DECLARE TEST currency_w ON currency BY (AGENT, HUMAN);
+DECLARE TEST currency_test ON currency BY (AGENT, HUMAN);
 
 # no sibling slot spoken: nothing owed yet
 query I
@@ -300,10 +300,10 @@ identity	{"type":["BIGINT"]}
 precision	{"type":["DOUBLE","DECIMAL"]}
 
 statement ok
-DECLARE TEST precision_w ON precision BY (AGENT, HUMAN);
+DECLARE TEST precision_test ON precision BY (AGENT, HUMAN);
 
 statement ok
-DECLARE TEST identity_w ON identity BY (AGENT, HUMAN);
+DECLARE TEST identity_test ON identity BY (AGENT, HUMAN);
 
 query TTT
 SELECT subject, aspect, state FROM GLOSSARY(orders) WHERE aspect IN ('precision', 'identity') ORDER BY subject, aspect;

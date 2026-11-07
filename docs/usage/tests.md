@@ -9,12 +9,12 @@ write into the data.
 ## Declare a test
 
 ```sql
-DECLARE TEST behavior_w ON behavior
+DECLARE TEST behavior_test ON behavior
   BY (AGENT, HUMAN)
   DETECTOR behavior_entropy
   THRESHOLD 0.7;
 
-DECLARE TEST reconciliation_w ON reconciliation
+DECLARE TEST reconciliation_test ON reconciliation
   DETECTOR reconcile_bands THRESHOLD 0.5;
 ```
 

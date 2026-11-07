@@ -118,7 +118,7 @@ same aspect and measures the violation share as `breach_rate`, 0.0
 passing. A test on the aspect names the kit's detector:
 
 ```glossql
-DECLARE TEST ids_w ON ids_present BY (AGENT, HUMAN)
+DECLARE TEST ids_test ON ids_present BY (AGENT, HUMAN)
   DETECTOR rate_tolerance THRESHOLD 0.0;
 ```
 

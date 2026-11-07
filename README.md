@@ -20,7 +20,7 @@ Every word glossql uses, beside the industry's: [terms](docs/terms.md).
 DECLARE ASPECT currency WITH $${"type": "object", "required": ["value"],
   "properties": {"value": {"type": "string", "pattern": "^[A-Z]{3}$"}}}$$
   AS FACT ON COLUMN WHEN role = 'measure';           -- required on every measure column
-DECLARE TEST currency_w ON currency BY (AGENT, HUMAN)
+DECLARE TEST currency_test ON currency BY (AGENT, HUMAN)
   DETECTOR slot_entropy THRESHOLD 0.7;              -- the test: who may annotate it; how disagreement is scored
 DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$
   AS MEASUREMENT ON COLUMN;
@@ -100,7 +100,7 @@ IMPORT orders;                                  -- the recipe runs again; keyed 
 
 DECLARE ASPECT behavior WITH $${"type": "object", "properties": {"value": {"enum": ["stock", "flow"]}}}$$ AS FACT ON COLUMN;
 DECLARE FUNCTION behavior_entropy FOR fin AS $$ SELECT subject, ... AS band, ... AS score FROM slots GROUP BY subject $$;
-DECLARE TEST behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
+DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
 
 GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
 SET VARIABLE glossql_actor = 'human';           -- the actor rides the connection
