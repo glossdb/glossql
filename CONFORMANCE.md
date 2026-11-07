@@ -90,7 +90,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 The workspace is an attached DuckLake, one per connection (`SET VARIABLE
 glossql_workspace` picks among several). `PRAGMA glossql` makes the
 store: the relations as `glossql_<relation>` tables in the lake's metadata
-catalog, beside the `ducklake_*` tables, and the views `ws.glossql.<relation>`
+catalog, beside the `ducklake_*` tables, and the views `ws.main.<relation>`
 that read them typed. The columns are the extension's own, sharpened to what
 the reads need: a declaration's SET pairs are one JSON `settings`, an
 aspect's WHEN one JSON `condition`, a gloss and a relationship carry their

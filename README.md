@@ -142,9 +142,11 @@ What of `SPEC.md` is implemented, section by section:
 - [grammar.ebnf](grammar.ebnf) — the grammar, the source of truth for
   syntax.
 - [CONFORMANCE.md](CONFORMANCE.md) — what this extension implements.
+- [The documentation](docs/README.md) — installation, usage, functions,
+  kits and the catalog's specification, one page per table.
 - [Terms](docs/terms.md) — every word, beside the industry's.
 - [Interfaces](docs/interfaces.md) — the CLI and the MCP server.
-- [How glossql maps onto DuckDB](docs/duckdb.md) — each part of the
+- [How glossql maps onto DuckDB](docs/internals/duckdb.md) — each part of the
   language and the DuckDB mechanism under it.
 - `corpus/` — real artifacts written in glossql: the language's
   acceptance tests, held to the grammar by `test/sql/glossql_corpus.test`.

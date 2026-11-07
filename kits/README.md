@@ -32,9 +32,12 @@ Each statement commits on its own, as it does from a script: a failing
 statement stops the load with its error, and the statements before it
 stand. The load is recorded in `kits` with its path and count.
 
-Loading a kit twice is a no-op for every unchanged aspect, a re-declare
-for functions, and a new row per witness; a changed aspect that has
-glosses under it is refused, as the language says.
+Loading a kit again with the same text runs only its `LOAD` and
+`INSTALL` lines: what it declared is already in the lake, and one row
+says so. A changed text runs whole and lands a new `kits` row: an
+unchanged aspect is a no-op, a function is re-declared, each test
+(`WITNESS`) lands a new row, and a changed aspect that has glosses under
+it is refused, as the language says.
 
 ## Writing one
 

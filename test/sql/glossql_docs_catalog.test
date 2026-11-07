@@ -1,0 +1,74 @@
+# name: test/sql/glossql_docs_catalog.test
+# description: the catalog's specification pages name every column of every store table with its type, and nothing else
+# group: [sql]
+
+require glossql
+
+require json
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/docs_catalog.ducklake' AS ws (DATA_PATH '{TEST_DIR}/docs_catalog_data/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+# every row of a page's column table: the page's name, the column, its type
+statement ok
+CREATE TEMP VIEW documented AS
+SELECT regexp_extract(filename, '([a-z_]+)\.md$', 1) AS relation,
+       regexp_extract(line, '^\| `([a-z_]+)`', 1) AS column_name,
+       regexp_extract(line, '^\| `[a-z_]+` \| ([A-Z]+) \|', 1) AS data_type
+FROM (
+    SELECT filename, unnest(regexp_extract_all(content, '(?m)^\| `[a-z_]+` \| [A-Z]+ \|')) AS line
+    FROM read_text('docs/specification/tables/*.md')
+);
+
+# every column of every store table in the lake's metadata catalog, which the catalog functions do not list
+statement ok
+CREATE TEMP VIEW stored AS
+SELECT 'datasets' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_datasets)
+UNION ALL SELECT 'kits' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_kits)
+UNION ALL SELECT 'sources' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_sources)
+UNION ALL SELECT 'recipes' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_recipes)
+UNION ALL SELECT 'imports' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_imports)
+UNION ALL SELECT 'aspects' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_aspects)
+UNION ALL SELECT 'glossary' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_glossary)
+UNION ALL SELECT 'relationships' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_relationships)
+UNION ALL SELECT 'functions' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_functions)
+UNION ALL SELECT 'measurements' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_measurements)
+UNION ALL SELECT 'witnesses' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_witnesses);
+
+# one page per store table: the pages are the views PRAGMA glossql made in the lake's main schema, one per table
+query I
+SELECT table_name FROM information_schema.tables WHERE table_catalog = 'ws' AND table_schema = 'main'
+EXCEPT SELECT DISTINCT relation FROM documented;
+----
+
+query I
+SELECT DISTINCT relation FROM documented
+EXCEPT SELECT table_name FROM information_schema.tables WHERE table_catalog = 'ws' AND table_schema = 'main';
+----
+
+query I
+SELECT count(DISTINCT relation) FROM stored;
+----
+11
+
+# a stored column the pages do not name
+query III
+SELECT relation, column_name, data_type FROM stored
+EXCEPT SELECT relation, column_name, data_type FROM documented
+ORDER BY ALL;
+----
+
+# a documented column the store does not hold
+query III
+SELECT relation, column_name, data_type FROM documented
+EXCEPT SELECT relation, column_name, data_type FROM stored
+ORDER BY ALL;
+----
