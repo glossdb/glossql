@@ -324,7 +324,7 @@ string JsonStringField(const string &document_text, const string &field) {
 	return result;
 }
 
-//! The grounding contract: what the engine reads of a QUERY gloss — the sql it
+//! The grounding contract: what the engine reads of a VIEW gloss — the sql it
 //! serves as a view, or the stop that ends one — and the disclosure key every
 //! reader may rely on. What a reader needs of the view's rows — the period, the
 //! measure and its behavior, the slices — is glossed on the view's columns under

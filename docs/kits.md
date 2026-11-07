@@ -43,12 +43,12 @@ the tests that name both.
 
 - A property's `WITH` schema is a JSON Schema. Annotations such as
   `title` or `x-kind` sit beside the structure.
-- Every `QUERY` value is checked against the metric contract (`sql` or
+- Every `VIEW` value is checked against the metric contract (`sql` or
   `stopped`, `assumptions`). What a reader of a metric's rows needs (the
   period, the measure and how it adds up, the slices) is recorded on
   the view's columns under the kit's properties. A kit whose readers
   need a key in the body declares a schema for it as an aspect with
-  `"x-kind": "grounding"`; every `QUERY` value is then checked against
+  `"x-kind": "grounding"`; every `VIEW` value is then checked against
   it too.
 - A measurement (`RETURNS aspect`) becomes a table macro in the
   dataset's schema, or in `glossql` for `GLOBAL`. Its body is DuckDB

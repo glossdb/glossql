@@ -18,8 +18,8 @@ DECLARE SOURCE books SET (type: relational_db,
 ## Harvest the source's own catalog — evidence, never declarations
 
 ```glossql
-PROBE books AS $$SELECT name, type FROM pragma_table_info('master_txn_table')$$;
-PROBE books AS $$SELECT "table", "from", "to"
+PREVIEW books AS $$SELECT name, type FROM pragma_table_info('master_txn_table')$$;
+PREVIEW books AS $$SELECT "table", "from", "to"
 FROM pragma_foreign_key_list('master_txn_table')$$;
 ```
 
@@ -53,7 +53,7 @@ Two dialect facts the run paid for, both now in the add-source skill:
   Measured through the source:
 
 ```glossql
-PROBE books AS $$SELECT date('2010-12-27')              AS iso,
+PREVIEW books AS $$SELECT date('2010-12-27')              AS iso,
                         CAST(date('2010-12-27') AS DATE) AS trap,
                         unixepoch('2010-12-27')          AS epoch$$;
 ```

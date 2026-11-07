@@ -42,5 +42,5 @@ by section: [CONFORMANCE.md](../../CONFORMANCE.md).
 | [relationships](tables/relationships.md) | a declared key between columns | none |
 | [functions](tables/functions.md) | a declared measurement or detector | `name`, `scope` |
 | [measurements](tables/measurements.md) | one result of a measurement | none |
-| [witnesses](tables/witnesses.md) | a declared test on an aspect | `aspect` |
+| [tests](tables/tests.md) | a declared test on an aspect | `aspect` |
 | [kits](tables/kits.md) | one load of a kit | none |

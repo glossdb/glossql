@@ -1,6 +1,6 @@
 ---
 name: glossql
-description: Speak glossql in a DuckDB workspace through the duckdb CLI — the opener, the call shape, the statement set, the reads, the store relations, how a refusal looks. Use when reading or writing anything in a glossql workspace (datasets, sources, recipes, glosses, functions, witnesses, metrics).
+description: Speak glossql in a DuckDB workspace through the duckdb CLI — the opener, the call shape, the statement set, the reads, the store relations, how a refusal looks. Use when reading or writing anything in a glossql workspace (datasets, sources, recipes, glosses, functions, tests, metrics).
 ---
 
 # Speaking glossql through the duckdb CLI
@@ -92,7 +92,7 @@ You are `agent`. A person rules through their own call with `SET
 VARIABLE glossql_actor = 'human';` ahead of their statements (and `SET
 VARIABLE glossql_actor_id = '<who>';` for the record); never set it
 yourself. The collapsed read prefers the human's slot and judges a
-disagreement through the witness's detector; a red band is a
+disagreement through the test's detector; a red band is a
 disagreement to resolve by re-glossing with grounds, not to overwrite.
 
 ## The statement set
@@ -102,19 +102,19 @@ disagreement to resolve by re-glossing with grounds, not to overwrite.
 | `USE fin;` | bind the statements after it in this call to a dataset (a schema of the lake); DuckDB's own `USE` |
 | `DECLARE DATASET fin SET (purpose: '…');` | create a dataset: a schema plus a row; `purpose` is required |
 | `DECLARE SOURCE erp SET (type: parquet, location: '/root');` | register a source: `type` (a word for the kind: `parquet`, `csv`, `json`, `shapefile`, …, or `relational_db` for an attached database), `location` (a directory, a URL prefix, or an attached database's name), `via` optional; relative file paths in a recipe resolve under the location for DuckDB's own readers |
-| `PROBE erp AS $$SELECT … LIMIT 5$$;` | run recipe-shaped SQL at the source, landing nothing: the rehearsal |
+| `PREVIEW erp AS $$SELECT … LIMIT 5$$;` | run recipe-shaped SQL at the source, landing nothing: the rehearsal |
 | `DECLARE RECIPE orders ON fin FROM erp [SET (key: id)] AS $$sql$$;` | land the table the SQL produces, now, as `fin.orders`; a key (`id`, or `'a, b'`) makes every later import merge by it, and the result carries each key once or the landing refuses by name; an unchanged re-declaration is a no-op |
 | `IMPORT orders;` | run the recipe again over the source as it stands now: a new snapshot of the lake |
 | `DECLARE RELATIONSHIP dept_emp.emp_no -> employees.emp_no;` | declare a join edge (`<->` both ways; `a.(x, y) -> b.(x, y)` composite) between landed columns |
-| `DECLARE ASPECT name WITH $$json-schema$$ AS FACT\|MEASUREMENT\|QUERY [ON TABLE, COLUMN, DATASET, SOURCE, RELATIONSHIP [WHEN aspect = 'value' \| WHEN TYPE = 'T' \| WHEN TYPE IN ('T', 'U')]];` | add a word; the schema is checked on every body; `ON` is the grain, `WHEN` narrows what is owed: to subjects whose sibling aspect says so, or to columns of a data type (the base type, `DECIMAL` for `DECIMAL(18,2)`; `ON COLUMN` alone) |
-| `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot; a QUERY aspect is glossed on the dataset (`GLOSS revenue ON fin AS …`) and then serves as the view `fin.revenue` |
+| `DECLARE ASPECT name WITH $$json-schema$$ AS FACT\|MEASUREMENT\|VIEW [ON TABLE, COLUMN, DATASET, SOURCE, RELATIONSHIP [WHEN aspect = 'value' \| WHEN TYPE = 'T' \| WHEN TYPE IN ('T', 'U')]];` | add a word; the schema is checked on every body; `ON` is the grain, `WHEN` narrows what is owed: to subjects whose sibling aspect says so, or to columns of a data type (the base type, `DECIMAL` for `DECIMAL(18,2)`; `ON COLUMN` alone) |
+| `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot; a VIEW aspect is glossed on the dataset (`GLOSS revenue ON fin AS …`) and then serves as the view `fin.revenue` |
 | `DELETE FROM glossary WHERE subject = '…' AND aspect = '…';` | take rows out of the record for good; what the newest remaining rows say then serves; `main.glossary` and the lake's full name spell the same rows |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context, one row per subject and aspect |
 | `SELECT … FROM GLOSSARY(subject, all => true);` | every slot, raw |
-| `SELECT … FROM ATTEST(subject \| subject::aspect);` | the witnesses' verdicts |
-| `DECLARE FUNCTION f FOR fin\|GLOBAL AS $$sql$$ [RETURNS aspect];` | a measurement (`RETURNS`: a table macro over `subject_column($subject)`) or a detector (no `RETURNS`: runs at read over the witness's `slots` with `$threshold`) |
+| `SELECT … FROM TESTS(subject \| subject::aspect);` | the tests' verdicts |
+| `DECLARE FUNCTION f FOR fin\|GLOBAL AS $$sql$$ [RETURNS aspect];` | a measurement (`RETURNS`: a table macro over `subject_column($subject)`) or a detector (no `RETURNS`: runs at read over the test's `slots` with `$threshold`) |
 | `SELECT f() FROM orders.amount;` | extract: compute and land the measurement, or serve the landed row while what it read is unchanged (`computed` says which) |
-| `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication |
+| `DECLARE TEST w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication |
 | `FROM glossql_kit('path-or-url');` | run a kit's declarations, one row each, and land a kits row with the text's hash; run again unchanged, as the opener does at every start-up, the kit stands in one row and only its LOAD lines run; changed, it runs whole |
 | `FROM glossql_lineage($$sql$$);` | every output column of a SELECT down to the base scans, `(column, derivation, complete)` |
 
@@ -143,9 +143,9 @@ reads the one source, and a gloss from any dataset supersedes.
 - `GLOSSARY(subject)` serves `(subject, aspect, value, band, score,
   state)`; `state` is `current | stale | contested | unassessed`; a
   contested value is withheld; every gap is a row. `GLOSSARY(subject,
-  all => true)` is a different shape: `(subject, aspect, kind, witness,
+  all => true)` is a different shape: `(subject, aspect, kind, test,
   actor, body, written_at, current)`.
-- `ATTEST(subject)` serves `(subject, aspect, witness, band, score,
+- `TESTS(subject)` serves `(subject, aspect, test, band, score,
   computed_at, current, error)`.
 - the store, as views in the lake's `main` schema, bare from any
   dataset in use (`ws.main.*` from elsewhere); every column, nothing else: `datasets (seq, name,
@@ -156,7 +156,7 @@ reads the one source, and a gloss from any dataset supersedes.
   `relationships (seq, dataset, left_side, op, right_side,
   declared_at)` · `aspects (seq, name, kind, grains, condition, schema,
   declared_at)` · `functions (seq, name, scope, script, returns,
-  declared_at)` · `witnesses (seq, name, aspect, speakers, detector,
+  declared_at)` · `tests (seq, name, aspect, speakers, detector,
   threshold, declared_at)` · `glossary (seq, dataset, subject, aspect,
   actor_kind, actor_id, body, snapshot_id, written_at)` ·
   `measurements (seq, dataset, function, subject, aspect, pin, value,

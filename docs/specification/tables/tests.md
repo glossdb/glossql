@@ -1,8 +1,8 @@
-# witnesses
+# tests
 
-A row is a declared test on an aspect (`WITNESS` in the grammar).
-`DECLARE WITNESS` writes it. Key: `aspect`; one test per aspect.
-`ATTEST()` runs the test's detector when it is read.
+A row is a declared test on an aspect (`TEST` in the grammar).
+`DECLARE TEST` writes it. Key: `aspect`; one test per aspect.
+`TESTS()` runs the test's detector when it is read.
 
 | Column | Type | Description |
 |---|---|---|

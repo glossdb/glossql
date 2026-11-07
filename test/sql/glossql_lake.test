@@ -44,7 +44,7 @@ measurements
 recipes
 relationships
 sources
-witnesses
+tests
 
 # a second init is a no-op for the views
 query T

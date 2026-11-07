@@ -44,7 +44,7 @@ Reference:
   [relationships](specification/tables/relationships.md),
   [functions](specification/tables/functions.md),
   [measurements](specification/tables/measurements.md),
-  [witnesses](specification/tables/witnesses.md).
+  [tests](specification/tables/tests.md).
 
 ## Internals
 

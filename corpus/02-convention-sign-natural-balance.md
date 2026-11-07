@@ -60,6 +60,6 @@ GLOSS conventions ON fin AS $${
   consumers filter it themselves.
 - Lost vs. today: declaration-time membership checking of group members
   (engine lint `concept_edge_store.py:78-90`); a dangling group member is
-  silent. If it matters, it is a witness's job, not admission's.
+  silent. If it matters, it is a test's job, not admission's.
 - Supersession is per (subject, aspect, actor kind): editing one convention
   re-glosses the whole blob. Accepted — the blob is the unit of authorship.

@@ -1,4 +1,4 @@
-# 01 · Concept `revenue` — TRANSCRIBES (concept = QUERY aspect)
+# 01 · Concept `revenue` — TRANSCRIBES (concept = VIEW aspect)
 
 Source: `dataraum-context/packages/dataraum-config/verticals/finance/ontology.yaml`
 
@@ -17,7 +17,7 @@ Pack envelope around it (same file): `name: financial_reporting`,
 ## Transcription
 
 Each concept is its own aspect; the ontology entry rides the `WITH` schema as
-annotations. `AS QUERY` makes its glosses groundings (fixture 07).
+annotations. `AS VIEW` makes its glosses groundings (fixture 07).
 
 ```glossql
 DECLARE ASPECT revenue WITH $${
@@ -27,7 +27,7 @@ DECLARE ASPECT revenue WITH $${
   "x-indicators": ["revenue", "sales", "income", "turnover", "receipts"],
   "x-exclude": ["cost", "expense"],
   "x-unit-from": "currency"
-}$$ AS QUERY;
+}$$ AS VIEW;
 ```
 
 The `compositions:` block in the same file (`whole: current_assets`,
@@ -39,7 +39,7 @@ DECLARE ASPECT current_assets WITH $${
   "title": "current_assets",
   "x-kind": "measure",
   "x-parts": ["cash", "accounts_receivable", "inventory"]
-}$$ AS QUERY;
+}$$ AS VIEW;
 ```
 
 ## Findings
@@ -48,7 +48,7 @@ DECLARE ASPECT current_assets WITH $${
   list of declared aspects.
 - In-blob composition drops the declaration-time membership check the engine's
   lint provides today (`concept_edge_store.py:78-90`): a dangling part name is
-  silent. Accepted with the in-blob decision; a witness can check it.
+  silent. Accepted with the in-blob decision; a test can check it.
 - **DROPPED BY DESIGN — pack envelope.** `financial_reporting`, `version:
   "1.0.0"`: portability is postponed entirely; a vertical is a folder of
   scripts and aspect declarations, ported by copying.

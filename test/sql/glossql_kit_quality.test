@@ -273,16 +273,16 @@ statement ok
 CREATE TABLE fin.ledger AS SELECT * FROM (VALUES (DATE '2024-01-15', 100.0), (DATE '2024-01-20', 200.0), (DATE '2024-02-10', 300.0), (DATE '2024-03-05', 400.0)) t(date, value);
 
 statement ok
-DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS QUERY;
+DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS VIEW;
 
 statement ok
-DECLARE ASPECT turnover WITH $${"title": "turnover"}$$ AS QUERY;
+DECLARE ASPECT turnover WITH $${"title": "turnover"}$$ AS VIEW;
 
 statement ok
-DECLARE ASPECT open_items WITH $${"title": "open items"}$$ AS QUERY;
+DECLARE ASPECT open_items WITH $${"title": "open items"}$$ AS VIEW;
 
 statement ok
-DECLARE ASPECT costs WITH $${"title": "costs"}$$ AS QUERY;
+DECLARE ASPECT costs WITH $${"title": "costs"}$$ AS VIEW;
 
 statement ok
 GLOSS revenue ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger"}$$;
@@ -305,7 +305,7 @@ SELECT groundings, kind, aspects::VARCHAR, months FROM grounding_collisions('fin
 # the series pass reads the view's claims: a view whose columns carry role timestamp and role measure under
 # other names folds like one named period and value, and not before the roles are glossed
 statement ok
-DECLARE ASPECT margin WITH $${"title": "margin"}$$ AS QUERY;
+DECLARE ASPECT margin WITH $${"title": "margin"}$$ AS VIEW;
 
 statement ok
 GLOSS margin ON fin AS $${"sql": "SELECT date AS day, value AS amount FROM fin.ledger"}$$;
@@ -421,14 +421,14 @@ statement ok
 DECLARE ASPECT ids_present WITH $${"type": "object", "required": ["outcome"], "properties": {"outcome": {"type": "string"}, "tolerance": {"type": "number"}, "breach_rate": {"type": "number"}}}$$ AS FACT ON TABLE;
 
 statement ok
-DECLARE WITNESS ids_w ON ids_present BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;
+DECLARE TEST ids_w ON ids_present BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;
 
 statement ok
 GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "tolerance": 0.2}$$;
 
 # no check has spoken: yellow, never green
 query TTR
-SELECT subject, band, score FROM ATTEST(orders::ids_present);
+SELECT subject, band, score FROM TESTS(orders::ids_present);
 ----
 fin.orders	yellow	0.0
 
@@ -444,7 +444,7 @@ SELECT ids_present_check() FROM orders;
 
 # one order in five names no customer: at the tolerance, green, the rate as the score
 query TTR
-SELECT subject, band, score FROM ATTEST(orders::ids_present);
+SELECT subject, band, score FROM TESTS(orders::ids_present);
 ----
 fin.orders	green	0.2
 
@@ -459,7 +459,7 @@ statement ok
 RESET VARIABLE glossql_actor;
 
 query TTR
-SELECT subject, band, score FROM ATTEST(orders::ids_present);
+SELECT subject, band, score FROM TESTS(orders::ids_present);
 ----
 fin.orders	red	0.2
 

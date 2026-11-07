@@ -49,7 +49,7 @@ min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
 query TT
 SELECT reads, pin FROM measurements;
 ----
-fin.orders	fin.orders:13,fin.other:14,main.aspects:1,main.datasets:1,main.functions:1,main.glossary:-,main.imports:-,main.kits:-,main.recipes:-,main.relationships:-,main.sources:-,main.witnesses:-
+fin.orders	fin.orders:13,fin.other:14,main.aspects:1,main.datasets:1,main.functions:1,main.glossary:-,main.imports:-,main.kits:-,main.recipes:-,main.relationships:-,main.sources:-,main.tests:-
 
 # --- a repeat is a serve, not a rerun
 
@@ -219,7 +219,7 @@ statement ok
 DECLARE FUNCTION all_current FOR fin AS $$ SELECT subject, CASE WHEN bool_and(current) THEN 'green' ELSE 'red' END AS band, 0.0 AS score FROM slots GROUP BY subject $$;
 
 statement ok
-DECLARE WITNESS min_max_w ON min_max DETECTOR all_current THRESHOLD 0.5;
+DECLARE TEST min_max_w ON min_max DETECTOR all_current THRESHOLD 0.5;
 
 query TTTTT
 SELECT min_max() FROM orders.amount;
@@ -227,7 +227,7 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":11.0}	true
 
 query TTTT
-SELECT subject, band, current, error FROM ATTEST(orders.amount::min_max);
+SELECT subject, band, current, error FROM TESTS(orders.amount::min_max);
 ----
 fin.orders.amount	green	true	NULL
 
@@ -247,7 +247,7 @@ DELETE FROM fin.orders WHERE id = 10;
 # the detector sees the slot's current; the verdict's current is every function voice it read
 
 query TTTT
-SELECT subject, band, current, error FROM ATTEST(orders.amount::min_max);
+SELECT subject, band, current, error FROM TESTS(orders.amount::min_max);
 ----
 fin.orders.amount	red	false	NULL
 
@@ -276,7 +276,7 @@ SELECT value, band, state FROM GLOSSARY(orders.amount::min_max);
 # a gloss's own staleness is the subject's shape (SPEC §5.2), a voice's is its reads: a landing ages the voice only
 
 statement ok
-DECLARE WITNESS note_w ON note BY (AGENT, HUMAN);
+DECLARE TEST note_w ON note BY (AGENT, HUMAN);
 
 query TTT
 SELECT aspect, actor, current FROM GLOSSARY(orders.amount, all => true) ORDER BY aspect, actor;

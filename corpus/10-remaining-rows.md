@@ -61,7 +61,7 @@ GLOSS calendar ON fin AS $${"fiscal_year_starts": "april"}$$;
 ## Statistics / profiling (`column_statistics`, `relationship_candidates`)
 
 Measurements are never glossed — a function `RETURNS` the aspect
-(respelled 2026-08-04: the reference is the binding, no witness ceremony)
+(respelled 2026-08-04: the reference is the binding, no test ceremony)
 and fills it from its cache:
 
 ```glossql

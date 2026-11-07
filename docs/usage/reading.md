@@ -39,13 +39,13 @@ SELECT * FROM GLOSSARY(orders) WHERE state <> 'current';
 SELECT * FROM GLOSSARY(orders.amount, all => true);
 ```
 
-Columns: `(subject, aspect, kind, witness, actor, body, written_at,
+Columns: `(subject, aspect, kind, test, actor, body, written_at,
 current)`, one row per source of a value. Which one wins is yours to
 decide. `current` is false for a computed value whose inputs moved.
 
 ## Test results
 
-`ATTEST()` returns one row per test and asset: band, score, whether it
+`TESTS()` returns one row per test and asset: band, score, whether it
 is current ([tests](tests.md)).
 
 ## The catalog tables
@@ -64,9 +64,9 @@ One page per table: [specification](../specification/introduction.md).
 
 ## How reads are cached
 
-`GLOSSARY()` and `ATTEST()` are computed once per catalog version and
+`GLOSSARY()` and `TESTS()` are computed once per catalog version and
 kept in DuckDB's object cache. A write, a load or a delete moves the
 version, and the next read computes again.
 
 Normative text: [SPEC.md §5.3](../../SPEC.md#53-reading) and
-[§7.2](../../SPEC.md#72-attestation).
+[§7.2](../../SPEC.md#72-test results).

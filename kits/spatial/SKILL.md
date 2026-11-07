@@ -8,7 +8,7 @@ description: The spatial kit's vocabulary for a glossql workspace — which colu
 For an actor working in a DuckDB that has the glossql extension loaded and
 this kit declared. The kit brings DuckDB's spatial extension in, its
 first lines install and load it, and declares two words, one
-measurement and their witnesses.
+measurement and their tests.
 
 ## Load
 
@@ -28,7 +28,7 @@ geometry stops at the first `ST_` function.
 | `crs` | geometry columns (`WHEN TYPE = 'GEOMETRY'`) | `value`: the identifier, `EPSG:2263`; `unit`: what a coordinate counts; `grounds` | the coordinate reference system the coordinates are in |
 | `geometry_profile` | column, a measurement | `total`, `null_ratio`, `kinds`, `invalid`, `empty`, `extent`, `area_sum` | what the geometries are: `SELECT geometry_profile() FROM zones.geom;` |
 
-Both witnesses take the agent and the human without a detector.
+Both tests take the agent and the human without a detector.
 
 ## Landing geometry
 

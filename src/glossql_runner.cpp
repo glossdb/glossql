@@ -1,4 +1,4 @@
-// Statements that run SQL: DECLARE DATASET, DECLARE RECIPE, PROBE, IMPORT.
+// Statements that run SQL: DECLARE DATASET, DECLARE RECIPE, PREVIEW, IMPORT.
 //
 // They execute on a second connection to the same database — DuckDB's own
 // pattern for work done while the calling connection's context lock is held
@@ -99,9 +99,9 @@ static Workspace FindWorkspace(ClientContext &context, Connection &con) {
 	}
 	ws.meta = "__ducklake_metadata_" + ws.lake;
 	for (auto schema : {"main", "public"}) {
-		auto probe =
+		auto preview =
 		    con.Query("SELECT 1 FROM " + QuoteName(ws.meta) + "." + QuoteName(schema) + ".ducklake_snapshot LIMIT 0");
-		if (!probe->HasError()) {
+		if (!preview->HasError()) {
 			ws.meta_schema = schema;
 			return ws;
 		}
@@ -563,16 +563,16 @@ TableFunction GlossImportFunction() {
 }
 
 //===--------------------------------------------------------------------===//
-// PROBE source AS $$sql$$: the recipe rehearsal, landing nothing
+// PREVIEW source AS $$sql$$: the recipe rehearsal, landing nothing
 //===--------------------------------------------------------------------===//
 
-struct ProbeState : public GlobalTableFunctionState {
+struct PreviewState : public GlobalTableFunctionState {
 	unique_ptr<Inner> inner;
 	unique_ptr<QueryResult> result;
 	unique_ptr<DataChunk> chunk;
 };
 
-static unique_ptr<FunctionData> ProbeBind(ClientContext &context, TableFunctionBindInput &input,
+static unique_ptr<FunctionData> PreviewBind(ClientContext &context, TableFunctionBindInput &input,
                                           vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<RunnerBindData>();
 	result->inputs = input.inputs;
@@ -584,19 +584,19 @@ static unique_ptr<FunctionData> ProbeBind(ClientContext &context, TableFunctionB
 	AtSource(inner, LookupSource(inner, source));
 	auto prepared = inner.con.Prepare(sql);
 	if (prepared->HasError()) {
-		throw InvalidInputException("glossql: probe of %s: %s", source, prepared->GetError());
+		throw InvalidInputException("glossql: preview of %s: %s", source, prepared->GetError());
 	}
 	return_types = prepared->GetTypes();
 	names = prepared->GetNames();
 	return std::move(result);
 }
 
-static unique_ptr<GlobalTableFunctionState> ProbeInit(ClientContext &context, TableFunctionInitInput &input) {
-	return make_uniq<ProbeState>();
+static unique_ptr<GlobalTableFunctionState> PreviewInit(ClientContext &context, TableFunctionInitInput &input) {
+	return make_uniq<PreviewState>();
 }
 
-static void ProbeExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &state = data.global_state->Cast<ProbeState>();
+static void PreviewExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &state = data.global_state->Cast<PreviewState>();
 	auto &inputs = data.bind_data->Cast<RunnerBindData>().inputs;
 	if (!state.inner) {
 		state.inner = make_uniq<Inner>(context);
@@ -610,9 +610,9 @@ static void ProbeExec(ClientContext &context, TableFunctionInput &data, DataChun
 	output.Reference(*state.chunk);
 }
 
-TableFunction GlossProbeFunction() {
-	return TableFunction("glossql_probe", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ProbeExec, ProbeBind,
-	                     ProbeInit);
+TableFunction GlossPreviewFunction() {
+	return TableFunction("glossql_probe", {LogicalType::VARCHAR, LogicalType::VARCHAR}, PreviewExec, PreviewBind,
+	                     PreviewInit);
 }
 
 //===--------------------------------------------------------------------===//
@@ -689,16 +689,16 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 	inner.Run("INSERT INTO " + inner.Store("functions") + " VALUES (" + inner.Seq("functions") + ", " +
 	          QuoteText(name) + ", " + QuoteText(scope) + ", " + QuoteText(script) + ", " + returns.ToSQLString() +
 	          ", now())");
-	// a detector's body is run by ATTEST() over its witness's slots, $threshold bound there
+	// a detector's body is run by TESTS() over its test's slots, $threshold bound there
 	Outcome(output, returns.IsNull() ? "declared detector " + name + " for " + scope
 	                                 : "declared measurement " + schema + "." + name + "($subject)");
 }
 
 //===--------------------------------------------------------------------===//
-// DECLARE WITNESS name ON aspect [BY (AGENT, HUMAN)] [DETECTOR fn] [THRESHOLD n]
+// DECLARE TEST name ON aspect [BY (AGENT, HUMAN)] [DETECTOR fn] [THRESHOLD n]
 //===--------------------------------------------------------------------===//
 
-static void WitnessExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<RunnerState>();
 	if (state.done) {
 		return;
@@ -712,13 +712,13 @@ static void WitnessExec(ClientContext &context, TableFunctionInput &data, DataCh
 	auto &threshold = inputs[4];
 
 	Inner inner(context);
-	auto declared = inner.Row("SELECT aspect, speakers, detector, threshold FROM " + inner.Store("witnesses") +
+	auto declared = inner.Row("SELECT aspect, speakers, detector, threshold FROM " + inner.Store("tests") +
 	                          " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
 	if (!declared.empty() && declared[0].ToString() == aspect && declared[1].ToString() == JsonList(inputs[2]) &&
 	    SameValue(declared[2], detector) &&
 	    (declared[3].IsNull() || threshold.IsNull() ? declared[3].IsNull() == threshold.IsNull()
 	                                                : declared[3].GetValue<double>() == threshold.GetValue<double>())) {
-		Outcome(output, "witness " + name + " unchanged: no-op");
+		Outcome(output, "test " + name + " unchanged: no-op");
 		return;
 	}
 	auto standing = inner.Row("SELECT kind, schema::JSON->>'x-kind' FROM " + inner.Store("aspects") +
@@ -728,7 +728,7 @@ static void WitnessExec(ClientContext &context, TableFunctionInput &data, DataCh
 	}
 	auto &kind = standing[0];
 	if (!standing[1].IsNull() && standing[1].ToString() == "grounding") {
-		throw InvalidInputException("glossql: a witness on grounding schema '%s' is refused: it judges nothing",
+		throw InvalidInputException("glossql: a test on grounding schema '%s' is refused: it judges nothing",
 		                            aspect);
 	}
 	if (kind.ToString() == "MEASUREMENT" && !speakers.empty()) {
@@ -745,17 +745,17 @@ static void WitnessExec(ClientContext &context, TableFunctionInput &data, DataCh
 			                            row[0].ToString());
 		}
 	}
-	inner.Run("INSERT INTO " + inner.Store("witnesses") + " VALUES (" + inner.Seq("witnesses") + ", " +
+	inner.Run("INSERT INTO " + inner.Store("tests") + " VALUES (" + inner.Seq("tests") + ", " +
 	          QuoteText(name) + ", " + QuoteText(aspect) + ", " + QuoteText(JsonList(inputs[2])) + ", " +
 	          detector.ToSQLString() + ", " + threshold.ToSQLString() + ", now())");
-	Outcome(output, "declared witness " + name + " on " + aspect);
+	Outcome(output, "declared test " + name + " on " + aspect);
 }
 
-TableFunction GlossWitnessFunction() {
-	return TableFunction("glossql_declare_witness",
+TableFunction GlossTestFunction() {
+	return TableFunction("glossql_declare_test",
 	                     {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR),
 	                      LogicalType::VARCHAR, LogicalType::DOUBLE},
-	                     WitnessExec, OutcomeBind, RunnerInit);
+	                     TestExec, OutcomeBind, RunnerInit);
 }
 
 TableFunction GlossFunctionFunction() {
@@ -999,7 +999,7 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		    inner.Scalar("SELECT returns FROM " + inner.Store("functions") + " WHERE name = " + QuoteText(name) +
 			             " AND scope = " + QuoteText(scope) + " ORDER BY seq DESC LIMIT 1");
 		if (returns.IsNull()) {
-			throw InvalidInputException("glossql: %s is a detector: it runs at read, through ATTEST()", name);
+			throw InvalidInputException("glossql: %s is a detector: it runs at read, through TESTS()", name);
 		}
 		output.data[0].Append(Value(name));
 		output.data[1].Append(Value(subject));
@@ -1993,7 +1993,7 @@ static TableFunction BehaviorCellsFunction() {
 
 //===--------------------------------------------------------------------===//
 // glossql_kit(path): a kit is a script of declarations — aspects, functions,
-// witnesses — and the SQL beside them, read from anything DuckDB's file system
+// tests — and the SQL beside them, read from anything DuckDB's file system
 // opens (a local path, or a URL once httpfs is loaded), run statement by
 // statement on a second connection under the glossql grammar, one row per
 // statement. Each statement commits on its own, as it does from a script; a
@@ -2136,9 +2136,9 @@ void RegisterGlossRunner(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossDatasetFunction());
 	loader.RegisterFunction(GlossRecipeFunction());
 	loader.RegisterFunction(GlossImportFunction());
-	loader.RegisterFunction(GlossProbeFunction());
+	loader.RegisterFunction(GlossPreviewFunction());
 	loader.RegisterFunction(GlossFunctionFunction());
-	loader.RegisterFunction(GlossWitnessFunction());
+	loader.RegisterFunction(GlossTestFunction());
 	loader.RegisterFunction(GlossExtractFunction());
 	loader.RegisterFunction(GlossSelectOrExtractFunction());
 	loader.RegisterFunction(SubjectColumnFunction());

@@ -17,7 +17,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | `DECLARE SOURCE` with `type`, `location`, `via`; other types refused | holds | the SET pairs land as one JSON `settings`, checked at parse against the schema the statement holds (`type` an enum of the four, `location` required, `via` recorded, no other key); secrets are DuckDB's `CREATE SECRET` |
 | a relational source executes the recipe in its own dialect | softened | a relational source is a database DuckDB has `ATTACH`ed; the recipe runs over it in DuckDB SQL, pushdown being the scanner's |
 | file sources resolve paths under the location | holds | `file_search_path` set to the location for the statement |
-| `PROBE` rehearses the recipe, landing nothing, schema always carried | holds | the result streams with its schema |
+| `PREVIEW` rehearses the recipe, landing nothing, schema always carried | holds | the result streams with its schema |
 | the recipe carries the casts; unchanged re-declaration is a no-op | holds | |
 | keyed recipes merge, unkeyed replace | holds | `MERGE INTO` by key, `CREATE OR REPLACE TABLE … AS` |
 | one commit per landing | holds | a landing is one snapshot of the lake; its `imports` row follows as the store's own commit, the lake and its catalog being two attached databases |
@@ -41,16 +41,16 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 
 | SPEC | Status | Here |
 |---|---|---|
-| aspects: name, JSON Schema, kind FACT, QUERY, MEASUREMENT; grains; `WHEN` | holds | `json_schema_check()` over the yyjson DuckDB ships |
-| a QUERY aspect's grain is the dataset | holds | a grain clause is refused at parse |
+| aspects: name, JSON Schema, kind FACT, VIEW, MEASUREMENT; grains; `WHEN` | holds | `json_schema_check()` over the yyjson DuckDB ships |
+| a VIEW aspect's grain is the dataset | holds | a grain clause is refused at parse |
 | identical re-declaration no-op; change under glosses refused | holds | |
 | every body JSON, dollar-quoted | holds | |
-| the grounding contract is fixed and open; the claims a reader needs are glosses on the view's columns | holds | the contract (`sql` or `stopped`, `assumptions`) validates every QUERY gloss, then each aspect flavored `x-kind: grounding` a kit declares; a reader of the view takes the period, the measure and its `behavior`, the slices and the row identity off the view's columns (fixture 28) |
+| the grounding contract is fixed and open; the claims a reader needs are glosses on the view's columns | holds | the contract (`sql` or `stopped`, `assumptions`) validates every VIEW gloss, then each aspect flavored `x-kind: grounding` a kit declares; a reader of the view takes the period, the measure and its `behavior`, the slices and the row identity off the view's columns (fixture 28) |
 | a grounding is a view; a stop ends it; a landed table's name refused | holds | `CREATE OR REPLACE VIEW` in the dataset's schema; the same sql glossed again keeps the view and its version, so the glosses and measurements on its columns stand |
 | `read.<metric>()` | softened | the view is reached by its bare name under `USE` or as `FROM dataset.metric`, which §5 says plans the same way; no `read` schema, since a schema is lake-wide and metrics are per dataset, and it would be a second door to the one view |
 | supersession key (subject, aspect, actor kind) | holds | the newest slot per key serves |
-| two QUERY glosses of one aspect on different tables coexist | softened | the subject of a QUERY gloss is the dataset, as §5.2 also says; one serving view per metric |
-| `DELETE FROM glossary` | holds | the grammar's statement, `DELETE FROM [lake.][glossql.]glossary [alias] [WHERE …]`: the lake reads the store as views, and DuckDB deletes through a table only, so it runs on the store's table in the lake's metadata catalog, where every write goes, and comes back as a DELETE does, the rows removed; the reads' version moves with it |
+| two VIEW glosses of one aspect on different tables coexist | softened | the subject of a VIEW gloss is the dataset, as §5.2 also says; one serving view per metric |
+| `DELETE FROM glossary` | holds | the grammar's statement, `DELETE FROM [lake.][main.]glossary [alias] [WHERE …]`: the lake reads the store as views, and DuckDB deletes through a table only, so it runs on the store's table in the lake's metadata catalog, where every write goes, and comes back as a DELETE does, the rows removed; the reads' version moves with it |
 | `snapshot_id`, `stale` | holds | every glossary row carries the lake's snapshot at write, NULL for a dataset subject or a pair path; staleness is a join against `ducklake_column`, and against `ducklake_view` for a view or its column, never a guess |
 | `GLOSSARY()` collapsed and raw; `unassessed`, `contested`, `current` | holds | `glossql_glossary()` plans a subquery over the store |
 | `stale` | holds | served and marked: a gloss against its subject's shape, a function voice against what it read |
@@ -66,15 +66,15 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | a FACT aspect returned by a function is a voice | holds, untested | a measurement row serves as actor `function` |
 | extraction lands in `measurements` with `pin` and `reads`; served while unchanged | holds | `reads` is read off the body's bound plan: lake tables as `dataset.table`, store relations as `glossql.relation`, `**` for a scan that has no name (a file, a catalog function, another database), empty for a body that reads nothing; `pin` is the glossql engine's: every leg at its version, sorted, `name:version`, a table's version being the last snapshot of the lake's change log that inserted, deleted, altered or dropped it (compaction is not a write), a relation's its highest `seq`; the next extraction serves the newest row while the legs its reads name match, `**` while every leg does, and never from a body the function has since re-declared; the row says `computed`; `ducklake_expire_snapshots` can lower a version it never touched, which reads as a move |
 | a top-level `summary` serves at extraction | holds | the whole value lands and reads back through `GLOSSARY(subject::aspect)` |
-| a detector plans over `slots`, `$threshold` bound, attest contract per row | holds | run at read by `ATTEST()` |
+| a detector plans over `slots`, `$threshold` bound, test-results contract per row | holds | run at read by `TESTS()` |
 
-## §7 Witnesses
+## §7 Tests
 
 | SPEC | Status | Here |
 |---|---|---|
 | `BY`, `DETECTOR`, `THRESHOLD`; one of the clauses; `BY` refused on MEASUREMENT | holds | |
-| the attest schema; verdict per witness; detectors at read; `ATTEST()` sweeps the dataset | holds | |
-| a detector that cannot answer serves `error` with the text | holds | the detector runs at read on a second connection; a plan or run it refuses, or a row outside the attest schema, is the verdict `error` with the failure's first line, one row per subject holding slots; the collapse never withholds on it |
+| the test-results schema; verdict per test; detectors at read; `TESTS()` sweeps the dataset | holds | |
+| a detector that cannot answer serves `error` with the text | holds | the detector runs at read on a second connection; a plan or run it refuses, or a row outside the test-results schema, is the verdict `error` with the failure's first line, one row per subject holding slots; the collapse never withholds on it |
 | `current` on a verdict | holds | every function voice the verdict read stands at the read's pin; the detector sees `current` per slot |
 | judgment never written into data | holds | verdicts are computed at read, never stored |
 

@@ -36,7 +36,7 @@ SELECT * FROM imports;
 SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 SELECT left_path, right_path FROM relationships;
 SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
-SELECT subject, band, score FROM ATTEST(fin) WHERE band != 'green';
+SELECT subject, band, score FROM TESTS(fin) WHERE band != 'green';
 ```
 
 **TRANSCRIBES.** The disclosure duties v0.3 hand-built (curation
@@ -82,11 +82,11 @@ name the gap, do not build for it.
 
 Band, grounded ratio, assumptions, concepts used. All of it rides
 constructs that exist: the grounding's `assumptions[]` array is in
-the gloss body, bands come from `ATTEST`, and the concepts used are
-the QUERY aspects the SQL was composed from.
+the gloss body, bands come from `TESTS`, and the concepts used are
+the VIEW aspects the SQL was composed from.
 
 ```glossql
-SELECT * FROM ATTEST(fin.trial_balance);
+SELECT * FROM TESTS(fin.trial_balance);
 ```
 
 **TRANSCRIBES.** The ratio arithmetic is app-side arithmetic over
@@ -97,7 +97,7 @@ served rows, not a construct.
 **Metrics DAG — the keeper UI (ruled 2026-08-06).** v0.3 draws
 metric → metric → measure → table from graph definitions and snippet
 state; clicking a runnable node opens live values. In glossql every
-edge is readable: QUERY aspects from the `aspects` relation, the
+edge is readable: VIEW aspects from the `aspects` relation, the
 definitional DAG from formula FACT glosses, groundings from the
 glossary, landed tables from `imports` — the app draws, nothing
 serves a drawing. The *click* was the consumer that pulled
@@ -111,7 +111,7 @@ SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
 **Concepts tab.** Ancestry, reconciliation state, multi-groundings —
-glossary reads plus witness bands. TRANSCRIBES.
+glossary reads plus test bands. TRANSCRIBES.
 
 **Bus matrix — the UI dies (ruled 2026-08-06).** It was agent
 context: which cross-fact comparisons are composable. The content is
@@ -137,7 +137,7 @@ The standing state of the union: bands, artifact counts, staleness,
 a "needs you" inbox. The reads exist; the inbox is a WHERE clause:
 
 ```glossql
-SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
+SELECT subject, band, score FROM TESTS(fin) WHERE band = 'red';
 SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
 SELECT * FROM imports;
 ```
@@ -157,7 +157,7 @@ nothing users see depends on anything we cut.
 ## Findings
 
 - **TRANSCRIBES**: every surface composes from `GLOSSARY()` /
-  `ATTEST()` / the declaration relations / the query door. No serving
+  `TESTS()` / the declaration relations / the query door. No serving
   construct is missing; fixture 09's bet survives contact with the
   full consumer inventory.
 - **SEMANTICS UNDEFINED, named not built**: the general

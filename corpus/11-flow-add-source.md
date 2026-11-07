@@ -15,7 +15,7 @@ phases in `pipeline/phases/`. Ordered steps and what each produces:
 | typing | deterministic | `type_candidates`, `type_decisions`, typed + quarantine tables |
 | statistics / eligibility / quality / temporal | deterministic | `statistical_profiles`, `column_eligibility`, `statistical_quality_metrics`, `temporal_column_profiles` |
 | semantic_per_column | LLM | `semantic_annotations` per column |
-| detect | deterministic | `entropy_objects`, `claim_witnesses`, `entropy_readiness` |
+| detect | deterministic | `entropy_objects`, `claim_tests`, `entropy_readiness` |
 | promote_to_latest | deterministic | snapshot head flip |
 | assess & auto-ground loop | LLM + orchestration | teach rows or `awaiting_input` park |
 
@@ -27,7 +27,7 @@ are **agent glosses**, teaches and parks are **human glosses**. The typing
 phase maps to none of them — it becomes **authorship**, the
 probe-and-recipe conversation below.
 
-Human registers the source; the agent probes it — `PROBE` is the recipe
+Human registers the source; the agent probes it — `PREVIEW` is the recipe
 rehearsal (ruled 2026-08-04): the same SQL surface, the same path
 resolution, executed at the source, landing nothing (v0.3's "probe query"
 step, returned to its place). The result always carries its schema, so a
@@ -38,9 +38,9 @@ step, returned to its place). The result always carries its schema, so a
 USE fin;
 DECLARE SOURCE erp_export SET (type: parquet, location: 'lake/erp');
 
-PROBE erp_export AS $$SELECT * FROM read_parquet('orders/*.parquet') LIMIT 50$$;
-PROBE erp_export AS $$SELECT count("order_date") AS filled,
-       count(try_to_date("order_date", '%d.%m.%Y')) AS parsed
+PREVIEW erp_export AS $$SELECT * FROM read_parquet('orders/*.parquet') LIMIT 50$$;
+PREVIEW erp_export AS $$SELECT count("order_date") AS filled,
+       count(try_strptime("order_date", '%d.%m.%Y')) AS parsed
 FROM read_parquet('orders/*.parquet')$$;
 ```
 
@@ -55,7 +55,7 @@ import:
 DECLARE RECIPE orders ON fin FROM erp_export AS $$
   SELECT order_id,
          try_cast(amount AS DECIMAL(12,2)) AS amount,
-         try_to_date(order_date, '%d.%m.%Y') AS order_date
+         try_strptime(order_date, '%d.%m.%Y')::DATE AS order_date
   FROM read_parquet('orders/*.parquet')$$;
 
 SELECT sum(amount) FROM orders;
@@ -94,7 +94,7 @@ SELECT dropped_rows_count FROM imports WHERE table_name = 'orders';
 ```
 
 Framing the vertical is replaying the vertical folder's declarations —
-aspects, check functions, witnesses (fixtures 01, 02, 04); no construct.
+aspects, check functions, tests (fixtures 01, 02, 04); no construct.
 
 The deterministic profile plane — declared once (vertical/global), fanned
 out per column (extraction grain is the subject; the fan-out is the
@@ -161,13 +161,13 @@ GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
 GLOSS unit ON orders.amount AS $${"value": "EUR", "source_column": "currency_code"}$$;
 ```
 
-Adjudication replaces the detect/resolve/readiness tail: witnesses on the
+Adjudication replaces the detect/resolve/readiness tail: tests on the
 contested aspects, bands read back; the auto-ground loop is an agent skill
-sweeping the attest relation and re-glossing where it may:
+sweeping the test-results relation and re-glossing where it may:
 
 ```glossql
-SELECT * FROM ATTEST(fin::behavior);
-SELECT subject, band, score FROM ATTEST(fin::unit) WHERE band = 'red';
+SELECT * FROM TESTS(fin::behavior);
+SELECT subject, band, score FROM TESTS(fin::unit) WHERE band = 'red';
 ```
 
 A human closes what the agent could not — the same statements on a human
@@ -221,11 +221,11 @@ that the grammar knows about.
   agents already know (the store's relations read as plain tables), not
   a new convention. Which rows were dropped is the agent's question,
   answered on the files.
-- **`PROBE` is a statement head** (ruled 2026-08-04, closing the fork):
+- **`PREVIEW` is a statement head** (ruled 2026-08-04, closing the fork):
   the first transcription bound probes by a path-prefix convention (the
   source name as the path's first segment) — magic an agent must be told.
-  The ruled form mirrors the recipe: `PROBE source AS $$sql$$`, one
-  concept (recipe-shaped SQL runs FROM a source; PROBE rehearses, RECIPE
+  The ruled form mirrors the recipe: `PREVIEW source AS $$sql$$`, one
+  concept (recipe-shaped SQL runs FROM a source; PREVIEW rehearses, RECIPE
   lands). The grammar grew by one head and lost a convention; the router
   stopped sniffing SELECTs for `read_*` references. The deciding
   advantage: a probe's result carries the schema it would land — `LIMIT 0`
@@ -238,10 +238,10 @@ that the grammar knows about.
   fills an aspect, and
   the aspect's schema became the single, live contract (shape-descriptive:
   `required` for what every value carries, `properties` for what readers
-  consume, open beyond that). The function witnesses died as ceremony —
+  consume, open beyond that). The function tests died as ceremony —
   the `RETURNS` binding is what wires a function's cache into the collapse
   — and a function without `RETURNS` *is* a detector: role by shape, the
-  attest contract engine-owned. Detectors migrate only where adjudication
+  test-results contract engine-owned. Detectors migrate only where adjudication
   is real (same ruling): v0.3's readout detectors (`null_ratio`,
   `unit_entropy`, `business_meaning`, `type_fidelity`) dissolve into
   measurements agents read directly; unit detection dissolves into

@@ -1,4 +1,4 @@
-# 07 · Grounding / `sql_snippets` — TRANSCRIBES (QUERY gloss, grounding contract)
+# 07 · Grounding / `sql_snippets` — TRANSCRIBES (VIEW gloss, grounding contract)
 
 Source: `sql_snippets` (engine schema.sql), semantic key:
 
@@ -17,9 +17,9 @@ disjoint_collision)`.
 
 ## Transcription
 
-A grounding is a gloss of a QUERY aspect (fixture 01 declares `revenue`,
+A grounding is a gloss of a VIEW aspect (fixture 01 declares `revenue`,
 likewise `accounts_receivable`). The body validates against the **standard
-grounding schema** — fixed, like the attest schema: `sql` required,
+grounding schema** — fixed, like the test-results schema: `sql` required,
 `assumptions[]` optional. Assumptions ride inside the grounding.
 
 ```glossql
@@ -43,10 +43,10 @@ GLOSS accounts_receivable ON fin.journal_lines AS $${
   view; the views ruling makes the grounding compose its grain-checked
   joins inline, so the subject is the fact table itself. Fixture 16 §2
   carries the full shape (grain-free extracts).
-- **Coexistence, decided:** two QUERY glosses of the same aspect on different
+- **Coexistence, decided:** two VIEW glosses of the same aspect on different
   tables may coexist — two ways to calculate revenue arriving at the same
   number is the correct answer, not a conflict. Whether they reconcile is a
-  witness's job (a function voice runs both and reports the residual; a
+  test's job (a function voice runs both and reports the residual; a
   detector bands it — a detector's own query plans over `slots` alone).
 - The old track's weakest-assumption confidence gate is a detector's business:
   assumptions are in the body, readable by any function.

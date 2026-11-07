@@ -129,18 +129,18 @@ DECLARE ASPECT behavior WITH $${
 
 - **A and B key a claim about one column of the view by the whole
   grounding.** One slot holds `sql` and `behavior`: a human's ruling on
-  the behaviour supersedes the agent's `sql` with it, no witness bands
+  the behaviour supersedes the agent's `sql` with it, no test bands
   the behaviour alone, no measurement sits beside it as evidence, and
   a metric read as another grounding's source carries none of a
   table's facts.
 - **C gives each claim the slot a landed column's claim has.** The
-  witness on `behavior` bands it, the behaviour evidence is a
+  test on `behavior` bands it, the behaviour evidence is a
   measurement on the column, a ruling lands on the one fact, `next`
   routes what a new metric's columns owe, and the ratio is sayable
   with its halves. The cost is statements: nine where A wrote one.
   Most are proposed rather than written: a detector reads the view's
   sources through lineage and proposes its columns' roles, and the
-  witness bands what it proposed.
+  test bands what it proposed.
 - **The no-claim rule.** At a coarser grain than the period column's
   cadence, with no behaviour on the value column, a reader refuses and
   names the gloss. A silent default is wrong for a stock and teaches

@@ -20,7 +20,7 @@ Every word glossql uses, beside the industry's: [terms](docs/terms.md).
 DECLARE ASPECT currency WITH $${"type": "object", "required": ["value"],
   "properties": {"value": {"type": "string", "pattern": "^[A-Z]{3}$"}}}$$
   AS FACT ON COLUMN WHEN role = 'measure';           -- required on every measure column
-DECLARE WITNESS currency_w ON currency BY (AGENT, HUMAN)
+DECLARE TEST currency_w ON currency BY (AGENT, HUMAN)
   DETECTOR slot_entropy THRESHOLD 0.7;              -- the test: who may annotate it; how disagreement is scored
 DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$
   AS MEASUREMENT ON COLUMN;
@@ -31,12 +31,12 @@ DECLARE FUNCTION min_max FOR GLOBAL AS
 - An **aspect** is a property of the harness schema: a JSON Schema for
   its values, the assets it applies to (dataset, table, column,
   relationship, source), and when it is required. It is asserted
-  (`FACT`), computed (`MEASUREMENT`), or a view (`QUERY`): a metric
+  (`FACT`), computed (`MEASUREMENT`), or a view (`VIEW`): a metric
   definition, a scalar, or a derived relation.
 - A **function** is one SQL query: a measurement (profiling,
   relationship discovery, quality screens) or a detector that scores a
   test.
-- A **test** (`WITNESS`) is declared on an aspect: which actors may
+- A **test** is declared on an aspect: which actors may
   annotate it, and which detector scores their agreement.
 - **Grants** (planned) give each actor the statements and datasets it
   needs, as in SQL.
@@ -59,7 +59,7 @@ IMPORT orders;                                           -- a load: a new DuckLa
 
 ```sql
 SELECT * FROM GLOSSARY(orders);  -- what is known: one row per asset and aspect, state current | stale | contested | unassessed
-SELECT * FROM ATTEST(orders);    -- the test results: a band and a score per asset and aspect
+SELECT * FROM TESTS(orders);    -- the test results: a band and a score per asset and aspect
 ```
 
 `stale` means the data changed after the annotation; `contested`, that
@@ -75,7 +75,7 @@ example of a domain kit. Each kit's `SKILL.md` teaches an agent what
 its words mean ([kits](kits/README.md)).
 
 ```sql
-FROM glossql_kit('kits/kpi/kit.sql');           -- vocabulary, functions, witnesses: one row per statement
+FROM glossql_kit('kits/kpi/kit.sql');           -- vocabulary, functions, tests: one row per statement
 FROM glossql_kit('kits/quality/kit.sql');       -- the screens over a dataset's cells, after the KPI kit
 ```
 
@@ -93,21 +93,21 @@ PRAGMA glossql;                                   -- the grammar for this connec
 DECLARE DATASET fin SET (purpose: 'working-capital analysis');
 USE fin;                                        -- a dataset is a schema of the lake; DuckDB's USE binds it
 DECLARE SOURCE erp SET (type: parquet, location: 's3://lake/erp');
-PROBE erp AS $$SELECT id, amount FROM read_parquet('orders/*.parquet') LIMIT 5$$;
+PREVIEW erp AS $$SELECT id, amount FROM read_parquet('orders/*.parquet') LIMIT 5$$;
 DECLARE RECIPE orders ON fin FROM erp SET (key: id)
   AS $$SELECT id::INTEGER AS id, amount::DOUBLE AS amount FROM read_parquet('orders/*.parquet')$$;
 IMPORT orders;                                  -- the recipe runs again; keyed tables merge; every load is a snapshot
 
 DECLARE ASPECT behavior WITH $${"type": "object", "properties": {"value": {"enum": ["stock", "flow"]}}}$$ AS FACT ON COLUMN;
 DECLARE FUNCTION behavior_entropy FOR fin AS $$ SELECT subject, ... AS band, ... AS score FROM slots GROUP BY subject $$;
-DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
+DECLARE TEST behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
 
 GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
 SET VARIABLE glossql_actor = 'human';           -- the actor rides the connection
 GLOSS behavior ON orders.amount AS $${"value": "stock"}$$;
 
 SELECT * FROM GLOSSARY(orders);                 -- (subject, aspect, value, band, score, state): current | contested | stale | unassessed
-SELECT * FROM ATTEST(orders.amount::behavior);  -- the test results
+SELECT * FROM TESTS(orders.amount::behavior);  -- the test results
 SELECT * FROM GLOSSARY(orders.amount, all => true);
 
 DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$ AS MEASUREMENT ON COLUMN;
@@ -115,7 +115,7 @@ DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FR
 SELECT min_max() FROM orders.amount;            -- stored with what it read; a repeat serves it while that is unchanged
 FROM min_max('fin.orders.amount');              -- the same function, as the table macro it is
 
-DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS QUERY;
+DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS VIEW;
 GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders"}$$;
 FROM fin.revenue;                               -- a metric definition is a view, and a table of the dataset
 GLOSS behavior ON revenue.revenue AS $${"value": "flow"}$$;  -- its columns are assets: annotate them like a table's

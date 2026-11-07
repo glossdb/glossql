@@ -1,7 +1,7 @@
 # Loading data
 
 You load data in three steps: name where it comes from (a source),
-preview the query that reads it (`PROBE`), then declare the load query
+preview the query that reads it (`PREVIEW`), then declare the load query
 (a recipe), which creates the table. `IMPORT` runs it again later.
 
 ## Declare a source
@@ -23,12 +23,12 @@ pushdown is the scanner's.
 
 ## Preview the load query
 
-`PROBE` runs a query at the source and loads nothing. The result
+`PREVIEW` runs a query at the source and loads nothing. The result
 always carries its schema, so `LIMIT 0` shows exactly the columns and
 types the table will get.
 
 ```sql
-PROBE erp_export AS $$SELECT id, amount FROM read_parquet('orders/*.parquet') LIMIT 0$$;
+PREVIEW erp_export AS $$SELECT id, amount FROM read_parquet('orders/*.parquet') LIMIT 0$$;
 ```
 
 ## Declare the load query

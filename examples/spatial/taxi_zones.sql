@@ -21,7 +21,7 @@ GLOSS shape ON zones.geom AS $${"value": "polygon", "represents": "a taxi zone's
 GLOSS crs ON zones.geom AS $${"value": "EPSG:2263", "unit": "US survey foot", "grounds": "ST_Read_Meta: NAD83 / New York Long Island (ftUS); the reader's column type carried it, the landed column does not"}$$;
 
 -- one question, grounded in the CRS's units
-DECLARE ASPECT borough_area WITH $${"title": "Area per borough"}$$ AS QUERY;
+DECLARE ASPECT borough_area WITH $${"title": "Area per borough"}$$ AS VIEW;
 GLOSS borough_area ON nyc AS $${"sql": "SELECT borough, round(sum(ST_Area(geom)) * 0.09290341 / 1e6, 2) AS sq_km, count(*) AS zones FROM nyc.zones GROUP BY borough ORDER BY borough", "assumptions": [{"dimension": "unit", "assumption": "ST_Area in EPSG:2263 is square US survey feet, 0.09290341 m2 each", "basis": "the crs gloss on zones.geom", "confidence": 0.9}]}$$;
 FROM nyc.borough_area;
 

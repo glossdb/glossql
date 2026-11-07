@@ -19,14 +19,14 @@ DECLARE ASPECT min_max WITH $${
   "properties": {"min": {}, "max": {}}
 }$$ AS MEASUREMENT ON COLUMN;
 
-DECLARE ASPECT revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS QUERY;
+DECLARE ASPECT revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS VIEW;
 ```
 
 | Kind | The value is | Validated against |
 |---|---|---|
 | `FACT` | stated by an agent or a person | the `WITH` schema |
 | `MEASUREMENT` | computed by a function; never written by hand | the `WITH` schema, at extraction ([measurements](measurements.md)) |
-| `QUERY` | SQL, served as a view under the property's name: a metric, a single value, or a derived relation | the metric contract below |
+| `VIEW` | SQL, served as a view under the property's name: a metric, a single value, or a derived relation | the metric contract below |
 
 Re-declaring with the same content does nothing. Changing a property
 that has values under it is refused: delete the values first.
@@ -35,7 +35,7 @@ that has values under it is refused: delete the values first.
 
 `ON DATASET | TABLE | COLUMN | RELATIONSHIP | SOURCE` lists the kinds of
 asset the property applies to. Without the clause it applies to any. A
-`QUERY` property takes no clause: a metric belongs to the dataset.
+`VIEW` property takes no clause: a metric belongs to the dataset.
 
 A `SOURCE` property's values are shared across every dataset that
 reads the source.
@@ -86,11 +86,11 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 
 ## Define a metric
 
-A `QUERY` value is SQL. The extension creates a view in the dataset's
+A `VIEW` value is SQL. The extension creates a view in the dataset's
 schema under the property's name:
 
 ```sql
-DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS QUERY;
+DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS VIEW;
 GLOSS revenue ON fin AS $${
   "sql": "SELECT sum(amount) AS revenue FROM fin.orders",
   "assumptions": [{"dimension": "scope", "key": "all-orders", "assumption": "every order is revenue", "confidence": 0.8}]

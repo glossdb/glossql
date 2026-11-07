@@ -288,7 +288,7 @@ WITH slots AS (
   SELECT g.aspect, g.subject, g.body, coalesce(json_extract_string(a.schema, '$."x-kind"'), '') AS flavor,
          row_number() OVER (PARTITION BY g.aspect, g.subject ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 ELSE 1 END, g.seq DESC) AS rk
   FROM main.glossary g JOIN main.aspects a ON a.name = g.aspect
-  WHERE g.dataset = ds AND a.kind = 'QUERY' AND json_extract_string(g.body, '$.sql') IS NOT NULL),
+  WHERE g.dataset = ds AND a.kind = 'VIEW' AND json_extract_string(g.body, '$.sql') IS NOT NULL),
 groundings AS (SELECT aspect, subject, flavor, json_extract_string(body, '$.sql') AS sql FROM slots WHERE rk = 1),
 canon AS (
   SELECT aspect, subject, flavor, sql,
@@ -921,7 +921,7 @@ $$ RETURNS temporal_profile;
 -- the same aspect is the check, its `breach_rate` the violation share
 -- (0.0 passes). Per subject: no check voice yet is yellow; a rate at or
 -- under the tolerance is green, above it red. The human's tolerance
--- outranks the agent's; the witness's THRESHOLD stands in while no
+-- outranks the agent's; the test's THRESHOLD stands in while no
 -- expectation carries one, and 0.0 when neither does. One-sided: a
 -- source whose expected dirt must not be cleaned away declares its own
 -- detector, red on both sides.

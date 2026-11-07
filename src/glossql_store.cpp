@@ -1,13 +1,13 @@
 // The glossql store: the workspace is an attached DuckLake, and the store
 // relations are tables in its metadata catalog, glossql_<relation> beside the
 // ducklake_* tables, written by the statements the grammar adds, read by
-// GLOSSARY() and ATTEST(), and deleted from by DELETE FROM glossary.
+// GLOSSARY() and TESTS(), and deleted from by DELETE FROM glossary.
 //
 // A dataset is a schema of the lake (SPEC §3): DECLARE DATASET fin creates
 // schema fin, DuckDB's own USE binds it, and an unprefixed subject resolves
 // against the connection's default schema. History is rows — every statement
 // appends; the reads collapse to the newest row per slot, human over agent
-// over function, a witness's detector judges the slots at read (SPEC §7), and
+// over function, a test's detector judges the slots at read (SPEC §7), and
 // a slot reads stale once its subject changed after the snapshot it was
 // written at (SPEC §5.2), a join against the lake's column history.
 
@@ -334,7 +334,7 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, "
 	 "pin VARCHAR, value VARCHAR NOT NULL, computed_at TIMESTAMP NOT NULL, reads VARCHAR",
 	 "", "seq, dataset, function, subject, aspect, pin, value::JSON AS value, computed_at, reads", "computed_at"},
-    {"witnesses",
+    {"tests",
 	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, speakers VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
 	 "declared_at TIMESTAMP NOT NULL",
 	 "aspect", "seq, name, aspect, from_json(speakers, '[\"VARCHAR\"]') AS speakers, detector, threshold, declared_at",
@@ -597,7 +597,7 @@ static AspectRow LookupAspect(Inner &inner, const string &name) {
 }
 
 //! The grounding schemas a kit declared: every aspect flavored `x-kind:
-//! grounding`, newest declaration per name. A QUERY body meets each of them
+//! grounding`, newest declaration per name. A VIEW body meets each of them
 //! after the grounding contract; a workspace without one runs on the contract
 static vector<pair<string, string>> GroundingSchemas(Inner &inner) {
 	vector<pair<string, string>> result;
@@ -618,8 +618,8 @@ static bool HasGrain(const AspectRow &aspect, const string &grain) {
 
 //! Admission of a gloss (SPEC §5.2, §7.1): the aspect is declared and not a
 //! MEASUREMENT; the body conforms to the aspect's schema (FACT) or the
-//! grounding contract and the kit's grounding schemas (QUERY); a TABLE or COLUMN grain takes landed
-//! subjects only; a witness's BY admits the actor's kind
+//! grounding contract and the kit's grounding schemas (VIEW); a TABLE or COLUMN grain takes landed
+//! subjects only; a test's BY admits the actor's kind
 static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &aspect_name, const string &subject,
                             const string &body, const string &actor) {
 	auto aspect = LookupAspect(inner, aspect_name);
@@ -629,12 +629,12 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 	}
 	if (aspect.flavor == "grounding") {
 		throw InvalidInputException(
-		    "glossql: aspect '%s' is a grounding schema: never glossed, it validates every QUERY gloss", aspect_name);
+		    "glossql: aspect '%s' is a grounding schema: never glossed, it validates every VIEW gloss", aspect_name);
 	}
-	// A QUERY body meets the grounding contract (sql or stopped, assumptions
+	// A VIEW body meets the grounding contract (sql or stopped, assumptions
 	// disclosed), then every grounding schema a kit declared; a FACT body meets
 	// the aspect's own WITH schema
-	if (aspect.kind == "QUERY") {
+	if (aspect.kind == "VIEW") {
 		auto error = JsonSchemaCheck(GROUNDING_CONTRACT, body);
 		if (!error.empty()) {
 			throw InvalidInputException("glossql: the body of %s does not meet the grounding contract: %s", aspect_name,
@@ -656,8 +656,8 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 	}
 	auto parts = SubjectParts(subject);
 	bool pair = subject.find(" -> ") != string::npos || subject.find(" <-> ") != string::npos;
-	if (aspect.kind == "QUERY" && (parts.size() != 1 || pair)) {
-		throw InvalidInputException("glossql: a QUERY aspect takes the dataset as its subject, not %s", subject);
+	if (aspect.kind == "VIEW" && (parts.size() != 1 || pair)) {
+		throw InvalidInputException("glossql: a VIEW aspect takes the dataset as its subject, not %s", subject);
 	}
 	// the grain gate (SPEC §5.1): the subject's class is one the aspect declared. A
 	// bare name is a source when one is declared by it, a dataset when a schema is,
@@ -696,7 +696,7 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 			throw InvalidInputException("glossql: %s is not a declared relationship", subject);
 		}
 	}
-	auto speakers = inner.Scalar("SELECT from_json(speakers, '[\"VARCHAR\"]') FROM " + inner.Store("witnesses") +
+	auto speakers = inner.Scalar("SELECT from_json(speakers, '[\"VARCHAR\"]') FROM " + inner.Store("tests") +
 	                             " WHERE aspect = " + QuoteText(aspect_name) + " ORDER BY seq DESC LIMIT 1");
 	if (speakers.IsNull()) {
 		return aspect;
@@ -712,7 +712,7 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 			return aspect;
 		}
 	}
-	throw InvalidInputException("glossql: the witness on '%s' admits %s, not %s", aspect_name,
+	throw InvalidInputException("glossql: the test on '%s' admits %s, not %s", aspect_name,
 	                            StringUtil::Join(names, ", "), actor);
 }
 
@@ -799,10 +799,10 @@ static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 	}
 	if (JsonStringField(row[1].ToString(), "x-kind") == "grounding") {
 		// existing bodies never silently stop matching their schema (SPEC §5.1):
-		// every current QUERY slot meets the schema before it is declared
+		// every current VIEW slot meets the schema before it is declared
 		auto rows = inner.Run("SELECT aspect, subject, body FROM " + inner.Store("glossary") +
 		                      " WHERE aspect IN (SELECT name FROM " + inner.Store("aspects") +
-		                      " WHERE kind = 'QUERY') QUALIFY row_number() OVER (PARTITION BY subject, aspect,"
+		                      " WHERE kind = 'VIEW') QUALIFY row_number() OVER (PARTITION BY subject, aspect,"
 		                      " actor_kind ORDER BY seq DESC) = 1 ORDER BY seq");
 		while (auto chunk = rows->Fetch()) {
 			for (idx_t i = 0; i < chunk->size(); i++) {
@@ -893,7 +893,7 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 		values = {
 		    QuoteText(DatasetOf(context, resolved)), QuoteText(resolved), bind.row[1].ToSQLString(), QuoteText(actor),
 		    ActorIdOf(context).ToSQLString(),        QuoteText(body),     snapshot.ToSQLString()};
-		if (aspect.kind == "QUERY") {
+		if (aspect.kind == "VIEW") {
 			Ground(inner, resolved, aspect.name, body);
 		}
 		outcome = "glossed " + bind.row[1].ToString() + " on " + resolved + " as " + actor;
@@ -1024,13 +1024,13 @@ static ParserExtensionPlanResult GlossPlan(ParserExtensionInfo *info, ClientCont
 		result.function = GlossRecipeFunction();
 	} else if (data.kind == "import") {
 		result.function = GlossImportFunction();
-	} else if (data.kind == "probe") {
-		result.function = GlossProbeFunction();
+	} else if (data.kind == "preview") {
+		result.function = GlossPreviewFunction();
 		modifies = false;
 	} else if (data.kind == "function") {
 		result.function = GlossFunctionFunction();
-	} else if (data.kind == "witness") {
-		result.function = GlossWitnessFunction();
+	} else if (data.kind == "test") {
+		result.function = GlossTestFunction();
 	} else {
 		throw InternalException("glossql: unknown statement kind '%s'", data.kind);
 	}
@@ -1053,10 +1053,10 @@ ParserExtension GlossParserExtension() {
 }
 
 //===--------------------------------------------------------------------===//
-// The reads: GLOSSARY() and ATTEST(), planned as subqueries over the store
+// The reads: GLOSSARY() and TESTS(), planned as subqueries over the store
 // (bind_replace), so they compose with any SQL. A dataset's rows — the slots
 // with their staleness, the detectors' verdicts, the collapse — are computed
-// on the second connection from the witnesses and detectors as they stand,
+// on the second connection from the tests and detectors as they stand,
 // once per store version, and kept by the instance; a bind serves them from
 // there, narrowed to its subject and aspect in SQL. The stale rule is planned
 // once per version, not once per bind.
@@ -1192,7 +1192,7 @@ static string SlotsSQL(const ReadScope &scope, const string &aspect_filter) {
 	       " QUALIFY row_number() OVER (PARTITION BY m.subject, m.aspect, m.function ORDER BY m.seq DESC) = 1)";
 }
 
-struct WitnessRow {
+struct TestRow {
 	string name;
 	string aspect;
 	string detector;
@@ -1206,44 +1206,44 @@ struct WitnessRow {
 	Value condition_types;
 };
 
-//! The witnesses as they stand, with their detector's script and their aspect's grains and condition
-static vector<WitnessRow> Witnesses(Inner &inner, const Value &aspect) {
-	vector<WitnessRow> result;
+//! The tests as they stand, with their detector's script and their aspect's grains and condition
+static vector<TestRow> Tests(Inner &inner, const Value &aspect) {
+	vector<TestRow> result;
 	auto rows = inner.Run(
 	    "SELECT w.name, w.aspect, w.detector, w.threshold, (SELECT f.script FROM " + inner.Store("functions") +
 	    " f WHERE f.name = w.detector AND f.returns IS NULL ORDER BY f.seq DESC LIMIT 1) AS script, "
 	    "from_json(a.grains, '[\"VARCHAR\"]'), a.condition::JSON->>'aspect',"
 	    " a.condition::JSON->>'value', a.condition::JSON->'type' FROM " +
-	    Newest(inner.ws, "witnesses") + " w LEFT JOIN " + Newest(inner.ws, "aspects") + " a ON a.name = w.aspect" +
+	    Newest(inner.ws, "tests") + " w LEFT JOIN " + Newest(inner.ws, "aspects") + " a ON a.name = w.aspect" +
 	    (aspect.IsNull() ? string() : " WHERE w.aspect = " + QuoteText(aspect.ToString())) + " ORDER BY w.aspect");
 	while (auto chunk = rows->Fetch()) {
 		for (idx_t i = 0; i < chunk->size(); i++) {
-			WitnessRow witness;
-			witness.name = chunk->GetValue(0, i).ToString();
-			witness.aspect = chunk->GetValue(1, i).ToString();
+			TestRow test;
+			test.name = chunk->GetValue(0, i).ToString();
+			test.aspect = chunk->GetValue(1, i).ToString();
 			auto detector = chunk->GetValue(2, i);
-			witness.detector = detector.IsNull() ? string() : detector.ToString();
-			witness.threshold = chunk->GetValue(3, i);
-			witness.script = chunk->GetValue(4, i);
+			test.detector = detector.IsNull() ? string() : detector.ToString();
+			test.threshold = chunk->GetValue(3, i);
+			test.script = chunk->GetValue(4, i);
 			auto grains = chunk->GetValue(5, i);
 			if (!grains.IsNull()) {
 				for (auto &grain : ListValue::GetChildren(grains)) {
-					witness.grains.push_back(grain.ToString());
+					test.grains.push_back(grain.ToString());
 				}
 			}
-			witness.condition_aspect = chunk->GetValue(6, i);
-			witness.condition_value = chunk->GetValue(7, i);
-			witness.condition_types = chunk->GetValue(8, i);
-			result.push_back(std::move(witness));
+			test.condition_aspect = chunk->GetValue(6, i);
+			test.condition_value = chunk->GetValue(7, i);
+			test.condition_types = chunk->GetValue(8, i);
+			result.push_back(std::move(test));
 		}
 	}
 	return result;
 }
 
-static constexpr const char *ATTEST_COLUMNS = "subject, aspect, witness, band, score, computed_at, current, error";
+static constexpr const char *TESTS_COLUMNS = "subject, aspect, test, band, score, computed_at, current, error";
 
 //! The verdict `error` (SPEC §7.2): one row per subject holding slots, score 0,
-//! the failure text; the detector's failure is its witness's verdict, never the read's
+//! the failure text; the detector's failure is its test's verdict, never the read's
 //! `current` on a verdict (SPEC §7.2): every function voice the verdict read
 //! stands at the read's pin; true where none spoke
 static string CurrentSQL(const string &slots) {
@@ -1257,7 +1257,7 @@ static string ErrorVerdictSQL(const string &head, const string &slots, const str
 	       QuoteText(failure) + " AS error FROM (" + slots + ") d";
 }
 
-static bool InAttestSchema(const Value &subject, const Value &band, const Value &score) {
+static bool InTestsSchema(const Value &subject, const Value &band, const Value &score) {
 	if (subject.IsNull() || band.IsNull() || score.IsNull()) {
 		return false;
 	}
@@ -1269,8 +1269,8 @@ static bool InAttestSchema(const Value &subject, const Value &band, const Value 
 	return value >= 0.0 && value <= 1.0;
 }
 
-//! The verdicts in scope: each witness's detector runs now, at read, over its
-//! slots on the second connection, and its rows serve in the standard attest
+//! The verdicts in scope: each test's detector runs now, at read, over its
+//! slots on the second connection, and its rows serve in the standard test-results
 //! schema (SPEC §7.2); a detector that cannot answer, or answers outside the
 //! schema, is the verdict `error`
 //! The slots of a read's scope, every aspect, as the hoisted relation every
@@ -1278,26 +1278,26 @@ static bool InAttestSchema(const Value &subject, const Value &band, const Value 
 //! the stale rule's joins again
 static constexpr const char *HOISTED = "slots_all";
 
-//! A witness's slots as a detector reads them, from the hoisted relation
-static string WitnessSlotsSQL(const string &relation, const string &aspect) {
+//! A test's slots as a detector reads them, from the hoisted relation
+static string TestSlotsSQL(const string &relation, const string &aspect) {
 	return "SELECT subject, aspect, actor AS speaker, body, NOT stale AS current FROM " + relation +
 	       " WHERE aspect = " + QuoteText(aspect);
 }
 
-static string VerdictsSQL(Inner &inner, const vector<WitnessRow> &witnesses, const ReadScope &scope) {
+static string VerdictsSQL(Inner &inner, const vector<TestRow> &tests, const ReadScope &scope) {
 	vector<string> parts;
 	// the detectors run at bind on the inner connection, over the scope's slots
 	// landed there once as a temporary table
 	bool landed = false;
-	for (auto &witness : witnesses) {
-		if (witness.detector.empty()) {
+	for (auto &test : tests) {
+		if (test.detector.empty()) {
 			continue;
 		}
-		auto slots = WitnessSlotsSQL(HOISTED, witness.aspect);
-		auto head = "'" + witness.aspect + "' AS aspect, '" + witness.name + "' AS witness, ";
-		if (witness.script.IsNull()) {
+		auto slots = TestSlotsSQL(HOISTED, test.aspect);
+		auto head = "'" + test.aspect + "' AS aspect, '" + test.name + "' AS test, ";
+		if (test.script.IsNull()) {
 			parts.push_back(
-			    ErrorVerdictSQL(head, slots, "detector " + witness.detector + " is not a declared function"));
+			    ErrorVerdictSQL(head, slots, "detector " + test.detector + " is not a declared function"));
 			continue;
 		}
 		if (!landed) {
@@ -1308,13 +1308,13 @@ static string VerdictsSQL(Inner &inner, const vector<WitnessRow> &witnesses, con
 			}
 			landed = true;
 		}
-		auto threshold = witness.threshold.IsNull() ? string("NULL") : witness.threshold.ToSQLString();
-		auto script = ReplacePlaceholder(witness.script.ToString(), "threshold", threshold);
+		auto threshold = test.threshold.IsNull() ? string("NULL") : test.threshold.ToSQLString();
+		auto script = ReplacePlaceholder(test.script.ToString(), "threshold", threshold);
 		// the script is a derived table under the slots CTE, so a body that opens
 		// with its own WITH composes
 		auto result = inner.con.Query(
 		    "SELECT d.subject::VARCHAR, d.band::VARCHAR, d.score::DOUBLE FROM (WITH slots AS (" +
-		    WitnessSlotsSQL("glossql_slots", witness.aspect) + ") SELECT * FROM (" + script + ") AS q) AS d");
+		    TestSlotsSQL("glossql_slots", test.aspect) + ") SELECT * FROM (" + script + ") AS q) AS d");
 		if (result->HasError()) {
 			parts.push_back(ErrorVerdictSQL(head, slots, FirstLine(result->GetError())));
 			continue;
@@ -1326,9 +1326,9 @@ static string VerdictsSQL(Inner &inner, const vector<WitnessRow> &witnesses, con
 				auto subject = chunk->GetValue(0, i);
 				auto band = chunk->GetValue(1, i);
 				auto score = chunk->GetValue(2, i);
-				if (!InAttestSchema(subject, band, score)) {
-					failure = "detector " + witness.detector + " served (" + subject.ToString() + ", " +
-					          band.ToString() + ", " + score.ToString() + "), outside the attest schema";
+				if (!InTestsSchema(subject, band, score)) {
+					failure = "detector " + test.detector + " served (" + subject.ToString() + ", " +
+					          band.ToString() + ", " + score.ToString() + "), outside the test-results schema";
 					break;
 				}
 				// the score travels as text: a double round-trips through its shortest decimal form
@@ -1346,23 +1346,23 @@ static string VerdictsSQL(Inner &inner, const vector<WitnessRow> &witnesses, con
 		}
 	}
 	if (parts.empty()) {
-		return "SELECT NULL::VARCHAR AS subject, NULL::VARCHAR AS aspect, NULL::VARCHAR AS witness, "
+		return "SELECT NULL::VARCHAR AS subject, NULL::VARCHAR AS aspect, NULL::VARCHAR AS test, "
 		       "NULL::VARCHAR AS band, NULL::DOUBLE AS score, NULL::TIMESTAMP AS computed_at, "
 		       "NULL::BOOLEAN AS current, NULL::VARCHAR AS error WHERE false";
 	}
 	return StringUtil::Join(parts, " UNION ALL ");
 }
 
-//! The subjects each witnessed aspect is owed on, by the aspect's grain
+//! The subjects each tested aspect is owed on, by the aspect's grain
 //! (SPEC §5.1): what the read discloses as unassessed when nobody spoke
-static string OwedSQL(const vector<WitnessRow> &witnesses, const ReadScope &scope) {
+static string OwedSQL(const vector<TestRow> &tests, const ReadScope &scope) {
 	vector<string> parts;
-	for (auto &witness : witnesses) {
-		auto grains = witness.grains;
+	for (auto &test : tests) {
+		auto grains = test.grains;
 		if (grains.empty()) {
 			grains = {"DATASET", "TABLE", "COLUMN", "RELATIONSHIP", "SOURCE"};
 		}
-		auto aspect = ", " + QuoteText(witness.aspect) + " AS aspect";
+		auto aspect = ", " + QuoteText(test.aspect) + " AS aspect";
 		auto dataset = QuoteText(scope.dataset);
 		auto columns = " FROM glossql_columns(" + dataset + ")";
 		vector<string> owed;
@@ -1385,19 +1385,19 @@ static string OwedSQL(const vector<WitnessRow> &witnesses, const ReadScope &scop
 			continue;
 		}
 		auto part = "SELECT subject, aspect FROM (" + StringUtil::Join(owed, " UNION ALL ") + ")";
-		if (!witness.condition_aspect.IsNull()) {
+		if (!test.condition_aspect.IsNull()) {
 			// owed only where the sibling's winning slot, human over agent, carries the literal (SPEC §5.1)
 			part += " WHERE subject IN (SELECT subject FROM (SELECT subject, body FROM " + string(HOISTED) +
-			        " WHERE aspect = " + QuoteText(witness.condition_aspect.ToString()) +
+			        " WHERE aspect = " + QuoteText(test.condition_aspect.ToString()) +
 			        " AND actor IN ('human', 'agent') QUALIFY row_number() OVER (PARTITION BY subject"
 			        " ORDER BY CASE actor WHEN 'human' THEN 0 ELSE 1 END, written_at DESC) = 1)"
 			        " WHERE body->>'value' = " +
-			        QuoteText(witness.condition_value.ToString()) + ")";
-		} else if (!witness.condition_types.IsNull()) {
+			        QuoteText(test.condition_value.ToString()) + ")";
+		} else if (!test.condition_types.IsNull()) {
 			// owed only on columns of the named types: the base type, DECIMAL for DECIMAL(18,2) (SPEC §5.1)
 			part += " WHERE subject IN (SELECT " + dataset + " || '.' || table_name || '.' || column_name" + columns +
 			        " WHERE upper(split_part(column_type, '(', 1)) IN (SELECT unnest(from_json(" +
-			        QuoteText(witness.condition_types.ToString()) + ", '[\"VARCHAR\"]'))))";
+			        QuoteText(test.condition_types.ToString()) + ", '[\"VARCHAR\"]'))))";
 		}
 		parts.push_back(part);
 	}
@@ -1410,11 +1410,11 @@ static string OwedSQL(const vector<WitnessRow> &witnesses, const ReadScope &scop
 }
 
 //! The collapsed read: one row per (subject, aspect) — the precedence pick,
-//! withheld while the witness's score exceeds its threshold; every gap visible
-static string CollapsedSQL(Inner &inner, const vector<WitnessRow> &witnesses, const ReadScope &scope,
+//! withheld while the test's score exceeds its threshold; every gap visible
+static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const ReadScope &scope,
                            const Value &aspect) {
 	auto aspect_filter = AspectFilter(aspect);
-	auto owed = OwedSQL(witnesses, scope);
+	auto owed = OwedSQL(tests, scope);
 	if (!aspect.IsNull()) {
 		owed = "SELECT * FROM (" + owed + ") WHERE aspect = " + QuoteText(aspect.ToString());
 	}
@@ -1425,10 +1425,10 @@ static string CollapsedSQL(Inner &inner, const vector<WitnessRow> &witnesses, co
 	       "), picked AS (SELECT subject, aspect, body AS value, stale FROM slots QUALIFY row_number() OVER ("
 	       "PARTITION BY subject, aspect ORDER BY CASE actor WHEN 'human' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END,"
 	       " written_at DESC) = 1), verdicts AS (" +
-	       VerdictsSQL(inner, witnesses, scope) +
+	       VerdictsSQL(inner, tests, scope) +
 	       "), judged AS (SELECT v.subject, v.aspect, v.band, v.score, w.threshold FROM verdicts v LEFT JOIN " +
-	       Newest(scope.ws, "witnesses") +
-	       " w ON w.name = v.witness QUALIFY row_number() OVER (PARTITION BY v.subject, v.aspect"
+	       Newest(scope.ws, "tests") +
+	       " w ON w.name = v.test QUALIFY row_number() OVER (PARTITION BY v.subject, v.aspect"
 	       " ORDER BY v.band = 'error', v.score DESC) = 1), owed AS (" +
 	       owed +
 	       ") SELECT * FROM ("
@@ -1443,12 +1443,12 @@ static string CollapsedSQL(Inner &inner, const vector<WitnessRow> &witnesses, co
 	       ") ORDER BY subject, aspect";
 }
 
-//! The raw read: one row per slot — (subject, aspect, kind, witness, actor, body, written_at, current)
+//! The raw read: one row per slot — (subject, aspect, kind, test, actor, body, written_at, current)
 static string RawSQL(const ReadScope &scope, const Value &aspect) {
-	return "SELECT s.subject, s.aspect, a.kind, w.name AS witness, s.actor, s.body, s.written_at,"
+	return "SELECT s.subject, s.aspect, a.kind, w.name AS test, s.actor, s.body, s.written_at,"
 	       " NOT s.stale AS current FROM (" +
 	       SlotsSQL(scope, AspectFilter(aspect)) + ") s LEFT JOIN " + Newest(scope.ws, "aspects") +
-	       " a ON a.name = s.aspect LEFT JOIN " + Newest(scope.ws, "witnesses") +
+	       " a ON a.name = s.aspect LEFT JOIN " + Newest(scope.ws, "tests") +
 	       " w ON w.aspect = s.aspect ORDER BY s.subject, s.aspect, s.actor";
 }
 
@@ -1580,7 +1580,7 @@ static string CacheKey(const string &lake, const string &kind, const string &dat
 
 //! The store's version: the lake's current snapshot and, per store relation,
 //! the highest seq, the row count and the newest stamp — everything a read's
-//! rows depend on, through the stale rule, the legs, the witnesses and the
+//! rows depend on, through the stale rule, the legs, the tests and the
 //! detectors. A write raises the seq; a delete lowers the count, and a row
 //! written after one is stamped later than the row whose seq it takes over
 static string StoreVersionSQL(const Workspace &ws) {
@@ -1609,13 +1609,13 @@ static string ReadSQL(Inner &inner, const string &kind, const ReadScope &whole) 
 		return RawSQL(whole, Value());
 	}
 	if (kind == "collapsed") {
-		return CollapsedSQL(inner, Witnesses(inner, Value()), whole, Value());
+		return CollapsedSQL(inner, Tests(inner, Value()), whole, Value());
 	}
-	if (kind == "attest") {
+	if (kind == "tests") {
 		return "WITH " + string(HOISTED) + " AS MATERIALIZED (" + SlotsSQL(whole, "") + ") SELECT " +
-		       string(ATTEST_COLUMNS) + " FROM (" + VerdictsSQL(inner, Witnesses(inner, Value()), whole) + ")";
+		       string(TESTS_COLUMNS) + " FROM (" + VerdictsSQL(inner, Tests(inner, Value()), whole) + ")";
 	}
-	throw InvalidInputException("glossql_cached serves a read: collapsed, raw or attest, not '%s'", kind);
+	throw InvalidInputException("glossql_cached serves a read: collapsed, raw or tests, not '%s'", kind);
 }
 
 //! One kind of read over a whole dataset: as kept while the store's version
@@ -1749,9 +1749,9 @@ static TableFunction GlossKeptViewFunction() {
 //! this connection fills a read
 static const char *const COLLAPSED_SHAPE = "subject VARCHAR, aspect VARCHAR, value JSON, band VARCHAR, score DOUBLE, "
                                            "state VARCHAR";
-static const char *const RAW_SHAPE = "subject VARCHAR, aspect VARCHAR, kind VARCHAR, witness VARCHAR, actor VARCHAR, "
+static const char *const RAW_SHAPE = "subject VARCHAR, aspect VARCHAR, kind VARCHAR, test VARCHAR, actor VARCHAR, "
                                      "body JSON, written_at TIMESTAMP, current BOOLEAN";
-static const char *const ATTEST_SHAPE = "subject VARCHAR, aspect VARCHAR, witness VARCHAR, band VARCHAR, "
+static const char *const TESTS_SHAPE = "subject VARCHAR, aspect VARCHAR, test VARCHAR, band VARCHAR, "
                                         "score DOUBLE, computed_at TIMESTAMP, current BOOLEAN, error VARCHAR";
 
 static unique_ptr<TableRef> Shape(const string &columns) {
@@ -1786,17 +1786,17 @@ static TableFunction GlossGlossaryFunction() {
 	return function;
 }
 
-static unique_ptr<TableRef> GlossAttestBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+static unique_ptr<TableRef> GlossTestsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	if (ReadFill::Of(context).filling) {
-		return Shape(ATTEST_SHAPE);
+		return Shape(TESTS_SHAPE);
 	}
 	auto scope = ScopeOf(context, input.inputs[0]);
-	return make_uniq<SubqueryRef>(ParseSelect(Narrowed("attest", scope, input.inputs[1], "subject, aspect, witness")));
+	return make_uniq<SubqueryRef>(ParseSelect(Narrowed("tests", scope, input.inputs[1], "subject, aspect, test")));
 }
 
-static TableFunction GlossAttestFunction() {
-	TableFunction function("glossql_attest", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr);
-	function.bind_replace = GlossAttestBindReplace;
+static TableFunction GlossTestsFunction() {
+	TableFunction function("glossql_tests", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr);
+	function.bind_replace = GlossTestsBindReplace;
 	return function;
 }
 
@@ -1810,7 +1810,7 @@ void RegisterGlossStore(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossWriteFunctions());
 	loader.RegisterFunction(GlossDeleteFunction());
 	loader.RegisterFunction(GlossGlossaryFunction());
-	loader.RegisterFunction(GlossAttestFunction());
+	loader.RegisterFunction(GlossTestsFunction());
 	loader.RegisterFunction(GlossCachedFunction());
 	loader.RegisterFunction(GlossKeptViewFunction());
 	loader.RegisterFunction(GlossColumnsFunctions());

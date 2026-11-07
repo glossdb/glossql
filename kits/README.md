@@ -2,13 +2,13 @@
 
 The extension ships the language and the store and no vocabulary. A kit
 is the vocabulary: a script of glossql declarations, aspects, functions
-and witnesses, with a `SKILL.md` beside it that teaches an actor the
+and tests, with a `SKILL.md` beside it that teaches an actor the
 words. The core validates what a kit declares; the kit decides what is
 said. A workspace runs kits of its own beside these, loaded after them.
 
 | Kit | Brings |
 |---|---|
-| `kpi/` | column and table vocabulary (`meaning`, `role`, `behavior` with `ratio` and its halves, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the `slot_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the witnesses that bind them; a metric's view carries the same words on its columns |
+| `kpi/` | column and table vocabulary (`meaning`, `role`, `behavior` with `ratio` and its halves, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the `slot_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the tests that bind them; a metric's view carries the same words on its columns |
 | `spatial/` | the geometry vocabulary: `shape` on a geometry column (`WHEN TYPE = 'GEOMETRY'`), the `crs` its coordinates are in, and the `geometry_profile` measurement; its first lines install and load DuckDB's spatial extension |
 | `quality/` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `grounding_collisions` and `behavior_anchors` as table macros, and the six measurements that land them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`, `behavior_evidence`, the stock/flow evidence over declared edges), the `temporal` profile, and the `rate_tolerance` detector that bands an authored expectation against a check voice; loaded after `kpi/` |
 
@@ -36,36 +36,36 @@ Loading a kit again with the same text runs only its `LOAD` and
 `INSTALL` lines: what it declared is already in the lake, and one row
 says so. A changed text runs whole and lands a new `kits` row: an
 unchanged aspect is a no-op, a function is re-declared, each test
-(`WITNESS`) lands a new row, and a changed aspect that has glosses under
+(`TEST`) lands a new row, and a changed aspect that has glosses under
 it is refused, as the language says.
 
 ## Writing one
 
 A kit is statements in order: aspects first, then the functions, then the
-witnesses that name both.
+tests that name both.
 
 - An aspect's `WITH` schema is a JSON Schema; the core validates every
   FACT body against it and every measurement's output against its
   aspect's. Annotations such as `title` or `x-kind` ride beside the
   structure.
-- The core validates every QUERY gloss against the grounding contract
+- The core validates every VIEW gloss against the grounding contract
   (`sql` or `stopped`, `assumptions`). What a reader of the view's rows
   needs — the period, the measure and its behaviour, the slices, the row
   identity — is glossed on the view and its columns under the kit's
   aspects, never keyed in the body. A kit whose readers need a body key
   of their own declares a schema for it, an aspect flavored `"x-kind":
-  "grounding"`: the core validates every QUERY gloss against each such
-  schema after the contract; it is never glossed, no witness names it,
-  and re-declaring it is refused while a current QUERY slot would stop
+  "grounding"`: the core validates every VIEW gloss against each such
+  schema after the contract; it is never glossed, no test names it,
+  and re-declaring it is refused while a current VIEW slot would stop
   matching.
 - A function's body is DuckDB SQL. A measurement (`RETURNS aspect`)
   becomes a table macro in the dataset's schema, or `glossql` for
   `GLOBAL`; `$subject` is its parameter and `subject_column($subject)` the
   subject's column as a relation named `v`. Names in the body resolve as
   they would in the declaring session. A detector (no `RETURNS`) runs
-  at read over its witness's `slots` with `$threshold` bound, and returns
+  at read over its test's `slots` with `$threshold` bound, and returns
   `(subject, band, score)`. A body may open with its own `WITH`. A detector
-  that fails serves its witness's verdict `error`, never a failed read.
+  that fails serves its test's verdict `error`, never a failed read.
 - What a measurement scans is what it is pinned to: the lake's tables and
   the store's relations, by name, read off the bound plan. A later
   extraction serves the landed row while those are unchanged and computes

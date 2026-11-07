@@ -38,7 +38,7 @@ statement ok
 DECLARE ASPECT entity WITH $${"type": "object"}$$ AS FACT ON TABLE;
 
 statement ok
-DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS QUERY;
+DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS VIEW;
 
 statement ok
 GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t"}$$;
@@ -158,7 +158,7 @@ fin.spend.value	current
 # --- a view over the view: the measurement's legs run through both
 
 statement ok
-DECLARE ASPECT spend_total WITH $${"title": "Spend, total"}$$ AS QUERY;
+DECLARE ASPECT spend_total WITH $${"title": "Spend, total"}$$ AS VIEW;
 
 statement ok
 GLOSS spend_total ON fin AS $${"sql": "SELECT sum(value) AS value FROM (SELECT * FROM spend) s"}$$;

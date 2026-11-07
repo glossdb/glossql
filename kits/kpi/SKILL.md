@@ -55,19 +55,19 @@ value withheld, the verdict `red` above 0.7. `meaning`, `entity` and
    "flow", "grounds": "sums over orders, never a balance"}$$;`. You speak
    as `agent`. A person's ruling arrives as `human`, which the wrapper
    sets with `SET VARIABLE glossql_actor = 'human'`; never set it yourself.
-5. Read the verdicts: `SELECT * FROM ATTEST(orders.amount::role);`. A red
+5. Read the verdicts: `SELECT * FROM TESTS(orders.amount::role);`. A red
    band is a disagreement to resolve by re-glossing, not to overwrite.
 
 ## Metrics
 
-A metric is a QUERY aspect, declared thin and grounded by a gloss on the
+A metric is a VIEW aspect, declared thin and grounded by a gloss on the
 dataset. The grounding is served as a view under the metric's name, and
 the view is a table of the dataset: its columns take this kit's words
 like a landed table's columns do, and that is where a reader of the
 numbers finds what it needs — never in the body.
 
 ```sql
-DECLARE ASPECT revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS QUERY;
+DECLARE ASPECT revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS VIEW;
 GLOSS revenue ON fin AS $${
   "sql": "SELECT month AS period, customer, sum(amount) AS value FROM fin.orders GROUP BY ALL",
   "assumptions": [{"dimension": "scope", "assumption": "amounts are net of tax",

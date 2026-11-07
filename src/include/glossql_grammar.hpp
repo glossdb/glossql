@@ -24,7 +24,7 @@ struct GlossStatementData : public ParserExtensionParseData {
 	    : kind(std::move(kind_p)), table(std::move(table_p)), row(std::move(row_p)), text(std::move(text_p)) {
 	}
 
-	//! write | delete | dataset | recipe | probe | import | function | witness
+	//! write | delete | dataset | recipe | preview | import | function | test
 	string kind;
 	//! the store relation, for a write or a delete
 	string table;
@@ -47,7 +47,7 @@ ParserExtension GlossParserExtension();
 //! Registers the store (glossql_store.cpp): the glossql_init pragma, the
 //! write and delete functions and the GLOSSARY() read
 void RegisterGlossStore(ExtensionLoader &loader);
-//! Registers the runner (glossql_runner.cpp): datasets, recipes, probes, imports
+//! Registers the runner (glossql_runner.cpp): datasets, recipes, previews, imports
 void RegisterGlossRunner(ExtensionLoader &loader);
 
 //! A dataset is a schema of the workspace's lake (SPEC §3): the USE'd dataset
@@ -99,10 +99,10 @@ TableFunction GlossWriteFunction(idx_t width);
 TableFunction GlossDeleteFunction();
 TableFunction GlossDatasetFunction();
 TableFunction GlossRecipeFunction();
-TableFunction GlossProbeFunction();
+TableFunction GlossPreviewFunction();
 TableFunction GlossImportFunction();
 TableFunction GlossFunctionFunction();
-TableFunction GlossWitnessFunction();
+TableFunction GlossTestFunction();
 TableFunction GlossExtractFunction();
 
 //! Registers json_schema_check (glossql_schema.cpp)

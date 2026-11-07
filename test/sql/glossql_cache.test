@@ -103,14 +103,14 @@ fin.orders.amount	current
 fin.orders.id	current
 fin.spend.total	stale
 
-# the kept rows are a read's: collapsed, raw or attest
+# the kept rows are a read's: collapsed, raw or tests
 statement error
 SELECT * FROM glossql_cached('verdicts', 'fin');
 ----
-collapsed, raw or attest, not 'verdicts'
+collapsed, raw or tests, not 'verdicts'
 
 query I
-SELECT count(*) FROM glossql_cached('attest', 'fin');
+SELECT count(*) FROM glossql_cached('tests', 'fin');
 ----
 0
 

@@ -19,7 +19,7 @@ statements.
 
 ## 1. The metric vocabulary (fixture 01/03's shape)
 
-One QUERY aspect per concept, on the dataset (the lead's placement).
+One VIEW aspect per concept, on the dataset (the lead's placement).
 Base concepts and derived metrics declare uniformly —
 fixture 03's finding, a metric *is* a concept; the difference is
 whether its SQL half is an extract (§2) or a formula over siblings
@@ -32,25 +32,25 @@ DECLARE ASPECT revenue WITH $${
   "title": "Revenue",
   "description": "Income recognized in the ledger",
   "x-kind": "measure", "x-unit": "currency"
-}$$ AS QUERY;
+}$$ AS VIEW;
 
 DECLARE ASPECT accounts_receivable WITH $${
   "title": "Accounts Receivable",
   "description": "Open receivables — a stock at (account, period) grain",
   "x-kind": "measure", "x-unit": "currency"
-}$$ AS QUERY;
+}$$ AS VIEW;
 
 DECLARE ASPECT dso WITH $${
   "title": "Days Sales Outstanding",
   "description": "Average days to collect a receivable",
   "x-kind": "metric", "x-unit": "days"
-}$$ AS QUERY;
+}$$ AS VIEW;
 
 DECLARE ASPECT gross_profit WITH $${
   "title": "Gross Profit",
   "description": "Revenue less expenses",
   "x-kind": "metric", "x-unit": "currency"
-}$$ AS QUERY;
+}$$ AS VIEW;
 ```
 
 ## 2. Concepts ground as extracts (fixture 07's shape, taken seriously)
@@ -132,7 +132,7 @@ consumer asks, the target carries it.
 **What a read proves may be recorded.** Pre-evaluation is computing
 before anyone asks; *recording* is keeping what a real read proved —
 the judged-join pattern. A composed evaluation the agent has verified
-against the oracle may land as the metric's own QUERY gloss (the
+against the oracle may land as the metric's own VIEW gloss (the
 durable executable knowledge — v0.3's snippet economy, post-record
 not pre-compute), superseding as definitions change; re-windowing
 recomposes from §2's extracts.
@@ -162,15 +162,15 @@ The formula is the pinned definition the scorecard calls
 definition-sensitive — it covers *every* window because it names
 none. Evaluation composes it from §2's extracts at the reader's
 window; a verified composition may be recorded as the metric's own
-QUERY gloss (§3). Two recorded evaluations arriving at the same
-number is a correct state; whether they reconcile is witness
+VIEW gloss (§3). Two recorded evaluations arriving at the same
+number is a correct state; whether they reconcile is test
 territory (fixture 07's coexistence finding).
 
 ## 5. Validations (fixture 04's ruled shape)
 
 Expectation as a FACT gloss; the check as a thin function **voice**
 (`RETURNS` the aspect, full door, fresh by the read's pin);
-a detector bands the slots; ATTEST is the verdict surface. Two of the
+a detector bands the slots; TESTS is the verdict surface. Two of the
 scorecard's four shown — the exact one and the one whose expectation
 is deliberately not zero:
 
@@ -215,14 +215,14 @@ DECLARE FUNCTION reconciliation_check FOR fin
   RETURNS bank_reconciliation;
 DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
 
-DECLARE WITNESS journal_balanced_w ON journal_balanced BY (AGENT, HUMAN)
+DECLARE TEST journal_balanced_w ON journal_balanced BY (AGENT, HUMAN)
   DETECTOR balance_bands THRESHOLD 0.5;
-DECLARE WITNESS bank_reconciliation_w ON bank_reconciliation BY (AGENT, HUMAN)
+DECLARE TEST bank_reconciliation_w ON bank_reconciliation BY (AGENT, HUMAN)
   DETECTOR balance_bands THRESHOLD 0.5;
 
 SELECT journal_balance_check() FROM journal_lines;
 SELECT reconciliation_check() FROM bank_transactions;
-SELECT * FROM ATTEST(journal_lines::journal_balanced);
+SELECT * FROM TESTS(journal_lines::journal_balanced);
 ```
 
 A check voice **speaks the aspect's schema** (fixture 06's
@@ -243,7 +243,7 @@ The framework's standing state is two reads; the app's metric DAG is
 the same rows drawn:
 
 ```glossql
-SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
+SELECT subject, band, score FROM TESTS(fin) WHERE band = 'red';
 SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
@@ -252,7 +252,7 @@ through the door — the scorecard runs this way (run-first).
 The bind lands when the UI transformation starts:
 **value-at-read as a namespaced table function** (closing the
 §9-parked enhancement) — the subject aspect's current
-QUERY gloss (an extract, or a recorded evaluation) expanded at read,
+VIEW gloss (an extract, or a recorded evaluation) expanded at read,
 the value arriving as an ordinary relation the reader composes
 around:
 
@@ -261,7 +261,7 @@ SELECT date_trunc('week', date) AS week, sum(value) FROM read.revenue() GROUP BY
 SELECT * FROM read.dso();
 ```
 
-`GLOSSARY` and `ATTEST` are the only FROM-position functions today,
+`GLOSSARY` and `TESTS` are the only FROM-position functions today,
 both grammar-fixed; `read.` is the first user-named family and the
 namespace prevents table collisions. The spelling parses under the
 grammar already — binding is engine work on the relation-planning
@@ -281,7 +281,7 @@ the `formulas` gloss, not regrouping `read.dso()`.
 ## Findings
 
 - **Exercises 01/03/04/07 end to end for the first time** — declare →
-  ground → check → attest as one sequence over real shapes, no new
+  ground → check → test as one sequence over real shapes, no new
   constructs anywhere.
 - **The checks are the first workspace-authored functions**
   (`FOR fin`, not `FOR GLOBAL`): the bootstrap ships measurements,
@@ -297,7 +297,7 @@ the `formulas` gloss, not regrouping `read.dso()`.
   the UI transformation starts; run-first until then. Fixture 15
   still holds the conformed-group fork. The prefix was `metric.`,
   renamed `read.` when it was ruled the one generic
-  serving door over every QUERY gloss — no alias; the flavor lives in
+  serving door over every VIEW gloss — no alias; the flavor lives in
   `x-kind`, never in the call syntax.
 - The `expected_rate: 0.895` gloss is the anti-overcleaning stance in
   one statement: the expectation is authored, never assumed zero.
@@ -312,7 +312,7 @@ the `formulas` gloss, not regrouping `read.dso()`.
   findings, a third list: **world-coverage wishes** — assumptions
   only more world can settle (an opening balance sheet anchoring
   every cumulative level), named as specific asks with the numbers
-  they would shift. A witness convention banding agent-only
+  they would shift. A test convention banding agent-only
   definitional glosses yellow was ruled *later* by the lead.
 - INFORMATION LOST (accepted): v0.3's interpretation ranges
   (EXCELLENT/GOOD bands per metric) stay in the aspect's `WITH`

@@ -72,7 +72,7 @@ GLOSS hierarchy ON customers AS $${"levels": ["country", "region", "city"], "kin
 GLOSS meaning ON orders_enriched AS $${"value": "orders with customer region and segment"}$$;
 ```
 
-Cross-fact reconciliation and drivers are measurements with witnesses; the
+Cross-fact reconciliation and drivers are measurements with tests; the
 grain check that today drops a bad join is a detector returning a red band on
 the view's subject:
 
@@ -84,11 +84,11 @@ DECLARE ASPECT reconciliation WITH $${
 DECLARE FUNCTION reconcile_aggregates FOR fin AS $$/* aggregate against its detail, residual per key */$$
   RETURNS reconciliation;
 DECLARE FUNCTION reconcile_bands FOR fin AS $$/* detector: bands the reconciliation slots */$$;
-DECLARE WITNESS reconciliation_w ON reconciliation
+DECLARE TEST reconciliation_w ON reconciliation
   DETECTOR reconcile_bands THRESHOLD 0.5;
 
 SELECT reconcile_aggregates() FROM fin;
-SELECT subject, band FROM ATTEST(fin::reconciliation) WHERE band = 'red';
+SELECT subject, band FROM TESTS(fin::reconciliation) WHERE band = 'red';
 
 DECLARE ASPECT driver_rankings WITH $${
   "type": "object", "properties": {"rankings": {"type": "array"}}
@@ -100,15 +100,15 @@ SELECT drivers() FROM fin.orders;
 
 ## Findings
 
-- **The flow transcribes as measure → read → declare/gloss → attest**, four
+- **The flow transcribes as measure → read → declare/gloss → test**, four
   general-purpose moves repeated per plane. No session construct, no phase
   list, no promote statement.
 - **The respell surfaced a hidden hole** (2026-08-04): `drivers` had a
   RETURNS schema but no aspect — its output was cache-only, unreachable
   through `GLOSSARY()`. With `RETURNS` an aspect reference the aspect had
-  to exist, so the rankings joined the vocabulary. The grain-check witness
+  to exist, so the rankings joined the vocabulary. The grain-check test
   became the model's cleanest form: a measurement aspect with only a
-  detector — `DECLARE WITNESS … ON reconciliation DETECTOR reconcile_bands`
+  detector — `DECLARE TEST … ON reconciliation DETECTOR reconcile_bands`
   — no `BY`, because nobody glosses a measurement.
 - The LLM/deterministic split in the real pipeline maps exactly onto actor
   kinds: every LLM phase becomes an agent connection writing glosses; every
@@ -119,4 +119,4 @@ SELECT drivers() FROM fin.orders;
   grammar collapse to cache + cache-row deletion + supersession keys.
 - The downstream context assembly for answer agents (ten-block served
   context) is fixture 09's dropped territory — the experiment: skills over
-  `GLOSSARY()` / `ATTEST()` reads instead of a serving layer.
+  `GLOSSARY()` / `TESTS()` reads instead of a serving layer.

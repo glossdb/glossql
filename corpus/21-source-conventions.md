@@ -46,7 +46,7 @@ USE fin_ap;
 
 SELECT value FROM GLOSSARY(erp_export) WHERE aspect = 'conventions';
 
-PROBE erp_export AS $$SELECT count(*) AS n, count(p_rec) AS reconciled_parsed
+PREVIEW erp_export AS $$SELECT count(*) AS n, count(p_rec) AS reconciled_parsed
 FROM (SELECT try_cast(reconciled AS BOOLEAN) AS p_rec
       FROM read_csv('bank_transactions.csv'))$$;
 

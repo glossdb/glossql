@@ -14,12 +14,12 @@ works](https://github.com/glossdb/glossdb/blob/main/docs/overview/how-it-works.m
 | an aspect's grain | scope | What the aspect applies to: `ON COLUMN`, `ON TABLE`, the dataset |
 | `FACT` aspect | asserted property | A value an actor states |
 | `MEASUREMENT` aspect | computed property | A value a function computes from the data |
-| `QUERY` aspect | view | SQL served as a view under the aspect's name: a metric, a scalar, or a derived relation |
+| `VIEW` aspect | view | SQL served as a view under the aspect's name: a metric, a scalar, or a derived relation |
 | gloss | annotation | One actor's value for one aspect on one asset, validated and versioned |
 | function | measurement | One SQL query that measures the data; its result is stored with its provenance |
 | detector | scoring function | A function that scores how far the values for an aspect agree |
-| test (`WITNESS`) | data test | Declared on an aspect: who may annotate it and which detector scores agreement, with a threshold |
-| `ATTEST()` | test results | One row per asset and aspect: band, score, whether it is current |
+| test (`DECLARE TEST`) | data test | Declared on an aspect: who may annotate it and which detector scores agreement, with a threshold |
+| `TESTS()` | test results | One row per asset and aspect: band, score, whether it is current |
 | `GLOSSARY()` | the glossary | What is known: one row per asset and aspect, with its state |
 | `current` · `stale` · `contested` · `unassessed` | valid · outdated · conflict · missing | The state of an asset's aspect in the glossary |
 | band | severity, confidence | green, yellow, orange, red, or error |
@@ -27,7 +27,7 @@ works](https://github.com/glossdb/glossdb/blob/main/docs/overview/how-it-works.m
 | source | connection | A directory, a URL prefix, or an attached database |
 | `RECIPE` | load query | The SQL that loads a table from a source |
 | `IMPORT` | load | Runs a load query; every load is a DuckLake snapshot with its row count and column lineage |
-| `PROBE` | dry run, preview | Runs a query on a source without loading |
+| `PREVIEW` | dry run, preview | Runs a query on a source without loading |
 | kit | rule pack | A domain's aspects, functions and tests, with a skill that teaches them |
 | actor | user, service account | An agent, a person, or a person working with an agent |
 

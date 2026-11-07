@@ -1,5 +1,5 @@
 # name: test/sql/glossql_datasets.test
-# description: datasets are schemas; sources, recipes, probes and imports ride DuckDB's own readers and ATTACH
+# description: datasets are schemas; sources, recipes, previews and imports ride DuckDB's own readers and ATTACH
 # group: [sql]
 
 require glossql
@@ -87,16 +87,16 @@ SELECT name, settings->>'type', settings->>'via' FROM sources ORDER BY name;
 crm_export	csv	NULL
 sheets	excel	NULL
 
-# --- PROBE: the rehearsal, executed at the source, landing nothing
+# --- PREVIEW: the rehearsal, executed at the source, landing nothing
 
 query IT
-PROBE crm_export AS $$SELECT id, segment FROM read_csv('segments.csv') ORDER BY id LIMIT 2$$;
+PREVIEW crm_export AS $$SELECT id, segment FROM read_csv('segments.csv') ORDER BY id LIMIT 2$$;
 ----
 0	seg0
 1	seg1
 
 statement error
-PROBE nowhere AS $$SELECT 1$$;
+PREVIEW nowhere AS $$SELECT 1$$;
 ----
 source 'nowhere' is not declared
 
@@ -344,7 +344,7 @@ statement ok
 DECLARE SOURCE crm SET (type: relational_db, location: 'crm');
 
 query IT
-PROBE crm AS $$SELECT id, segment FROM customer_segments ORDER BY id LIMIT 1$$;
+PREVIEW crm AS $$SELECT id, segment FROM customer_segments ORDER BY id LIMIT 1$$;
 ----
 0	tier0
 
@@ -360,7 +360,7 @@ statement ok
 DECLARE SOURCE detached SET (type: relational_db, location: 'nowhere');
 
 statement error
-PROBE detached AS $$SELECT 1$$;
+PREVIEW detached AS $$SELECT 1$$;
 ----
 not attached
 

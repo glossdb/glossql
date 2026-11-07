@@ -1,5 +1,5 @@
 # name: test/sql/glossql_kits.test
-# description: a kit is a script of declarations glossql_kit() loads; the KPI kit's vocabulary, grounding schema, detector, measurements and witnesses
+# description: a kit is a script of declarations glossql_kit() loads; the KPI kit's vocabulary, grounding schema, detector, measurements and tests
 # group: [sql]
 
 require glossql
@@ -38,9 +38,9 @@ SELECT count(*) FROM main.loaded;
 19
 
 query TT
-SELECT statement, outcome FROM main.loaded WHERE statement LIKE 'DECLARE WITNESS role_w%';
+SELECT statement, outcome FROM main.loaded WHERE statement LIKE 'DECLARE TEST role_w%';
 ----
-DECLARE WITNESS role_w ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;	declared witness role_w on role
+DECLARE TEST role_w ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;	declared test role_w on role
 
 query TTI
 SELECT name, location, statements FROM kits;
@@ -69,7 +69,7 @@ FROM glossql_kit('kits/nothing/kit.sql');
 ----
 nothing
 
-# --- the vocabulary is owed where a witness stands: role on every column, meaning and entity by grain;
+# --- the vocabulary is owed where a test stands: role on every column, meaning and entity by grain;
 # behavior, unit and dimension wait on a role (WHEN)
 
 query TTT
@@ -107,7 +107,7 @@ statement ok
 RESET VARIABLE glossql_actor;
 
 query TTR
-SELECT aspect, band, score FROM ATTEST(orders.amount::role);
+SELECT aspect, band, score FROM TESTS(orders.amount::role);
 ----
 role	red	1.0
 
@@ -123,7 +123,7 @@ role	NULL	contested
 # columns, under the kit's words — the kit declares no grounding schema
 
 statement ok
-DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS QUERY;
+DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS VIEW;
 
 statement ok
 GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders"}$$;

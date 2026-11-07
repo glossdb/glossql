@@ -1,6 +1,6 @@
 # Functions
 
-The functions the extension adds to DuckDB. `GLOSSARY()` and `ATTEST()`
+The functions the extension adds to DuckDB. `GLOSSARY()` and `TESTS()`
 are grammar; the rest are ordinary DuckDB functions any SQL can call.
 
 ## GLOSSARY
@@ -17,19 +17,19 @@ argument, the dataset in use.
 - Default: `(subject, aspect, value, band, score, state)`, one row per
   asset and property; `state` is `current`, `stale`, `contested` or
   `unassessed`.
-- `all => true`: `(subject, aspect, kind, witness, actor, body,
+- `all => true`: `(subject, aspect, kind, test, actor, body,
   written_at, current)`, one row per source of a value.
 - `subject::aspect` narrows to one property.
 
 See [reading](usage/reading.md).
 
-## ATTEST
+## TESTS
 
 ```sql
-SELECT * FROM ATTEST(orders.amount::behavior);
+SELECT * FROM TESTS(orders.amount::behavior);
 ```
 
-Test results: `(subject, aspect, witness, band, score, computed_at,
+Test results: `(subject, aspect, test, band, score, computed_at,
 current, error)`. Without an argument, the dataset in use. See
 [tests](usage/tests.md).
 

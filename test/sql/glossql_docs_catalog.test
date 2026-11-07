@@ -41,7 +41,7 @@ UNION ALL SELECT 'glossary' AS relation, column_name, column_type AS data_type F
 UNION ALL SELECT 'relationships' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_relationships)
 UNION ALL SELECT 'functions' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_functions)
 UNION ALL SELECT 'measurements' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_measurements)
-UNION ALL SELECT 'witnesses' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_witnesses);
+UNION ALL SELECT 'tests' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_tests);
 
 # one page per store table: the pages are the views PRAGMA glossql made in the lake's main schema, one per table
 query I

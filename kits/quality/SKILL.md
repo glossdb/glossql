@@ -115,22 +115,22 @@ A validation is a FACT aspect whose schema carries `tolerance` and
 `breach_rate`. Gloss the expectation with the tolerance you measured at
 landing, never an assumed zero. Declare a function that returns the
 same aspect and measures the violation share as `breach_rate`, 0.0
-passing. A witness on the aspect names the kit's detector:
+passing. A test on the aspect names the kit's detector:
 
 ```glossql
-DECLARE WITNESS ids_w ON ids_present BY (AGENT, HUMAN)
+DECLARE TEST ids_w ON ids_present BY (AGENT, HUMAN)
   DETECTOR rate_tolerance THRESHOLD 0.0;
 ```
 
-`ATTEST()` bands each subject: yellow while no check has spoken, green
+`TESTS()` bands each subject: yellow while no check has spoken, green
 at or under the tolerance, red above it. The human's tolerance outranks
-the agent's; the witness's threshold stands in while no gloss carries
+the agent's; the test's threshold stands in while no gloss carries
 one. The detector is one-sided: a source whose expected dirt must not
 be cleaned away declares its own, red on both sides.
 
 ## What this kit does not do
 
-No witness judges these measurements: they are evidence, served beside
+No test judges these measurements: they are evidence, served beside
 the glosses, not claims. Declaring an edge, a hierarchy gloss or a
 derived metric is the actor's statement, made from the evidence. The
 screens compare values as text within one stored type, read a NULL as

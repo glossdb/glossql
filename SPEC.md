@@ -21,7 +21,7 @@ Ground rules:
   Rendering conventions ride the schema. Authored prose is opaque.
 - **The actor rides the transport.** Every connection carries an actor
   (agent_id or human_id). An answer the door elicits from
-  the human mid-call is door-witnessed and lands with human standing —
+  the human mid-call is door-tested and lands with human standing —
   the same rule; the transport is just not always a connection (fixture
   22). There is no BY clause anywhere; the engine
   stamps writer and actor kind on every statement.
@@ -40,9 +40,9 @@ Ground rules:
   declared.
 - **A function's body is one SQL query.** A function with `RETURNS` is
   a measurement — its query runs over data at the read's pin; a
-  detector's query runs over its witness's `slots` relation. A
+  detector's query runs over its test's `slots` relation. A
   function is either a measurement or a detector, never a
-  metric. Metrics are concepts: QUERY aspects, run as their SQL (§5.1).
+  metric. Metrics are concepts: VIEW aspects, run as their SQL (§5.1).
   Analytical logic does not live in the grammar.
 
 ## 2. Origins
@@ -79,10 +79,11 @@ DECLARE RECIPE segments ON fin FROM crm AS $$SELECT id, segment FROM customer_se
 
 The recipe SQL runs **at the source**: a relational source executes it in
 its own dialect; at a file source the engine runs it, with `read_parquet` /
-`read_csv` / `read_json` resolving paths under the source's location and
-`try_to_date` / `try_to_timestamp` registered. **The recipe carries the
+`read_csv` / `read_json` resolving paths under the source's location, and
+DuckDB's `try_strptime(value, format)` parsing dates (a list of formats
+takes the first that parses; NULL on failure). **The recipe carries the
 casts**: typing is authored, not decided. The author
-probes the source first — `PROBE source AS $$sql$$` is the recipe
+probes the source first — `PREVIEW source AS $$sql$$` is the recipe
 rehearsal: the same SQL surface and path resolution, executed at the
 source, landing nothing, its result always carrying its schema (a
 `LIMIT 0` probe of the final SQL rehearses exactly the identity the
@@ -154,7 +155,7 @@ glossable like tables.
 
 ## 4. Subjects and relationships
 
-A **subject** is what a gloss, a function SELECT, or a witness attaches to:
+A **subject** is what a gloss, a function SELECT, or a test attaches to:
 
 - `dataset`
 - `dataset.table` — views count as tables
@@ -202,7 +203,7 @@ DECLARE ASPECT revenue WITH $${
   "description": "Income from sales or services",
   "x-kind": "measure",
   "x-indicators": ["revenue", "sales", "income", "turnover", "receipts"]
-}$$ AS QUERY;
+}$$ AS VIEW;
 
 DECLARE ASPECT min_max WITH $${
   "type": "object",
@@ -215,9 +216,9 @@ The kind fixes the aspect's role:
 - **FACT** — an authored JSON assertion (units are USD, `created_at` is a
   timestamp, this convention holds). The `WITH` schema validates the gloss
   body. Constants and formulas are FACT aspects — "cannot be grounded" means
-  simply not `AS QUERY`.
-- **QUERY** — an SQL-grounded concept (revenue, accounts_receivable, dso).
-  Metrics are QUERY aspects: the value materializes by running the grounding
+  simply not `AS VIEW`.
+- **VIEW** — an SQL-grounded concept (revenue, accounts_receivable, dso).
+  Metrics are VIEW aspects: the value materializes by running the grounding
   SQL, never through a function. Glosses validate against the **grounding
   contract** (§5.2), not the `WITH` schema; the `WITH` schema
   carries the ontology entry (description, indicators, parameters,
@@ -232,7 +233,7 @@ The kind fixes the aspect's role:
 
 The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP | SOURCE, …` list
 is the aspect's **grain**: the subject classes glosses (and a `RETURNS`
-binding) may attach to. Absent, the aspect speaks to all grains. A QUERY
+binding) may attach to. Absent, the aspect speaks to all grains. A VIEW
 aspect takes no grain clause: a metric is grounded on the dataset (§4),
 so its grain is the dataset. Disclosure
 (§5.3) stays within it: absence shows only on subjects the aspect is
@@ -294,13 +295,13 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 ```
 
 - You cannot gloss an aspect that was not declared. Admission validates the
-  body by the aspect's kind: FACT → the aspect's `WITH` schema, QUERY → the
+  body by the aspect's kind: FACT → the aspect's `WITH` schema, VIEW → the
   grounding contract, MEASUREMENT → rejected.
 - An aspect whose grain names `TABLE` or `COLUMN` takes only landed
   subjects: the table, and the column, must exist in the dataset. An
-  aspect without a grain clause takes the subject as spelled; a QUERY
+  aspect without a grain clause takes the subject as spelled; a VIEW
   aspect takes the dataset.
-- The **grounding contract** is fixed, like the attest schema (§7.2): what
+- The **grounding contract** is fixed, like the test-results schema (§7.2): what
   the engine reads of a grounding, and nothing a reader of its rows needs.
   It is open: a key it does not name passes, and a kit's grounding schema
   is what closes the body.
@@ -340,9 +341,9 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   and names the gloss; it defaults nothing.
 - A kit may declare a schema for a body key its readers need, an
   aspect flavored `x-kind: grounding`: the engine validates every
-  QUERY gloss against each such schema after the contract. The aspect
-  is never glossed, no witness names it, and re-declaring it is
-  refused while a current QUERY slot would stop matching.
+  VIEW gloss against each such schema after the contract. The aspect
+  is never glossed, no test names it, and re-declaring it is
+  refused while a current VIEW slot would stop matching.
 - `stopped` in place of `sql` records that the author serves no number,
   and why: what is missing, where, how much, what closes it. The read
   door refuses with that text, a reader of the view's rows abstains
@@ -359,10 +360,10 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   and a recipe on a grounded metric's name is refused.
 - **Supersession key: (subject, aspect, actor kind).** A human re-gloss
   supersedes the human's value; an agent's supersedes the agent's. The slots
-  stay separate; a witness adjudicates across them (§7).
-- Two QUERY glosses of the same aspect on different tables may coexist — two
+  stay separate; a test adjudicates across them (§7).
+- Two VIEW glosses of the same aspect on different tables may coexist — two
   ways to calculate revenue arriving at the same number is a correct state.
-  Whether they reconcile is a witness's job (a function voice runs both and
+  Whether they reconcile is a test's job (a function voice runs both and
   reports the residual; a detector bands it).
 - The glossary is an ordinary queryable relation; removal is SQL:
 
@@ -388,11 +389,11 @@ SELECT * FROM GLOSSARY(orders.amount);
 
 The default, collapsed read: one row per (subject, aspect) —
 `(subject, aspect, value, band, score, state)`. The value is the precedence
-pick — human over agent over function — withheld only when the witness
+pick — human over agent over function — withheld only when the test
 detector's score exceeds the threshold. `state` makes every gap visible;
 the read never hides one:
 
-- `unassessed` — a witness exists, nobody spoke. The row still appears
+- `unassessed` — a test exists, nobody spoke. The row still appears
   (absence is a visible row, never an omission — fixture 09's benchmark).
 - `contested` — entropy above the threshold; value withheld, band and
   score say how badly.
@@ -406,11 +407,11 @@ the read never hides one:
 SELECT * FROM GLOSSARY(orders.amount, all => true);
 ```
 
-The raw read: one row per (subject, aspect, kind, witness) —
-`(subject, aspect, kind, witness, actor, body, written_at, current)` —
+The raw read: one row per (subject, aspect, kind, test) —
+`(subject, aspect, kind, test, actor, body, written_at, current)` —
 every slot side by side; precedence between them is the reader's
 business. `kind` is the aspect's kind; who spoke is `actor`, under
-`witness`; `current` is false for a function voice an input of which
+`test`; `current` is false for a function voice an input of which
 has moved since it landed (§7).
 
 With no subject, `GLOSSARY()` sweeps the `USE`'d dataset. A subject serves
@@ -418,7 +419,7 @@ itself and what lies under it: a table serves its columns and every
 relationship it participates in, from either side; the far endpoint's own
 context is never pulled in.
 
-`subject::aspect` narrows either read to one declared aspect, as in ATTEST
+`subject::aspect` narrows either read to one declared aspect, as in TESTS
 (§7.2) — a metric's declaration and grounding SQL are one narrowed read
 away:
 
@@ -430,8 +431,8 @@ SELECT * FROM GLOSSARY(fin::dso);
 
 Functions registered with name, contract and body. A function is either
 a **measurement** — it fills a MEASUREMENT aspect through that aspect's
-witness (§7), its query running over data — or a **detector** (§7.1),
-whose query runs over its witness's `slots`. The library is the engine's
+test (§7), its query running over data — or a **detector** (§7.1),
+whose query runs over its test's `slots`. The library is the engine's
 analytical machinery (profiling, quality checks, detection) shipped as
 declarations; metrics are not functions (§5.1). Typing is not in it —
 the recipe carries the casts (§3).
@@ -479,11 +480,11 @@ $$;
   returned by functions too — each is a data-grounded *voice* whose
   output joins the spoken slots (§7), computed at read.
 - **No `RETURNS` declares a detector** — role by shape. A detector is
-  named only in a witness's `DETECTOR` clause. Its query plans over
-  the `slots` relation — the witness's raw rows (§5.3),
+  named only in a test's `DETECTOR` clause. Its query plans over
+  the `slots` relation — the test's raw rows (§5.3),
   narrowed to its aspect, with `speaker` and `current` beside them and
-  `body` typed by the slots' own JSON — and the witness `THRESHOLD`
-  binds as `$threshold`. Each returned row must satisfy the standard attest
+  `body` typed by the slots' own JSON — and the test `THRESHOLD`
+  binds as `$threshold`. Each returned row must satisfy the standard test-results
   contract (§7.2) — the engine's contract, not authored.
 - A measurement receives its subject as `$subject`; a detector's
   relation carries `subject` per row, so one query answers every
@@ -522,9 +523,9 @@ send one statement with many calls, or many statements; the grammar carries
 no ordering surface. Functions never write the glossary; their results
 land in `measurements`.
 
-## 7. Witnesses
+## 7. Tests
 
-A witness is declared per aspect, dataset-wide. Per (subject, aspect) it
+A test is declared per aspect, dataset-wide. Per (subject, aspect) it
 holds one slot per speaker: each function voice (the newest measurement
 of a function whose `RETURNS` names the aspect, §6 — served whatever
 its pin, marked `current` while what it read is unchanged), the agent's
@@ -533,12 +534,12 @@ gloss, the human's gloss — one value each.
 ### 7.1 Declaration
 
 ```sql
-DECLARE WITNESS behavior_w ON behavior
+DECLARE TEST behavior_w ON behavior
   BY (AGENT, HUMAN)
   DETECTOR behavior_entropy
   THRESHOLD 0.7;
 
-DECLARE WITNESS reconciliation_w ON reconciliation
+DECLARE TEST reconciliation_w ON reconciliation
   DETECTOR reconcile_bands THRESHOLD 0.5;
 ```
 
@@ -548,43 +549,43 @@ DECLARE WITNESS reconciliation_w ON reconciliation
   are never glossed.
 - `DETECTOR` names a function without `RETURNS` (§6) that examines the
   slots and returns band + score.
-- Both clauses are optional, but not together: a witness names `BY`, or
+- Both clauses are optional, but not together: a test names `BY`, or
   `DETECTOR`, or both. On a MEASUREMENT aspect only the detector form is
   possible — judgment applied to a measurement's output, as in the second
   example.
 - `THRESHOLD` (0..1) is the entropy cutoff used by the collapsed
   `GLOSSARY()` read (§5.3).
 
-### 7.2 Attestation
+### 7.2 Test results
 
 ```sql
-SELECT * FROM ATTEST(orders.amount::behavior);
-SELECT subject, band FROM ATTEST(fin.trial_balance) WHERE band = 'red';
+SELECT * FROM TESTS(orders.amount::behavior);
+SELECT subject, band FROM TESTS(fin.trial_balance) WHERE band = 'red';
 ```
 
-The **standard attest schema** is fixed:
-`(subject, aspect, witness, band, score, computed_at, current, error)` —
+The **standard test-results schema** is fixed:
+`(subject, aspect, test, band, score, computed_at, current, error)` —
 `band` in `green | yellow | orange | red | error`, `score` the
 disagreement/entropy in 0..1, `current` whether every function voice
 the verdict read stands at the read's pin, `error` null except where
 `band` is `error`.
 A detector's query returns the authored third of it — one
 `(subject, band, score)` row per subject — and the engine completes
-each row with the witness, its aspect, and its own clock.
+each row with the test, its aspect, and its own clock.
 A detector that cannot answer — unresolved from the reading dataset,
 a body that is not one SQL query, a plan or run the engine refuses —
-refuses nothing: the failure is served as that witness's verdict, one
+refuses nothing: the failure is served as that test's verdict, one
 row per subject holding slots, `band` `error` with `score` 0 and the
 failure text in `error`. An error is not a judgment: the §5.3
-collapse never withholds on it, and every other witness still speaks.
-Detectors run **at read**. A verdict belongs to its **witness**, not to
-its detector: one detector serving three witnesses holds three verdicts,
-computed from each witness's own slots against its own threshold.
+collapse never withholds on it, and every other test still speaks.
+Detectors run **at read**. A verdict belongs to its **test**, not to
+its detector: one detector serving three tests holds three verdicts,
+computed from each test's own slots against its own threshold.
 Detail lives in the value function's own output, reachable by
 SELECT. Sweeps ("all contested
-behavior columns") are WHERE clauses over the attest relation, never a
-special form; with no argument, `ATTEST()` sweeps the `USE`'d dataset.
-`subject::aspect` — the host's cast spelling — narrows attestation to one
+behavior columns") are WHERE clauses over the test-results relation, never a
+special form; with no argument, `TESTS()` sweeps the `USE`'d dataset.
+`subject::aspect` — the host's cast spelling — narrows test results to one
 declared aspect, unambiguously: `fin.trial_balance` names a table,
 `fin::reconciliation` an aspect across the dataset.
 
@@ -634,12 +635,12 @@ never by argument.
 PoC notes: batch visibility comes from (long-running) transactions — the
 running system's run_id + snapshot-head pointer is the verbose version of
 the same guarantee · the actor rides the transport — the connection,
-or a door-elicited answer, door-witnessed with human standing ·
-value-at-read: a QUERY aspect's
+or a door-elicited answer, door-tested with human standing ·
+value-at-read: a VIEW aspect's
 value is its view — `FROM dso`, or `FROM fin.dso` — the collapsed
 current grounding expanded at plan time, nesting allowed behind a
 cycle guard; running stays the reader's act: one serving door over
-every QUERY gloss, whatever flavor `x-kind` names.
+every VIEW gloss, whatever flavor `x-kind` names.
 
 Deferred, not under discussion: access rights · portability · persistence
 backend and engine mapping.

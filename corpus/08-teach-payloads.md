@@ -44,7 +44,7 @@ GLOSS type_patterns ON fin AS $${
     "name": "eu_date",
     "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$",
     "inferred_type": "DATE",
-    "standardization": "try_to_date(\"{col}\", '%d.%m.%Y')"
+    "standardization": "try_strptime(\"{col}\", '%d.%m.%Y')::DATE"
   }]
 }$$;
 ```
