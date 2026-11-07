@@ -175,3 +175,7 @@ release, like every grammar-level extension, because the grammar API is C++
 only (`duckdb_v2.h` exposes a tokenizer, not the grammar). The CLI parses a
 `-c` batch before executing it, so the grammar setting applies from the next
 batch; stdin and the test runner go statement by statement.
+
+## License
+
+MIT.
