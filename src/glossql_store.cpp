@@ -335,9 +335,9 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "pin VARCHAR, value VARCHAR NOT NULL, computed_at TIMESTAMP NOT NULL, reads VARCHAR",
 	 "", "seq, dataset, function, subject, aspect, pin, value::JSON AS value, computed_at, reads", "computed_at"},
     {"tests",
-	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, speakers VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
+	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
 	 "declared_at TIMESTAMP NOT NULL",
-	 "aspect", "seq, name, aspect, from_json(speakers, '[\"VARCHAR\"]') AS speakers, detector, threshold, declared_at",
+	 "aspect", "seq, name, aspect, from_json(actors, '[\"VARCHAR\"]') AS actors, detector, threshold, declared_at",
 	 "declared_at"},
 };
 
@@ -696,7 +696,7 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 			throw InvalidInputException("glossql: %s is not a declared relationship", subject);
 		}
 	}
-	auto speakers = inner.Scalar("SELECT from_json(speakers, '[\"VARCHAR\"]') FROM " + inner.Store("tests") +
+	auto speakers = inner.Scalar("SELECT from_json(actors, '[\"VARCHAR\"]') FROM " + inner.Store("tests") +
 	                             " WHERE aspect = " + QuoteText(aspect_name) + " ORDER BY seq DESC LIMIT 1");
 	if (speakers.IsNull()) {
 		return aspect;

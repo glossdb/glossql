@@ -114,7 +114,7 @@ disagreement to resolve by re-glossing with grounds, not to overwrite.
 | `SELECT … FROM TESTS(subject \| subject::aspect);` | the tests' verdicts |
 | `DECLARE FUNCTION f FOR fin\|GLOBAL AS $$sql$$ [RETURNS aspect];` | a measurement (`RETURNS`: a table macro over `subject_column($subject)`) or a detector (no `RETURNS`: runs at read over the test's `slots` with `$threshold`) |
 | `SELECT f() FROM orders.amount;` | extract: compute and land the measurement, or serve the landed row while what it read is unchanged (`computed` says which) |
-| `DECLARE TEST w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication |
+| `DECLARE TEST w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit actors, wire the scoring |
 | `FROM glossql_kit('path-or-url');` | run a kit's declarations, one row each, and land a kits row with the text's hash; run again unchanged, as the opener does at every start-up, the kit stands in one row and only its LOAD lines run; changed, it runs whole |
 | `FROM glossql_lineage($$sql$$);` | every output column of a SELECT down to the base scans, `(column, derivation, complete)` |
 
@@ -156,7 +156,7 @@ reads the one source, and a gloss from any dataset supersedes.
   `relationships (seq, dataset, left_side, op, right_side,
   declared_at)` · `aspects (seq, name, kind, grains, condition, schema,
   declared_at)` · `functions (seq, name, scope, script, returns,
-  declared_at)` · `tests (seq, name, aspect, speakers, detector,
+  declared_at)` · `tests (seq, name, aspect, actors, detector,
   threshold, declared_at)` · `glossary (seq, dataset, subject, aspect,
   actor_kind, actor_id, body, snapshot_id, written_at)` ·
   `measurements (seq, dataset, function, subject, aspect, pin, value,

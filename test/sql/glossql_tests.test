@@ -50,7 +50,7 @@ DECLARE TEST behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy 
 test behavior_w unchanged: no-op
 
 query TTTTR
-SELECT name, aspect, speakers, detector, threshold FROM tests;
+SELECT name, aspect, actors, detector, threshold FROM tests;
 ----
 behavior_w	behavior	[AGENT, HUMAN]	behavior_entropy	0.7
 
@@ -193,7 +193,7 @@ GLOSS nothing ON orders.amount AS $${}$$;
 ----
 aspect 'nothing' is not declared
 
-# --- BY gates the speakers
+# --- BY gates the actors
 
 statement ok
 DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON TABLE;

@@ -35,7 +35,7 @@ SELECT name, kind, grains FROM aspects;
 `role`, `behavior` and `unit` are judged by `slot_entropy`: when the
 agent's and the human's values differ, the claim is `contested`, its
 value withheld, the verdict `red` above 0.7. `meaning`, `entity` and
-`dimension` take both speakers without a detector.
+`dimension` take both kinds of actor without a detector.
 
 ## The order of a round
 

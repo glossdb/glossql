@@ -712,7 +712,7 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 	auto &threshold = inputs[4];
 
 	Inner inner(context);
-	auto declared = inner.Row("SELECT aspect, speakers, detector, threshold FROM " + inner.Store("tests") +
+	auto declared = inner.Row("SELECT aspect, actors, detector, threshold FROM " + inner.Store("tests") +
 	                          " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
 	if (!declared.empty() && declared[0].ToString() == aspect && declared[1].ToString() == JsonList(inputs[2]) &&
 	    SameValue(declared[2], detector) &&
