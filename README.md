@@ -9,6 +9,8 @@ table functions to DuckDB SQL, and keeps its catalog in a DuckLake beside
 the lake's own catalog tables, so what is known about the data is
 versioned with the data.
 
+Every word glossql uses, beside the industry's: [terms](docs/terms.md).
+
 ## Declare what must be known
 
 ```sql
