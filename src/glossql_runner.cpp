@@ -2110,7 +2110,7 @@ static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk 
 			state.rows.emplace_back(head, outcome);
 		}
 		if (stands) {
-			state.rows.emplace_back(name, "stands");
+			state.rows.emplace_back(name, "current");
 		} else {
 			inner.Run("INSERT INTO " + inner.Store("kits") + " VALUES (" + inner.Seq("kits") + ", " + QuoteText(name) +
 			          ", " + QuoteText(path) + ", " + to_string(state.rows.size()) + ", now(), " + QuoteText(hash) +
