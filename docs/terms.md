@@ -3,7 +3,7 @@
 The words glossql uses, beside the industry's. Each is defined once
 here. The normative definitions are in [SPEC.md](../SPEC.md). How a
 server builds a harness for agents on them: [how the harness
-works](https://github.com/glossdb/glossdb/blob/main/docs/harness.md).
+works](https://github.com/glossdb/glossdb/blob/main/docs/overview/how-it-works.md).
 
 ## The language
 
