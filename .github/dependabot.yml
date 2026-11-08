@@ -1,0 +1,10 @@
+# What moves on its own: the actions this repository's workflow pins by
+# commit. DuckDB and its CI tools (the duckdb and extension-ci-tools
+# submodules, and the versions the workflow names) move by hand, together
+# with the glossdb server's pin (docs/internals/updating-duckdb.md).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

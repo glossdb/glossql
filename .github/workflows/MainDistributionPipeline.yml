@@ -20,6 +20,8 @@ jobs:
       duckdb_version: v2.0.0
       ci_tools_version: v2.0-cyanoptera
       extension_name: glossql
+      # the platforms the server ships on and laptops build for: no wasm, no Windows
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64;windows_arm64;windows_amd64_mingw;windows_amd64_rtools'
 
   # The format is this repository's: the venv's clang-format, pinned in the
   # Makefile, over the sources, run here as `make lint-format` runs on a laptop
