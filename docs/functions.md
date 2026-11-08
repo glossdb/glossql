@@ -53,8 +53,9 @@ FROM glossql_lineage($$SELECT id, amount * 2 AS twice FROM fin.orders$$);
 complete BOOLEAN)`. What computes each output column of a `SELECT`, read
 off its bound plan; a leaf is `scan.column:type`.
 
-`glossql_views_lineage(dataset VARCHAR)` → `(view, column, derivation,
-complete)`: the same for every view of a dataset. See
+`glossql_views_lineage(dataset VARCHAR)` → `(dataset, view, column,
+derivation, complete)`: the same for every view of a dataset, or of
+every dataset when `dataset` is NULL. See
 [lineage](usage/lineage.md).
 
 ## glossql_columns
