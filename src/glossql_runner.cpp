@@ -573,7 +573,7 @@ struct PreviewState : public GlobalTableFunctionState {
 };
 
 static unique_ptr<FunctionData> PreviewBind(ClientContext &context, TableFunctionBindInput &input,
-                                          vector<LogicalType> &return_types, vector<Identifier> &names) {
+                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<RunnerBindData>();
 	result->inputs = input.inputs;
 	auto source = input.inputs[0].ToString();
@@ -728,8 +728,7 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 	}
 	auto &kind = standing[0];
 	if (!standing[1].IsNull() && standing[1].ToString() == "grounding") {
-		throw InvalidInputException("glossql: a test on grounding schema '%s' is refused: it judges nothing",
-		                            aspect);
+		throw InvalidInputException("glossql: a test on grounding schema '%s' is refused: it judges nothing", aspect);
 	}
 	if (kind.ToString() == "MEASUREMENT" && !speakers.empty()) {
 		throw InvalidInputException("glossql: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
@@ -745,9 +744,9 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 			                            row[0].ToString());
 		}
 	}
-	inner.Run("INSERT INTO " + inner.Store("tests") + " VALUES (" + inner.Seq("tests") + ", " +
-	          QuoteText(name) + ", " + QuoteText(aspect) + ", " + QuoteText(JsonList(inputs[2])) + ", " +
-	          detector.ToSQLString() + ", " + threshold.ToSQLString() + ", now())");
+	inner.Run("INSERT INTO " + inner.Store("tests") + " VALUES (" + inner.Seq("tests") + ", " + QuoteText(name) + ", " +
+	          QuoteText(aspect) + ", " + QuoteText(JsonList(inputs[2])) + ", " + detector.ToSQLString() + ", " +
+	          threshold.ToSQLString() + ", now())");
 	Outcome(output, "declared test " + name + " on " + aspect);
 }
 

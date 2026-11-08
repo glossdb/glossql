@@ -1296,8 +1296,7 @@ static string VerdictsSQL(Inner &inner, const vector<TestRow> &tests, const Read
 		auto slots = TestSlotsSQL(HOISTED, test.aspect);
 		auto head = "'" + test.aspect + "' AS aspect, '" + test.name + "' AS test, ";
 		if (test.script.IsNull()) {
-			parts.push_back(
-			    ErrorVerdictSQL(head, slots, "detector " + test.detector + " is not a declared function"));
+			parts.push_back(ErrorVerdictSQL(head, slots, "detector " + test.detector + " is not a declared function"));
 			continue;
 		}
 		if (!landed) {
@@ -1312,9 +1311,9 @@ static string VerdictsSQL(Inner &inner, const vector<TestRow> &tests, const Read
 		auto script = ReplacePlaceholder(test.script.ToString(), "threshold", threshold);
 		// the script is a derived table under the values CTE, so a body that opens
 		// with its own WITH composes
-		auto result = inner.con.Query(
-		    "SELECT d.subject::VARCHAR, d.band::VARCHAR, d.score::DOUBLE FROM (WITH slots AS (" +
-		    TestSlotsSQL("glossql_slots", test.aspect) + ") SELECT * FROM (" + script + ") AS q) AS d");
+		auto result =
+		    inner.con.Query("SELECT d.subject::VARCHAR, d.band::VARCHAR, d.score::DOUBLE FROM (WITH slots AS (" +
+			                TestSlotsSQL("glossql_slots", test.aspect) + ") SELECT * FROM (" + script + ") AS q) AS d");
 		if (result->HasError()) {
 			parts.push_back(ErrorVerdictSQL(head, slots, FirstLine(result->GetError())));
 			continue;
@@ -1327,8 +1326,8 @@ static string VerdictsSQL(Inner &inner, const vector<TestRow> &tests, const Read
 				auto band = chunk->GetValue(1, i);
 				auto score = chunk->GetValue(2, i);
 				if (!InTestsSchema(subject, band, score)) {
-					failure = "detector " + test.detector + " served (" + subject.ToString() + ", " +
-					          band.ToString() + ", " + score.ToString() + "), outside the test-results schema";
+					failure = "detector " + test.detector + " served (" + subject.ToString() + ", " + band.ToString() +
+					          ", " + score.ToString() + "), outside the test-results schema";
 					break;
 				}
 				// the score travels as text: a double round-trips through its shortest decimal form
@@ -1411,8 +1410,7 @@ static string OwedSQL(const vector<TestRow> &tests, const ReadScope &scope) {
 
 //! The collapsed read: one row per (subject, aspect) — the precedence pick,
 //! withheld while the test's score exceeds its threshold; every gap visible
-static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const ReadScope &scope,
-                           const Value &aspect) {
+static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const ReadScope &scope, const Value &aspect) {
 	auto aspect_filter = AspectFilter(aspect);
 	auto owed = OwedSQL(tests, scope);
 	if (!aspect.IsNull()) {
@@ -1752,7 +1750,7 @@ static const char *const COLLAPSED_SHAPE = "subject VARCHAR, aspect VARCHAR, val
 static const char *const RAW_SHAPE = "subject VARCHAR, aspect VARCHAR, kind VARCHAR, test VARCHAR, actor VARCHAR, "
                                      "body JSON, written_at TIMESTAMP, current BOOLEAN";
 static const char *const TESTS_SHAPE = "subject VARCHAR, aspect VARCHAR, test VARCHAR, band VARCHAR, "
-                                        "score DOUBLE, computed_at TIMESTAMP, current BOOLEAN, error VARCHAR";
+                                       "score DOUBLE, computed_at TIMESTAMP, current BOOLEAN, error VARCHAR";
 
 static unique_ptr<TableRef> Shape(const string &columns) {
 	vector<string> parts;

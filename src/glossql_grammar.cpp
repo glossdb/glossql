@@ -706,8 +706,8 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 
 	// New words are unreserved: still usable as column and table names
 	for (auto keyword :
-	     {"'GLOSS'", "'GLOSSARY'", "'ASPECT'", "'RELATIONSHIP'", "'FACT'", "'MEASUREMENT'", "'DATASET'",
-	      "'RECIPE'", "'PREVIEW'", "'TEST'", "'DETECTOR'", "'THRESHOLD'", "'AGENT'", "'HUMAN'", "'TESTS'"}) {
+	     {"'GLOSS'", "'GLOSSARY'", "'ASPECT'", "'RELATIONSHIP'", "'FACT'", "'MEASUREMENT'", "'DATASET'", "'RECIPE'",
+	      "'PREVIEW'", "'TEST'", "'DETECTOR'", "'THRESHOLD'", "'AGENT'", "'HUMAN'", "'TESTS'"}) {
 		changes.push_back(GrammarChange::AddChoice("UnreservedKeyword", keyword));
 	}
 
