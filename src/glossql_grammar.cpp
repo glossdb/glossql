@@ -161,7 +161,7 @@ static string SubjectText(PEGTransformer &transformer, ParseResult &parse_result
 }
 
 //===--------------------------------------------------------------------===//
-// Settings: SET (key: value, ...) lands as one JSON object, the pairs verbatim;
+// Settings: SET (key: value, ...) is stored as one JSON object, the pairs verbatim;
 // which keys a statement takes is a JSON Schema the extension holds, checked
 // here, at parse
 //===--------------------------------------------------------------------===//
@@ -180,7 +180,7 @@ static constexpr const char *RECIPE_SETTINGS =
     R"({"type": "object", "additionalProperties": false, "properties": {"key": {"type": "string"}}})";
 
 //! GlossPair <- Identifier ':' GlossPairValue ; GlossPairValue <- StringLiteral / NumberLiteral / Identifier
-//! The value as JSON: a string or a name is a JSON string, a number stands as written
+//! The value as JSON: a string or a name is a JSON string, a number holds as written
 static pair<string, string> PairOf(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	auto key = StringUtil::Lower(Ident(transformer, list.GetChild(0)));
@@ -290,14 +290,14 @@ static arena_ptr<TransformResultValue> FinalizeDeclareRecipe(PEGTransformer &tra
 }
 GLOSSQL_TRANSFORM(StartDeclareRecipe, FinalizeDeclareRecipe)
 
-//! GlossProbe <- 'PROBE' Identifier 'AS' StringLiteral
-static arena_ptr<TransformResultValue> FinalizeProbe(PEGTransformer &transformer, ParseResult &parse_result) {
+//! GlossPreview <- 'PREVIEW' Identifier 'AS' StringLiteral
+static arena_ptr<TransformResultValue> FinalizePreview(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	auto source = Ident(transformer, list.GetChild(1));
 	auto sql = Text(transformer, list.GetChild(3));
-	return MakeStatement(transformer, "probe", "", {Value(source), Value(sql)}, "PROBE " + source);
+	return MakeStatement(transformer, "preview", "", {Value(source), Value(sql)}, "PREVIEW " + source);
 }
-GLOSSQL_TRANSFORM(StartProbe, FinalizeProbe)
+GLOSSQL_TRANSFORM(StartPreview, FinalizePreview)
 
 //! GlossImport <- 'IMPORT' Identifier GlossPathTail?
 static arena_ptr<TransformResultValue> FinalizeImport(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -475,11 +475,11 @@ static arena_ptr<TransformResultValue> FinalizeExtract(PEGTransformer &transform
 }
 GLOSSQL_TRANSFORM(StartExtract, FinalizeExtract)
 
-//! GlossDeclareWitness <- 'DECLARE' 'WITNESS' Identifier 'ON' Identifier GlossBy? GlossDetector?
+//! GlossDeclareTest <- 'DECLARE' 'TEST' Identifier 'ON' Identifier GlossBy? GlossDetector?
 //!                          GlossThreshold?
 //! GlossBy <- 'BY' Parens(List(GlossSpeaker)) ; GlossSpeaker <- GlossSpeakerAgent / GlossSpeakerHuman
 //! GlossDetector <- 'DETECTOR' Identifier ; GlossThreshold <- 'THRESHOLD' NumberLiteral
-static arena_ptr<TransformResultValue> FinalizeDeclareWitness(PEGTransformer &transformer, ParseResult &parse_result) {
+static arena_ptr<TransformResultValue> FinalizeDeclareTest(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	auto name = Ident(transformer, list.GetChild(2));
 	auto aspect = Ident(transformer, list.GetChild(4));
@@ -502,21 +502,21 @@ static arena_ptr<TransformResultValue> FinalizeDeclareWitness(PEGTransformer &tr
 		auto text = transformer.Transform<unique_ptr<ParsedExpression>>(number)->ToString();
 		double value = std::stod(text);
 		if (value < 0 || value > 1) {
-			throw ParserException("DECLARE WITNESS: THRESHOLD is in 0..1, not %s", text);
+			throw ParserException("DECLARE TEST: THRESHOLD is in 0..1, not %s", text);
 		}
 		threshold = Value::DOUBLE(value);
 	}
 	if (speakers.empty() && detector.IsNull()) {
-		throw ParserException("DECLARE WITNESS names BY or DETECTOR, or both");
+		throw ParserException("DECLARE TEST names BY or DETECTOR, or both");
 	}
 	return MakeStatement(
-	    transformer, "witness", "",
+	    transformer, "test", "",
 	    {Value(name), Value(aspect), Value::LIST(LogicalType::VARCHAR, std::move(speakers)), detector, threshold},
-	    "DECLARE WITNESS " + name + " ON " + aspect);
+	    "DECLARE TEST " + name + " ON " + aspect);
 }
-GLOSSQL_TRANSFORM(StartDeclareWitness, FinalizeDeclareWitness)
+GLOSSQL_TRANSFORM(StartDeclareTest, FinalizeDeclareTest)
 
-//! GlossAspectKind <- GlossKindMeasurement / GlossKindFact / GlossKindQuery
+//! GlossAspectKind <- GlossKindMeasurement / GlossKindFact / GlossKindView
 static string AspectKindText(ParseResult &parse_result) {
 	auto &kind = GetChoice(parse_result);
 	if (IsRule(kind, "GlossKindMeasurement")) {
@@ -525,7 +525,7 @@ static string AspectKindText(ParseResult &parse_result) {
 	if (IsRule(kind, "GlossKindFact")) {
 		return "FACT";
 	}
-	return "QUERY";
+	return "VIEW";
 }
 
 //! GlossGrain <- GlossGrainDataset / GlossGrainTable / GlossGrainColumn / GlossGrainRelationship /
@@ -552,7 +552,7 @@ static arena_ptr<TransformResultValue> FinalizeDeclareAspect(PEGTransformer &tra
 	auto schema = Text(transformer, list.GetChild(4));
 	auto kind = AspectKindText(list.GetChild(6));
 	vector<Value> grains;
-	// the WHEN as JSON: the sibling aspect and the literal its winning slot carries, or the
+	// the WHEN as JSON: the sibling aspect and the literal its winning value carries, or the
 	// columns' data types, upper-cased as DuckDB names them
 	Value condition(LogicalType::VARCHAR);
 	auto &grain_clause = list.Child<OptionalParseResult>(7);
@@ -583,9 +583,9 @@ static arena_ptr<TransformResultValue> FinalizeDeclareAspect(PEGTransformer &tra
 			}
 		}
 	}
-	if (kind == "QUERY" && !grains.empty()) {
+	if (kind == "VIEW" && !grains.empty()) {
 		// SPEC §5.1: a metric is grounded on the dataset; a grain clause is refused
-		throw ParserException("a QUERY aspect takes no grain clause: its grain is the dataset");
+		throw ParserException("a VIEW aspect takes no grain clause: its grain is the dataset");
 	}
 	return MakeWrite(
 	    transformer, "aspects",
@@ -608,7 +608,7 @@ GLOSSQL_TRANSFORM(StartDeclareRelationship, FinalizeDeclareRelationship)
 
 //===--------------------------------------------------------------------===//
 // Reads: GLOSSARY(...) becomes glossql_glossary(subject, aspect, all) and
-// ATTEST(...) becomes glossql_attest(subject, aspect) — stock table-function
+// TESTS(...) becomes glossql_tests(subject, aspect) — stock table-function
 // references, whose bind plans the read over the store
 //===--------------------------------------------------------------------===//
 
@@ -662,9 +662,9 @@ static arena_ptr<TransformResultValue> FinalizeGlossaryRead(PEGTransformer &tran
 }
 GLOSSQL_TRANSFORM(StartGlossaryRead, FinalizeGlossaryRead)
 
-//! GlossAttestRead <- 'ATTEST' Parens(GlossAttestArgs?) TableAlias?
-//! GlossAttestArgs <- GlossSubject GlossAspectNarrow?
-static arena_ptr<TransformResultValue> FinalizeAttestRead(PEGTransformer &transformer, ParseResult &parse_result) {
+//! GlossTestsRead <- 'TESTS' Parens(GlossTestsArgs?) TableAlias?
+//! GlossTestsArgs <- GlossSubject GlossAspectNarrow?
+static arena_ptr<TransformResultValue> FinalizeTestsRead(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	unique_ptr<ParsedExpression> subject = ConstantExpression::Null();
 	unique_ptr<ParsedExpression> aspect = ConstantExpression::Null();
@@ -681,9 +681,9 @@ static arena_ptr<TransformResultValue> FinalizeAttestRead(PEGTransformer &transf
 	vector<unique_ptr<ParsedExpression>> children;
 	children.push_back(std::move(subject));
 	children.push_back(std::move(aspect));
-	return ReadRef(transformer, "glossql_attest", std::move(children), list.Child<OptionalParseResult>(2));
+	return ReadRef(transformer, "glossql_tests", std::move(children), list.Child<OptionalParseResult>(2));
 }
-GLOSSQL_TRANSFORM(StartAttestRead, FinalizeAttestRead)
+GLOSSQL_TRANSFORM(StartTestsRead, FinalizeTestsRead)
 
 //===--------------------------------------------------------------------===//
 // The grammar extension
@@ -706,8 +706,8 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 
 	// New words are unreserved: still usable as column and table names
 	for (auto keyword :
-	     {"'GLOSS'", "'GLOSSARY'", "'ASPECT'", "'RELATIONSHIP'", "'FACT'", "'MEASUREMENT'", "'QUERY'", "'DATASET'",
-	      "'RECIPE'", "'PROBE'", "'WITNESS'", "'DETECTOR'", "'THRESHOLD'", "'AGENT'", "'HUMAN'", "'ATTEST'"}) {
+	     {"'GLOSS'", "'GLOSSARY'", "'ASPECT'", "'RELATIONSHIP'", "'FACT'", "'MEASUREMENT'", "'DATASET'", "'RECIPE'",
+	      "'PREVIEW'", "'TEST'", "'DETECTOR'", "'THRESHOLD'", "'AGENT'", "'HUMAN'", "'TESTS'"}) {
 		changes.push_back(GrammarChange::AddChoice("UnreservedKeyword", keyword));
 	}
 
@@ -739,10 +739,10 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	statement("GlossDeclareAspect <- 'DECLARE' 'ASPECT' Identifier 'WITH' StringLiteral 'AS' GlossAspectKind "
 	          "GlossGrainClause?",
 	          StartDeclareAspect);
-	rule("GlossAspectKind <- GlossKindMeasurement / GlossKindFact / GlossKindQuery");
+	rule("GlossAspectKind <- GlossKindMeasurement / GlossKindFact / GlossKindView");
 	rule("GlossKindMeasurement <- 'MEASUREMENT'");
 	rule("GlossKindFact <- 'FACT'");
-	rule("GlossKindQuery <- 'QUERY'");
+	rule("GlossKindView <- 'VIEW'");
 	rule("GlossGrainClause <- 'ON' List(GlossGrain) GlossWhen?");
 	rule("GlossWhen <- 'WHEN' GlossWhenBody");
 	rule("GlossWhenBody <- GlossWhenType / GlossWhenAspect");
@@ -760,7 +760,7 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	rule("GlossGrainSource <- 'SOURCE'");
 	statement("GlossDeclareRelationship <- 'DECLARE' 'RELATIONSHIP' GlossRelSide GlossRelOp GlossRelSide",
 	          StartDeclareRelationship);
-	statement("GlossProbe <- 'PROBE' Identifier 'AS' StringLiteral", StartProbe);
+	statement("GlossPreview <- 'PREVIEW' Identifier 'AS' StringLiteral", StartPreview);
 	statement("GlossDeclareFunction <- 'DECLARE' 'FUNCTION' Identifier 'FOR' GlossFunctionScope 'AS' "
 	          "StringLiteral GlossReturns?",
 	          StartDeclareFunction);
@@ -807,14 +807,14 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	rule("GlossAllFlag <- 'ALL' '=>' 'TRUE'");
 	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossGlossaryRead"));
 	changes.push_back(
-	    GrammarChange::AddRule("GlossAttestRead <- 'ATTEST' Parens(GlossAttestArgs?) TableAlias?", StartAttestRead));
-	rule("GlossAttestArgs <- GlossSubject GlossAspectNarrow?");
-	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossAttestRead"));
+	    GrammarChange::AddRule("GlossTestsRead <- 'TESTS' Parens(GlossTestsArgs?) TableAlias?", StartTestsRead));
+	rule("GlossTestsArgs <- GlossSubject GlossAspectNarrow?");
+	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossTestsRead"));
 
-	// Witnesses
-	statement("GlossDeclareWitness <- 'DECLARE' 'WITNESS' Identifier 'ON' Identifier GlossBy? GlossDetector? "
+	// Tests
+	statement("GlossDeclareTest <- 'DECLARE' 'TEST' Identifier 'ON' Identifier GlossBy? GlossDetector? "
 	          "GlossThreshold?",
-	          StartDeclareWitness);
+	          StartDeclareTest);
 	rule("GlossBy <- 'BY' Parens(List(GlossSpeaker))");
 	rule("GlossSpeaker <- GlossSpeakerAgent / GlossSpeakerHuman");
 	rule("GlossSpeakerAgent <- 'AGENT'");

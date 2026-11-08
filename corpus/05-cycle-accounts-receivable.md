@@ -81,8 +81,8 @@ GLOSS cycles ON fin AS $${
   VALUES aspects, argumented applications, `DECLARE CYCLE FAMILY`); here it is
   two FACT aspects.
 - Progression and completion checks (the derived validations of the old §3.2)
-  become functions reading `x-order` / `x-terminal` — witnesses adjudicate,
-  ATTEST serves the verdict.
+  become functions reading `x-order` / `x-terminal` — tests score,
+  TESTS serves the result.
 - Completion-rate is a MEASUREMENT aspect filled by a function when wanted.
 - **INFORMATION LOST, by decision:** `feeds_into`, per-stage indicator lists,
   aliases — authoring guidance for the detecting function, script-side.

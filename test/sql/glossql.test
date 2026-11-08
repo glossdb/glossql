@@ -51,7 +51,7 @@ statement ok
 DECLARE ASPECT unit WITH $${"type": "object", "properties": {"value": {"type": "string"}}}$$ AS FACT ON COLUMN;
 
 statement ok
-DECLARE ASPECT revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS QUERY;
+DECLARE ASPECT revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS VIEW;
 
 statement ok
 DECLARE ASPECT min_max WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN, TABLE;
@@ -60,14 +60,14 @@ query TTT
 SELECT name, kind, grains FROM aspects ORDER BY name;
 ----
 min_max	MEASUREMENT	[COLUMN, TABLE]
-revenue	QUERY	[]
+revenue	VIEW	[]
 unit	FACT	[COLUMN]
 
-# a QUERY aspect takes no grain clause (SPEC §5.1), refused at parse time
+# a VIEW aspect takes no grain clause (SPEC §5.1), refused at parse time
 statement error
-DECLARE ASPECT dso WITH $${}$$ AS QUERY ON COLUMN;
+DECLARE ASPECT dso WITH $${}$$ AS VIEW ON COLUMN;
 ----
-a QUERY aspect takes no grain clause
+a VIEW aspect takes no grain clause
 
 # --- GLOSS: dollar-quoted JSON body, actor from the connection
 

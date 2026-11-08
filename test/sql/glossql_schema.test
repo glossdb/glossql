@@ -89,11 +89,11 @@ GLOSS unit ON nothing.amount AS $${"value": "EUR"}$$;
 ----
 names no column of fin.nothing
 
-# --- a QUERY body meets the grounding contract (sql or stopped, assumptions disclosed),
+# --- a VIEW body meets the grounding contract (sql or stopped, assumptions disclosed),
 # then every grounding schema a kit declared; a grounding is a view
 
 statement ok
-DECLARE ASPECT revenue WITH $${"title": "revenue", "description": "income from sales", "x-kind": "measure"}$$ AS QUERY;
+DECLARE ASPECT revenue WITH $${"title": "revenue", "description": "income from sales", "x-kind": "measure"}$$ AS VIEW;
 
 statement error
 GLOSS revenue ON fin AS $${"formula": "x"}$$;
@@ -125,7 +125,7 @@ statement ok
 GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders", "window": "7 days"}$$;
 
 # a kit's grounding schema is an aspect flavored x-kind grounding: the engine validates every
-# QUERY body against it after the contract, and refuses a schema that would strand a current slot
+# VIEW body against it after the contract, and refuses a schema that would strand a current slot
 statement error
 DECLARE ASPECT grounding WITH $${"x-kind": "grounding", "type": "object", "additionalProperties": false, "properties": {"sql": {}, "stopped": {}, "assumptions": {}, "behavior": {"enum": ["stock", "flow"]}}}$$ AS FACT ON DATASET;
 ----
@@ -184,7 +184,7 @@ fin	{"stopped": "no cost basis landed yet"}
 
 # a grounding on a landed table's name is refused
 statement ok
-DECLARE ASPECT orders WITH $${}$$ AS QUERY;
+DECLARE ASPECT orders WITH $${}$$ AS VIEW;
 
 statement error
 GLOSS orders ON fin AS $${"sql": "SELECT 1"}$$;
@@ -251,7 +251,7 @@ SELECT name, condition FROM aspects WHERE name = 'currency';
 currency	{"aspect":"role","value":"measure"}
 
 statement ok
-DECLARE WITNESS currency_w ON currency BY (AGENT, HUMAN);
+DECLARE TEST currency_test ON currency BY (AGENT, HUMAN);
 
 # no sibling slot spoken: nothing owed yet
 query I
@@ -300,10 +300,10 @@ identity	{"type":["BIGINT"]}
 precision	{"type":["DOUBLE","DECIMAL"]}
 
 statement ok
-DECLARE WITNESS precision_w ON precision BY (AGENT, HUMAN);
+DECLARE TEST precision_test ON precision BY (AGENT, HUMAN);
 
 statement ok
-DECLARE WITNESS identity_w ON identity BY (AGENT, HUMAN);
+DECLARE TEST identity_test ON identity BY (AGENT, HUMAN);
 
 query TTT
 SELECT subject, aspect, state FROM GLOSSARY(orders) WHERE aspect IN ('precision', 'identity') ORDER BY subject, aspect;

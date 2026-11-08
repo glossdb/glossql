@@ -1,4 +1,4 @@
-# 04 · Validation `trial_balance` — TRANSCRIBES (aspect + witness, no dedicated construct)
+# 04 · Validation `trial_balance` — TRANSCRIBES (aspect + test, no dedicated construct)
 
 Source: `validations` table (engine schema.sql) — fields: validation_id, name,
 description, category, severity, check_type ∈ (aggregate|balance|comparison|
@@ -24,8 +24,8 @@ expected_outcome: >
 
 ## Transcription
 
-The authored expectation is a FACT gloss; the check is a function; the witness
-binds them; ATTEST is the verdict surface. No validation construct exists.
+The authored expectation is a FACT gloss; the check is a function; the test
+binds them; TESTS is the result surface. No validation construct exists.
 
 ```glossql
 DECLARE ASPECT trial_balance WITH $${
@@ -55,10 +55,10 @@ DECLARE FUNCTION trial_balance_check FOR fin AS $$/* debits minus credits per pe
 
 DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
 
-DECLARE WITNESS tb ON trial_balance BY (HUMAN)
+DECLARE TEST tb ON trial_balance BY (HUMAN)
   DETECTOR balance_bands;
 
-SELECT * FROM ATTEST(fin.trial_balance);
+SELECT * FROM TESTS(fin.trial_balance);
 ```
 
 ## Findings
@@ -66,17 +66,17 @@ SELECT * FROM ATTEST(fin.trial_balance);
 - **TRANSCRIBES — the strongest confirmation in the corpus.** The old spec
   needed `DECLARE VALIDATION` with six clauses (KIND / ON CYCLES / OVER /
   CONVENTIONS / TOLERANCE / SEVERITY / GUIDANCE / OUTCOME); here the same
-  artifact is an aspect, a gloss, a function, and a witness — all
+  artifact is an aspect, a gloss, a function, and a test — all
   general-purpose constructs.
 - The check reads its own expectation (tolerance, cycles) from the glossary —
   the function implicitly receives its subject; the gloss is data.
 - **Role is declared by shape** (respelled 2026-08-04): the original
   transcription had `trial_balance_check` doubling as value function and
-  detector, legal because its RETURNS transcribed the attest schema. With
+  detector, legal because its RETURNS transcribed the test-results schema. With
   `RETURNS` an aspect reference, the roles separate: the check is a
-  *voice* — `RETURNS trial_balance`, full SQL door, its verdict lands as a
-  slot beside the human's expectation — and `balance_bands` (no RETURNS)
-  is the detector that reads both slots and bands. The attest schema left
+  *value* — `RETURNS trial_balance`, full SQL interface, its result is stored as a
+  value beside the human's expectation — and `balance_bands` (no RETURNS)
+  is the detector that reads both values and bands. The test-results schema left
   the author's hands: it is the engine's contract, no longer transcribed.
 - **INFORMATION LOST (accepted):** category, tags, version — browsing
   metadata, same relocation as fixture 03.

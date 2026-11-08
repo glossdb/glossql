@@ -1,0 +1,39 @@
+# name: test/sql/glossql_docs.test
+# description: the docs' examples parse: every ```sql block under docs/ and in the README parses on the grammar
+# group: [sql]
+
+require glossql
+
+require json
+
+statement ok
+SET active_grammar_extensions = ['glossql'];
+
+# every ```sql block of the docs and the README, with its file and line, judged by the parser as the corpus test
+# judges the record: a statement the grammar admits serializes, or is "not implemented" where there is no SELECT
+statement ok
+CREATE VIEW examples AS
+WITH blocks AS (
+    SELECT filename, content, unnest(regexp_extract_all(content, '(?s)```sql\n.*?\n```')) AS block
+    FROM read_text(['docs/*.md', 'docs/*/*.md', 'docs/*/*/*.md', 'README.md'])
+), bodies AS (
+    SELECT filename,
+           1 + length(content[1:instr(content, block)]) - length(replace(content[1:instr(content, block)], chr(10), '')) AS line,
+           regexp_replace(block, '(?s)^```sql\n(.*)\n```$', '\1') AS body
+    FROM blocks
+)
+SELECT filename, line,
+       coalesce(json_serialize_sql(body)->>'error_type', 'ok') AS verdict,
+       coalesce(json_serialize_sql(body)->>'error_message', '') AS message
+FROM bodies;
+
+# the docs carry examples, so an empty read cannot pass
+query I
+SELECT count(*) > 20 FROM examples;
+----
+true
+
+# an example the parser refuses is a broken page
+query III
+SELECT filename, line, left(message, 80) FROM examples WHERE verdict = 'parser' ORDER BY ALL;
+----

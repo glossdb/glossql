@@ -12,7 +12,7 @@ design — skills over `GLOSSARY()` are the bet; this fixture gives the
 bet its concrete target: for each surface, the reads that must
 compose it.
 
-Rulings carried (lead, 2026-08-06): the bus-matrix UI was agent
+Review decisions carried (lead, 2026-08-06): the bus-matrix UI was agent
 context in disguise — if the reads cover it, the UI goes, and the
 same test applies to every surface; the metrics graph is the UI
 genuinely worth keeping; and the standing balance — what statistics
@@ -36,7 +36,7 @@ SELECT * FROM imports;
 SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 SELECT left_path, right_path FROM relationships;
 SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
-SELECT subject, band, score FROM ATTEST(fin) WHERE band != 'green';
+SELECT subject, band, score FROM TESTS(fin) WHERE band != 'green';
 ```
 
 **TRANSCRIBES.** The disclosure duties v0.3 hand-built (curation
@@ -49,7 +49,7 @@ vehicle.
 ## 2. The drill
 
 The deepest consumer: per axis it reads slice relevance and
-interest, hierarchy chains, per-(metric, axis) additivity verdicts
+interest, hierarchy chains, per-(metric, axis) additivity results
 (`current_metric_axis_additivity` — the time gate withholds a bucket
 grain rather than guessing), a cross-currency unit gate, and the
 metric's persisted clause parts. Refusals render with reasons.
@@ -59,7 +59,7 @@ gloss (a stock never sums across periods; the year-scoped
 behavior_evidence anchor says when a season/YTD reset bounds it);
 the unit gate is the `unit` gloss's `source_column` plus a distinct
 count; the chain is the declared same-table relationships; axis
-choice is the `dimension` verdict (including the judged negative
+choice is the `dimension` result (including the judged negative
 `none`) beside `dimension_relevance`:
 
 ```glossql
@@ -70,7 +70,7 @@ SELECT count(*) FROM results r JOIN races a ON r.race_id = a.race_id;
 ```
 
 **TRANSCRIBES for the time and unit gates · SEMANTICS UNDEFINED for
-the general axis verdict.** v0.3's additivity table is keyed per
+the general axis result.** v0.3's additivity table is keyed per
 (metric, axis); our claim is that behavior + unit + entity grain
 compose the same refusals at read. The time case is covered
 (behavior is exactly it). The general case — a metric non-additive
@@ -81,12 +81,12 @@ name the gap, do not build for it.
 ## 3. The answer confidence strip
 
 Band, grounded ratio, assumptions, concepts used. All of it rides
-constructs that exist: the grounding's `assumptions[]` array is in
-the gloss body, bands come from `ATTEST`, and the concepts used are
-the QUERY aspects the SQL was composed from.
+constructs that exist: the metric definition's `assumptions[]` array is in
+the gloss body, bands come from `TESTS`, and the concepts used are
+the VIEW aspects the SQL was composed from.
 
 ```glossql
-SELECT * FROM ATTEST(fin.trial_balance);
+SELECT * FROM TESTS(fin.trial_balance);
 ```
 
 **TRANSCRIBES.** The ratio arithmetic is app-side arithmetic over
@@ -94,16 +94,16 @@ served rows, not a construct.
 
 ## 4. The operating-model tabs
 
-**Metrics DAG — the keeper UI (ruled 2026-08-06).** v0.3 draws
+**Metrics DAG — the keeper UI (decided 2026-08-06).** v0.3 draws
 metric → metric → measure → table from graph definitions and snippet
 state; clicking a runnable node opens live values. In glossql every
-edge is readable: QUERY aspects from the `aspects` relation, the
-definitional DAG from formula FACT glosses, groundings from the
-glossary, landed tables from `imports` — the app draws, nothing
+edge is readable: VIEW aspects from the `aspects` relation, the
+definitional DAG from formula FACT glosses, metric definitions from the
+glossary, loaded tables from `imports` — the app draws, nothing
 serves a drawing. The *click* was the consumer that pulled
-value-at-read out of §9's parking: ruled 2026-08-06 (fixture 16 §6) —
+value-at-read out of §9's parking: decided 2026-08-06 (fixture 16 §6) —
 `read.` table functions, bound when the UI transformation starts;
-until then the app runs the served SQL through the query door:
+until then the app runs the served SQL through the query interface:
 
 ```glossql
 SELECT name, kind, grains FROM aspects;
@@ -111,9 +111,9 @@ SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
 **Concepts tab.** Ancestry, reconciliation state, multi-groundings —
-glossary reads plus witness bands. TRANSCRIBES.
+glossary reads plus test bands. TRANSCRIBES.
 
-**Bus matrix — the UI dies (ruled 2026-08-06).** It was agent
+**Bus matrix — the UI dies (decided 2026-08-06).** It was agent
 context: which cross-fact comparisons are composable. The content is
 already in the reads — fact/dimension roles from `entity` glosses,
 edges from `relationships`, grain safety from the judged-join prose.
@@ -121,7 +121,7 @@ Run 5 on f1 produced it unprompted (races, drivers, constructors
 named as conformed dimensions in pair prose). One FORK stays open
 with the lead: the conformed *group* today lives in prose on pairs,
 which an agent reads but an app cannot key on. If a consumer ever
-needs it structured, the spelling is a field beside the verdict —
+needs it structured, the spelling is a field beside the result —
 not a new construct:
 
 ```glossql
@@ -137,13 +137,13 @@ The standing state of the union: bands, artifact counts, staleness,
 a "needs you" inbox. The reads exist; the inbox is a WHERE clause:
 
 ```glossql
-SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
+SELECT subject, band, score FROM TESTS(fin) WHERE band = 'red';
 SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
 SELECT * FROM imports;
 ```
 
 **TRANSCRIBES.** Seeding a chat from a blocker is app orchestration
-(fixture 11's verdict: no flow construct).
+(fixture 11's result: no flow construct).
 
 ## The negative space
 
@@ -157,17 +157,17 @@ nothing users see depends on anything we cut.
 ## Findings
 
 - **TRANSCRIBES**: every surface composes from `GLOSSARY()` /
-  `ATTEST()` / the declaration relations / the query door. No serving
+  `TESTS()` / the declaration relations / the query interface. No serving
   construct is missing; fixture 09's bet survives contact with the
   full consumer inventory.
 - **SEMANTICS UNDEFINED, named not built**: the general
-  per-(metric, axis) additivity verdict (§2). Watch it when a
+  per-(metric, axis) additivity result (§2). Watch it when a
   drill-shaped consumer arrives.
 - **FORK, open with the lead**: the conformed-dimension group as a
   structured field vs prose (§4). Value-at-read, the other fork this
-  fixture opened, was ruled 2026-08-06 — fixture 16 §6 records it.
+  fixture opened, was decided 2026-08-06 — fixture 16 §6 records it.
 - Closed same day by the run fixes: the judged-negative dimension
-  verdict (`none`) and the exact relevance score (a display cap must
+  result (`none`) and the exact relevance score (a display cap must
   not become a statistics cap).
-- What users will do stays app-side by design — the door tells,
+- What users will do stays app-side by design — the interface tells,
   skills teach, the app renders.

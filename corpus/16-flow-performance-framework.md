@@ -3,23 +3,23 @@
 Source: the target scorecard against the finance generator's real
 shapes (`../dataraum-testdata/output/clean`, seed 42;
 `ground_truth.yaml` is the oracle). The operating-model deliverable as
-a statement sequence: fixtures 01/03/04/07's ruled shapes, exercised
-end to end for the first time. Ruled:
+a statement sequence: fixtures 01/03/04/07's decided shapes, exercised
+end to end for the first time. Decided:
 windows are read policy; `read.` table functions are the
 value-at-read spelling, bound when the UI transformation starts;
 the scorecard runs first with the reader inlining served SQL.
 
 The floor under it (fixtures 11 + the dimensions flow) has already
-produced: `entity` glosses with verified grain, `behavior` verdicts
+produced: `entity` glosses with verified grain, `behavior` results
 evidenced by `behavior_evidence`, declared relationships carrying
-grain-check grounds, units and the sign convention. Every grounding
+grain-check grounds, units and the sign convention. Every metric definition
 below cites that floor in its assumptions — this is what "ground the
 aspects with the information we expose over functions" means in
 statements.
 
 ## 1. The metric vocabulary (fixture 01/03's shape)
 
-One QUERY aspect per concept, on the dataset (the lead's placement).
+One VIEW aspect per concept, on the dataset (the lead's placement).
 Base concepts and derived metrics declare uniformly —
 fixture 03's finding, a metric *is* a concept; the difference is
 whether its SQL half is an extract (§2) or a formula over siblings
@@ -32,30 +32,30 @@ DECLARE ASPECT revenue WITH $${
   "title": "Revenue",
   "description": "Income recognized in the ledger",
   "x-kind": "measure", "x-unit": "currency"
-}$$ AS QUERY;
+}$$ AS VIEW;
 
 DECLARE ASPECT accounts_receivable WITH $${
   "title": "Accounts Receivable",
   "description": "Open receivables — a stock at (account, period) grain",
   "x-kind": "measure", "x-unit": "currency"
-}$$ AS QUERY;
+}$$ AS VIEW;
 
 DECLARE ASPECT dso WITH $${
   "title": "Days Sales Outstanding",
   "description": "Average days to collect a receivable",
   "x-kind": "metric", "x-unit": "days"
-}$$ AS QUERY;
+}$$ AS VIEW;
 
 DECLARE ASPECT gross_profit WITH $${
   "title": "Gross Profit",
   "description": "Revenue less expenses",
   "x-kind": "metric", "x-unit": "currency"
-}$$ AS QUERY;
+}$$ AS VIEW;
 ```
 
 ## 2. Concepts ground as extracts (fixture 07's shape, taken seriously)
 
-A grounding carries **no grain**: it is the semantic core — scoping,
+A metric definition carries **no grain**: it is the semantic core — scoping,
 signs, the grain-preserving joins composed inline (`journal_lines`
 has no date; entries carry time, accounts carry type) — served as a
 row-grain relation with the time axis and the judged dimensions as
@@ -94,18 +94,18 @@ by serving `period` as-is.
 
 Grain is an open axis (decade … year, quarter, month, week, day) and
 so is slice (cost center, geography, any judged dimension). Baking
-any enumeration into a grounding is pre-evaluation — the exact
+any enumeration into a metric definition is pre-evaluation — the exact
 disease the drill re-think kills. The coherent rule:
 
 - **Definitions are grain-free** (§2's extracts, §4's formulas).
 - **Possibilities are exposed once, as judged knowledge** — what v0.3
   pre-evaluated per metric, the floor already serves per column:
   `temporal()` cadence says which time grains the data can answer,
-  `dimension` verdicts (with `none`) say which axes slice, `behavior`
+  `dimension` results (with `none`) say which axes slice, `behavior`
   says sum-vs-last, `unit` guards cross-currency sums.
 - **Evaluation is composition at read**, any window, any slice
-  (the §6 spelling; until the bind lands, the reader inlines the
-  served SQL through the door):
+  (the §6 spelling; until the bind is stored, the reader inlines the
+  served SQL through the interface):
 
 ```glossql
 SELECT date_trunc('month', date) AS month, sum(value) FROM read.revenue() GROUP BY 1 ORDER BY 1;
@@ -132,7 +132,7 @@ consumer asks, the target carries it.
 **What a read proves may be recorded.** Pre-evaluation is computing
 before anyone asks; *recording* is keeping what a real read proved —
 the judged-join pattern. A composed evaluation the agent has verified
-against the oracle may land as the metric's own QUERY gloss (the
+against the oracle may land as the metric's own VIEW gloss (the
 durable executable knowledge — v0.3's snippet economy, post-record
 not pre-compute), superseding as definitions change; re-windowing
 recomposes from §2's extracts.
@@ -162,15 +162,15 @@ The formula is the pinned definition the scorecard calls
 definition-sensitive — it covers *every* window because it names
 none. Evaluation composes it from §2's extracts at the reader's
 window; a verified composition may be recorded as the metric's own
-QUERY gloss (§3). Two recorded evaluations arriving at the same
-number is a correct state; whether they reconcile is witness
+VIEW gloss (§3). Two recorded evaluations arriving at the same
+number is a correct state; whether they reconcile is test
 territory (fixture 07's coexistence finding).
 
-## 5. Validations (fixture 04's ruled shape)
+## 5. Validations (fixture 04's decided shape)
 
-Expectation as a FACT gloss; the check as a thin function **voice**
-(`RETURNS` the aspect, full door, fresh by the read's pin);
-a detector bands the slots; ATTEST is the verdict surface. Two of the
+Expectation as a FACT gloss; the check as a thin function **value**
+(`RETURNS` the aspect, full interface, fresh by the read's pin);
+a detector bands the values; TESTS is the result surface. Two of the
 scorecard's four shown — the exact one and the one whose expectation
 is deliberately not zero:
 
@@ -215,19 +215,19 @@ DECLARE FUNCTION reconciliation_check FOR fin
   RETURNS bank_reconciliation;
 DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
 
-DECLARE WITNESS journal_balanced_w ON journal_balanced BY (AGENT, HUMAN)
+DECLARE TEST journal_balanced_test ON journal_balanced BY (AGENT, HUMAN)
   DETECTOR balance_bands THRESHOLD 0.5;
-DECLARE WITNESS bank_reconciliation_w ON bank_reconciliation BY (AGENT, HUMAN)
+DECLARE TEST bank_reconciliation_test ON bank_reconciliation BY (AGENT, HUMAN)
   DETECTOR balance_bands THRESHOLD 0.5;
 
 SELECT journal_balance_check() FROM journal_lines;
 SELECT reconciliation_check() FROM bank_transactions;
-SELECT * FROM ATTEST(journal_lines::journal_balanced);
+SELECT * FROM TESTS(journal_lines::journal_balanced);
 ```
 
-A check voice **speaks the aspect's schema** (fixture 06's
+A check value **speaks the aspect's schema** (fixture 06's
 respelling, enforced by the engine): its output must carry `outcome`
-like any slot — the verdict in words, the measurement beside it
+like any value — the result in words, the measurement beside it
 (`{"outcome": "measured: debits equal credits", "imbalance": 0.0}`).
 One schema, every speaker.
 
@@ -243,16 +243,16 @@ The framework's standing state is two reads; the app's metric DAG is
 the same rows drawn:
 
 ```glossql
-SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
+SELECT subject, band, score FROM TESTS(fin) WHERE band = 'red';
 SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
 A metric's *value*: the reader takes the served SQL and runs it
-through the door — the scorecard runs this way (run-first).
-The bind lands when the UI transformation starts:
+through the interface — the scorecard runs this way (run-first).
+The bind is stored when the UI transformation starts:
 **value-at-read as a namespaced table function** (closing the
 §9-parked enhancement) — the subject aspect's current
-QUERY gloss (an extract, or a recorded evaluation) expanded at read,
+VIEW gloss (an extract, or a recorded evaluation) expanded at read,
 the value arriving as an ordinary relation the reader composes
 around:
 
@@ -261,7 +261,7 @@ SELECT date_trunc('week', date) AS week, sum(value) FROM read.revenue() GROUP BY
 SELECT * FROM read.dso();
 ```
 
-`GLOSSARY` and `ATTEST` are the only FROM-position functions today,
+`GLOSSARY` and `TESTS` are the only FROM-position functions today,
 both grammar-fixed; `read.` is the first user-named family and the
 namespace prevents table collisions. The spelling parses under the
 grammar already — binding is engine work on the relation-planning
@@ -271,8 +271,8 @@ with the aspect cast, but `::` in FROM position is not the
 substrate's SQL grammar, and rewriting query text ahead of the
 engine is a parallel-layer move. The division of labor: `::` names
 an aspect in glossql argument position (`GLOSSARY(fin::dso)`); `.`
-names a runnable relation in SQL position. The ruled line holds: no
-script, no cache, no voice — running stays the reader's act, spelled
+names a runnable relation in SQL position. The decided line holds: no
+script, no cache, no value — running stays the reader's act, spelled
 inside the reader's SQL. The seam to respect: composing around the
 *output* is free, but a ratio cannot be re-scoped from its output
 rows — drilling DSO by country means re-scoping its components per
@@ -281,7 +281,7 @@ the `formulas` gloss, not regrouping `read.dso()`.
 ## Findings
 
 - **Exercises 01/03/04/07 end to end for the first time** — declare →
-  ground → check → attest as one sequence over real shapes, no new
+  ground → check → test as one sequence over real shapes, no new
   constructs anywhere.
 - **The checks are the first workspace-authored functions**
   (`FOR fin`, not `FOR GLOBAL`): the bootstrap ships measurements,
@@ -293,11 +293,11 @@ the `formulas` gloss, not regrouping `read.dso()`.
   a read proves may be recorded — pre-evaluation and recording are
   different acts. Fixture 03's parameter question closes with it: the
   parameter was the window, and the window belongs to the reader.
-- **Value-at-read ruled** (§6): `read.` table functions, bound when
+- **Value-at-read decided** (§6): `read.` table functions, bound when
   the UI transformation starts; run-first until then. Fixture 15
   still holds the conformed-group fork. The prefix was `metric.`,
-  renamed `read.` when it was ruled the one generic
-  serving door over every QUERY gloss — no alias; the flavor lives in
+  renamed `read.` when it was decided the one generic
+  serving interface over every VIEW gloss — no alias; the flavor lives in
   `x-kind`, never in the call syntax.
 - The `expected_rate: 0.895` gloss is the anti-overcleaning stance in
   one statement: the expectation is authored, never assumed zero.
@@ -305,15 +305,15 @@ the `formulas` gloss, not regrouping `read.dso()`.
   scorecard run reproduced every uniquely-defined number exactly, and
   its only misses were unflagged *definition choices* — the agent
   stated each with grounds but presented them as judgments made, not
-  decisions owed. The flow now ends with every definitional
+  decisions required. The flow now ends with every definitional
   assumption served to the user as a multiple-choice question; the
-  pin is a human re-gloss (the human slot outranks the agent's — a
+  pin is a human re-gloss (the human value outranks the agent's — a
   tested collapse invariant). Beside the questions and the data
   findings, a third list: **world-coverage wishes** — assumptions
   only more world can settle (an opening balance sheet anchoring
   every cumulative level), named as specific asks with the numbers
-  they would shift. A witness convention banding agent-only
-  definitional glosses yellow was ruled *later* by the lead.
+  they would shift. A test convention banding agent-only
+  definitional glosses yellow was decided *later* by the lead.
 - INFORMATION LOST (accepted): v0.3's interpretation ranges
   (EXCELLENT/GOOD bands per metric) stay in the aspect's `WITH`
   annotations when wanted — rendering guidance, not glossary content.

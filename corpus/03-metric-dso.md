@@ -1,4 +1,4 @@
-# 03 · Metric `dso` — TRANSCRIBES (metric = QUERY aspect, run as its SQL)
+# 03 · Metric `dso` — TRANSCRIBES (metric = VIEW aspect, run as its SQL)
 
 Source: `dataraum-context/packages/dataraum-config/verticals/finance/metrics/working_capital/dso.yaml`
 (persisted per `metrics` / `metric_parameters` / `metric_derives_from`, engine schema.sql)
@@ -45,12 +45,12 @@ interpretation:
 
 ## Transcription
 
-A metric is a **concept** — a QUERY aspect, declared like `revenue`
-(fixture 01) and grounded in SQL like any grounding (fixture 07). The
+A metric is a **concept** — a VIEW aspect, declared like `revenue`
+(fixture 01) and grounded in SQL like any metric definition (fixture 07). The
 running system says so: metrics move through declare → compose → execute,
-where compose is an agent writing SQL over the input concepts' groundings
+where compose is an agent writing SQL over the input concepts' metric definitions
 and execute runs that SQL (`pipeline/phases/metrics_phase.py`; the working
-SQL lands as `sql_snippets`). The value is never returned by a function —
+SQL is stored as `sql_snippets`). The value is never returned by a function —
 it materializes by running the metric's SQL.
 
 ```glossql
@@ -71,7 +71,7 @@ DECLARE ASPECT dso WITH $${
     {"min": 61, "max": 90,  "label": "POOR"},
     {"min": 91, "max": 999, "label": "CRITICAL"}
   ]
-}$$ AS QUERY;
+}$$ AS VIEW;
 
 GLOSS dso ON fin AS $${
   "sql": "SELECT (sum(accounts_receivable) / sum(revenue)) * 30 FROM monthly_balances",
@@ -84,7 +84,7 @@ GLOSS dso ON fin AS $${
 
 ## Findings
 
-- **TRANSCRIBES as a QUERY aspect.** The v0.3 lifecycle maps one to one:
+- **TRANSCRIBES as a VIEW aspect.** The v0.3 lifecycle maps one to one:
   *declare* is the aspect (the yaml's ontology half — name, category, unit,
   parameters, interpretation — is the `WITH` schema, like fixture 01's
   `x-indicators`); *compose* is an agent glossing the composed SQL; *execute*
@@ -101,4 +101,4 @@ GLOSS dso ON fin AS $${
   belongs to the reader — definitions are grain-free, windows are read
   policy, and a verified composition may be recorded as the metric's gloss.
 - The yaml's step validation (`0 <= value <= 365`) is adjudication —
-  witness territory (fixture 04), open with the witness questions.
+  test territory (fixture 04), open with the test questions.

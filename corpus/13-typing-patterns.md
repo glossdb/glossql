@@ -63,10 +63,10 @@ GLOSS type_patterns ON fin AS $${"min_confidence": 0.85, "patterns": [
    "inferred_type": "DATE", "examples": ["2024-01-15"]},
   {"name": "eu_date", "pattern": "^\\d{1,2}\\.\\d{1,2}\\.\\d{2,4}$",
    "inferred_type": "DATE",
-   "standardization_expr": "try_to_date(\"{col}\", '%d.%m.%Y')"},
+   "standardization_expr": "try_strptime(\"{col}\", '%d.%m.%Y')::DATE"},
   {"name": "us_date", "pattern": "^\\d{1,2}/\\d{1,2}/\\d{2,4}$",
    "inferred_type": "DATE", "ambiguous": true,
-   "standardization_expr": "try_to_date(\"{col}\", '%m/%d/%Y')"}
+   "standardization_expr": "try_strptime(\"{col}\", '%m/%d/%Y')::DATE"}
 ]}$$;
 ```
 
@@ -87,18 +87,17 @@ GLOSS null_values ON fin AS $${"values": [
 
 - Zero grammar change: both artifacts transcribe with existing constructs —
   `DECLARE ASPECT … AS FACT` + `GLOSS`, subject = the dataset.
-- **Exprs speak the substrate's SQL** (respelled 2026-08-04, ruled with the
+- **Exprs speak the substrate's SQL** (respelled 2026-08-04, decided with the
   M4 pass): the source yaml's `STRPTIME(…)` is DuckDB vocabulary; migrated
-  patterns spell `try_to_date` / `try_to_timestamp` — the engine's NULL-on-
-  failure parsers, registered because the substrate's own `to_date` aborts
-  a whole scan on one dirty value and ships no try_ variant. A pattern's
-  expr must never be able to error a scan: it lands inside a recipe, and
+  patterns spell `try_strptime` — DuckDB's NULL-on-failure parser, since
+  `strptime` aborts a whole scan on one dirty value. A pattern's
+  expr must never be able to error a scan: it is stored inside a recipe, and
   one dirty value must cost a NULL cell, never the import.
 - Whole-body supersession replaces the overlay's per-entry merge: the teach
-  skill does read–amend–re-gloss. The human slot supersedes the base slot by
+  skill does read–amend–re-gloss. The human value supersedes the base value by
   the ordinary key; no merge machinery survives.
 - **The author is the consumer** (respelled 2026-08-04, with the
-  authored-typing ruling): the patterns' reader was the typing function
+  authored-typing review decision): the patterns' reader was the typing function
   (v0.3's `infer_types`); it is now the
   agent authoring a recipe, reading the same glosses through
   `GLOSSARY(fin::type_patterns)` before writing the casts — a pattern's

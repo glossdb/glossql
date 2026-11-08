@@ -34,7 +34,7 @@ GLOSS entity ON orders AS $${
 
 (Each aspect above was declared once with `DECLARE ASPECT … AS FACT`; agent
 glosses land on agent connections, human corrections supersede on the human
-slot.)
+value.)
 
 ## Relationships + composite keys (`relationships`, `surrogate_key_intents`)
 
@@ -43,7 +43,7 @@ DECLARE RELATIONSHIP orders.customer_id -> customers.id;
 DECLARE RELATIONSHIP invoices.order_id <-> orders.id;
 ```
 
-Composite keys are tuple endpoints (ruled 2026-08-05, fixture 14; the
+Composite keys are tuple endpoints (decided 2026-08-05, fixture 14; the
 derived-column cure retired with it):
 
 ```glossql
@@ -61,7 +61,7 @@ GLOSS calendar ON fin AS $${"fiscal_year_starts": "april"}$$;
 ## Statistics / profiling (`column_statistics`, `relationship_candidates`)
 
 Measurements are never glossed — a function `RETURNS` the aspect
-(respelled 2026-08-04: the reference is the binding, no witness ceremony)
+(respelled 2026-08-04: the reference is the binding, no test ceremony)
 and fills it from its cache:
 
 ```glossql

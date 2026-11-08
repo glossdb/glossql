@@ -15,7 +15,7 @@ phases in `pipeline/phases/`. Ordered steps and what each produces:
 | typing | deterministic | `type_candidates`, `type_decisions`, typed + quarantine tables |
 | statistics / eligibility / quality / temporal | deterministic | `statistical_profiles`, `column_eligibility`, `statistical_quality_metrics`, `temporal_column_profiles` |
 | semantic_per_column | LLM | `semantic_annotations` per column |
-| detect | deterministic | `entropy_objects`, `claim_witnesses`, `entropy_readiness` |
+| detect | deterministic | `entropy_objects`, `claim_tests`, `entropy_readiness` |
 | promote_to_latest | deterministic | snapshot head flip |
 | assess & auto-ground loop | LLM + orchestration | teach rows or `awaiting_input` park |
 
@@ -27,9 +27,9 @@ are **agent glosses**, teaches and parks are **human glosses**. The typing
 phase maps to none of them — it becomes **authorship**, the
 probe-and-recipe conversation below.
 
-Human registers the source; the agent probes it — `PROBE` is the recipe
-rehearsal (ruled 2026-08-04): the same SQL surface, the same path
-resolution, executed at the source, landing nothing (v0.3's "probe query"
+Human registers the source; the agent probes it — `PREVIEW` is the recipe
+rehearsal (decided 2026-08-04): the same SQL surface, the same path
+resolution, executed at the source, load nothing (v0.3's "probe query"
 step, returned to its place). The result always carries its schema, so a
 `LIMIT 0` probe of the final recipe SQL rehearses exactly the identity a
 `DECLARE RECIPE` would stamp:
@@ -38,24 +38,24 @@ step, returned to its place). The result always carries its schema, so a
 USE fin;
 DECLARE SOURCE erp_export SET (type: parquet, location: 'lake/erp');
 
-PROBE erp_export AS $$SELECT * FROM read_parquet('orders/*.parquet') LIMIT 50$$;
-PROBE erp_export AS $$SELECT count("order_date") AS filled,
-       count(try_to_date("order_date", '%d.%m.%Y')) AS parsed
+PREVIEW erp_export AS $$SELECT * FROM read_parquet('orders/*.parquet') LIMIT 50$$;
+PREVIEW erp_export AS $$SELECT count("order_date") AS filled,
+       count(try_strptime("order_date", '%d.%m.%Y')) AS parsed
 FROM read_parquet('orders/*.parquet')$$;
 ```
 
-Typing is authored, not decided (ruled 2026-08-04): the recipe carries the
+Typing is authored, not decided (decided 2026-08-04): the recipe carries the
 casts. The agent writes it from the probes and the taught patterns
 (fixture 13 — still FACT glosses, now read by the author instead of
 consumed by machinery); the human approves. The default is `SELECT *`;
-the landed table is the typed table, versioned on every
+the loaded table is the typed table, versioned on every
 import:
 
 ```glossql
 DECLARE RECIPE orders ON fin FROM erp_export AS $$
   SELECT order_id,
          try_cast(amount AS DECIMAL(12,2)) AS amount,
-         try_to_date(order_date, '%d.%m.%Y') AS order_date
+         try_strptime(order_date, '%d.%m.%Y')::DATE AS order_date
   FROM read_parquet('orders/*.parquet')$$;
 
 SELECT sum(amount) FROM orders;
@@ -66,7 +66,7 @@ SQL and the schema it produces (the v0.3 engine already keys recipes this
 way). The declaration's outcome carries the counts at the decision moment
 (`DECLARE RECIPE orders ON fin (2 rows landed, 1 dropped)`). A data update
 re-runs the same recipe and the table becomes its result as the source
-stands now, in one commit; it must reproduce the schema or it errors.
+holds now, in one commit; it must reproduce the schema or it errors.
 It is asked for by name, from outside — a schedule
 or an agent sends it, nothing in the server watches a source:
 
@@ -83,8 +83,8 @@ DROP TABLE orders;
 
 — refused while the table holds data; a wrong recipe is re-declared
 under the same name and **supersedes**: the changed recipe drops the
-old landing and lands fresh, sweeping the table's cached evidence
-while glosses stay (ruled 2026-08-06 — runs 5 and 6 both dead-ended
+old load and is stored fresh, sweeping the table's cached evidence
+while glosses stay (decided 2026-08-06 — runs 5 and 6 both dead-ended
 on the earlier new-name rule). Rows the recipe filtered away are the
 author's to judge, on the files, outside the box; the engine keeps one
 number:
@@ -94,16 +94,16 @@ SELECT dropped_rows_count FROM imports WHERE table_name = 'orders';
 ```
 
 Framing the vertical is replaying the vertical folder's declarations —
-aspects, check functions, witnesses (fixtures 01, 02, 04); no construct.
+aspects, check functions, tests (fixtures 01, 02, 04); no construct.
 
 The deterministic profile plane — declared once (vertical/global), fanned
 out per column (extraction grain is the subject; the fan-out is the
 caller's loop, the grammar carries no ordering). The quality plane chains
-on it in the body: the outlier fences read the profile's landed value
+on it in the body: the outlier fences read the profile's stored value
 from `measurements`, and a re-profile moves the pin the outlier cache
 sits at. The temporal plane is
 the same shape — window, cadence, completeness, gaps, all pure functions
-of the landed column's instants (v0.3's `temporal_column_profiles`, minus
+of the stored column's instants (v0.3's `temporal_column_profiles`, minus
 its one wall-clock field). An all-null column needs no machinery — the
 author leaves it out of the recipe, or keeps it, deliberately:
 
@@ -161,17 +161,17 @@ GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
 GLOSS unit ON orders.amount AS $${"value": "EUR", "source_column": "currency_code"}$$;
 ```
 
-Adjudication replaces the detect/resolve/readiness tail: witnesses on the
+Adjudication replaces the detect/resolve/readiness tail: tests on the
 contested aspects, bands read back; the auto-ground loop is an agent skill
-sweeping the attest relation and re-glossing where it may:
+sweeping the test-results relation and re-glossing where it may:
 
 ```glossql
-SELECT * FROM ATTEST(fin::behavior);
-SELECT subject, band, score FROM ATTEST(fin::unit) WHERE band = 'red';
+SELECT * FROM TESTS(fin::behavior);
+SELECT subject, band, score FROM TESTS(fin::unit) WHERE band = 'red';
 ```
 
 A human closes what the agent could not — the same statements on a human
-connection supersede the human slot (fixture 08); nothing parks in a queue
+connection supersede the human value (fixture 08); nothing parks in a queue
 that the grammar knows about.
 
 ## Findings
@@ -186,63 +186,63 @@ that the grammar knows about.
   orchestration — app concern. The grammar carries no ordering surface at
   all (`SEQUENTIAL | PARALLEL` was dropped 2026-08-03): the caller either
   sends one extraction with many calls or several statements in sequence.
-- **Typing is authored in the recipe** (ruled 2026-08-04 — the third
-  respell of this finding, and the arc is the record): the original
+- **Typing is authored in the recipe** (decided 2026-08-04 — the third
+  respell of this finding, and the arc is the catalog): the original
   transcription hand-wrote `CREATE VIEW orders_typed` with strict CASTs;
   the M4 build derived the typed view from `type` glosses, with
   `orders_raw` and `orders_quarantined` beside it. Both put typing in
-  machinery. The ruling puts it in authorship: the recipe carries the
+  machinery. The review decision puts it in authorship: the recipe carries the
   casts, written by the agent from probes and patterns, approved by the
-  human, and the landed table is the typed table — served types are
+  human, and the loaded table is the typed table — served types are
   catalog fact, not judgment. `type`, `type_candidates`, and `eligible`
   leave the engine's vocabulary; the derived pair, the raw twin, and
   reactive view invalidation leave the engine.
-- **Eligibility dissolved into authorship** (ruled 2026-08-04, hours after
-  the projection gate landed): column selection is the recipe's SELECT
+- **Eligibility dissolved into authorship** (decided 2026-08-04, hours after
+  the projection gate stored): column selection is the recipe's SELECT
   list. The v0.3 findings stand — the phase's `ALTER`-drop was
   irreversible with no override, and its `WARN` tier was read by nobody —
   but the corrected answer is a line the author writes, not a gate the
   engine owns.
-- **Table lifecycle is content identity plus coarse rules** (ruled
+- **Table lifecycle is content identity plus coarse rules** (decided
   2026-08-04, after holding the design against dbt and dlt): identity is
   the recipe-and-schema hash; a data update must reproduce the schema or
   error (the frozen-contract rule); `DROP TABLE` refuses while data
-  exists (PoC). Replacement-by-new-name was part of this ruling and was
+  exists (PoC). Replacement-by-new-name was part of this review decision and was
   superseded 2026-08-06 — a changed recipe now supersedes and re-lands;
   the full deletion cascade stays future work — tricky through
   relations and actor-generated SQL. No
   reactive invalidation of definitions anywhere: the read's pin and
   snapshot staleness are the only freshness mechanisms.
-- **Filtered rows are the author's judgment** (ruled 2026-08-04): the
+- **Filtered rows are the author's judgment** (decided 2026-08-04): the
   engine keeps one number, `dropped_rows_count` — source rows minus
-  landed rows. It arrives twice, deliberately: in the `DECLARE RECIPE`
+  stored rows. It arrives twice, deliberately: in the `DECLARE RECIPE`
   outcome at the decision moment, and in the `imports` relation beside
   `glossary` and `cache` for history — a third name in a convention
   agents already know (the store's relations read as plain tables), not
   a new convention. Which rows were dropped is the agent's question,
   answered on the files.
-- **`PROBE` is a statement head** (ruled 2026-08-04, closing the fork):
+- **`PREVIEW` is a statement head** (decided 2026-08-04, closing the fork):
   the first transcription bound probes by a path-prefix convention (the
   source name as the path's first segment) — magic an agent must be told.
-  The ruled form mirrors the recipe: `PROBE source AS $$sql$$`, one
-  concept (recipe-shaped SQL runs FROM a source; PROBE rehearses, RECIPE
-  lands). The grammar grew by one head and lost a convention; the router
+  The decided form mirrors the recipe: `PREVIEW source AS $$sql$$`, one
+  concept (recipe-shaped SQL runs FROM a source; PREVIEW rehearses, RECIPE
+  is stored). The grammar grew by one head and lost a convention; the router
   stopped sniffing SELECTs for `read_*` references. The deciding
   advantage: a probe's result carries the schema it would land — `LIMIT 0`
   rehearses the identity.
-- **Benford's law dropped** (ruled 2026-08-04): the only domain-leaning
+- **Benford's law dropped** (decided 2026-08-04): the only domain-leaning
   measurement in the deterministic plane — and the only numpy/scipy
   dependency in it — consumed by nothing as a signal. It never ports;
   whoever wants it writes a script.
-- **`RETURNS` references the vocabulary** (ruled 2026-08-04): a function
+- **`RETURNS` references the vocabulary** (decided 2026-08-04): a function
   fills an aspect, and
   the aspect's schema became the single, live contract (shape-descriptive:
   `required` for what every value carries, `properties` for what readers
-  consume, open beyond that). The function witnesses died as ceremony —
+  consume, open beyond that). The function tests died as ceremony —
   the `RETURNS` binding is what wires a function's cache into the collapse
   — and a function without `RETURNS` *is* a detector: role by shape, the
-  attest contract engine-owned. Detectors migrate only where adjudication
-  is real (same ruling): v0.3's readout detectors (`null_ratio`,
+  test-results contract engine-owned. Detectors migrate only where adjudication
+  is real (same review decision): v0.3's readout detectors (`null_ratio`,
   `unit_entropy`, `business_meaning`, `type_fidelity`) dissolve into
   measurements agents read directly; unit detection dissolves into
   authorship — a recipe splits a value-carried unit into two columns with
@@ -250,13 +250,13 @@ that the grammar knows about.
 - **The temporal family ports as one ordinary function** (2026-08-04):
   with tables that never change under their evidence, temporal needs no
   machinery of its own — window, cadence, completeness and gaps are pure
-  functions of the landed column. Cadence is the nearest named grain to
+  functions of the stored column. Cadence is the nearest named grain to
   the median gap between *distinct* instants (a duplicate-heavy fact
   column counts each day once — v0.3 learned that the hard way);
   completeness counts calendar buckets over the column's own window, by
   calendar arithmetic, never by nominal grain seconds; gaps are the
   stretches beyond twice the median. Two v0.3 fields stayed behind:
-  `is_stale` — the family's only wall-clock-dependent field, and a verdict
+  `is_stale` — the family's only wall-clock-dependent field, and a result
   about *now* is judgment, which lives in detectors and read policy, never
   in results (an agent who wants it is one `max(column)` from it) — and
   `last_period_complete`, low-signal by its own documentation and read by

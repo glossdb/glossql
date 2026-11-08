@@ -1,6 +1,6 @@
 -- The KPI kit: the vocabulary a workspace starts with, the detector that
 -- judges the vocabulary, two measurements that profile the columns, and
--- the witnesses that bind them. The core ships no aspect; what an actor
+-- the tests that bind them. The core ships no aspect; what an actor
 -- must learn about these words is SKILL.md beside this file. Load it with
 --
 --   FROM glossql_kit('kits/kpi/kit.sql');
@@ -74,9 +74,9 @@ DECLARE ASPECT definitions WITH $${
   "type": "object", "properties": {"definitions": {"type": "object"}}
 }$$ AS FACT ON DATASET;
 
--- The detector: one query over the witness's slots, a (subject, band,
+-- The detector: one query over the test's slots, a (subject, band,
 -- score) row per subject. Score is the fraction of extra distinct values
--- across a subject's slots; the band reads it against the witness's
+-- across a subject's slots; the band reads it against the test's
 -- threshold, bound as $threshold.
 
 DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$
@@ -141,12 +141,12 @@ DECLARE FUNCTION outlier_profile FOR GLOBAL AS $$
   FROM f CROSS JOIN c
 $$ RETURNS outlier_profile;
 
--- The witnesses, last: a witness names an aspect and a detector that stand.
+-- The tests, last: a test names an aspect and a detector that stand.
 -- BY says who may speak; slot_entropy judges the enum claims.
 
-DECLARE WITNESS meaning_w ON meaning BY (AGENT, HUMAN);
-DECLARE WITNESS entity_w ON entity BY (AGENT, HUMAN);
-DECLARE WITNESS role_w ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE WITNESS dimension_w ON dimension BY (AGENT, HUMAN);
+DECLARE TEST meaning_test ON meaning BY (AGENT, HUMAN);
+DECLARE TEST entity_test ON entity BY (AGENT, HUMAN);
+DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE TEST unit_test ON unit BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE TEST dimension_test ON dimension BY (AGENT, HUMAN);

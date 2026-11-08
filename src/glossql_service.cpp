@@ -2,7 +2,7 @@
 // from inside a query. The body is JSON — one table and a specification, as
 // the service's contract spells it — and the answer comes back as JSON, one
 // table and an answer object; a kit's function builds the one and reads the
-// other in SQL, and what it lands is a measurement like any other. The service
+// other in SQL, and what it is stored is a measurement like any other. The service
 // is named once, for the instance: glossql_service_url is its base, the route the
 // argument; no URL named is a refusal that says so, before any call goes out.
 // The bearer is glossql_service_token, sent as-is. The call goes through DuckDB's

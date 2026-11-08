@@ -10,7 +10,7 @@ validation, cycle, metric` (all Zod-validated; a 9th direct-read type
 There is no teach construct. A teach is an ordinary statement on a connection
 whose actor is a human; supersession by (subject, aspect, actor kind) does the
 rest — the human's gloss supersedes the human's, and the detector sees both
-the human and agent slots.
+the human and agent values.
 
 `unit` teach `{table, column, unit}`:
 
@@ -26,7 +26,7 @@ DECLARE RELATIONSHIP orders.customer_id -> customers.id;
 
 `hierarchy` teach, `add` action (reconciled 2026-08-06: a hierarchy is
 recorded as same-table relationships, finer → coarser, with the grounds
-on the pair — the dimensions ruling — never a levels blob):
+on the pair — the dimensions review decision — never a levels blob):
 
 ```glossql
 DECLARE RELATIONSHIP customers.city -> customers.region;
@@ -44,7 +44,7 @@ GLOSS type_patterns ON fin AS $${
     "name": "eu_date",
     "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$",
     "inferred_type": "DATE",
-    "standardization": "try_to_date(\"{col}\", '%d.%m.%Y')"
+    "standardization": "try_strptime(\"{col}\", '%d.%m.%Y')::DATE"
   }]
 }$$;
 ```
