@@ -127,20 +127,20 @@ GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders
 # a kit's grounding schema is an aspect flavored x-kind grounding: the engine validates every
 # VIEW body against it after the contract, and refuses a schema that would strand a current slot
 statement error
-DECLARE ASPECT grounding WITH $${"x-kind": "grounding", "type": "object", "additionalProperties": false, "properties": {"sql": {}, "stopped": {}, "assumptions": {}, "behavior": {"enum": ["stock", "flow"]}}}$$ AS FACT ON DATASET;
+DECLARE ASPECT grounding WITH $${"x-kind": "grounding", "type": "object", "additionalProperties": false, "properties": {"sql": {}, "stopped": {}, "assumptions": {}, "additivity": {"enum": ["semi-additive", "additive"]}}}$$ AS FACT ON DATASET;
 ----
 would strand the revenue gloss on fin: at $: property 'window' is not allowed
 
 statement ok
-GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders", "behavior": "flow", "assumptions": [{"assumption": "amounts are net", "basis": "column_stats", "confidence": 0.9}]}$$;
+GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders", "additivity": "additive", "assumptions": [{"assumption": "amounts are net", "basis": "column_stats", "confidence": 0.9}]}$$;
 
 statement ok
-DECLARE ASPECT grounding WITH $${"x-kind": "grounding", "type": "object", "additionalProperties": false, "properties": {"sql": {}, "stopped": {}, "assumptions": {}, "behavior": {"enum": ["stock", "flow"]}}}$$ AS FACT ON DATASET;
+DECLARE ASPECT grounding WITH $${"x-kind": "grounding", "type": "object", "additionalProperties": false, "properties": {"sql": {}, "stopped": {}, "assumptions": {}, "additivity": {"enum": ["semi-additive", "additive"]}}}$$ AS FACT ON DATASET;
 
 statement error
-GLOSS revenue ON fin AS $${"sql": "SELECT 1", "behavior": "stok"}$$;
+GLOSS revenue ON fin AS $${"sql": "SELECT 1", "additivity": "stok"}$$;
 ----
-grounding schema grounding: at $.behavior
+grounding schema grounding: at $.additivity
 
 statement error
 GLOSS revenue ON fin AS $${"sql": "SELECT 1", "window": "7 days"}$$;
@@ -158,9 +158,9 @@ SELECT view_name FROM duckdb_views() WHERE schema_name = 'fin';
 revenue
 
 query TTT
-SELECT subject, aspect, value->>'behavior' FROM GLOSSARY(fin::revenue);
+SELECT subject, aspect, value->>'additivity' FROM GLOSSARY(fin::revenue);
 ----
-fin	revenue	flow
+fin	revenue	additive
 
 # a stop ends the view; the stop serves
 statement ok

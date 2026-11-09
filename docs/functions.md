@@ -26,7 +26,7 @@ See [reading](usage/reading.md).
 ## TESTS
 
 ```sql
-SELECT * FROM TESTS(orders.amount::behavior);
+SELECT * FROM TESTS(orders.amount::additivity);
 ```
 
 Test results: `(subject, aspect, test, band, score, computed_at,

@@ -157,7 +157,7 @@ same SQL hands that wrote it — never a gloss:
 SELECT * FROM GLOSSARY(fin.orders.amount);
 
 GLOSS meaning ON orders.amount AS $${"value": "gross invoiced amount per order line"}$$;
-GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
+GLOSS additivity ON orders.amount AS $${"value": "additive"}$$;
 GLOSS unit ON orders.amount AS $${"value": "EUR", "source_column": "currency_code"}$$;
 ```
 
@@ -166,7 +166,7 @@ conflict aspects, bands read back; the auto-ground loop is an agent skill
 sweeping the test-results relation and re-glossing where it may:
 
 ```glossql
-SELECT * FROM TESTS(fin::behavior);
+SELECT * FROM TESTS(fin::additivity);
 SELECT subject, band, score FROM TESTS(fin::unit) WHERE band = 'red';
 ```
 

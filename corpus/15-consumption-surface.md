@@ -54,16 +54,16 @@ interest, hierarchy chains, per-(metric, axis) additivity results
 grain rather than guessing), a cross-currency unit gate, and the
 metric's persisted clause parts. Refusals render with reasons.
 
-The glossql composition per gate: the time gate is the `behavior`
+The glossql composition per gate: the time gate is the `additivity`
 gloss (a stock never sums across periods; the year-scoped
-behavior_evidence anchor says when a season/YTD reset bounds it);
+additivity_evidence anchor says when a season/YTD reset bounds it);
 the unit gate is the `unit` gloss's `source_column` plus a distinct
 count; the chain is the declared same-table relationships; axis
 choice is the `dimension` result (including the judged negative
 `none`) beside `dimension_relevance`:
 
 ```glossql
-SELECT value FROM GLOSSARY(results.points::behavior) WHERE state = 'current';
+SELECT value FROM GLOSSARY(results.points::additivity) WHERE state = 'current';
 SELECT value FROM GLOSSARY(results.points::unit) WHERE state = 'current';
 SELECT value FROM GLOSSARY(races.circuit_id::dimension) WHERE state = 'current';
 SELECT count(*) FROM results r JOIN races a ON r.race_id = a.race_id;
@@ -71,9 +71,9 @@ SELECT count(*) FROM results r JOIN races a ON r.race_id = a.race_id;
 
 **TRANSCRIBES for the time and unit gates · SEMANTICS UNDEFINED for
 the general axis result.** v0.3's additivity table is keyed per
-(metric, axis); our claim is that behavior + unit + entity grain
+(metric, axis); our claim is that additivity + unit + entity grain
 compose the same refusals at read. The time case is covered
-(behavior is exactly it). The general case — a metric non-additive
+(additivity is exactly it). The general case — a metric non-additive
 over an arbitrary categorical axis — has no home yet and gets none
 until a drill-shaped consumer proves the composition insufficient:
 name the gap, do not build for it.

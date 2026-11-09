@@ -10,7 +10,7 @@
 -- val). A screen is SQL over that relation: a join on rn puts a row's columns
 -- side by side, a join on val matches values across columns, within one
 -- stored type. The engine's primitives, dataset_cells,
--- glossql_relationship_checks and glossql_behavior_cells, are what names a
+-- glossql_relationship_checks and glossql_additivity_cells, are what names a
 -- column; a screen is SQL over them. A primitive names what its bind read
 -- beside the plan, the record's edges and roles and the tables' shapes, so a
 -- measurement over a screen is served while those stand and computes when one
@@ -277,7 +277,7 @@ ORDER BY seq;
 -- kit does: the period is the column glossed role timestamp (one, or the
 -- one named period), the value the column glossed role measure (one, or
 -- the one named value); without the claims, the columns named period and
--- value, the first date column standing in for the period. The behavior
+-- value, the first date column standing in for the period. The additivity
 -- glossed on the value column folds the month: a flow summed, a stock the
 -- month's last level, a ratio its summed halves re-divided, the columns
 -- its numerator and denominator name; none claimed reads as flow. A
@@ -308,7 +308,7 @@ claims AS (
          substr(subject, length(split_part(subject, '.', 1)) + length(split_part(subject, '.', 2)) + 3) AS col,
          g.aspect AS claim, value
   FROM glossql_glossary(ds, NULL, false) g
-  WHERE g.aspect IN ('role', 'behavior') AND state IN ('current', 'stale') AND value IS NOT NULL
+  WHERE g.aspect IN ('role', 'additivity') AND state IN ('current', 'stale') AND value IS NOT NULL
     AND len(string_split(subject, '.')) >= 3 AND split_part(subject, '.', 2) IN (SELECT aspect FROM groundings)),
 roles AS (
   SELECT aspect, value->>'value' AS role,
@@ -327,13 +327,13 @@ chosen AS (
   LEFT JOIN roles m ON m.aspect = g.aspect AND m.role = 'measure'),
 folds AS (
   SELECT c.aspect, c.period_column, c.value_column,
-         coalesce(b.value->>'value', 'flow') AS verb, b.value->>'numerator' AS num, b.value->>'denominator' AS den
-  FROM chosen c LEFT JOIN claims b ON b.claim = 'behavior' AND b.aspect = c.aspect AND b.col = c.value_column
+         coalesce(b.value->>'value', 'additive') AS verb, b.value->>'numerator' AS num, b.value->>'denominator' AS den
+  FROM chosen c LEFT JOIN claims b ON b.claim = 'additivity' AND b.aspect = c.aspect AND b.col = c.value_column
   WHERE c.period_column IS NOT NULL AND c.value_column IS NOT NULL),
 series AS (
   SELECT f.aspect, date_trunc('month', TRY_CAST(p.val AS TIMESTAMP)) AS month,
          CASE f.verb
-           WHEN 'stock' THEN arg_max(TRY_CAST(v.val AS DOUBLE), TRY_CAST(p.val AS TIMESTAMP)) FILTER (WHERE v."column" = f.value_column)
+           WHEN 'semi-additive' THEN arg_max(TRY_CAST(v.val AS DOUBLE), TRY_CAST(p.val AS TIMESTAMP)) FILTER (WHERE v."column" = f.value_column)
            WHEN 'ratio' THEN sum(TRY_CAST(v.val AS DOUBLE)) FILTER (WHERE v."column" = f.num)
                              / sum(TRY_CAST(v.val AS DOUBLE)) FILTER (WHERE v."column" = f.den)
            ELSE sum(TRY_CAST(v.val AS DOUBLE)) FILTER (WHERE v."column" = f.value_column) END AS value,
@@ -364,7 +364,7 @@ WHERE NOT EXISTS (SELECT 1 FROM hits)
 ORDER BY seq;
 
 --===------------------------------------------------------------------===--
--- behavior_anchors(column): whether a numeric column behaves as a stock, a
+-- additivity_anchors(column): whether a numeric column behaves as a stock, a
 -- level correct at a point in time, or a flow, a movement that sums over a
 -- period. A column's own trajectory cannot decide it: a trending flow and a
 -- mean-reverting stock look alike. The evidence is cross-table: a movement
@@ -372,7 +372,7 @@ ORDER BY seq;
 -- relationships align with the column's table, scored against both readings
 -- with scale-free residuals, flow where y ≈ m, stock where Δy ≈ m. One row
 -- per anchor: an event table, an alignment, a time axis on each side, a
--- grain and a scope. Over glossql_behavior_cells(column), both sides at the
+-- grain and a scope. Over glossql_additivity_cells(column), both sides at the
 -- day, folded to the anchor's grain, the coarser of the two sides' native
 -- grains, a day-native alignment serving a month beside the day, and scoped
 -- by year where the grain allows, since a cumulative that resets is a stock
@@ -396,7 +396,7 @@ ORDER BY seq;
 -- One anchor per alignment and scope reads the measure's own shape instead:
 -- entities that never decrease over four periods or more at the native
 -- grain vote stock under the convention monotone, movers only. The verdict
--- is evidence the judge reads before glossing behavior, never a voice in its
+-- is evidence the judge reads before glossing additivity, never a voice in its
 -- slots. A column that is not numeric, an identifier (a leg of a declared
 -- relationship, or an integer distinct on nine filled rows in ten, which is
 -- what the monotone reading would otherwise read as a cumulative), a table
@@ -411,15 +411,15 @@ CREATE OR REPLACE MACRO main.wilson_lower(s, n) AS
                           / (1.0 + 3.8416 / n)) END;
 
 -- One entity's vote under a convention from its two residuals: stock, flow, or NULL for an abstention
-CREATE OR REPLACE MACRO main.behavior_vote(n, flat, moving, nan, rf, rs) AS
+CREATE OR REPLACE MACRO main.additivity_vote(n, flat, moving, nan, rf, rs) AS
   CASE WHEN n < 4 OR flat OR NOT moving OR nan THEN NULL
        WHEN least(rf, rs) > 0.05 THEN NULL
        WHEN (CASE WHEN isinf(least(rf, rs)) THEN 0.0 WHEN isinf(greatest(rf, rs)) THEN 1.0
                   WHEN rf + rs = 0.0 THEN 0.0 ELSE (greatest(rf, rs) - least(rf, rs)) / (rf + rs) END) < 1.0 / 3.0 THEN NULL
-       WHEN rs < rf THEN 'stock' ELSE 'flow' END;
+       WHEN rs < rf THEN 'semi-additive' ELSE 'additive' END;
 
-CREATE OR REPLACE MACRO main.behavior_anchors(col) AS TABLE
-WITH cells AS MATERIALIZED (SELECT * FROM glossql_behavior_cells(col)),
+CREATE OR REPLACE MACRO main.additivity_anchors(col) AS TABLE
+WITH cells AS MATERIALIZED (SELECT * FROM glossql_additivity_cells(col)),
 -- the native grain of each side's axis: the coarsest named grain every period is already truncated to
 native AS (
   SELECT side, event, align, axis,
@@ -490,8 +490,8 @@ per_entity AS (
   FROM stepped GROUP BY ALL),
 voters AS (
   SELECT anchor_id, convention, terms, entity, r_flow, r_stock,
-         behavior_vote(n, flat, moving, nan, r_flow, r_stock) AS vote,
-         behavior_vote(n, flat, moving, nan, r_flow_neg, r_stock_neg) AS mirror
+         additivity_vote(n, flat, moving, nan, r_flow, r_stock) AS vote,
+         additivity_vote(n, flat, moving, nan, r_flow_neg, r_stock_neg) AS mirror
   FROM (SELECT *,
                CASE WHEN df > 0 THEN nf / df ELSE 'infinity'::DOUBLE END AS r_flow,
                CASE WHEN ds > 0 THEN ns / ds ELSE 'infinity'::DOUBLE END AS r_stock,
@@ -501,9 +501,9 @@ voters AS (
 -- per convention: the votes, the winning label, its diagnostics over the winning voters, the support over the common entities
 counts AS (
   SELECT anchor_id, convention, terms, count(vote) AS voted,
-         count(*) FILTER (WHERE vote = 'stock') AS stock, count(*) FILTER (WHERE vote = 'flow') AS flow
+         count(*) FILTER (WHERE vote = 'semi-additive') AS stock, count(*) FILTER (WHERE vote = 'additive') AS flow
   FROM voters GROUP BY ALL),
-winning AS (SELECT *, CASE WHEN stock > flow THEN 'stock' ELSE 'flow' END AS label, greatest(stock, flow) AS winners FROM counts),
+winning AS (SELECT *, CASE WHEN stock > flow THEN 'semi-additive' ELSE 'additive' END AS label, greatest(stock, flow) AS winners FROM counts),
 diag AS (
   SELECT w.anchor_id, w.convention,
          median(v.r_flow) FILTER (WHERE v.vote = w.label) AS r_flow, median(v.r_stock) FILTER (WHERE v.vote = w.label) AS r_stock,
@@ -595,7 +595,7 @@ mono_read AS (
 mono AS (
   SELECT mk.event, mk.align, mk.measure_time, mk.event_time, mk.grain, mk.scope,
          coalesce(r.considered, 0) AS entities, coalesce(r.considered, 0) AS viable_entities, i.identifier_columns,
-         CASE WHEN coalesce(r.considered, 0) < 2 OR coalesce(r.movers, 0) < 2 OR r.monotone * 2 < r.movers THEN 'abstain' ELSE 'stock' END AS verdict,
+         CASE WHEN coalesce(r.considered, 0) < 2 OR coalesce(r.movers, 0) < 2 OR r.monotone * 2 < r.movers THEN 'abstain' ELSE 'semi-additive' END AS verdict,
          'monotone' AS convention,
          CASE WHEN r.considered >= 2 AND r.movers >= 2 THEN r.movers END AS voted,
          CASE WHEN r.considered >= 2 AND r.movers >= 2 THEN r.monotone / r.movers::DOUBLE END AS agreement,
@@ -758,13 +758,13 @@ $$ RETURNS grounding_collisions;
 -- abstains the summary carries the reason of the one that came closest: a
 -- reconciliation over the monotone reading, one that aligned over one that
 -- did not, the most votes. Extraction serves the summary; the anchors read
--- back through GLOSSARY(column::behavior_evidence).
-DECLARE ASPECT behavior_evidence WITH $${
+-- back through GLOSSARY(column::additivity_evidence).
+DECLARE ASPECT additivity_evidence WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
                  "anchors_n": {"type": ["integer", "null"]}, "decided": {"type": ["integer", "null"]},
                  "summary": {"type": ["object", "null"],
-                   "properties": {"verdict": {"enum": ["stock", "flow", "abstain"]},
+                   "properties": {"verdict": {"enum": ["semi-additive", "additive", "abstain"]},
                                   "convention": {"type": ["string", "null"]}, "support": {"type": ["number", "null"]},
                                   "voted": {"type": ["integer", "null"]}, "event": {"type": ["string", "null"]},
                                   "align": {"type": ["string", "null"]}, "grain": {"type": ["string", "null"]},
@@ -774,8 +774,8 @@ DECLARE ASPECT behavior_evidence WITH $${
                  "anchors": {"type": ["array", "null"], "items": {"type": "object"}}}
 }$$ AS MEASUREMENT ON COLUMN WHEN role = 'measure';
 
-DECLARE FUNCTION behavior_evidence FOR GLOBAL AS $$
-  WITH a AS (SELECT * FROM behavior_anchors($subject)),
+DECLARE FUNCTION additivity_evidence FOR GLOBAL AS $$
+  WITH a AS (SELECT * FROM additivity_anchors($subject)),
   ranked AS (
     SELECT *, convention = 'monotone' AS monotone,
            row_number() OVER (ORDER BY round(support, 8) DESC, convention = 'monotone', voted DESC, event, align) AS rank
@@ -806,7 +806,7 @@ DECLARE FUNCTION behavior_evidence FOR GLOBAL AS $$
            'sign_primary': a.sign_primary, 'sign_mirror': a.sign_mirror, 'sign_both': a.sign_both,
            'alternatives': a.alternatives, 'reason': a.reason} ORDER BY a.seq) END AS anchors
   FROM a
-$$ RETURNS behavior_evidence;
+$$ RETURNS additivity_evidence;
 
 --===------------------------------------------------------------------===--
 -- The temporal profile: a date column's window, cadence, completeness and

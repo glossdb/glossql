@@ -98,16 +98,16 @@ DECLARE RECIPE orders ON fin FROM erp SET (key: id)
   AS $$SELECT id::INTEGER AS id, amount::DOUBLE AS amount FROM read_parquet('orders/*.parquet')$$;
 IMPORT orders;                                  -- the recipe runs again; keyed tables merge; every load is a snapshot
 
-DECLARE ASPECT behavior WITH $${"type": "object", "properties": {"value": {"enum": ["stock", "flow"]}}}$$ AS FACT ON COLUMN;
-DECLARE FUNCTION behavior_entropy FOR fin AS $$ SELECT subject, ... AS band, ... AS score FROM slots GROUP BY subject $$;
-DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
+DECLARE ASPECT additivity WITH $${"type": "object", "properties": {"value": {"enum": ["semi-additive", "additive"]}}}$$ AS FACT ON COLUMN;
+DECLARE FUNCTION additivity_entropy FOR fin AS $$ SELECT subject, ... AS band, ... AS score FROM slots GROUP BY subject $$;
+DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN) DETECTOR additivity_entropy THRESHOLD 0.7;
 
-GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
+GLOSS additivity ON orders.amount AS $${"value": "additive"}$$;
 SET VARIABLE glossql_actor = 'human';           -- the actor rides the connection
-GLOSS behavior ON orders.amount AS $${"value": "stock"}$$;
+GLOSS additivity ON orders.amount AS $${"value": "semi-additive"}$$;
 
 SELECT * FROM GLOSSARY(orders);                 -- (subject, aspect, value, band, score, state): current | conflict | stale | missing
-SELECT * FROM TESTS(orders.amount::behavior);  -- the test results
+SELECT * FROM TESTS(orders.amount::additivity);  -- the test results
 SELECT * FROM GLOSSARY(orders.amount, all => true);
 
 DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$ AS MEASUREMENT ON COLUMN;
@@ -118,7 +118,7 @@ FROM min_max('fin.orders.amount');              -- the same function, as the tab
 DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS VIEW;
 GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders"}$$;
 FROM fin.revenue;                               -- a metric definition is a view, and a table of the dataset
-GLOSS behavior ON revenue.revenue AS $${"value": "flow"}$$;  -- its columns are assets: annotate them like a table's
+GLOSS additivity ON revenue.revenue AS $${"value": "additive"}$$;  -- its columns are assets: annotate them like a table's
 ```
 
 ## Status

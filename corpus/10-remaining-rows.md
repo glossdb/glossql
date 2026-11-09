@@ -19,7 +19,7 @@ statements. `recipe_hash` needs no clause: statement identity is content hash
 
 ```glossql
 GLOSS meaning ON orders.amount AS $${"value": "gross invoiced amount per order line"}$$;
-GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
+GLOSS additivity ON orders.amount AS $${"value": "additive"}$$;
 GLOSS unit ON orders.amount AS $${"value": "EUR", "source_column": "currency_code"}$$;
 GLOSS stored_sign ON journal_lines.amount AS $${"value": "ledger_signed"}$$;
 GLOSS type ON orders.amount AS $${"value": "DECIMAL(12,2)"}$$;

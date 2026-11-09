@@ -38,7 +38,7 @@ works](https://github.com/glossdb/glossdb/blob/main/docs/overview/how-it-works.m
 | `meaning` | description | What a table, column or relationship means, and the business term it carries |
 | `role` | column role | key, measure, dimension, timestamp, attribute |
 | `unit` | unit of measure | A measure's unit or currency |
-| `behavior`: flow · stock · ratio | additivity: additive · semi-additive · non-additive | Whether a measure may be summed, and over which axes |
+| `additivity`: flow · stock · ratio | additivity: additive · semi-additive · non-additive | Whether a measure may be summed, and over which axes |
 | `dimension`: primary · supporting | dimension | Whether a dimension column is one to slice a metric by |
 | `entity` | grain and key | What one row of a table is, and the columns that identify it |
 | `definitions` | business glossary | Each metric's meaning, unit, owner, source and formula, kept per dataset |

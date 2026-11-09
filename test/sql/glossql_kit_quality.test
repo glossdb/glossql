@@ -346,10 +346,10 @@ SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_se
 ----
 [margin, open_items, revenue, turnover]
 
-# the behavior glossed on the value column folds the month: a stock keeps the month's last level, so open_items
+# the additivity glossed on the value column folds the month: a stock keeps the month's last level, so open_items
 # no longer agrees with the flows
 statement ok
-GLOSS behavior ON open_items.value AS $${"value": "stock"}$$;
+GLOSS additivity ON open_items.value AS $${"value": "semi-additive"}$$;
 
 query T
 SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_series';
@@ -483,10 +483,10 @@ SELECT subject, band, score FROM TESTS(orders::ids_present);
 ----
 fin.orders	red	0.2
 
-# --- behavior_evidence: the stock/flow evidence over declared edges; a level an event table's movements reconcile reads stock, a sum of them flow
+# --- additivity_evidence: the stock/flow evidence over declared edges; a level an event table's movements reconcile reads stock, a sum of them flow
 
 statement ok
-DECLARE DATASET beh SET (purpose: 'behavior');
+DECLARE DATASET beh SET (purpose: 'additivity');
 
 statement ok
 USE beh;
@@ -512,7 +512,7 @@ CREATE TABLE beh.totals AS SELECT account_id, date_trunc('month', posted)::DATE 
 
 # no declared edge: nothing aligns, and the screen says why
 query TT
-SELECT applicable, reason FROM behavior_anchors('beh.balances.balance');
+SELECT applicable, reason FROM additivity_anchors('beh.balances.balance');
 ----
 false	no declared relationships connect balances to an event table with a time axis
 
@@ -541,18 +541,18 @@ beh.totals.account_id -> beh.accounts.id	2
 
 # no role glossed on the event tables: every anchor abstains and names the gloss to make
 query TT
-SELECT DISTINCT verdict, reason FROM behavior_anchors('beh.balances.balance') ORDER BY reason;
+SELECT DISTINCT verdict, reason FROM additivity_anchors('beh.balances.balance') ORDER BY reason;
 ----
 abstain	no role glossed on postings: gloss role on its columns
 abstain	no role glossed on totals: gloss role on its columns
 
 # the abstention is a measurement row: it names the roles it read, and the roles glossed below make the repeat compute
 statement ok
-SELECT behavior_evidence() FROM balances.balance;
+SELECT additivity_evidence() FROM balances.balance;
 
 query TT
 SELECT json_extract_string(g.value, '$.summary.verdict'), m.reads
-FROM GLOSSARY(beh.balances.balance::behavior_evidence) g, main.measurements m
+FROM GLOSSARY(beh.balances.balance::additivity_evidence) g, main.measurements m
 WHERE m.subject = 'beh.balances.balance';
 ----
 abstain	beh.accounts,beh.balances,beh.postings,beh.totals,main.glossary,main.relationships
@@ -571,84 +571,84 @@ GLOSS role ON balances.balance AS $${"value": "measure"}$$;
 # reading abstains, since signed postings move the level both ways. The movements are the glossed measures; posting_id
 # is an identifier, served as one
 query ITTTTTIRRRT
-SELECT seq, event, grain, scope, verdict, convention, voted, round(support, 4), round(r_flow, 2), r_stock, reason FROM behavior_anchors('beh.balances.balance') ORDER BY seq;
+SELECT seq, event, grain, scope, verdict, convention, voted, round(support, 4), round(r_flow, 2), r_stock, reason FROM additivity_anchors('beh.balances.balance') ORDER BY seq;
 ----
 0	postings	day	none	abstain	NULL	NULL	NULL	NULL	NULL	no entity series reconciled: wrong anchor, short series, or dead values
 1	postings	day	year	abstain	NULL	NULL	NULL	NULL	NULL	no entity series reconciled: wrong anchor, short series, or dead values
-2	postings	month	none	stock	amount	3	0.4385	129.36	0.0	NULL
-3	postings	month	year	stock	amount	3	0.4385	129.36	0.0	NULL
+2	postings	month	none	semi-additive	amount	3	0.4385	129.36	0.0	NULL
+3	postings	month	year	semi-additive	amount	3	0.4385	129.36	0.0	NULL
 4	postings	day	none	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
 5	postings	day	year	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
-6	totals	month	none	stock	total	3	0.4385	129.36	0.0	NULL
-7	totals	month	year	stock	total	3	0.4385	129.36	0.0	NULL
+6	totals	month	none	semi-additive	total	3	0.4385	129.36	0.0	NULL
+7	totals	month	year	semi-additive	total	3	0.4385	129.36	0.0	NULL
 8	totals	day	none	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
 9	totals	day	year	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
 
 query TTIII
-SELECT identifier_columns::VARCHAR, align, entities, viable_entities, sign_primary FROM behavior_anchors('beh.balances.balance') WHERE seq = 2;
+SELECT identifier_columns::VARCHAR, align, entities, viable_entities, sign_primary FROM additivity_anchors('beh.balances.balance') WHERE seq = 2;
 ----
 [account_id, posting_id]	balances.account_id = postings.account_id	3	3	3
 
 # the measurement: the election's summary, the anchors read back whole; the second row on the subject
 statement ok
-SELECT behavior_evidence() FROM balances.balance;
+SELECT additivity_evidence() FROM balances.balance;
 
 query TTTTTTI
 SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'), json_extract_string(value, '$.summary.event'),
        json_extract_string(value, '$.summary.grain'), json_extract_string(value, '$.summary.tiebreak'),
        json_extract_string(value, '$.anchors_n') || '/' || json_extract_string(value, '$.decided') || '/' || json_array_length(value, '$.anchors'),
        (SELECT count(*) FROM main.measurements WHERE subject = 'beh.balances.balance')
-FROM GLOSSARY(beh.balances.balance::behavior_evidence);
+FROM GLOSSARY(beh.balances.balance::additivity_evidence);
 ----
-stock	amount	postings	month	event-name	10/4/10	2
+semi-additive	amount	postings	month	event-name	10/4/10	2
 
 # the monthly sums match the postings' movement as they stand: flow
 statement ok
-SELECT behavior_evidence() FROM totals.total;
+SELECT additivity_evidence() FROM totals.total;
 
 query TTTT
 SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'),
        json_extract_string(value, '$.summary.r_flow'), json_extract_string(value, '$.summary.sign.primary')
-FROM GLOSSARY(beh.totals.total::behavior_evidence);
+FROM GLOSSARY(beh.totals.total::additivity_evidence);
 ----
-flow	amount	0.0	3
+additive	amount	0.0	3
 
 # no number, no time axis: examined, nothing to say
 query TT
-SELECT applicable, reason FROM behavior_anchors('beh.accounts.name');
+SELECT applicable, reason FROM additivity_anchors('beh.accounts.name');
 ----
 false	beh.accounts.name is VARCHAR, not a number: the evidence reads a numeric measure
 
 statement ok
-SELECT behavior_evidence() FROM accounts.rating;
+SELECT additivity_evidence() FROM accounts.rating;
 
 query TT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') FROM GLOSSARY(beh.accounts.rating::behavior_evidence);
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') FROM GLOSSARY(beh.accounts.rating::additivity_evidence);
 ----
 false	no period axis: no date column on accounts or one declared hop away
 
 # an identifier is no measure: a leg of a declared relationship at bind, a key-shaped integer by its distinct share
 query TT
-SELECT applicable, reason FROM behavior_anchors('beh.postings.account_id');
+SELECT applicable, reason FROM additivity_anchors('beh.postings.account_id');
 ----
 false	beh.postings.account_id is a leg of a declared relationship: an identifier, no measure
 
 query TT
-SELECT applicable, reason FROM behavior_anchors('beh.postings.posting_id');
+SELECT applicable, reason FROM additivity_anchors('beh.postings.posting_id');
 ----
 false	beh.postings.posting_id is key-shaped: 546 distinct values in 546 filled rows, an identifier, no measure; gloss role key
 
 # the refusal is a measurement row keyed to the table it counted: rows appended, the repeat computes with the counts now
 statement ok
-SELECT behavior_evidence() FROM postings.posting_id;
+SELECT additivity_evidence() FROM postings.posting_id;
 
 statement ok
 INSERT INTO beh.postings SELECT 546 + i, 1, DATE '2024-07-01' + (i % 30)::INTEGER, 1.0 FROM range(1, 201) t(i);
 
 query TTTTT
-SELECT behavior_evidence() FROM postings.posting_id;
+SELECT additivity_evidence() FROM postings.posting_id;
 ----
-behavior_evidence	beh.postings.posting_id	behavior_evidence	{"applicable":false,"reason":"beh.postings.posting_id is key-shaped: 746 distinct values in 746 filled rows, an identifier, no measure; gloss role key","anchors_n":null,"decided":null,"summary":null,"anchors":null}	true
+additivity_evidence	beh.postings.posting_id	additivity_evidence	{"applicable":false,"reason":"beh.postings.posting_id is key-shaped: 746 distinct values in 746 filled rows, an identifier, no measure; gloss role key","anchors_n":null,"decided":null,"summary":null,"anchors":null}	true
 
 query T
 SELECT reads FROM main.measurements WHERE subject = 'beh.postings.posting_id' ORDER BY seq;
@@ -681,7 +681,7 @@ DECLARE RELATIONSHIP postings.account_id -> balances.account_id;
 
 # no role, then a role that is no measure, then the measure: the abstention names the act each time
 query TT
-SELECT DISTINCT verdict, reason FROM behavior_anchors('direct.balances.balance');
+SELECT DISTINCT verdict, reason FROM additivity_anchors('direct.balances.balance');
 ----
 abstain	no role glossed on postings: gloss role on its columns
 
@@ -689,7 +689,7 @@ statement ok
 GLOSS role ON postings.amount AS $${"value": "attribute"}$$;
 
 query TT
-SELECT DISTINCT verdict, reason FROM behavior_anchors('direct.balances.balance');
+SELECT DISTINCT verdict, reason FROM additivity_anchors('direct.balances.balance');
 ----
 abstain	no measure among postings's roles: gloss role measure on its movement columns
 
@@ -697,10 +697,10 @@ statement ok
 GLOSS role ON postings.amount AS $${"value": "measure"}$$;
 
 query TTTTTT
-SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('direct.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
+SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM additivity_anchors('direct.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
 ----
-balances.account_id = postings.account_id	month	none	stock	amount	[account_id, posting_id]
-balances.account_id = postings.account_id	month	year	stock	amount	[account_id, posting_id]
+balances.account_id = postings.account_id	month	none	semi-additive	amount	[account_id, posting_id]
+balances.account_id = postings.account_id	month	year	semi-additive	amount	[account_id, posting_id]
 
 # the measure side borrows its entity through a document: the levels are per invoice, the invoice names the customer,
 # and the payments key on the customer; a measure table whose every edge lands on a document keys on the document's dimension
@@ -750,21 +750,21 @@ statement ok
 GLOSS role ON received.received_to_date AS $${"value": "measure"}$$;
 
 query TTTTTT
-SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('viadoc.received.received_to_date') WHERE verdict <> 'abstain' ORDER BY seq;
+SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM additivity_anchors('viadoc.received.received_to_date') WHERE verdict <> 'abstain' ORDER BY seq;
 ----
-received via invoices.customer_id = payments.customer_id	month	none	stock	amount	[customer_id, payment_id]
-received via invoices.customer_id = payments.customer_id	month	year	stock	amount	[customer_id, payment_id]
+received via invoices.customer_id = payments.customer_id	month	none	semi-additive	amount	[customer_id, payment_id]
+received via invoices.customer_id = payments.customer_id	month	year	semi-additive	amount	[customer_id, payment_id]
 
 # the borrowed axis names the hop, on both alignments the lines have: meeting received at the invoice, and the
 # customer borrowed through the invoice; one issue date per invoice is one period, so every anchor abstains on viability
 query TTT
-SELECT DISTINCT side, axis, align FROM glossql_behavior_cells('viadoc.lines.amount') WHERE side = 'measure' ORDER BY align;
+SELECT DISTINCT side, axis, align FROM glossql_additivity_cells('viadoc.lines.amount') WHERE side = 'measure' ORDER BY align;
 ----
 measure	invoices.issued via invoice_id	invoice_id
 measure	invoices.issued via invoice_id	invoices>customer_id
 
 query TTI
-SELECT measure_time, reason, viable_entities FROM behavior_anchors('viadoc.lines.amount') WHERE convention IS NULL ORDER BY seq LIMIT 1;
+SELECT measure_time, reason, viable_entities FROM additivity_anchors('viadoc.lines.amount') WHERE convention IS NULL ORDER BY seq LIMIT 1;
 ----
 invoices.issued via invoice_id	fewer than two entities carry 4+ periods on this alignment	0
 
@@ -807,10 +807,10 @@ statement ok
 GLOSS role ON payment_lines.amount AS $${"value": "measure"}$$;
 
 query TTTTTT
-SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM behavior_anchors('viamaster.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
+SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM additivity_anchors('viamaster.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
 ----
-balances.customer_id = payment_lines via payments.customer_id	month	none	stock	amount	[line_id, payment_id]
-balances.customer_id = payment_lines via payments.customer_id	month	year	stock	amount	[line_id, payment_id]
+balances.customer_id = payment_lines via payments.customer_id	month	none	semi-additive	amount	[line_id, payment_id]
+balances.customer_id = payment_lines via payments.customer_id	month	year	semi-additive	amount	[line_id, payment_id]
 
 # the kit run again with the same text stands: one row, nothing runs
 query TT

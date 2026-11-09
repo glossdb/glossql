@@ -33,7 +33,7 @@ to look; extract its measurement to land what it found.
 | `detect_hierarchies()` | table | `hierarchy_candidates(table)` | `candidates`: `from`, `to`, `g3`, `lambda`, `kind` (`edge` or `alias`); `rows`, the rows read: a sample of a larger table, so the rates are estimates |
 | `detect_derivations()` | table | `derivation_candidates(table)` | `candidates`: `target`, `form` (`product` or `sum`), `operands`, `support`, `violations`, `match_rate`; `truncated`; `rows`, the rows read: a sample of a larger table |
 | `detect_grounding_collisions()` | dataset | `grounding_collisions(dataset)` | `groundings`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |
-| `behavior_evidence()` | column | `behavior_anchors(column)` | `summary`: `verdict` (`stock`, `flow`, `abstain`), `convention`, `support`, `voted`, `event`, `align`, `grain`, `scope`, `r_flow`, `r_stock`, `sign`, `tiebreak`, `reason`; `anchors`: every anchor's row; `anchors_n`, `decided` |
+| `additivity_evidence()` | column | `additivity_anchors(column)` | `summary`: `verdict` (`semi-additive`, `additive`, `abstain`), `convention`, `support`, `voted`, `event`, `align`, `grain`, `scope`, `r_flow`, `r_stock`, `sign`, `tiebreak`, `reason`; `anchors`: every anchor's row; `anchors_n`, `decided` |
 
 What each line means:
 
@@ -53,9 +53,9 @@ What each line means:
   SQL differs. The series is read off the view's claims: the column
   glossed `role` timestamp is the period, the column glossed `role`
   measure the value, else the columns named `period` and `value`; the
-  `behavior` glossed on the value column folds the month, a flow summed,
+  `additivity` glossed on the value column folds the month, a flow summed,
   a stock at its last level, a ratio its summed halves re-divided.
-- The behavior evidence says whether a numeric column is a stock, a
+- The additivity evidence says whether a numeric column is a stock, a
   level correct at a point in time, or a flow, a movement that sums over
   a period. A column's own trajectory cannot decide it; the evidence is
   cross-table: a movement summed per entity and period from an event
@@ -73,7 +73,7 @@ What each line means:
   median residuals of the voters; `sign` how many fire only under the
   negated movement, the ledger-signed reading. An anchor abstains with
   its reason: short series, no fit, under the majority. Read the
-  summary, then gloss `behavior` citing the anchor in `grounds`; the
+  summary, then gloss `additivity` citing the anchor in `grounds`; the
   result is evidence, never a value in the values.
 - `applicable: false` with a `reason` is a screen that could not run:
   an empty table, too few columns of the right kind, no declared
@@ -99,9 +99,9 @@ What each line means:
    detect_derivations() FROM fin.lines;`. Cite a found edge or
    derivation in the `grounds` of the gloss it supports.
 5. Per measure column, after the edges are declared and the event
-   tables' measures carry `role`, `SELECT behavior_evidence() FROM
+   tables' measures carry `role`, `SELECT additivity_evidence() FROM
    fin.balances.amount;`: stock or flow, with the anchor that decided.
-   Gloss `behavior` with the anchor as grounds.
+   Gloss `additivity` with the anchor as grounds.
 6. After metric definition metrics, `SELECT detect_grounding_collisions() FROM
    fin;`: two names for one number is a definition to settle, not two
    metrics.

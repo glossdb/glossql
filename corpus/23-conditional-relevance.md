@@ -3,11 +3,11 @@
 Source: our own runs. A validated onboarding run
 stored ~109 columns
 against the kit's six column-grain vocabulary aspects and disclosed
-~607 `missing` values — behavior required on text columns, dimension
+~607 `missing` values — additivity required on text columns, dimension
 required on keys. Grain answers *which
 subject class* an aspect speaks to; nothing could answer *which
 subjects, given what the catalog already knows*. The relevance of
-`behavior`, `unit`, and `dimension` is conditional on `role` — and
+`additivity`, `unit`, and `dimension` is conditional on `role` — and
 `role` is already an ordinary FACT aspect whose schema pins `value`
 to an enum, so the condition references a vocabulary the store
 already validates.
@@ -15,13 +15,13 @@ already validates.
 ## The decided form
 
 ```glossql
-DECLARE ASPECT behavior WITH $${
+DECLARE ASPECT additivity WITH $${
   "type": "object", "required": ["value"],
-  "properties": {"value": {"enum": ["stock", "flow", "none"]}}
+  "properties": {"value": {"enum": ["semi-additive", "additive", "none"]}}
 }$$ AS FACT ON COLUMN WHEN role = 'measure';
 ```
 
-TRANSCRIBES — the kit's behavior aspect as shipped
+TRANSCRIBES — the kit's additivity aspect as shipped
 (`crates/scripts/functions/kpi_kit.glossql`): required on a column only
 while that column's winning `role` value carries `value = 'measure'`.
 
@@ -41,7 +41,7 @@ Semantics, sized to the mechanism:
   nobody could satisfy is a typo, refused at the interface.
 - `none` (the kit's judged negative — "examined, does not apply")
   stays meaningful *within* relevance: a ratio column is
-  `role = 'measure'` yet `behavior = 'none'`; the condition removes
+  `role = 'measure'` yet `additivity = 'non-additive'`; the condition removes
   the columns that were never candidates at all.
 
 ## The forks that lost

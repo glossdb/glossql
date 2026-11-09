@@ -9,9 +9,9 @@ write into the data.
 ## Declare a test
 
 ```sql
-DECLARE TEST behavior_test ON behavior
+DECLARE TEST additivity_test ON additivity
   BY (AGENT, HUMAN)
-  DETECTOR behavior_entropy
+  DETECTOR additivity_entropy
   THRESHOLD 0.7;
 
 DECLARE TEST reconciliation_test ON reconciliation
@@ -49,7 +49,7 @@ disagreement from 0 to 1.
 ## Read the results
 
 ```sql
-SELECT * FROM TESTS(orders.amount::behavior);
+SELECT * FROM TESTS(orders.amount::additivity);
 SELECT subject, band FROM TESTS(fin.trial_balance) WHERE band = 'red';
 ```
 
