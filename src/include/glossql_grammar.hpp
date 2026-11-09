@@ -158,12 +158,13 @@ struct Workspace {
 	string Table(const string &dataset, const string &name) const;
 };
 
-//! The legs a measurement can read, each at its version now: (name, version) —
+//! The legs a measurement can read, each at its version now: (name, version, kind) —
 //! every live table of the lake as <schema>.<table> at the last snapshot that
 //! wrote, altered or dropped it, every live view but the store's own as
 //! <schema>.<view> at the snapshot that defined it, every store relation but
-//! measurements as glossql.<relation> at its highest seq ('-' while empty). A
-//! measurement's pin is these parts joined, sorted, name:version; glossql_store.cpp
+//! measurements as glossql.<relation> at its highest seq ('-' while empty); kind is
+//! table, view or store. A measurement's pin is these parts joined, sorted,
+//! name:version; glossql_store.cpp
 string LegsSQL(const Workspace &ws);
 //! The store's legs by name, quoted and comma-separated: 'main.aspects', ... (measurements is none)
 string StoreLegNames();

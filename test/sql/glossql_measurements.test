@@ -321,3 +321,41 @@ query T
 SELECT count(*) > 0 FROM GLOSSARY(fin.orders) WHERE subject LIKE 'fin.orders.%';
 ----
 true
+
+# --- * is the dataset's every table: a new view moves no * row, a table's landing does
+
+statement ok
+DECLARE ASPECT cell_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
+
+statement ok
+DECLARE FUNCTION cell_count FOR fin AS $$ SELECT count(*) AS n FROM dataset_cells('fin') $$ RETURNS cell_count;
+
+statement ok
+SELECT cell_count() FROM fin;
+
+query IT
+SELECT count(*), bool_and(list_contains(string_split(reads, ','), '*')) FROM measurements WHERE function = 'cell_count';
+----
+1	true
+
+statement ok
+CREATE VIEW fin.order_view AS SELECT * FROM fin.orders;
+
+statement ok
+SELECT cell_count() FROM fin;
+
+query I
+SELECT count(*) FROM measurements WHERE function = 'cell_count';
+----
+1
+
+statement ok
+INSERT INTO fin.other VALUES (4);
+
+statement ok
+SELECT cell_count() FROM fin;
+
+query I
+SELECT count(*) FROM measurements WHERE function = 'cell_count';
+----
+2

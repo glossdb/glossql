@@ -167,7 +167,8 @@ rescues AS (
 rescued AS (
   SELECT CASE WHEN pdk >= sdk THEN ft || '.' || pfc ELSE ft || '.' || sfc END AS from_col,
          CASE WHEN pdk >= sdk THEN kt || '.' || pkc ELSE kt || '.' || skc END AS to_col,
-         CASE WHEN df = from_filled THEN 'one-to-one' ELSE 'many-to-one' END AS cardinality,
+         CASE WHEN df = from_filled AND dt = to_filled THEN 'one-to-one' WHEN dt = to_filled THEN 'many-to-one'
+              WHEN df = from_filled THEN 'one-to-many' ELSE 'many-to-many' END AS cardinality,
          overlap, matched, df - matched AS orphans, df AS from_distinct, dt AS to_distinct,
          dt = to_filled AS to_unique, CASE WHEN pdk >= sdk THEN k_temporal ELSE s_temporal END AS to_temporal,
          CASE WHEN pdk >= sdk THEN ft || '.' || sfc ELSE ft || '.' || pfc END AS kc_from,
@@ -176,7 +177,8 @@ rescued AS (
   FROM rescues WHERE pick = 1),
 found AS (
   SELECT ft || '.' || fc AS from_col, kt || '.' || kc AS to_col,
-         CASE WHEN f_uniq THEN 'one-to-one' ELSE 'many-to-one' END AS cardinality,
+         CASE WHEN f_uniq AND k_uniq THEN 'one-to-one' WHEN k_uniq THEN 'many-to-one'
+              WHEN f_uniq THEN 'one-to-many' ELSE 'many-to-many' END AS cardinality,
          overlap, matched, df - matched AS orphans, df AS from_distinct, dk AS to_distinct,
          k_uniq AS to_unique, k_temporal AS to_temporal, NULL::VARCHAR AS kc_from, NULL::VARCHAR AS kc_to,
          0 AS phase, ki AS o1, fi AS o2
@@ -671,7 +673,7 @@ DECLARE FUNCTION detect_relationships FOR GLOBAL AS $$
       'to_unique': to_unique, 'to_temporal': to_temporal,
       'key_columns': CASE WHEN kc_from IS NOT NULL THEN [{'from': kc_from, 'to': kc_to}] END
     } ORDER BY CASE WHEN to_unique AND NOT to_temporal THEN 0 ELSE 1 END,
-               CASE cardinality WHEN 'many-to-one' THEN 0 ELSE 1 END,
+               CASE cardinality WHEN 'many-to-one' THEN 0 WHEN 'one-to-one' THEN 1 ELSE 2 END,
                overlap DESC, matched / to_distinct::DOUBLE DESC, seq)
       FILTER (WHERE from_col IS NOT NULL), []) AS candidates
     FROM relationship_candidates($subject))
