@@ -155,7 +155,10 @@ vector<RelationColumn> DatasetColumns(ClientContext &context, const string &data
 		auto name = entry.name.GetIdentifierName();
 		idx_t ordinal = 0;
 		if (entry.type == CatalogType::VIEW_ENTRY) {
-			if (!views) {
+			// main holds the kits' reads, no dataset's relations: binding one of
+			// those views runs the glossary reads whose binds list these columns
+			// again, under the bind DuckDB holds for the view
+			if (!views || StringUtil::CIEquals(dataset, "main")) {
 				continue;
 			}
 			auto &view = entry.Cast<ViewCatalogEntry>();

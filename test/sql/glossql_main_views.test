@@ -1,0 +1,62 @@
+# name: test/sql/glossql_main_views.test
+# description: main holds the kits' reads, no dataset's relations: a view there whose body reads the glossary binds without listing main's views again, so binding it never waits on itself
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_main_views_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'main views');
+
+statement ok
+CREATE TABLE fin.orders AS SELECT i AS id, i * 1.5 AS amount FROM range(4) t(i);
+
+# a kit-style read in main over the glossary of the schema it is bound in
+statement ok
+CREATE OR REPLACE VIEW main.glossary_here AS SELECT * FROM glossql_glossary(current_schema(), NULL, false);
+
+statement ok
+CREATE OR REPLACE VIEW main.glossary_here_too AS SELECT count(*) AS n FROM main.glossary_here;
+
+# binding the views again, as an open does when the kits run once more, completes
+query I
+SELECT count(*) >= 0 FROM main.glossary_here_too;
+----
+true
+
+statement ok
+CREATE OR REPLACE VIEW main.glossary_here AS SELECT * FROM glossql_glossary(current_schema(), NULL, false);
+
+query I
+SELECT count(*) >= 0 FROM main.glossary_here_too;
+----
+true
+
+# main's views are no dataset's relations: the listing leaves them unbound
+query I
+SELECT count(*) FROM glossql_columns('main', true) WHERE table_name LIKE 'glossary_here%';
+----
+0
+
+# a dataset's own views are still listed with their columns
+statement ok
+CREATE VIEW fin.order_view AS SELECT id FROM fin.orders;
+
+query T
+SELECT list_contains(list(column_name), 'id') FROM glossql_columns('fin', true) WHERE table_name = 'order_view';
+----
+true
