@@ -52,7 +52,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | two VIEW glosses of one aspect on different tables coexist | softened | the subject of a VIEW gloss is the dataset, as §5.2 also says; one serving view per metric |
 | `DELETE FROM glossary` | holds | the grammar's statement, `DELETE FROM [lake.][main.]glossary [alias] [WHERE …]`: the lake reads the store as views, and DuckDB deletes through a table only, so it runs on the store's table in the lake's metadata catalog, where every write goes, and comes back as a DELETE does, the rows removed; the reads' version moves with it |
 | `snapshot_id`, `stale` | holds | every glossary row carries the lake's snapshot at write, NULL for a dataset subject or a pair path; staleness is a join against `ducklake_column`, and against `ducklake_view` for a view or its column, never a guess |
-| `GLOSSARY()` collapsed and raw; `unassessed`, `contested`, `current` | holds | `glossql_glossary()` plans a subquery over the store |
+| `GLOSSARY()` collapsed and raw; `missing`, `conflict`, `current` | holds | `glossql_glossary()` plans a subquery over the store |
 | `stale` | holds | served and marked: a gloss against its subject's shape, a function value against what it read |
 
 ## §6 The function library

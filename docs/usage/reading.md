@@ -18,8 +18,8 @@ shows every gap; the read never hides one.
 |---|---|
 | `current` | the value is served and its basis is unchanged |
 | `stale` | served, and marked: the asset changed after the value was written, or an input of the computed value moved |
-| `contested` | the values disagree beyond the test's threshold; the value is withheld, `band` and `score` say how far |
-| `unassessed` | the property is required here and nobody has recorded it; the row still appears |
+| `conflict` | the values disagree beyond the test's threshold; the value is withheld, `band` and `score` say how far |
+| `missing` | the property is required here and nobody has recorded it; the row still appears |
 
 - With no argument, `GLOSSARY()` covers the dataset in use.
 - A table returns itself, its columns, and every relationship it takes

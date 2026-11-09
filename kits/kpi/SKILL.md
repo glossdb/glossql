@@ -33,7 +33,7 @@ SELECT name, kind, grains FROM aspects;
 | `definitions` | dataset | `definitions`: one object per metric name | the handbook: meaning, unit, owner, source of each metric, and a derived metric's `formula` over its siblings, text a person corrects, never computed |
 
 `role`, `behavior` and `unit` are judged by `slot_entropy`: when the
-agent's and the human's values differ, the claim is `contested`, its
+agent's and the human's values differ, the claim is in `conflict`, its
 value withheld, the result `red` above 0.7. `meaning`, `entity` and
 `dimension` take both kinds of actor without a detector.
 

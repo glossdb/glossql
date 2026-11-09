@@ -254,11 +254,12 @@ SELECT count(*), count(DISTINCT "column") FROM glossql_views_lineage(NULL) WHERE
 statement ok
 CREATE VIEW fin.big_customers AS SELECT o.id FROM fin.orders o JOIN fin.customers c USING (customer) WHERE c.segment = 'seg1';
 
-query TTT
-SELECT dataset, view, table_name FROM glossql_views_scans('fin') WHERE view = 'big_customers' ORDER BY ALL;
+# each scan names the columns the view reads of it, the join's and the filter's included
+query TTTT
+SELECT dataset, view, table_name, columns FROM glossql_views_scans('fin') WHERE view = 'big_customers' ORDER BY ALL;
 ----
-fin	big_customers	fin.customers
-fin	big_customers	fin.orders
+fin	big_customers	fin.customers	[customer, segment]
+fin	big_customers	fin.orders	[customer, id]
 
 query TTT
 SELECT dataset, view, table_name FROM glossql_views_scans(NULL) WHERE view = 'visit_count';

@@ -35,13 +35,13 @@ USE fin;
 SELECT * FROM imports;
 SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 SELECT left_path, right_path FROM relationships;
-SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
+SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'missing';
 SELECT subject, band, score FROM TESTS(fin) WHERE band != 'green';
 ```
 
 **TRANSCRIBES.** The disclosure duties v0.3 hand-built (curation
 counts, omitted-edge counts, withheld sections) are the collapsed
-read's native shape: `unassessed` rows and bands ride the same
+read's native shape: `missing` rows and bands ride the same
 relations. Whether an agent actually composes this block well is
 fixture 09's experiment, unchanged — the operating-model run is its
 vehicle.
@@ -138,7 +138,7 @@ a "needs you" inbox. The reads exist; the inbox is a WHERE clause:
 
 ```glossql
 SELECT subject, band, score FROM TESTS(fin) WHERE band = 'red';
-SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
+SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'missing';
 SELECT * FROM imports;
 ```
 

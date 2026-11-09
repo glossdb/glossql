@@ -15,8 +15,8 @@ What is known about an asset and what lies under it. Without an
 argument, the dataset in use.
 
 - Default: `(subject, aspect, value, band, score, state)`, one row per
-  asset and property; `state` is `current`, `stale`, `contested` or
-  `unassessed`.
+  asset and property; `state` is `current`, `stale`, `conflict` or
+  `missing`.
 - `all => true`: `(subject, aspect, kind, test, actor, body,
   written_at, current)`, one row per source of a value.
 - `subject::aspect` narrows to one property.
@@ -56,7 +56,7 @@ off its bound plan; a leaf is `scan.column:type`.
 `glossql_views_lineage(dataset VARCHAR)` → `(dataset, view, column,
 derivation, complete)`: the same for every view of a dataset, or of
 every dataset when `dataset` is NULL.
-`glossql_views_scans(dataset VARCHAR)` → `(dataset, view, table_name)`:
+`glossql_views_scans(dataset VARCHAR)` → `(dataset, view, table_name, columns)`:
 every table each view scans, joins and filters included, NULL for every
 dataset. See
 [lineage](usage/lineage.md).

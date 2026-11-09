@@ -75,14 +75,14 @@ nothing
 query TTT
 SELECT subject, aspect, state FROM GLOSSARY(orders) ORDER BY subject, aspect;
 ----
-fin.orders	entity	unassessed
-fin.orders	meaning	unassessed
-fin.orders.amount	meaning	unassessed
-fin.orders.amount	role	unassessed
-fin.orders.customer	meaning	unassessed
-fin.orders.customer	role	unassessed
-fin.orders.id	meaning	unassessed
-fin.orders.id	role	unassessed
+fin.orders	entity	missing
+fin.orders	meaning	missing
+fin.orders.amount	meaning	missing
+fin.orders.amount	role	missing
+fin.orders.customer	meaning	missing
+fin.orders.customer	role	missing
+fin.orders.id	meaning	missing
+fin.orders.id	role	missing
 
 statement ok
 GLOSS role ON orders.amount AS $${"value": "measure"}$$;
@@ -90,12 +90,12 @@ GLOSS role ON orders.amount AS $${"value": "measure"}$$;
 query TT
 SELECT aspect, state FROM GLOSSARY(orders.amount) ORDER BY aspect;
 ----
-behavior	unassessed
-meaning	unassessed
+behavior	missing
+meaning	missing
 role	current
-unit	unassessed
+unit	missing
 
-# --- slot_entropy judges the enum claims: the human disagrees, the role is contested, red at 0.7
+# --- slot_entropy judges the enum claims: the human disagrees, the role is in conflict, red at 0.7
 
 statement ok
 SET VARIABLE glossql_actor = 'human';
@@ -115,9 +115,9 @@ role	red	1.0
 query TTT
 SELECT aspect, value, state FROM GLOSSARY(orders.amount) ORDER BY aspect;
 ----
-dimension	NULL	unassessed
-meaning	NULL	unassessed
-role	NULL	contested
+dimension	NULL	missing
+meaning	NULL	missing
+role	NULL	conflict
 
 # --- a metric's body is the grounding contract; what a reader needs is glossed on the view's
 # columns, under the kit's words — the kit declares no grounding schema
@@ -170,10 +170,10 @@ query TTT
 SELECT aspect, value, state FROM GLOSSARY(orders.amount) ORDER BY aspect;
 ----
 column_profile	{"total":4,"null_ratio":0.0,"distinct":4,"min":"0.0","max":"4.5"}	current
-dimension	NULL	unassessed
-meaning	NULL	unassessed
+dimension	NULL	missing
+meaning	NULL	missing
 outlier_profile	{"applicable":true,"iqr":{"lower":-2.25,"upper":6.75,"count":0,"ratio":0.0},"zscore":{"count":0,"ratio":0.0}}	current
-role	NULL	contested
+role	NULL	conflict
 
 # the measurement is a table macro too
 query II

@@ -63,7 +63,7 @@ SELECT * FROM TESTS(orders.amount::behavior);
 
 - **Values TRANSCRIBE.** target→subject, claim_field→aspect, the detector's
   result→(band, score). A human re-gloss supersedes the human value; a
-  contested state is a red/orange band, not a flag.
+  conflict state is a red/orange band, not a flag.
 - **The data-grounded value is a `RETURNS` binding** (respelled
   2026-08-04): `temporal_behavior` speaks the `behavior` aspect by
   returning it — v0.3's `structural_reconciliation` test, made a typed

@@ -268,7 +268,7 @@ GLOSS role ON orders.id AS $${"value": "key"}$$;
 query TT
 SELECT subject, state FROM GLOSSARY(orders::currency);
 ----
-fin.orders.amount	unassessed
+fin.orders.amount	missing
 
 # writes stay gated by grain alone: a gloss outside the condition serves normally
 statement ok
@@ -277,7 +277,7 @@ GLOSS currency ON orders.id AS $${"value": "none"}$$;
 query TTT
 SELECT subject, value, state FROM GLOSSARY(orders::currency);
 ----
-fin.orders.amount	NULL	unassessed
+fin.orders.amount	NULL	missing
 fin.orders.id	{"value": "none"}	current
 
 # --- WHEN TYPE names the columns' data type: owed on those columns alone; the base type, DECIMAL for DECIMAL(18,2)
@@ -308,5 +308,5 @@ DECLARE TEST identity_test ON identity BY (AGENT, HUMAN);
 query TTT
 SELECT subject, aspect, state FROM GLOSSARY(orders) WHERE aspect IN ('precision', 'identity') ORDER BY subject, aspect;
 ----
-fin.orders.amount	precision	unassessed
-fin.orders.id	identity	unassessed
+fin.orders.amount	precision	missing
+fin.orders.id	identity	missing

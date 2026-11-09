@@ -29,7 +29,7 @@ every view in a dataset, with the dataset and the view's name first.
 Lineage names the columns that compute a view's outputs. A table a view
 only joins or filters on computes no output column, so it does not
 appear there. `glossql_views_scans(dataset)` lists every table each view
-scans, one row per view and table.
+scans, one row per view and scan, with the columns the view reads of it.
 
 ## Lineage of every load
 

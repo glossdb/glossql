@@ -296,12 +296,22 @@ static unique_ptr<SelectStatement> ParseOneSelect(const string &sql) {
 	return unique_ptr_cast<SQLStatement, SelectStatement>(std::move(parser.statements[0]));
 }
 
-//! The lake tables a plan scans, as schema.table
-static void Scans(LogicalOperator &op, std::set<string> &scans) {
+//! The lake tables a plan scans, as schema.table, each scan with the columns the
+//! query reads of it, its select list, joins and filters included: the binder
+//! names a scan's column once something refers to it
+static void Scans(LogicalOperator &op, std::set<std::pair<string, vector<string>>> &scans) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
-		auto table = op.Cast<LogicalGet>().GetTable();
+		auto &get = op.Cast<LogicalGet>();
+		auto table = get.GetTable();
 		if (table) {
-			scans.insert(table->ParentSchema().name.GetIdentifierName() + "." + table->name.GetIdentifierName());
+			std::set<string> columns;
+			for (auto &id : get.GetColumnIds()) {
+				if (!id.IsRowIdColumn() && id.GetPrimaryIndex() < get.names.size()) {
+					columns.insert(get.names[id.GetPrimaryIndex()].GetIdentifierName());
+				}
+			}
+			scans.insert({table->ParentSchema().name.GetIdentifierName() + "." + table->name.GetIdentifierName(),
+			              vector<string>(columns.begin(), columns.end())});
 		}
 	}
 	for (auto &child : op.children) {
@@ -459,8 +469,8 @@ static unique_ptr<FunctionData> ViewsLineageBind(ClientContext &context, TableFu
 }
 
 //! glossql_views_scans(dataset): every lake table each view of a dataset scans,
-//! one row per view and table; NULL reads every dataset's views. A view that
-//! does not plan serves no row
+//! one row per view and scan with the columns the view reads of it; NULL reads
+//! every dataset's views. A view that does not plan serves no row
 static unique_ptr<FunctionData> ViewsScansBind(ClientContext &context, TableFunctionBindInput &input,
                                                vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<ViewsLineageBindData>();
@@ -469,8 +479,9 @@ static unique_ptr<FunctionData> ViewsScansBind(ClientContext &context, TableFunc
 		result->dataset = input.inputs[0].ToString();
 	}
 	result->scans = true;
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
-	names = {Identifier("dataset"), Identifier("view"), Identifier("table_name")};
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::LIST(LogicalType::VARCHAR)};
+	names = {Identifier("dataset"), Identifier("view"), Identifier("table_name"), Identifier("columns")};
 	return result;
 }
 
@@ -510,7 +521,12 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 			}
 			if (bind.scans) {
 				for (auto &scan : lineage.scans) {
-					state.rows.push_back({view.first, view.second, Value(scan), Value(), true});
+					vector<Value> columns;
+					for (auto &column : scan.second) {
+						columns.emplace_back(column);
+					}
+					state.rows.push_back({view.first, view.second, Value(scan.first),
+					                      Value::LIST(LogicalType::VARCHAR, std::move(columns)), true});
 				}
 				continue;
 			}
@@ -531,8 +547,8 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 		output.data[0].Append(Value(row.dataset));
 		output.data[1].Append(Value(row.view));
 		output.data[2].Append(row.column);
+		output.data[3].Append(row.derivation);
 		if (!scans) {
-			output.data[3].Append(row.derivation);
 			output.data[4].Append(Value::BOOLEAN(row.complete));
 		}
 		state.offset++;

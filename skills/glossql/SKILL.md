@@ -141,8 +141,8 @@ reads the one source, and a gloss from any dataset supersedes.
 ## Reading live state
 
 - `GLOSSARY(subject)` serves `(subject, aspect, value, band, score,
-  state)`; `state` is `current | stale | contested | unassessed`; a
-  contested value is withheld; every gap is a row. `GLOSSARY(subject,
+  state)`; `state` is `current | stale | conflict | missing`; a
+  value in conflict is withheld; every gap is a row. `GLOSSARY(subject,
   all => true)` is a different shape: `(subject, aspect, kind, test,
   actor, body, written_at, current)`.
 - `TESTS(subject)` serves `(subject, aspect, test, band, score,
