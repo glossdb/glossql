@@ -38,6 +38,8 @@
 #include "duckdb/planner/operator/logical_expression_get.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_join.hpp"
+#include "duckdb/planner/operator/logical_comparison_join.hpp"
+#include "duckdb/planner/operator/logical_any_join.hpp"
 #include "duckdb/planner/operator/logical_materialized_cte.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/operator/logical_set_operation.hpp"
@@ -56,6 +58,8 @@ struct Lineage {
 	column_binding_map_t<string> text;
 	unordered_map<TableIndex, vector<string>> ctes;
 	bool complete = true;
+	//! the pairs of scanned columns a join or a filter equates, each as scan.column
+	std::set<std::pair<string, string>> joins;
 
 	string Unknown() {
 		complete = false;
@@ -143,6 +147,42 @@ static string ScanName(LogicalGet &get) {
 		return table->ParentSchema().name.GetIdentifierName() + "." + table->name.GetIdentifierName();
 	}
 	return string(get.function.GetDefinition()->name);
+}
+
+//! A derivation that is one scanned column, as scan.column without its type; empty otherwise
+static string Leaf(const string &text) {
+	auto colon = text.rfind(':');
+	if (colon == string::npos || text.find('(') != string::npos || text.find(' ') != string::npos) {
+		return string();
+	}
+	return text.substr(0, colon);
+}
+
+//! Two expressions a join or a filter equates: a pair where each is one scanned
+//! column of another scan than the other's
+static void Equated(const Expression &left, const Expression &right, Lineage &lineage) {
+	bool complete = lineage.complete;
+	auto a = Leaf(Text(left, lineage));
+	auto b = Leaf(Text(right, lineage));
+	lineage.complete = complete; // a side the walk cannot follow is no pair and no gap in the lineage
+	if (a.empty() || b.empty() || a == b) {
+		return;
+	}
+	lineage.joins.insert(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
+}
+
+//! The column equalities of a predicate: `a = b`, and each side of an AND
+static void Equalities(const Expression &expr, Lineage &lineage) {
+	auto type = expr.GetExpressionType();
+	if (type == ExpressionType::COMPARE_EQUAL) {
+		vector<const Expression *> sides;
+		ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) { sides.push_back(&child); });
+		if (sides.size() == 2) {
+			Equated(*sides[0], *sides[1], lineage);
+		}
+	} else if (type == ExpressionType::CONJUNCTION_AND) {
+		ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) { Equalities(child, lineage); });
+	}
 }
 
 static void Walk(LogicalOperator &op, Lineage &lineage) {
@@ -264,11 +304,28 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		if (join.join_type == JoinType::MARK) {
 			lineage.text[ColumnBinding(join.mark_index, ProjectionIndex(0))] = "mark";
 		}
+		if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+		    op.type == LogicalOperatorType::LOGICAL_ASOF_JOIN || op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
+			for (auto &condition : op.Cast<LogicalComparisonJoin>().conditions) {
+				if (!condition.IsComparison()) {
+					Equalities(condition.GetLHS(), lineage);
+				} else if (condition.GetComparisonType() == ExpressionType::COMPARE_EQUAL) {
+					Equated(condition.GetLHS(), condition.GetRHS(), lineage);
+				}
+			}
+		} else if (op.type == LogicalOperatorType::LOGICAL_ANY_JOIN) {
+			Equalities(*op.Cast<LogicalAnyJoin>().condition, lineage);
+		}
 		break;
 	}
+	case LogicalOperatorType::LOGICAL_FILTER:
+		// a join written in the WHERE clause
+		for (auto &expr : op.expressions) {
+			Equalities(*expr, lineage);
+		}
+		break;
 	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
 	case LogicalOperatorType::LOGICAL_POSITIONAL_JOIN:
-	case LogicalOperatorType::LOGICAL_FILTER:
 	case LogicalOperatorType::LOGICAL_LIMIT:
 	case LogicalOperatorType::LOGICAL_ORDER_BY:
 	case LogicalOperatorType::LOGICAL_TOP_N:
@@ -338,6 +395,7 @@ QueryLineage LineageOf(ClientContext &context, const string &sql) {
 			                            i < outputs.size() ? outputs[i] : lineage.Unknown());
 		}
 		result.complete = lineage.complete;
+		result.joins = lineage.joins;
 		Scans(*planner.plan, result.scans);
 	});
 	return result;
@@ -426,17 +484,20 @@ struct ViewsLineageBindData : public FunctionData {
 	bool every = false;
 	//! glossql_views_scans: the tables each view scans instead of its columns' lineage
 	bool scans = false;
+	//! glossql_views_joins: the column pairs each view's joins equate
+	bool joins = false;
 
 	unique_ptr<FunctionData> Copy() const override {
 		auto result = make_uniq<ViewsLineageBindData>();
 		result->dataset = dataset;
 		result->every = every;
 		result->scans = scans;
+		result->joins = joins;
 		return result;
 	}
 	bool Equals(const FunctionData &other) const override {
 		auto &that = other.Cast<ViewsLineageBindData>();
-		return dataset == that.dataset && every == that.every && scans == that.scans;
+		return dataset == that.dataset && every == that.every && scans == that.scans && joins == that.joins;
 	}
 };
 
@@ -485,6 +546,22 @@ static unique_ptr<FunctionData> ViewsScansBind(ClientContext &context, TableFunc
 	return result;
 }
 
+//! glossql_views_joins(dataset): the pairs of scanned columns each view of a
+//! dataset equates, in a join's condition or in its WHERE clause, one row per
+//! view and pair as schema.table.column; NULL reads every dataset's views
+static unique_ptr<FunctionData> ViewsJoinsBind(ClientContext &context, TableFunctionBindInput &input,
+                                               vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto result = make_uniq<ViewsLineageBindData>();
+	result->every = input.inputs[0].IsNull();
+	if (!result->every) {
+		result->dataset = input.inputs[0].ToString();
+	}
+	result->joins = true;
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
+	names = {Identifier("dataset"), Identifier("view"), Identifier("left_column"), Identifier("right_column")};
+	return result;
+}
+
 static unique_ptr<GlobalTableFunctionState> ViewsLineageInit(ClientContext &context, TableFunctionInitInput &input) {
 	return make_uniq<ViewsLineageState>();
 }
@@ -519,6 +596,12 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 			} catch (std::exception &) {
 				planned = false;
 			}
+			if (bind.joins) {
+				for (auto &join : lineage.joins) {
+					state.rows.push_back({view.first, view.second, Value(join.first), Value(join.second), true});
+				}
+				continue;
+			}
 			if (bind.scans) {
 				for (auto &scan : lineage.scans) {
 					vector<Value> columns;
@@ -540,7 +623,8 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 			}
 		}
 	}
-	bool scans = data.bind_data->Cast<ViewsLineageBindData>().scans;
+	bool scans =
+	    data.bind_data->Cast<ViewsLineageBindData>().scans || data.bind_data->Cast<ViewsLineageBindData>().joins;
 	idx_t count = 0;
 	while (state.offset < state.rows.size() && count < STANDARD_VECTOR_SIZE) {
 		auto &row = state.rows[state.offset];
@@ -564,6 +648,8 @@ void RegisterGlossLineage(ExtensionLoader &loader) {
 	                                      ViewsLineageBind, ViewsLineageInit));
 	loader.RegisterFunction(TableFunction("glossql_views_scans", {LogicalType::VARCHAR}, ViewsLineageExec,
 	                                      ViewsScansBind, ViewsLineageInit));
+	loader.RegisterFunction(TableFunction("glossql_views_joins", {LogicalType::VARCHAR}, ViewsLineageExec,
+	                                      ViewsJoinsBind, ViewsLineageInit));
 }
 
 } // namespace duckdb

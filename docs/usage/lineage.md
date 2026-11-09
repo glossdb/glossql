@@ -30,6 +30,8 @@ Lineage names the columns that compute a view's outputs. A table a view
 only joins or filters on computes no output column, so it does not
 appear there. `glossql_views_scans(dataset)` lists every table each view
 scans, one row per view and scan, with the columns the view reads of it.
+`glossql_views_joins(dataset)` lists the column pairs each view's joins
+equate.
 
 ## Lineage of every load
 

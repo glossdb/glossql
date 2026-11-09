@@ -940,6 +940,7 @@ DECLARE FUNCTION rate_tolerance FOR GLOBAL AS $$
          CASE WHEN rate IS NULL THEN 'yellow'
               WHEN rate <= coalesce(tolerance, $threshold, 0.0) THEN 'green'
               ELSE 'red' END AS band,
-         least(greatest(coalesce(rate, 0.0), 0.0), 1.0) AS score
+         CASE WHEN rate IS NULL OR rate <= coalesce(tolerance, $threshold, 0.0) THEN 0.0
+              ELSE least(greatest(rate, 0.0), 1.0) END AS score
   FROM s
 $$;

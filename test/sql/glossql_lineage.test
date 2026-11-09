@@ -265,3 +265,26 @@ query TTT
 SELECT dataset, view, table_name FROM glossql_views_scans(NULL) WHERE view = 'visit_count';
 ----
 ops	visit_count	ops.visits
+
+# --- glossql_views_joins(dataset): the column pairs a view's joins equate, a join's ON, USING and a WHERE alike; a shared column the view only reads is no pair
+
+query TTT
+SELECT view, left_column, right_column FROM glossql_views_joins('fin') WHERE view = 'big_customers';
+----
+big_customers	fin.customers.customer	fin.orders.customer
+
+statement ok
+CREATE VIEW fin.where_join AS SELECT o.id, c.segment FROM fin.orders o, fin.customers c WHERE o.customer = c.customer AND c.segment = 'seg1';
+
+query TT
+SELECT left_column, right_column FROM glossql_views_joins('fin') WHERE view = 'where_join';
+----
+fin.customers.customer	fin.orders.customer
+
+statement ok
+CREATE VIEW fin.no_join AS SELECT customer FROM fin.orders UNION ALL SELECT customer FROM fin.customers;
+
+query I
+SELECT count(*) FROM glossql_views_joins('fin') WHERE view = 'no_join';
+----
+0

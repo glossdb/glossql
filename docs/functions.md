@@ -56,6 +56,10 @@ off its bound plan; a leaf is `scan.column:type`.
 `glossql_views_lineage(dataset VARCHAR)` → `(dataset, view, column,
 derivation, complete)`: the same for every view of a dataset, or of
 every dataset when `dataset` is NULL.
+`glossql_views_joins(dataset VARCHAR)` → `(dataset, view, left_column,
+right_column)`: the pairs of columns each view's joins equate, in a
+join's condition or in its `WHERE` clause, as `schema.table.column`.
+
 `glossql_views_scans(dataset VARCHAR)` → `(dataset, view, table_name, columns)`:
 every table each view scans, joins and filters included, NULL for every
 dataset. See
