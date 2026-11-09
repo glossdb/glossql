@@ -1469,7 +1469,8 @@ static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const Rea
 	       " count(DISTINCT actor) AS n FROM slots GROUP BY subject, aspect), owed AS (" +
 	       owed +
 	       ") SELECT * FROM ("
-	       "SELECT p.subject, p.aspect, CASE WHEN j.score > j.threshold AND v.n > 1 THEN NULL ELSE p.value END AS value,"
+	       "SELECT p.subject, p.aspect, CASE WHEN j.score > j.threshold AND v.n > 1 THEN NULL ELSE p.value END AS "
+	       "value,"
 	       " j.band, j.score, CASE WHEN j.score > j.threshold AND v.n > 1 THEN 'contested' WHEN p.stale THEN 'stale'"
 	       " ELSE 'current' END AS state"
 	       " FROM picked p LEFT JOIN judged j ON j.subject = p.subject AND j.aspect = p.aspect"

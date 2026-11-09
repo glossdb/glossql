@@ -926,7 +926,8 @@ static void FunctionPredicates(LogicalOperator &root, const Workspace &ws, Expre
 		return;
 	}
 	if (type == ExpressionType::CONJUNCTION_AND || type == ExpressionType::CONJUNCTION_OR) {
-		ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { FunctionPredicates(root, ws, child, reads); });
+		ExpressionIterator::EnumerateChildren(expr,
+		                                      [&](Expression &child) { FunctionPredicates(root, ws, child, reads); });
 	}
 }
 
