@@ -13,3 +13,4 @@ table once; `IMPORT` runs it again. Key: `dataset`, `table_name`.
 | `settings` | VARCHAR | The `SET` pairs as one JSON object, such as `key`: with a key a load merges by it, without one it replaces the table. The view serves it as JSON. |
 | `sql` | VARCHAR | The load query. |
 | `declared_at` | TIMESTAMP | When the row was written. |
+| `declared_by` | VARCHAR | Who wrote the row: `kit:<name>` for a declaration a kit made, else the actor as `<kind>:<id>` (`agent:builder`, `human:ana`), or the kind alone where the connection named no one. |

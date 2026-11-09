@@ -296,6 +296,19 @@ static unique_ptr<SelectStatement> ParseOneSelect(const string &sql) {
 	return unique_ptr_cast<SQLStatement, SelectStatement>(std::move(parser.statements[0]));
 }
 
+//! The lake tables a plan scans, as schema.table
+static void Scans(LogicalOperator &op, std::set<string> &scans) {
+	if (op.type == LogicalOperatorType::LOGICAL_GET) {
+		auto table = op.Cast<LogicalGet>().GetTable();
+		if (table) {
+			scans.insert(table->ParentSchema().name.GetIdentifierName() + "." + table->name.GetIdentifierName());
+		}
+	}
+	for (auto &child : op.children) {
+		Scans(*child, scans);
+	}
+}
+
 QueryLineage LineageOf(ClientContext &context, const string &sql) {
 	QueryLineage result;
 	auto statement = ParseOneSelect(sql);
@@ -315,6 +328,7 @@ QueryLineage LineageOf(ClientContext &context, const string &sql) {
 			                            i < outputs.size() ? outputs[i] : lineage.Unknown());
 		}
 		result.complete = lineage.complete;
+		Scans(*planner.plan, result.scans);
 	});
 	return result;
 }
@@ -343,7 +357,7 @@ struct LineageBindData : public FunctionData {
 	unique_ptr<FunctionData> Copy() const override {
 		auto result = make_uniq<LineageBindData>();
 		result->sql = sql;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other) const override {
 		return sql == other.Cast<LineageBindData>().sql;
@@ -360,7 +374,7 @@ static unique_ptr<FunctionData> LineageBind(ClientContext &context, TableFunctio
 	result->sql = input.inputs[0].ToString();
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN};
 	names = {Identifier("column"), Identifier("derivation"), Identifier("complete")};
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> LineageInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -400,16 +414,19 @@ struct ViewsLineageBindData : public FunctionData {
 	// empty when the argument is NULL: every dataset
 	string dataset;
 	bool every = false;
+	//! glossql_views_scans: the tables each view scans instead of its columns' lineage
+	bool scans = false;
 
 	unique_ptr<FunctionData> Copy() const override {
 		auto result = make_uniq<ViewsLineageBindData>();
 		result->dataset = dataset;
 		result->every = every;
-		return std::move(result);
+		result->scans = scans;
+		return result;
 	}
 	bool Equals(const FunctionData &other) const override {
 		auto &that = other.Cast<ViewsLineageBindData>();
-		return dataset == that.dataset && every == that.every;
+		return dataset == that.dataset && every == that.every && scans == that.scans;
 	}
 };
 
@@ -438,7 +455,23 @@ static unique_ptr<FunctionData> ViewsLineageBind(ClientContext &context, TableFu
 	                LogicalType::BOOLEAN};
 	names = {Identifier("dataset"), Identifier("view"), Identifier("column"), Identifier("derivation"),
 	         Identifier("complete")};
-	return std::move(result);
+	return result;
+}
+
+//! glossql_views_scans(dataset): every lake table each view of a dataset scans,
+//! one row per view and table; NULL reads every dataset's views. A view that
+//! does not plan serves no row
+static unique_ptr<FunctionData> ViewsScansBind(ClientContext &context, TableFunctionBindInput &input,
+                                               vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto result = make_uniq<ViewsLineageBindData>();
+	result->every = input.inputs[0].IsNull();
+	if (!result->every) {
+		result->dataset = input.inputs[0].ToString();
+	}
+	result->scans = true;
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
+	names = {Identifier("dataset"), Identifier("view"), Identifier("table_name")};
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> ViewsLineageInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -475,6 +508,12 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 			} catch (std::exception &) {
 				planned = false;
 			}
+			if (bind.scans) {
+				for (auto &scan : lineage.scans) {
+					state.rows.push_back({view.first, view.second, Value(scan), Value(), true});
+				}
+				continue;
+			}
 			if (!planned || lineage.columns.empty()) {
 				state.rows.push_back({view.first, view.second, Value(), Value(), false});
 				continue;
@@ -485,14 +524,17 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 			}
 		}
 	}
+	bool scans = data.bind_data->Cast<ViewsLineageBindData>().scans;
 	idx_t count = 0;
 	while (state.offset < state.rows.size() && count < STANDARD_VECTOR_SIZE) {
 		auto &row = state.rows[state.offset];
 		output.data[0].Append(Value(row.dataset));
 		output.data[1].Append(Value(row.view));
 		output.data[2].Append(row.column);
-		output.data[3].Append(row.derivation);
-		output.data[4].Append(Value::BOOLEAN(row.complete));
+		if (!scans) {
+			output.data[3].Append(row.derivation);
+			output.data[4].Append(Value::BOOLEAN(row.complete));
+		}
 		state.offset++;
 		count++;
 	}
@@ -504,6 +546,8 @@ void RegisterGlossLineage(ExtensionLoader &loader) {
 	    TableFunction("glossql_lineage", {LogicalType::VARCHAR}, LineageExec, LineageBind, LineageInit));
 	loader.RegisterFunction(TableFunction("glossql_views_lineage", {LogicalType::VARCHAR}, ViewsLineageExec,
 	                                      ViewsLineageBind, ViewsLineageInit));
+	loader.RegisterFunction(TableFunction("glossql_views_scans", {LogicalType::VARCHAR}, ViewsLineageExec,
+	                                      ViewsScansBind, ViewsLineageInit));
 }
 
 } // namespace duckdb

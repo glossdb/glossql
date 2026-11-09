@@ -284,7 +284,7 @@ struct RunnerBindData : public FunctionData {
 	unique_ptr<FunctionData> Copy() const override {
 		auto result = make_uniq<RunnerBindData>();
 		result->inputs = inputs;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other_p) const override {
 		return inputs == other_p.Cast<RunnerBindData>().inputs;
@@ -301,7 +301,7 @@ static unique_ptr<FunctionData> OutcomeBind(ClientContext &context, TableFunctio
 	result->inputs = input.inputs;
 	return_types.push_back(LogicalType::VARCHAR);
 	names.emplace_back("outcome");
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> RunnerInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -339,7 +339,7 @@ static void DatasetExec(ClientContext &context, TableFunctionInput &data, DataCh
 	}
 	inner.Run("CREATE SCHEMA IF NOT EXISTS " + QuoteName(inner.ws.lake) + "." + QuoteName(name));
 	inner.Run("INSERT INTO " + inner.Store("datasets") + " VALUES (" + inner.Seq("datasets") + ", " + QuoteText(name) +
-	          ", " + inputs[1].ToSQLString() + ", now())");
+	          ", " + inputs[1].ToSQLString() + ", now(), " + QuoteText(DeclaredBy(context)) + ")");
 	Outcome(output, "declared dataset " + name + " (schema " + inner.ws.lake + "." + name + ")");
 }
 
@@ -525,7 +525,7 @@ static void RecipeExec(ClientContext &context, TableFunctionInput &data, DataChu
 	auto landed = Land(inner, dataset, name, recipe, true);
 	inner.Run("INSERT INTO " + inner.Store("recipes") + " VALUES (" + inner.Seq("recipes") + ", " + QuoteText(dataset) +
 	          ", " + QuoteText(name) + ", " + QuoteText(recipe.source) + ", " + QuoteText(recipe.settings) + ", " +
-	          QuoteText(recipe.sql) + ", now())");
+	          QuoteText(recipe.sql) + ", now(), " + QuoteText(DeclaredBy(context)) + ")");
 	landed.how = standing.empty() ? "new" : "superseded";
 	Outcome(output, "landed " + dataset + "." + name + ": " + landed.Summary());
 }
@@ -588,7 +588,7 @@ static unique_ptr<FunctionData> PreviewBind(ClientContext &context, TableFunctio
 	}
 	return_types = prepared->GetTypes();
 	names = prepared->GetNames();
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> PreviewInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -688,7 +688,7 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 	}
 	inner.Run("INSERT INTO " + inner.Store("functions") + " VALUES (" + inner.Seq("functions") + ", " +
 	          QuoteText(name) + ", " + QuoteText(scope) + ", " + QuoteText(script) + ", " + returns.ToSQLString() +
-	          ", now())");
+	          ", now(), " + QuoteText(DeclaredBy(context)) + ")");
 	// a detector's body is run by TESTS() over its test's values, $threshold bound there
 	Outcome(output, returns.IsNull() ? "declared detector " + name + " for " + scope
 	                                 : "declared measurement " + schema + "." + name + "($subject)");
@@ -746,7 +746,7 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 	}
 	inner.Run("INSERT INTO " + inner.Store("tests") + " VALUES (" + inner.Seq("tests") + ", " + QuoteText(name) + ", " +
 	          QuoteText(aspect) + ", " + QuoteText(JsonList(inputs[2])) + ", " + detector.ToSQLString() + ", " +
-	          threshold.ToSQLString() + ", now())");
+	          threshold.ToSQLString() + ", now(), " + QuoteText(DeclaredBy(context)) + ")");
 	Outcome(output, "declared test " + name + " on " + aspect);
 }
 
@@ -785,7 +785,7 @@ static unique_ptr<FunctionData> ExtractBind(ClientContext &context, TableFunctio
 	// true when this call computed the measurement, false when the stored row served
 	return_types.push_back(LogicalType::BOOLEAN);
 	names.emplace_back("computed");
-	return std::move(result);
+	return result;
 }
 
 //! What a body read (SPEC §6): the lake's tables as <dataset>.<table> and the
@@ -1091,7 +1091,7 @@ static unique_ptr<TableRef> SelectOrExtractBindReplace(ClientContext &context, T
 	children.push_back(make_uniq<FunctionExpression>(Identifier("list_value"), std::move(calls)));
 	auto ref = make_uniq<TableFunctionRef>();
 	ref->function = make_uniq<FunctionExpression>(Identifier("glossql_extract"), std::move(children));
-	return std::move(ref);
+	return ref;
 }
 
 static TableFunction GlossSelectOrExtractFunction() {
@@ -2036,7 +2036,7 @@ static unique_ptr<FunctionData> KitBind(ClientContext &context, TableFunctionBin
 	names.emplace_back("statement");
 	return_types.push_back(LogicalType::VARCHAR);
 	names.emplace_back("outcome");
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> KitInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -2104,6 +2104,8 @@ static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk 
 		auto hash = ScriptHash(script);
 		Inner inner(context);
 		inner.Run("SET active_grammar_extensions = ['glossql']");
+		// every declaration the kit makes names it as its author
+		inner.Run("SET VARIABLE glossql_declared_by = " + QuoteText("kit:" + name));
 		auto newest = inner.Scalar("SELECT hash FROM " + inner.Store("kits") + " WHERE name = " + QuoteText(name) +
 		                           " ORDER BY seq DESC LIMIT 1");
 		bool stands = !newest.IsNull() && newest.ToString() == hash;

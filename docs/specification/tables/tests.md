@@ -13,3 +13,4 @@ A row is a declared test on an aspect (`TEST` in the grammar).
 | `detector` | VARCHAR | The function that scores agreement among the aspect's values; NULL when the test only gates who may annotate. |
 | `threshold` | DOUBLE | The score, from 0 to 1, above which differing values read `contested`. |
 | `declared_at` | TIMESTAMP | When the row was written. |
+| `declared_by` | VARCHAR | Who wrote the row: `kit:<name>` for a declaration a kit made, else the actor as `<kind>:<id>` (`agent:builder`, `human:ana`), or the kind alone where the connection named no one. |

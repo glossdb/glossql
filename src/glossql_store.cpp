@@ -295,19 +295,20 @@ struct StoreRelation {
 };
 
 static const StoreRelation STORE_RELATIONS[] = {
-    {"datasets", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL", "name",
-	 "seq, name, settings::JSON AS settings, declared_at", "declared_at"},
+    {"datasets",
+	 "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR", "name",
+	 "seq, name, settings::JSON AS settings, declared_at, declared_by", "declared_at"},
     {"kits",
 	 "name VARCHAR NOT NULL, location VARCHAR NOT NULL, statements INTEGER NOT NULL, loaded_at TIMESTAMP NOT NULL, "
 	 "hash VARCHAR",
 	 "", "*", "loaded_at"},
-    {"sources", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL", "name",
-	 "seq, name, settings::JSON AS settings, declared_at", "declared_at"},
+    {"sources", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
+	 "name", "seq, name, settings::JSON AS settings, declared_at, declared_by", "declared_at"},
     {"recipes",
 	 "dataset VARCHAR NOT NULL, table_name VARCHAR NOT NULL, source VARCHAR NOT NULL, settings VARCHAR NOT NULL, "
-	 "sql VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL",
-	 "dataset, table_name", "seq, dataset, table_name, source, settings::JSON AS settings, sql, declared_at",
-	 "declared_at"},
+	 "sql VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
+	 "dataset, table_name",
+	 "seq, dataset, table_name, source, settings::JSON AS settings, sql, declared_at, declared_by", "declared_at"},
     {"imports",
 	 "dataset VARCHAR NOT NULL, table_name VARCHAR NOT NULL, mode VARCHAR NOT NULL, rows BIGINT NOT NULL, "
 	 "dropped_rows_count BIGINT, lineage VARCHAR NOT NULL, snapshot_id BIGINT, imported_at TIMESTAMP NOT NULL",
@@ -315,10 +316,10 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "imported_at"},
     {"aspects",
 	 "name VARCHAR NOT NULL, kind VARCHAR NOT NULL, grains VARCHAR NOT NULL, condition VARCHAR, "
-	 "schema VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL",
+	 "schema VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "name",
 	 "seq, name, kind, from_json(grains, '[\"VARCHAR\"]') AS grains, condition::JSON AS condition, "
-	 "schema::JSON AS schema, declared_at",
+	 "schema::JSON AS schema, declared_at, declared_by",
 	 "declared_at"},
     {"glossary",
 	 "dataset VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actor_kind VARCHAR NOT NULL, "
@@ -327,11 +328,11 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "written_at"},
     {"relationships",
 	 "dataset VARCHAR NOT NULL, left_side VARCHAR NOT NULL, op VARCHAR NOT NULL, right_side VARCHAR NOT NULL, "
-	 "declared_at TIMESTAMP NOT NULL",
+	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "", "*", "declared_at"},
     {"functions",
 	 "name VARCHAR NOT NULL, scope VARCHAR NOT NULL, script VARCHAR NOT NULL, returns VARCHAR, "
-	 "declared_at TIMESTAMP NOT NULL",
+	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "name, scope", "*", "declared_at"},
     {"measurements",
 	 "dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, "
@@ -339,8 +340,9 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "", "seq, dataset, function, subject, aspect, pin, value::JSON AS value, computed_at, reads", "computed_at"},
     {"tests",
 	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
-	 "declared_at TIMESTAMP NOT NULL",
-	 "aspect", "seq, name, aspect, from_json(actors, '[\"VARCHAR\"]') AS actors, detector, threshold, declared_at",
+	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
+	 "aspect",
+	 "seq, name, aspect, from_json(actors, '[\"VARCHAR\"]') AS actors, detector, threshold, declared_at, declared_by",
 	 "declared_at"},
 };
 
@@ -527,7 +529,7 @@ struct GlossWriteBindData : public FunctionData {
 		auto result = make_uniq<GlossWriteBindData>();
 		result->table = table;
 		result->row = row;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<GlossWriteBindData>();
@@ -548,7 +550,7 @@ static unique_ptr<FunctionData> GlossWriteBind(ClientContext &context, TableFunc
 	}
 	return_types.push_back(LogicalType::VARCHAR);
 	names.emplace_back("outcome");
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> GlossWriteInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -573,6 +575,18 @@ static string ActorKindOf(ClientContext &context) {
 //! Who the actor is, NULL when the wrapper set none
 static Value ActorIdOf(ClientContext &context) {
 	return Variable(context, "glossql_actor_id");
+}
+
+//! Who declares, for the declaration relations' declared_by: the kit while
+//! glossql_kit runs one (glossql_declared_by on its connection), else the
+//! actor as kind:id, or the kind alone where the wrapper set no id
+string DeclaredBy(ClientContext &context) {
+	auto kit = Variable(context, "glossql_declared_by");
+	if (!kit.IsNull()) {
+		return kit.ToString();
+	}
+	auto id = ActorIdOf(context);
+	return ActorKindOf(context) + (id.IsNull() ? string() : ":" + id.ToString());
 }
 
 //! An aspect as its newest row holds
@@ -922,7 +936,8 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 		throw InternalException("glossql: no write to '%s'", bind.table);
 	}
 	inner.Run("INSERT INTO " + inner.Store(bind.table) + " VALUES (" + inner.Seq(bind.table) + ", " +
-	          StringUtil::Join(values, ", ") + ", now())");
+	          StringUtil::Join(values, ", ") + ", now()" +
+	          (bind.table == "glossary" ? string() : ", " + QuoteText(DeclaredBy(context))) + ")");
 
 	output.data[0].Append(Value(outcome));
 }
@@ -962,7 +977,7 @@ struct GlossDeleteBindData : public FunctionData {
 		result->lake = lake;
 		result->alias = alias;
 		result->where = where;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<GlossDeleteBindData>();
@@ -978,7 +993,7 @@ static unique_ptr<FunctionData> GlossDeleteBind(ClientContext &context, TableFun
 	result->where = input.inputs[2];
 	return_types.push_back(LogicalType::BIGINT);
 	names.emplace_back("Count");
-	return std::move(result);
+	return result;
 }
 
 static void GlossDeleteExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -1475,7 +1490,7 @@ struct ColumnsBindData : public FunctionData {
 		result->dataset = dataset;
 		result->table = table;
 		result->views = views;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other) const override {
 		auto &o = other.Cast<ColumnsBindData>();
@@ -1503,14 +1518,14 @@ static unique_ptr<FunctionData> ColumnsBind(ClientContext &context, TableFunctio
 	                LogicalType::VARCHAR};
 	names = {Identifier("table_name"), Identifier("column_name"), Identifier("column_type"),
 	         Identifier("ordinal_position"), Identifier("table_type")};
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> ColumnsInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto &bind = input.bind_data->Cast<ColumnsBindData>();
 	auto state = make_uniq<ColumnsState>();
 	state->rows = DatasetColumns(context, bind.dataset, bind.table, bind.views);
-	return std::move(state);
+	return state;
 }
 
 static void ColumnsExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -1654,7 +1669,7 @@ struct CachedBindData : public FunctionData {
 	unique_ptr<FunctionData> Copy() const override {
 		auto result = make_uniq<CachedBindData>();
 		result->read = read;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other) const override {
 		return read == other.Cast<CachedBindData>().read;
@@ -1674,14 +1689,14 @@ static unique_ptr<FunctionData> CachedBind(ClientContext &context, TableFunction
 	result->read = Cached(context, inner, input.inputs[0].ToString(), whole);
 	return_types = result->read->types;
 	names = result->read->names;
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> CachedInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto state = make_uniq<CachedScanState>();
 	state->rows = input.bind_data->Cast<CachedBindData>().read->rows;
 	state->rows->InitializeScan(state->scan);
-	return std::move(state);
+	return state;
 }
 
 static void CachedExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -1741,7 +1756,7 @@ static unique_ptr<FunctionData> KeptViewBind(ClientContext &context, TableFuncti
 	result->read = kept;
 	return_types = kept->types;
 	names = kept->names;
-	return std::move(result);
+	return result;
 }
 
 static TableFunction GlossKeptViewFunction() {
