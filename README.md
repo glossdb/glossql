@@ -2,7 +2,7 @@
 
 **The language for writing data harnesses.** It declares what must be
 known about data, how it is measured and tested, and who may say it,
-and keeps the record of what was said.
+and keeps the history of every annotation.
 
 A coding harness has types, a compiler and tests. glossql gives data
 the same three: a schema of what must be known, validation on write,

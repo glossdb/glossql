@@ -39,7 +39,7 @@ write; a refused statement is the tool error, what landed before it
 above the refusal. `USE`, variables and the actor persist from call to
 call, as in any session. The two skills are its resources
 (`skill://glossql/SKILL.md`, `skill://glossql-kpi/SKILL.md`) and its prompts,
-the opener a resource. Nothing else: no brief, no auth, the lake is the
+the opener a resource. Nothing else: no status line, no sign-in. The lake is the
 state.
 
 ```sh
@@ -48,4 +48,4 @@ claude mcp add glossql -- uv run --quiet "$PWD/examples/mcp/glossql_mcp.py" /pat
 uv run --with pytest --with fastmcp pytest -q test/python    # the integration test, on a workspace it makes
 ```
 
-`GLOSSQL_WORKSPACE` stands in for the argument.
+`GLOSSQL_WORKSPACE` replaces the argument.
