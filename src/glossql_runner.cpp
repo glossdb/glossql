@@ -42,6 +42,10 @@
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/planner/planner.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
+#include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
@@ -795,12 +799,31 @@ static unique_ptr<FunctionData> ExtractBind(ClientContext &context, TableFunctio
 struct Reads {
 	std::set<string> names;
 	bool everything = false;
+	//! each scan of the measurements relation, with the functions the filters above it name
+	std::map<const LogicalOperator *, std::set<string>> measurements;
 
-	string Text() const {
-		if (everything) {
-			return "**";
+	//! A scan of the measurements relation names the functions its filter equates
+	//! `function` with, `main.measurements/<function>`; a scan with no such filter
+	//! names the whole relation
+	void Close() {
+		for (auto &scan : measurements) {
+			if (scan.second.empty()) {
+				names.insert("main.measurements");
+			}
+			for (auto &function : scan.second) {
+				names.insert("main.measurements/" + function);
+			}
 		}
-		return StringUtil::Join(vector<string>(names.begin(), names.end()), ",");
+	}
+
+	//! `**` when the reads could not be enumerated, the names it did enumerate
+	//! after it: a store relation the body scanned pins what it holds even then
+	string Text() const {
+		auto listed = StringUtil::Join(vector<string>(names.begin(), names.end()), ",");
+		if (everything) {
+			return listed.empty() ? "**" : "**," + listed;
+		}
+		return listed;
 	}
 };
 
@@ -808,6 +831,103 @@ struct Reads {
 static bool ReadsNothing(const string &function) {
 	static const std::set<string> PURE = {"range", "generate_series", "repeat", "repeat_row", "unnest"};
 	return PURE.count(function) > 0;
+}
+
+//! The operator in the subtree that owns a column binding's table index
+static optional_ptr<LogicalOperator> OwnerOf(LogicalOperator &op, TableIndex table_index) {
+	for (auto index : op.GetTableIndex()) {
+		if (index == table_index) {
+			return &op;
+		}
+	}
+	for (auto &child : op.children) {
+		auto found = OwnerOf(*child, table_index);
+		if (found) {
+			return found;
+		}
+	}
+	return nullptr;
+}
+
+//! The measurements scan whose `function` column an expression is, followed
+//! through the projections between (a view expands to one), or none
+static optional_ptr<LogicalOperator> FunctionColumnOf(LogicalOperator &root, const Workspace &ws, Expression &expr) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+		return nullptr;
+	}
+	auto binding = expr.Cast<BoundColumnRefExpression>().Binding();
+	auto owner = OwnerOf(root, binding.table_index);
+	if (!owner) {
+		return nullptr;
+	}
+	if (owner->type == LogicalOperatorType::LOGICAL_PROJECTION) {
+		auto &projection = owner->Cast<LogicalProjection>();
+		if (binding.column_index.GetIndex() >= projection.expressions.size()) {
+			return nullptr;
+		}
+		return FunctionColumnOf(*owner, ws, *projection.expressions[binding.column_index.GetIndex()]);
+	}
+	if (owner->type != LogicalOperatorType::LOGICAL_GET) {
+		return nullptr;
+	}
+	auto &get = owner->Cast<LogicalGet>();
+	auto table = get.GetTable();
+	if (!table || string(table->ParentCatalog().GetName()) != ws.meta ||
+	    table->ParentSchema().name.GetIdentifierName() != ws.meta_schema ||
+	    table->name.GetIdentifierName() != "glossql_measurements") {
+		return nullptr;
+	}
+	auto &column_ids = get.GetColumnIds();
+	if (binding.column_index.GetIndex() >= column_ids.size()) {
+		return nullptr;
+	}
+	auto column = column_ids[binding.column_index.GetIndex()].GetPrimaryIndex();
+	return column < get.names.size() && get.names[column] == "function" ? owner : nullptr;
+}
+
+//! The constant an expression is, under the casts the binder wraps a literal in
+//! (`function = 'x'` compares to `CAST('x' AS VARCHAR)`); none otherwise
+static optional_ptr<Expression> ConstantOf(Expression &expr) {
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+		return &expr;
+	}
+	if (expr.GetExpressionType() != ExpressionType::OPERATOR_CAST) {
+		return nullptr;
+	}
+	optional_ptr<Expression> found;
+	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
+		if (!found) {
+			found = ConstantOf(child);
+		}
+	});
+	return found;
+}
+
+//! The functions a filter's expression equates the measurements relation's
+//! `function` column with — `function = 'x'`, `function IN (...)`, and each
+//! side of an AND or an OR — recorded on the scan they narrow
+static void FunctionPredicates(LogicalOperator &root, const Workspace &ws, Expression &expr, Reads &reads) {
+	auto type = expr.GetExpressionType();
+	if (type == ExpressionType::COMPARE_EQUAL || type == ExpressionType::COMPARE_IN) {
+		optional_ptr<LogicalOperator> scan;
+		vector<string> constants;
+		ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
+			if (auto constant = ConstantOf(child)) {
+				constants.push_back(constant->Cast<BoundConstantExpression>().GetValue().ToString());
+			} else if (!scan) {
+				scan = FunctionColumnOf(root, ws, child);
+			}
+		});
+		if (scan) {
+			for (auto &constant : constants) {
+				reads.measurements[scan.get()].insert(constant);
+			}
+		}
+		return;
+	}
+	if (type == ExpressionType::CONJUNCTION_AND || type == ExpressionType::CONJUNCTION_OR) {
+		ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { FunctionPredicates(root, ws, child, reads); });
+	}
 }
 
 static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads) {
@@ -820,6 +940,8 @@ static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads)
 			auto name = table->name.GetIdentifierName();
 			if (catalog == ws.lake) {
 				reads.names.insert(schema + "." + name);
+			} else if (catalog == ws.meta && schema == ws.meta_schema && name == "glossql_measurements") {
+				reads.measurements.emplace(&op, std::set<string>());
 			} else if (catalog == ws.meta && schema == ws.meta_schema && StringUtil::StartsWith(name, "glossql_")) {
 				reads.names.insert("main." + name.substr(8));
 			} else {
@@ -827,6 +949,11 @@ static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads)
 			}
 		} else if (!ReadsNothing(string(get.function.GetDefinition()->name))) {
 			reads.everything = true;
+		}
+	}
+	if (op.type == LogicalOperatorType::LOGICAL_FILTER) {
+		for (auto &expr : op.expressions) {
+			FunctionPredicates(op, ws, *expr, reads);
 		}
 	}
 	for (auto &child : op.children) {
@@ -903,6 +1030,7 @@ static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 		Planner planner(context);
 		planner.CreatePlan(std::move(statement));
 		CollectReads(*planner.plan, inner.ws, reads);
+		reads.Close();
 		reads.names.insert(side.names.begin(), side.names.end());
 		auto parts = StringUtil::Split(subject, '.');
 		if (parts.size() >= 2 && subject.find(" -> ") == string::npos && subject.find(" <-> ") == string::npos) {
@@ -916,18 +1044,25 @@ static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 
 //! The pin a computation is stored at: the dataset's tables, the store relations
 //! and whatever else the reads named, each at its version now; the dataset's
-//! views too where the reads could not be enumerated (**)
-static string PinOf(Inner &inner, const string &dataset, const string &reads) {
+//! views too where the reads could not be enumerated (**). A body that read the
+//! measurements relation pins the other functions' rows, one leg per function:
+//! its own rows are its output, never its input (SPEC §6)
+static string PinOf(Inner &inner, const string &dataset, const string &function, const string &reads) {
 	vector<string> named;
+	bool measurements = false;
 	for (auto &name : StringUtil::Split(reads, ',')) {
 		named.push_back(QuoteText(name));
+		measurements = measurements || name == "main.measurements";
 	}
 	named.push_back("''");
+	string others = measurements ? " OR (starts_with(name, 'main.measurements/') AND name <> " +
+	                                   QuoteText("main.measurements/" + function) + ")"
+	                             : string();
 	return inner
 	    .Scalar("SELECT coalesce(string_agg(name || ':' || version, ',' ORDER BY name || ':' || version), '') FROM (" +
 	            LegsSQL(inner.ws) + ") WHERE (starts_with(name, " + QuoteText(dataset + ".") + ") AND (kind = 'table'" +
-	            (reads == "**" ? string(" OR true") : string("")) + ")) OR name IN (" + StoreLegNames() +
-	            ") OR name IN (" + StringUtil::Join(named, ", ") + ")")
+	            (StringUtil::StartsWith(reads, "**") ? string(" OR true") : string("")) + ")) OR name IN (" +
+	            StoreLegNames() + ") OR name IN (" + StringUtil::Join(named, ", ") + ")" + others)
 	    .ToString();
 }
 
@@ -1034,7 +1169,7 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		// stored at its pin, with what it read: the next extraction serves it while those are unchanged
 		inner.Run("INSERT INTO " + inner.Store("measurements") + " VALUES (" + inner.Seq("measurements") + ", " +
 		          QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) + ", " +
-		          returns.ToSQLString() + ", " + QuoteText(PinOf(inner, dataset, reads)) + ", " +
+		          returns.ToSQLString() + ", " + QuoteText(PinOf(inner, dataset, name, reads)) + ", " +
 		          QuoteText(value.ToString()) + ", now(), " + QuoteText(reads) + ")");
 		output.data[3].Append(Value(Summary(inner, value.ToString())));
 		output.data[4].Append(Value::BOOLEAN(true));
