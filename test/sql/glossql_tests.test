@@ -394,3 +394,80 @@ conventions	current
 
 statement ok
 USE fin;
+
+# --- one voice scored red is served with its band: a measurement alone never contests itself (SPEC §5.3)
+
+statement ok
+DECLARE ASPECT tie_out WITH $${"type": "object", "properties": {"breach_rate": {"type": "number"}, "tolerance": {"type": "number"}}}$$ AS FACT ON TABLE;
+
+statement ok
+DECLARE FUNCTION tie_out_check FOR GLOBAL AS $$ SELECT 1.0 AS breach_rate, 'every line against its order' AS outcome $$ RETURNS tie_out;
+
+statement ok
+DECLARE FUNCTION rate_red FOR GLOBAL AS $$ SELECT subject, CASE WHEN max(try_cast(body->>'breach_rate' AS DOUBLE)) > $threshold THEN 'red' ELSE 'green' END AS band, coalesce(max(try_cast(body->>'breach_rate' AS DOUBLE)), 0.0) AS score FROM slots GROUP BY subject $$;
+
+statement ok
+DECLARE TEST tie_out_test ON tie_out BY (AGENT, HUMAN) DETECTOR rate_red THRESHOLD 0.0;
+
+statement ok
+SELECT tie_out_check() FROM orders;
+
+query TTRT
+SELECT aspect, band, score, state FROM GLOSSARY(orders) WHERE aspect = 'tie_out';
+----
+tie_out	red	1.0	current
+
+query TR
+SELECT band, score FROM TESTS(orders::tie_out);
+----
+red	1.0
+
+# a second voice makes it a disagreement: contested, the value withheld
+
+statement ok
+GLOSS tie_out ON orders AS $${"tolerance": 0.0}$$;
+
+query TTT
+SELECT value, band, state FROM GLOSSARY(orders::tie_out);
+----
+NULL	red	contested
+
+# --- a measurement that reads other measurements is served while they hold and computes once another function lands a row; its own rows are never its input (SPEC §6)
+
+statement ok
+DECLARE ASPECT tie_out_count WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION tie_out_count FOR GLOBAL AS $$ SELECT count(*) AS n, 'stored tie-outs' AS what FROM main.measurements WHERE function = 'tie_out_check' $$ RETURNS tie_out_count;
+
+query TTTTT
+SELECT tie_out_count() FROM orders;
+----
+tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"stored tie-outs"}	true
+
+# the reader's reads name the function it filtered to, not the whole relation
+query T
+SELECT reads FROM measurements WHERE function = 'tie_out_count' ORDER BY seq DESC LIMIT 1;
+----
+main.measurements/tie_out_check
+
+query TTTTT
+SELECT tie_out_count() FROM orders;
+----
+tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"stored tie-outs"}	false
+
+statement ok
+DECLARE FUNCTION tie_out_check FOR GLOBAL AS $$ SELECT 0.5 AS breach_rate, 'every line against its order' AS outcome $$ RETURNS tie_out;
+
+statement ok
+SELECT tie_out_check() FROM orders;
+
+query TTTTT
+SELECT tie_out_count() FROM orders;
+----
+tie_out_count	fin.orders	tie_out_count	{"n":2,"what":"stored tie-outs"}	true
+
+query TTTTT
+SELECT tie_out_count() FROM orders;
+----
+tie_out_count	fin.orders	tie_out_count	{"n":2,"what":"stored tie-outs"}	false
