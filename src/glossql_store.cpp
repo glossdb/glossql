@@ -390,14 +390,15 @@ string LegsSQL(const Workspace &ws) {
 	                 " 'tables_dropped', 'inlined_insert', 'inlined_delete'))";
 	string sql = "SELECT s.schema_name || '.' || t.table_name AS name, greatest(t.begin_snapshot, coalesce("
 	             "(SELECT max(c.snapshot_id) FROM " +
-	             changes + " c WHERE list_contains(c.ids, t.table_id::VARCHAR)), 0))::VARCHAR AS version FROM " +
+	             changes +
+	             " c WHERE list_contains(c.ids, t.table_id::VARCHAR)), 0))::VARCHAR AS version, 'table' AS kind FROM " +
 	             ws.Meta("table") + " t JOIN " + ws.Meta("schema") +
 	             " s ON s.schema_id = t.schema_id AND s.end_snapshot IS NULL WHERE t.end_snapshot IS NULL";
 	// a view's version is the snapshot that made or replaced it: a metric definition's
 	// re-gloss with other sql is a new definition, and what was measured over
 	// the view's columns moves with it. The store's own views are no leg
-	sql += " UNION ALL SELECT s.schema_name || '.' || v.view_name, v.begin_snapshot::VARCHAR FROM " + ws.Meta("view") +
-	       " v JOIN " + ws.Meta("schema") +
+	sql += " UNION ALL SELECT s.schema_name || '.' || v.view_name, v.begin_snapshot::VARCHAR, 'view' FROM " +
+	       ws.Meta("view") + " v JOIN " + ws.Meta("schema") +
 	       " s ON s.schema_id = v.schema_id AND s.end_snapshot IS NULL WHERE v.end_snapshot IS NULL"
 	       " AND NOT (s.schema_name = 'main' AND v.view_name IN (" +
 	       StoreViewNames() + "))";
@@ -405,8 +406,8 @@ string LegsSQL(const Workspace &ws) {
 		if (string(relation.name) == "measurements") {
 			continue; // an output, never an input
 		}
-		sql += " UNION ALL SELECT 'main." + string(relation.name) + "', coalesce(max(seq)::VARCHAR, '-') FROM " +
-		       ws.Store(relation.name);
+		sql += " UNION ALL SELECT 'main." + string(relation.name) +
+		       "', coalesce(max(seq)::VARCHAR, '-'), 'store' FROM " + ws.Store(relation.name);
 	}
 	return sql;
 }
@@ -420,15 +421,17 @@ string StandsSQL(const Workspace &ws, const string &m) {
 	               parts + ", lambda p: " + name_of + "), '*') WHEN " + m +
 	               ".reads = '' THEN []::VARCHAR[] ELSE string_split(" + m + ".reads, ',') END)";
 	// a leg is selected by its name, or by * when it is one of the dataset's tables
-	auto selected = [&](const string &name) {
+	// (SPEC: * is the dataset's every table, so a new view moves no * row). A pin
+	// holds the dataset's views only where its reads named them or were **
+	auto selected = [&](const string &name, const string &is_table) {
 		return "(list_contains(" + names + ", " + name + ") OR (list_contains(" + names + ", '*') AND starts_with(" +
-		       name + ", " + m + ".dataset || '.')))";
+		       name + ", " + m + ".dataset || '.') AND " + is_table + "))";
 	};
-	string then_view = "coalesce(list_aggregate(list_sort(list_filter(" + parts + ", lambda p: " + selected(name_of) +
-	                   ")), 'string_agg', ','), '')";
+	string then_view = "coalesce(list_aggregate(list_sort(list_filter(" + parts +
+	                   ", lambda p: " + selected(name_of, "true") + ")), 'string_agg', ','), '')";
 	string now_view = "coalesce((SELECT string_agg(l.name || ':' || l.version, ',' ORDER BY l.name || ':' || l.version)"
 	                  " FROM legs l WHERE " +
-	                  selected("l.name") + "), '')";
+	                  selected("l.name", "l.kind = 'table'") + "), '')";
 	// a measurement of an older body is never served: the function's newest declaration precedes it
 	string declared = "coalesce(" + m + ".computed_at >= (SELECT max(f.declared_at) FROM " + ws.Store("functions") +
 	                  " f WHERE f.name = " + m + ".function AND f.scope IN (" + m + ".dataset, 'GLOBAL')), true)";

@@ -141,6 +141,26 @@ DROP TABLE fin.statement;
 statement ok
 DROP TABLE fin.payment;
 
+# the cardinality reads both sides: a unique column into a repeating one is one-to-many, never one-to-one
+statement ok
+CREATE TABLE fin.staff AS SELECT i AS staff_no FROM range(1, 21) t(i);
+
+statement ok
+CREATE TABLE fin.postings AS SELECT i AS staff_no, i AS posted FROM range(1, 21) t(i) UNION ALL SELECT 1, 99;
+
+query TTT
+SELECT from_col, to_col, cardinality FROM relationship_candidates('fin')
+WHERE from_col IN ('staff.staff_no', 'postings.staff_no') AND to_col IN ('staff.staff_no', 'postings.staff_no') ORDER BY ALL;
+----
+postings.staff_no	staff.staff_no	many-to-one
+staff.staff_no	postings.staff_no	one-to-many
+
+statement ok
+DROP TABLE fin.staff;
+
+statement ok
+DROP TABLE fin.postings;
+
 # --- relationship_checks: orphans and the temporal pairs over declared edges
 
 statement ok

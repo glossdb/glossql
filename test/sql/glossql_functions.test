@@ -122,11 +122,11 @@ SELECT min_max(), nothing() FROM orders.amount;
 ----
 not a declared function
 
-# a SELECT naming no declared function is plain SQL, with DuckDB's own answer
+# a column is a subject, never a relation: a call on one that names no declared function is refused as one
 statement error
 SELECT nothing() FROM orders.amount;
 ----
-schema "orders" does not exist
+nothing() is no declared function over fin.orders.amount
 
 # a SELECT of zero-argument calls over a table that names no glossql function is plain SQL
 query I

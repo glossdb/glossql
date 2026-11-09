@@ -915,7 +915,8 @@ static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 }
 
 //! The pin a computation is stored at: the dataset's tables, the store relations
-//! and whatever else the reads named, each at its version now
+//! and whatever else the reads named, each at its version now; the dataset's
+//! views too where the reads could not be enumerated (**)
 static string PinOf(Inner &inner, const string &dataset, const string &reads) {
 	vector<string> named;
 	for (auto &name : StringUtil::Split(reads, ',')) {
@@ -924,8 +925,9 @@ static string PinOf(Inner &inner, const string &dataset, const string &reads) {
 	named.push_back("''");
 	return inner
 	    .Scalar("SELECT coalesce(string_agg(name || ':' || version, ',' ORDER BY name || ':' || version), '') FROM (" +
-	            LegsSQL(inner.ws) + ") WHERE starts_with(name, " + QuoteText(dataset + ".") + ") OR name IN (" +
-	            StoreLegNames() + ") OR name IN (" + StringUtil::Join(named, ", ") + ")")
+	            LegsSQL(inner.ws) + ") WHERE (starts_with(name, " + QuoteText(dataset + ".") + ") AND (kind = 'table'" +
+	            (reads == "**" ? string(" OR true") : string("")) + ")) OR name IN (" + StoreLegNames() +
+	            ") OR name IN (" + StringUtil::Join(named, ", ") + ")")
 	    .ToString();
 }
 
@@ -1062,6 +1064,22 @@ static unique_ptr<TableRef> SelectOrExtractBindReplace(ClientContext &context, T
 		// no store, no functions
 	}
 	if (!declared) {
+		// a column is a subject, never a relation plain SQL reads: a call on one
+		// that names no declared function is a misspelt function
+		string resolved;
+		try {
+			resolved = ResolveSubject(context, input.inputs[0].ToString());
+		} catch (std::exception &) {
+		}
+		if (SubjectParts(resolved).size() == 3) {
+			vector<string> names;
+			for (auto &call : ListValue::GetChildren(input.inputs[1])) {
+				names.push_back(call.ToString() + "()");
+			}
+			throw InvalidInputException(
+			    "glossql: %s is no declared function over %s; SELECT name FROM functions lists them",
+			    StringUtil::Join(names, ", "), resolved);
+		}
 		return make_uniq<SubqueryRef>(ParseSelect(input.inputs[2].ToString()));
 	}
 	vector<unique_ptr<ParsedExpression>> children;
