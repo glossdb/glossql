@@ -23,7 +23,8 @@ same way read the same. `complete` is false where a part of the plan
 could not be resolved.
 
 `glossql_views_lineage(dataset)` returns the same for every column of
-every view in a dataset, with the view's name first.
+every view in a dataset, with the dataset and the view's name first.
+`glossql_views_lineage(NULL)` reads the views of every dataset.
 
 ## Lineage of every load
 
