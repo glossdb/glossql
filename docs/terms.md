@@ -45,12 +45,3 @@ works](https://github.com/glossdb/glossdb/blob/main/docs/overview/how-it-works.m
 | `conventions` | source conventions | A source's fiscal calendar, sign conventions, what its nulls mean |
 | time grains | time grains | day, week, month, quarter: the grains a metric is served at |
 | metric definition | metric | A view whose columns carry role, additivity and time |
-
-## Beside the standards
-
-| Standard | What it names | glossql |
-|---|---|---|
-| dbt data tests, Great Expectations, Soda checks, DataHub assertions | a check on the data with a pass or a fail | `DECLARE TEST` and `TESTS()`; `green` · `red` · `unassessed` · `stale` read as pass · fail · skipped · stale |
-| Apache Ossie (incubating), formerly Open Semantic Interchange | the semantic model exchanged between tools: datasets, fields, metrics, relationships, `ai_context` | the `kpi` kit's words on a view's columns, and `DECLARE RELATIONSHIP`; a server exports it |
-| OpenLineage | which columns a run read and wrote | `glossql_views_lineage()`, `glossql_views_scans()`, and the lineage on every load |
-| data contract | a producer's promise about a table: schema, keys, quality rules | a kit's required aspects and the tests on a source's tables |
