@@ -284,7 +284,7 @@ struct RunnerBindData : public FunctionData {
 	unique_ptr<FunctionData> Copy() const override {
 		auto result = make_uniq<RunnerBindData>();
 		result->inputs = inputs;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other_p) const override {
 		return inputs == other_p.Cast<RunnerBindData>().inputs;
@@ -301,7 +301,7 @@ static unique_ptr<FunctionData> OutcomeBind(ClientContext &context, TableFunctio
 	result->inputs = input.inputs;
 	return_types.push_back(LogicalType::VARCHAR);
 	names.emplace_back("outcome");
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> RunnerInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -588,7 +588,7 @@ static unique_ptr<FunctionData> PreviewBind(ClientContext &context, TableFunctio
 	}
 	return_types = prepared->GetTypes();
 	names = prepared->GetNames();
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> PreviewInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -785,7 +785,7 @@ static unique_ptr<FunctionData> ExtractBind(ClientContext &context, TableFunctio
 	// true when this call computed the measurement, false when the stored row served
 	return_types.push_back(LogicalType::BOOLEAN);
 	names.emplace_back("computed");
-	return std::move(result);
+	return result;
 }
 
 //! What a body read (SPEC §6): the lake's tables as <dataset>.<table> and the
@@ -1091,7 +1091,7 @@ static unique_ptr<TableRef> SelectOrExtractBindReplace(ClientContext &context, T
 	children.push_back(make_uniq<FunctionExpression>(Identifier("list_value"), std::move(calls)));
 	auto ref = make_uniq<TableFunctionRef>();
 	ref->function = make_uniq<FunctionExpression>(Identifier("glossql_extract"), std::move(children));
-	return std::move(ref);
+	return ref;
 }
 
 static TableFunction GlossSelectOrExtractFunction() {
@@ -2036,7 +2036,7 @@ static unique_ptr<FunctionData> KitBind(ClientContext &context, TableFunctionBin
 	names.emplace_back("statement");
 	return_types.push_back(LogicalType::VARCHAR);
 	names.emplace_back("outcome");
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> KitInit(ClientContext &context, TableFunctionInitInput &input) {

@@ -357,7 +357,7 @@ struct LineageBindData : public FunctionData {
 	unique_ptr<FunctionData> Copy() const override {
 		auto result = make_uniq<LineageBindData>();
 		result->sql = sql;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other) const override {
 		return sql == other.Cast<LineageBindData>().sql;
@@ -374,7 +374,7 @@ static unique_ptr<FunctionData> LineageBind(ClientContext &context, TableFunctio
 	result->sql = input.inputs[0].ToString();
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN};
 	names = {Identifier("column"), Identifier("derivation"), Identifier("complete")};
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> LineageInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -422,7 +422,7 @@ struct ViewsLineageBindData : public FunctionData {
 		result->dataset = dataset;
 		result->every = every;
 		result->scans = scans;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other) const override {
 		auto &that = other.Cast<ViewsLineageBindData>();
@@ -455,7 +455,7 @@ static unique_ptr<FunctionData> ViewsLineageBind(ClientContext &context, TableFu
 	                LogicalType::BOOLEAN};
 	names = {Identifier("dataset"), Identifier("view"), Identifier("column"), Identifier("derivation"),
 	         Identifier("complete")};
-	return std::move(result);
+	return result;
 }
 
 //! glossql_views_scans(dataset): every lake table each view of a dataset scans,
@@ -471,7 +471,7 @@ static unique_ptr<FunctionData> ViewsScansBind(ClientContext &context, TableFunc
 	result->scans = true;
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
 	names = {Identifier("dataset"), Identifier("view"), Identifier("table_name")};
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> ViewsLineageInit(ClientContext &context, TableFunctionInitInput &input) {

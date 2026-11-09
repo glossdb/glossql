@@ -529,7 +529,7 @@ struct GlossWriteBindData : public FunctionData {
 		auto result = make_uniq<GlossWriteBindData>();
 		result->table = table;
 		result->row = row;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<GlossWriteBindData>();
@@ -550,7 +550,7 @@ static unique_ptr<FunctionData> GlossWriteBind(ClientContext &context, TableFunc
 	}
 	return_types.push_back(LogicalType::VARCHAR);
 	names.emplace_back("outcome");
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> GlossWriteInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -977,7 +977,7 @@ struct GlossDeleteBindData : public FunctionData {
 		result->lake = lake;
 		result->alias = alias;
 		result->where = where;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<GlossDeleteBindData>();
@@ -993,7 +993,7 @@ static unique_ptr<FunctionData> GlossDeleteBind(ClientContext &context, TableFun
 	result->where = input.inputs[2];
 	return_types.push_back(LogicalType::BIGINT);
 	names.emplace_back("Count");
-	return std::move(result);
+	return result;
 }
 
 static void GlossDeleteExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -1490,7 +1490,7 @@ struct ColumnsBindData : public FunctionData {
 		result->dataset = dataset;
 		result->table = table;
 		result->views = views;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other) const override {
 		auto &o = other.Cast<ColumnsBindData>();
@@ -1518,14 +1518,14 @@ static unique_ptr<FunctionData> ColumnsBind(ClientContext &context, TableFunctio
 	                LogicalType::VARCHAR};
 	names = {Identifier("table_name"), Identifier("column_name"), Identifier("column_type"),
 	         Identifier("ordinal_position"), Identifier("table_type")};
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> ColumnsInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto &bind = input.bind_data->Cast<ColumnsBindData>();
 	auto state = make_uniq<ColumnsState>();
 	state->rows = DatasetColumns(context, bind.dataset, bind.table, bind.views);
-	return std::move(state);
+	return state;
 }
 
 static void ColumnsExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -1669,7 +1669,7 @@ struct CachedBindData : public FunctionData {
 	unique_ptr<FunctionData> Copy() const override {
 		auto result = make_uniq<CachedBindData>();
 		result->read = read;
-		return std::move(result);
+		return result;
 	}
 	bool Equals(const FunctionData &other) const override {
 		return read == other.Cast<CachedBindData>().read;
@@ -1689,14 +1689,14 @@ static unique_ptr<FunctionData> CachedBind(ClientContext &context, TableFunction
 	result->read = Cached(context, inner, input.inputs[0].ToString(), whole);
 	return_types = result->read->types;
 	names = result->read->names;
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<GlobalTableFunctionState> CachedInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto state = make_uniq<CachedScanState>();
 	state->rows = input.bind_data->Cast<CachedBindData>().read->rows;
 	state->rows->InitializeScan(state->scan);
-	return std::move(state);
+	return state;
 }
 
 static void CachedExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -1756,7 +1756,7 @@ static unique_ptr<FunctionData> KeptViewBind(ClientContext &context, TableFuncti
 	result->read = kept;
 	return_types = kept->types;
 	names = kept->names;
-	return std::move(result);
+	return result;
 }
 
 static TableFunction GlossKeptViewFunction() {
