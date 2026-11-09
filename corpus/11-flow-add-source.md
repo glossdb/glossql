@@ -162,7 +162,7 @@ GLOSS unit ON orders.amount AS $${"value": "EUR", "source_column": "currency_cod
 ```
 
 Adjudication replaces the detect/resolve/readiness tail: tests on the
-contested aspects, bands read back; the auto-ground loop is an agent skill
+conflict aspects, bands read back; the auto-ground loop is an agent skill
 sweeping the test-results relation and re-glossing where it may:
 
 ```glossql

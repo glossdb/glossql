@@ -25,7 +25,7 @@ DECLARE TEST reconciliation_test ON reconciliation
 - Name `BY`, `DETECTOR`, or both. On a `MEASUREMENT` property only
   `DETECTOR` applies: it judges the measurement's output.
 - `THRESHOLD` (0 to 1): above it, and where the values differ, the
-  glossary withholds the value and marks the asset `contested`
+  glossary withholds the value and marks the asset `conflict`
   ([reading](reading.md)).
 
 ## Write a detector
@@ -60,7 +60,7 @@ Every row has the same columns:
   current.
 - A detector that fails does not fail the read: its rows come back with
   band `error`, score 0, and the failure in `error`. An error never
-  marks an asset `contested`, and the other tests still answer.
+  marks an asset `conflict`, and the other tests still answer.
 - One detector can serve several tests; each test gets its own results,
   from its own values and threshold.
 - With no argument, `TESTS()` covers the dataset in use;

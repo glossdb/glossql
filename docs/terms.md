@@ -21,7 +21,7 @@ works](https://github.com/glossdb/glossdb/blob/main/docs/overview/how-it-works.m
 | test (`DECLARE TEST`) | data test | Declared on an aspect: who may annotate it and which detector scores agreement, with a threshold |
 | `TESTS()` | test results | One row per asset and aspect: band, score, whether it is current |
 | `GLOSSARY()` | the glossary | What is known: one row per asset and aspect, with its state |
-| `current` · `stale` · `contested` · `unassessed` | valid · outdated · conflict · missing | The state of an asset's aspect in the glossary |
+| `current` · `stale` · `conflict` · `missing` | valid · outdated · conflict · missing value | The state of an asset's aspect in the glossary |
 | band | severity, confidence | green, yellow, orange, red, or error |
 | `pin`, `reads` | provenance | The versions of what a measurement read |
 | source | connection | A directory, a URL prefix, or an attached database |

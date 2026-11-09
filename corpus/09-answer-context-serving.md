@@ -42,8 +42,8 @@ SELECT subject, band FROM TESTS(fin.trial_balance) WHERE band = 'red';
   stable enough to cache, curation cuts made visible, confirmation state
   respected. Disclosure stopped being experimental 2026-08-04 ("serving
   wrong information is not an experiment" — project lead): the collapsed
-  read carries `state` — `unassessed` (a tested aspect nobody spoke to
-  is a visible row, the "9 of 41" cut), `contested` (value withheld, band
+  read carries `state` — `missing` (a tested aspect nobody spoke to
+  is a visible row, the "9 of 41" cut), `conflict` (value withheld, band
   says how badly), `current`, `stale` (served and marked — the snapshot
   moved or the column's type decision postdates the gloss). Confirmation
   state stays the band from `TESTS()`. What remains for the experiment is

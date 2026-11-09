@@ -121,7 +121,7 @@ struct QueryLineage {
 	vector<pair<string, string>> columns;
 	bool complete = true;
 	//! every lake table the plan scans, as schema.table, joins and filters included
-	std::set<string> scans;
+	std::set<std::pair<string, vector<string>>> scans;
 };
 QueryLineage LineageOf(ClientContext &context, const string &sql);
 //! The lineage as one JSON object, column to derivation; a column the walk could

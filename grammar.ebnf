@@ -156,7 +156,7 @@ grain             = "DATASET" | "TABLE" | "COLUMN" | "RELATIONSHIP" | "SOURCE" ;
                        value: the aspect is required on a
                        subject only while that aspect's collapsed body
                        carries `value` = the literal — bounds
-                       `unassessed` disclosure and every count derived
+                       `missing` disclosure and every count derived
                        from it; writes stay gated by grain alone, and a
                        spoken value outside its condition serves
                        normally. WHEN TYPE, on a grain list of COLUMN
@@ -236,7 +236,7 @@ all_flag          = "all", "=>", "true" ;
                        (subject, aspect, value, band, score, state); value is
                        the precedence pick (human > agent > function),
                        withheld when the detector's score exceeds the
-                       threshold; state in unassessed | contested | current |
+                       threshold; state in missing | conflict | current |
                        stale — every gap visible, stale served-and-marked.
                        all => true: one row per (subject, aspect, kind, test)
                        — (subject, aspect, kind, test, actor, body,

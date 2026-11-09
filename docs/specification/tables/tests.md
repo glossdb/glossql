@@ -11,6 +11,6 @@ A row is a declared test on an aspect (`TEST` in the grammar).
 | `aspect` | VARCHAR | The aspect it tests. |
 | `actors` | VARCHAR | The kinds of actor that may annotate the aspect (`AGENT`, `HUMAN`), as a JSON list; empty when the statement has no `BY`, as on a measurement aspect, where `BY` is refused. The view serves it as a list. |
 | `detector` | VARCHAR | The function that scores agreement among the aspect's values; NULL when the test only gates who may annotate. |
-| `threshold` | DOUBLE | The score, from 0 to 1, above which differing values read `contested`. |
+| `threshold` | DOUBLE | The score, from 0 to 1, above which differing values read `conflict`. |
 | `declared_at` | TIMESTAMP | When the row was written. |
 | `declared_by` | VARCHAR | Who wrote the row: `kit:<name>` for a declaration a kit made, else the actor as `<kind>:<id>` (`agent:builder`, `human:ana`), or the kind alone where the connection named no one. |

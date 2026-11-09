@@ -1389,7 +1389,7 @@ static string VerdictsSQL(Inner &inner, const vector<TestRow> &tests, const Read
 }
 
 //! The subjects each tested aspect is required on, by the aspect's grain
-//! (SPEC §5.1): what the read discloses as unassessed when nobody spoke
+//! (SPEC §5.1): what the read discloses as missing when nobody spoke
 static string OwedSQL(const vector<TestRow> &tests, const ReadScope &scope) {
 	vector<string> parts;
 	for (auto &test : tests) {
@@ -1446,7 +1446,7 @@ static string OwedSQL(const vector<TestRow> &tests, const ReadScope &scope) {
 
 //! The collapsed read: one row per (subject, aspect) — the precedence pick,
 //! withheld while two actors' values stand and the test's score exceeds its
-//! threshold; one value is never contested, it is served with its band
+//! threshold; one value is never in conflict, it is served with its band
 //! (SPEC §5.3); every gap visible
 static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const ReadScope &scope, const Value &aspect) {
 	auto aspect_filter = AspectFilter(aspect);
@@ -1471,13 +1471,13 @@ static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const Rea
 	       ") SELECT * FROM ("
 	       "SELECT p.subject, p.aspect, CASE WHEN j.score > j.threshold AND v.n > 1 THEN NULL ELSE p.value END AS "
 	       "value,"
-	       " j.band, j.score, CASE WHEN j.score > j.threshold AND v.n > 1 THEN 'contested' WHEN p.stale THEN 'stale'"
+	       " j.band, j.score, CASE WHEN j.score > j.threshold AND v.n > 1 THEN 'conflict' WHEN p.stale THEN 'stale'"
 	       " ELSE 'current' END AS state"
 	       " FROM picked p LEFT JOIN judged j ON j.subject = p.subject AND j.aspect = p.aspect"
 	       " LEFT JOIN voices v ON v.subject = p.subject AND v.aspect = p.aspect"
 	       " UNION ALL "
 	       "SELECT o.subject, o.aspect, NULL::JSON AS value, NULL::VARCHAR AS band, NULL::DOUBLE AS score,"
-	       " 'unassessed' AS state FROM owed o WHERE NOT EXISTS"
+	       " 'missing' AS state FROM owed o WHERE NOT EXISTS"
 	       " (SELECT 1 FROM picked p WHERE p.subject = o.subject AND p.aspect = o.aspect)"
 	       ") ORDER BY subject, aspect";
 }

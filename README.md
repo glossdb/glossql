@@ -58,12 +58,12 @@ IMPORT orders;                                           -- a load: a new DuckLa
 ## Read it
 
 ```sql
-SELECT * FROM GLOSSARY(orders);  -- what is known: one row per asset and aspect, state current | stale | contested | unassessed
+SELECT * FROM GLOSSARY(orders);  -- what is known: one row per asset and aspect, state current | stale | conflict | missing
 SELECT * FROM TESTS(orders);    -- the test results: a band and a score per asset and aspect
 ```
 
-`stale` means the data changed after the annotation; `contested`, that
-actors disagree beyond the test's threshold; `unassessed`, that the
+`stale` means the data changed after the annotation; `conflict`, that
+actors disagree beyond the test's threshold; `missing`, that the
 aspect is required and nobody has annotated it. Everything else is
 plain SQL over the catalog tables.
 
@@ -106,7 +106,7 @@ GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
 SET VARIABLE glossql_actor = 'human';           -- the actor rides the connection
 GLOSS behavior ON orders.amount AS $${"value": "stock"}$$;
 
-SELECT * FROM GLOSSARY(orders);                 -- (subject, aspect, value, band, score, state): current | contested | stale | unassessed
+SELECT * FROM GLOSSARY(orders);                 -- (subject, aspect, value, band, score, state): current | conflict | stale | missing
 SELECT * FROM TESTS(orders.amount::behavior);  -- the test results
 SELECT * FROM GLOSSARY(orders.amount, all => true);
 

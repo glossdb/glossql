@@ -3,7 +3,7 @@
 Source: our own runs. A validated onboarding run
 stored ~109 columns
 against the kit's six column-grain vocabulary aspects and disclosed
-~607 `unassessed` values — behavior required on text columns, dimension
+~607 `missing` values — behavior required on text columns, dimension
 required on keys. Grain answers *which
 subject class* an aspect speaks to; nothing could answer *which
 subjects, given what the catalog already knows*. The relevance of
@@ -27,7 +27,7 @@ while that column's winning `role` value carries `value = 'measure'`.
 
 Semantics, sized to the mechanism:
 
-- **The condition bounds `unassessed` disclosure only** — and every
+- **The condition bounds `missing` disclosure only** — and every
   count derived from it (the coverage backlog, the checks backlog).
   Writes stay gated by grain alone: a spoken value outside its
   condition serves normally, so a later re-ruling of `role` strands

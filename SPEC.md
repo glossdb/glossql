@@ -225,7 +225,7 @@ The kind fixes the aspect's role:
   rendering). Anything the company revises — meaning, unit, owner, source —
   belongs in a gloss instead, because a declaration cannot be re-declared
   once anything is glossed on the aspect and so can never be superseded,
-  contested or outranked.
+  in conflict or outranked.
 - **MEASUREMENT** — a statistical evaluation (min_max, outliers,
   relationship_candidates). Never glossed: its value is the bound
   function's stored output (§6, §7), extracted at the read's pin and
@@ -243,7 +243,7 @@ A grain list may carry a **condition**:
 `ON COLUMN WHEN role = 'measure'` names a sibling aspect and a value, and
 the aspect is required on a subject only while that aspect's winning value
 (human over agent, contest notwithstanding) carries `value` = the literal.
-The condition bounds `unassessed` disclosure and every count derived from
+The condition bounds `missing` disclosure and every count derived from
 it — never writes: glosses stay gated by grain alone, and a spoken value
 outside its condition serves normally, so a later re-ruling of the sibling
 strands nothing. No sibling value spoken means nothing required yet. At
@@ -393,11 +393,11 @@ pick — human over agent over function — withheld only when the test
 detector's score exceeds the threshold. `state` makes every gap visible;
 the read never hides one:
 
-- `unassessed` — a test exists, nobody spoke. The row still appears
+- `missing` — a test exists, nobody spoke. The row still appears
   (absence is a visible row, never an omission — fixture 09's benchmark).
-- `contested` — two actors' values stand and the score is above the
+- `conflict` — two actors' values stand and the score is above the
   threshold; value withheld, band and score say how badly. One value is
-  never contested: it is served with its band.
+  never in conflict: it is served with its band.
 - `current` — served, basis unchanged.
 - `stale` — served **and marked**: the subject changed since the write
   (§5.2), or an input the serving function value read has moved since
@@ -586,7 +586,7 @@ Detectors run **at read**. A result belongs to its **test**, not to
 its detector: one detector serving three tests holds three results,
 computed from each test's own values against its own threshold.
 Detail lives in the value function's own output, reachable by
-SELECT. Sweeps ("all contested
+SELECT. Sweeps ("all conflict
 behavior columns") are WHERE clauses over the test-results relation, never a
 special form; with no argument, `TESTS()` sweeps the `USE`'d dataset.
 `subject::aspect` — the host's cast spelling — narrows test results to one

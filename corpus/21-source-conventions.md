@@ -83,6 +83,6 @@ FROM GLOSSARY(erp_export) WHERE aspect = 'conventions';
 ```
 
 Result: TRANSCRIBES. Promotion is an ordinary re-speak at source
-grain; disclosure (`unassessed`) bounds to declared sources through
+grain; disclosure (`missing`) bounds to declared sources through
 the grain; the persistence of the deposit rides the storage
 integration (proposal §5 in the fork record).
