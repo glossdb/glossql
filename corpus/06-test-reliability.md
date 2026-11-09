@@ -24,7 +24,7 @@ tests:
     quarantine_clustering: 0.8681
     type_claim: 0.2658
     null_vocabulary: 0.944
-  temporal_behavior:
+  temporal_additivity:
     llm_claim: 0.838                    # measured 2026-06-10, stratified corpus
     structural_reconciliation: 0.889    # measured 2026-06-11, wave-2 rig
 ```
@@ -40,20 +40,20 @@ the human's gloss. The detector scores across values and returns band +
 score; TESTS serves it.
 
 ```glossql
-DECLARE ASPECT behavior WITH $${
+DECLARE ASPECT additivity WITH $${
   "type": "object",
-  "properties": {"value": {"enum": ["stock", "flow"]}}
+  "properties": {"value": {"enum": ["semi-additive", "additive"]}}
 }$$ AS FACT ON COLUMN;
 
-DECLARE FUNCTION temporal_behavior FOR GLOBAL AS $$/* stock/flow from a column's period shape */$$
-  RETURNS behavior;
+DECLARE FUNCTION temporal_additivity FOR GLOBAL AS $$/* stock/flow from a column's period shape */$$
+  RETURNS additivity;
 
-DECLARE FUNCTION behavior_entropy FOR GLOBAL AS $$/* detector: spread across the behavior slots */$$;
+DECLARE FUNCTION additivity_entropy FOR GLOBAL AS $$/* detector: spread across the additivity slots */$$;
 
-DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN)
-  DETECTOR behavior_entropy THRESHOLD 0.7;
+DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN)
+  DETECTOR additivity_entropy THRESHOLD 0.7;
 
-SELECT * FROM TESTS(orders.amount::behavior);
+SELECT * FROM TESTS(orders.amount::additivity);
 ```
 
 `claim_tests.distribution` becomes the value function's cached JSON output
@@ -65,15 +65,15 @@ SELECT * FROM TESTS(orders.amount::behavior);
   result→(band, score). A human re-gloss supersedes the human value; a
   conflict state is a red/orange band, not a flag.
 - **The data-grounded value is a `RETURNS` binding** (respelled
-  2026-08-04): `temporal_behavior` speaks the `behavior` aspect by
+  2026-08-04): `temporal_additivity` speaks the `additivity` aspect by
   returning it — v0.3's `structural_reconciliation` test, made a typed
   function instead of a `BY (FUNCTION …)` entry. Its output validates
   against the aspect it speaks; the `BY` gate is for actors only. The
   detector lost its RETURNS transcription: no RETURNS *is* the detector
   shape, and the test-results contract is the engine's. *The example function
-  is superseded (2026-08-05): a trajectory read of behavior was falsified
+  is superseded (2026-08-05): a trajectory read of additivity was falsified
   (a trending flow and a mean-reverting stock look alike), and the shipped
-  wiring serves `behavior_evidence` as a MEASUREMENT the agent reads
+  wiring serves `additivity_evidence` as a MEASUREMENT the agent reads
   before glossing. The value mechanism itself lives on — fixture 16 §5's
   validation checks speak their aspects exactly this way.*
 - **DROPPED BY DESIGN — the calibration theater.** Per-test calibrated

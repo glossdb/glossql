@@ -29,11 +29,11 @@ statement ok
 CREATE TABLE fin.orders AS SELECT i AS id, i * 1.5 AS amount FROM range(4) t(i);
 
 statement ok
-DECLARE ASPECT behavior WITH $${"type": "object", "properties": {"value": {"enum": ["stock", "flow"]}}}$$ AS FACT ON COLUMN;
+DECLARE ASPECT additivity WITH $${"type": "object", "properties": {"value": {"enum": ["semi-additive", "additive"]}}}$$ AS FACT ON COLUMN;
 
 # a detector is a function without RETURNS: one (subject, band, score) row per subject over its test's slots
 statement ok
-DECLARE FUNCTION behavior_entropy FOR fin AS $$
+DECLARE FUNCTION additivity_entropy FOR fin AS $$
   SELECT subject,
          CASE WHEN count(DISTINCT body->>'value') > 1 THEN 'red' ELSE 'green' END AS band,
          CASE WHEN count(DISTINCT body->>'value') > 1 THEN 1.0 ELSE 0.0 END AS score
@@ -41,18 +41,18 @@ DECLARE FUNCTION behavior_entropy FOR fin AS $$
 $$;
 
 statement ok
-DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
+DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN) DETECTOR additivity_entropy THRESHOLD 0.7;
 
 # an unchanged re-declaration is a no-op
 query T
-DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;
+DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN) DETECTOR additivity_entropy THRESHOLD 0.7;
 ----
-test behavior_test unchanged: no-op
+test additivity_test unchanged: no-op
 
 query TTTTR
 SELECT name, aspect, actors, detector, threshold FROM tests;
 ----
-behavior_test	behavior	[AGENT, HUMAN]	behavior_entropy	0.7
+additivity_test	additivity	[AGENT, HUMAN]	additivity_entropy	0.7
 
 # --- what a test refuses
 
@@ -62,12 +62,12 @@ DECLARE TEST w2 ON nothing BY (AGENT);
 aspect 'nothing' is not declared
 
 statement error
-DECLARE TEST w3 ON behavior;
+DECLARE TEST w3 ON additivity;
 ----
 names BY or DETECTOR
 
 statement error
-DECLARE TEST w4 ON behavior THRESHOLD 2;
+DECLARE TEST w4 ON additivity THRESHOLD 2;
 ----
 THRESHOLD is in 0..1
 
@@ -83,12 +83,12 @@ statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 
 statement error
-DECLARE TEST w6 ON behavior DETECTOR min_max;
+DECLARE TEST w6 ON additivity DETECTOR min_max;
 ----
 a measurement, not a detector
 
 statement error
-DECLARE TEST w7 ON behavior DETECTOR nothing;
+DECLARE TEST w7 ON additivity DETECTOR nothing;
 ----
 detector 'nothing' is not a declared function
 
@@ -97,8 +97,8 @@ detector 'nothing' is not a declared function
 query TTTTTT
 SELECT subject, aspect, value, band, score, state FROM GLOSSARY(orders);
 ----
-fin.orders.amount	behavior	NULL	NULL	NULL	missing
-fin.orders.id	behavior	NULL	NULL	NULL	missing
+fin.orders.amount	additivity	NULL	NULL	NULL	missing
+fin.orders.id	additivity	NULL	NULL	NULL	missing
 
 query I
 SELECT count(*) FROM TESTS();
@@ -108,13 +108,13 @@ SELECT count(*) FROM TESTS();
 # --- one voice: current, judged green
 
 statement ok
-GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
+GLOSS additivity ON orders.amount AS $${"value": "additive"}$$;
 
 query TTTTTT
 SELECT subject, aspect, value, band, score, state FROM GLOSSARY(orders);
 ----
-fin.orders.amount	behavior	{"value": "flow"}	green	0.0	current
-fin.orders.id	behavior	NULL	NULL	NULL	missing
+fin.orders.amount	additivity	{"value": "additive"}	green	0.0	current
+fin.orders.id	additivity	NULL	NULL	NULL	missing
 
 # --- two voices disagree: conflict, the value withheld, the verdict says how badly
 
@@ -122,7 +122,7 @@ statement ok
 SET VARIABLE glossql_actor = 'human';
 
 statement ok
-GLOSS behavior ON orders.amount AS $${"value": "stock"}$$;
+GLOSS additivity ON orders.amount AS $${"value": "semi-additive"}$$;
 
 statement ok
 RESET VARIABLE glossql_actor;
@@ -130,24 +130,24 @@ RESET VARIABLE glossql_actor;
 query TTTTT
 SELECT subject, aspect, value, band, state FROM GLOSSARY(orders.amount);
 ----
-fin.orders.amount	behavior	NULL	red	conflict
+fin.orders.amount	additivity	NULL	red	conflict
 
 query TTTTR
-SELECT subject, aspect, test, band, score FROM TESTS(orders.amount::behavior);
+SELECT subject, aspect, test, band, score FROM TESTS(orders.amount::additivity);
 ----
-fin.orders.amount	behavior	behavior_test	red	1.0
+fin.orders.amount	additivity	additivity_test	red	1.0
 
 query TTTTT
 SELECT subject, aspect, test, band, current FROM TESTS() WHERE band = 'red';
 ----
-fin.orders.amount	behavior	behavior_test	red	true
+fin.orders.amount	additivity	additivity_test	red	true
 
 # the raw read shows every slot with its aspect's kind and its test
 query TTTTT
 SELECT subject, aspect, kind, test, actor FROM GLOSSARY(orders.amount, all => true) ORDER BY actor;
 ----
-fin.orders.amount	behavior	FACT	behavior_test	agent
-fin.orders.amount	behavior	FACT	behavior_test	human
+fin.orders.amount	additivity	FACT	additivity_test	agent
+fin.orders.amount	additivity	FACT	additivity_test	human
 
 # --- the human re-glosses to agree: the human slot is superseded, current again
 
@@ -155,7 +155,7 @@ statement ok
 SET VARIABLE glossql_actor = 'human';
 
 statement ok
-GLOSS behavior ON orders.amount AS $${"value": "flow"}$$;
+GLOSS additivity ON orders.amount AS $${"value": "additive"}$$;
 
 statement ok
 RESET VARIABLE glossql_actor;
@@ -163,7 +163,7 @@ RESET VARIABLE glossql_actor;
 query TTTT
 SELECT subject, value, band, state FROM GLOSSARY(orders.amount);
 ----
-fin.orders.amount	{"value": "flow"}	green	current
+fin.orders.amount	{"value": "additive"}	green	current
 
 # --- function voices arrive through RETURNS: extraction lands a measurement, served beside the glosses
 
@@ -251,7 +251,7 @@ fin.orders.id	{"value": "key"}	error	current
 query TTTT
 SELECT subject, test, band, error FROM TESTS(orders);
 ----
-fin.orders.amount	behavior_test	green	NULL
+fin.orders.amount	additivity_test	green	NULL
 fin.orders.id	role_test	error	Binder Error: Referenced column "no_such_column" not found in FROM clause!
 
 # a run the engine refuses

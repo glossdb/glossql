@@ -1564,8 +1564,8 @@ static TableFunction RelationshipChecksFunction() {
 }
 
 //===--------------------------------------------------------------------===//
-// glossql_behavior_cells(column): the cells the stock/flow evidence reads; the
-// quality kit's behavior_anchors is the screen over them. A column's own
+// glossql_additivity_cells(column): the cells the stock/flow evidence reads; the
+// quality kit's additivity_anchors is the screen over them. A column's own
 // trajectory cannot decide stock from flow; the evidence is a movement an
 // event table carries per entity and period, aligned with the column's table
 // over the declared relationships. Per alignment, both sides as cells at the
@@ -1868,12 +1868,12 @@ static pair<string, string> AlignLabels(const string &table, const string &ev, c
 	return {m_align, align_label};
 }
 
-static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	Inner inner(context);
 	auto subject = ResolveSubject(context, input.inputs[0].ToString());
 	auto parts = SubjectParts(subject);
 	if (parts.size() != 3) {
-		throw InvalidInputException("glossql: glossql_behavior_cells takes dataset.table.column, got '%s'", subject);
+		throw InvalidInputException("glossql: glossql_additivity_cells takes dataset.table.column, got '%s'", subject);
 	}
 	auto &dataset = parts[0];
 	auto &table = parts[1];
@@ -2134,9 +2134,9 @@ static unique_ptr<TableRef> BehaviorCellsBindReplace(ClientContext &context, Tab
 	return make_uniq<SubqueryRef>(ParseSelect(StringUtil::Join(branches, " UNION ALL ")));
 }
 
-static TableFunction BehaviorCellsFunction() {
-	TableFunction function("glossql_behavior_cells", {LogicalType::VARCHAR}, nullptr);
-	function.bind_replace = BehaviorCellsBindReplace;
+static TableFunction AdditivityCellsFunction() {
+	TableFunction function("glossql_additivity_cells", {LogicalType::VARCHAR}, nullptr);
+	function.bind_replace = AdditivityCellsBindReplace;
 	return function;
 }
 
@@ -2299,7 +2299,7 @@ void RegisterGlossRunner(ExtensionLoader &loader) {
 	loader.RegisterFunction(SubjectColumnFunction());
 	loader.RegisterFunction(DatasetCellsFunctions());
 	loader.RegisterFunction(RelationshipChecksFunction());
-	loader.RegisterFunction(BehaviorCellsFunction());
+	loader.RegisterFunction(AdditivityCellsFunction());
 }
 
 } // namespace duckdb

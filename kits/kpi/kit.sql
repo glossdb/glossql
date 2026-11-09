@@ -7,14 +7,14 @@
 --
 -- Every statement is glossql, so a fork is an edit.
 
--- Column vocabulary. role classes every column; behavior and unit are the
+-- Column vocabulary. role classes every column; additivity and unit are the
 -- claims on measures, dimension the claim on dimensions. WHEN narrows what
 -- a column owes to what its role makes meaningful: a role-less column owes
 -- only role, so the backlog counts what is real instead of columns ×
 -- vocabulary. `none` is the judged negative: examined, does not apply. A
 -- metric's view is a table of its dataset, so its columns carry these
 -- words too: how its value combines over periods and members is the
--- behavior on its value column — a flow sums, a stock keeps its last
+-- additivity on its value column — a flow sums, a stock keeps its last
 -- level, a ratio re-divides its summed halves, the columns numerator and
 -- denominator name.
 
@@ -29,9 +29,9 @@ DECLARE ASPECT role WITH $${
                                     "timestamp", "attribute"]}}
 }$$ AS FACT ON COLUMN;
 
-DECLARE ASPECT behavior WITH $${
+DECLARE ASPECT additivity WITH $${
   "type": "object", "required": ["value"],
-  "properties": {"value": {"enum": ["stock", "flow", "ratio", "none"]},
+  "properties": {"value": {"enum": ["semi-additive", "additive", "ratio", "non-additive"]},
                  "numerator": {"type": "string"},
                  "denominator": {"type": "string"},
                  "grounds": {"type": "string"}}
@@ -147,6 +147,6 @@ $$ RETURNS outlier_profile;
 DECLARE TEST meaning_test ON meaning BY (AGENT, HUMAN);
 DECLARE TEST entity_test ON entity BY (AGENT, HUMAN);
 DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE TEST behavior_test ON behavior BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
 DECLARE TEST unit_test ON unit BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
 DECLARE TEST dimension_test ON dimension BY (AGENT, HUMAN);

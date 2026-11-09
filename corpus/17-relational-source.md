@@ -114,7 +114,7 @@ load's row carries `mode = 'merge'`.
 - **INFORMATION LOST** — the temporal *type*: SQLite's wire has no
   temporal storage class, so no recipe spelling writes a Date/Timestamp
   column from this dialect. `temporal()` names the gap in its
-  abstention reason; `behavior_evidence()` abstains dataset-wide
+  abstention reason; `additivity_evidence()` abstains dataset-wide
   without a typed period axis. A typed backend (PostgreSQL) does not
   share the loss — the recipe cast is stored temporal there. Decided:
   no load-side machinery; the dialect teaching carries

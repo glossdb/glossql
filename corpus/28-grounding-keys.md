@@ -1,10 +1,10 @@
-# 28 · Metric definition keys: behaviour, row identity, slices — DECIDED (C: the metric definition contract, the claims as glosses on the view's columns)
+# 28 · Metric definition keys: additivity, row identity, slices — DECIDED (C: the metric definition contract, the claims as glosses on the view's columns)
 
 Source: three artifacts the corpus and the docs already hold, and one
 host. The City of Baton Rouge revised budget (fixture 27): a flow booked
 in the month it was authorized, sliced by fund and by object
 (`segment2`); its metric definition in `docs/methods/plan.md` carries
-`behavior` and `axes`. The finance integration run's `ar_balance`
+`additivity` and `axes`. The finance integration run's `ar_balance`
 (fixture 26): a stock, its row identity declared as `grain`. The
 harmonisation demo's service level: the share of a system's rows that
 keep their required fields, by system of record — a ratio, neither
@@ -15,7 +15,7 @@ and required (its views suite).
 
 What the engine reads of a metric definition: `sql` or `stopped`, to build or
 end the view; `assumptions`, for disclosure and the question round.
-What reads `behavior`, `grain` and `axes`: the cube alone
+What reads `additivity`, `grain` and `axes`: the cube alone
 (`crates/session/src/cube.rs`), to combine the view's rows over periods
 and members and to validate the frame against its row identity.
 
@@ -30,13 +30,13 @@ budget as the docs spell it:
 ```glossql
 GLOSS revised_budget ON brla AS $${
   "sql": "SELECT fiscalmonth, revisedbudget AS value, fund, segment2 FROM expense_budget",
-  "behavior": "flow",
+  "additivity": "additive",
   "axes": ["fund", "segment2"]
 }$$;
 ```
 
 The service level carries no key the enum holds: `ratio` is refused at
-admission, so its author writes nothing, or `flow`, which is wrong.
+admission, so its author writes nothing, or `additive`, which is wrong.
 
 **B. The contract, and a metric definition schema the kit declares**
 (`.claude/plans/grounding.md`). The body validates against the
@@ -51,7 +51,7 @@ DECLARE ASPECT kpi_grounding WITH $${
   "properties": {
     "sql": {"type": "string"}, "stopped": {"type": "string"},
     "assumptions": {"type": "array"},
-    "behavior": {"enum": ["stock", "flow", "ratio"]},
+    "additivity": {"enum": ["semi-additive", "additive", "ratio"]},
     "grain": {"type": "array", "items": {"type": "string"}},
     "axes": {"type": "array", "items": {"type": "string"}}
   }
@@ -59,7 +59,7 @@ DECLARE ASPECT kpi_grounding WITH $${
 ```
 
 The budget's statement is A's, unchanged. The claim still rides the
-body: one value holds `sql` and `behavior` together.
+body: one value holds `sql` and `additivity` together.
 
 **C. The contract, and the claims as glosses on the view's columns.**
 The body is `sql` or `stopped` and `assumptions`. The view is a table
@@ -73,8 +73,8 @@ GLOSS revised_budget ON brla AS $${
 
 GLOSS role ON revised_budget.period AS $${"value": "timestamp"}$$;
 GLOSS role ON revised_budget.value AS $${"value": "measure"}$$;
-GLOSS behavior ON revised_budget.value AS $${
-  "value": "flow",
+GLOSS additivity ON revised_budget.value AS $${
+  "value": "additive",
   "grounds": "a row is the amount booked in its month; the year is the sum"
 }$$;
 GLOSS role ON revised_budget.fund AS $${"value": "dimension"}$$;
@@ -91,7 +91,7 @@ The stock says its level and its row identity the same way:
 
 ```glossql
 GLOSS role ON ar_balance.date AS $${"value": "timestamp"}$$;
-GLOSS behavior ON ar_balance.value AS $${"value": "stock"}$$;
+GLOSS additivity ON ar_balance.value AS $${"value": "semi-additive"}$$;
 GLOSS entity ON ar_balance AS $${
   "value": "the receivable at a day's end",
   "grain": ["date"]
@@ -107,7 +107,7 @@ GLOSS service_level ON demo AS $${
 }$$;
 
 GLOSS role ON service_level.value AS $${"value": "measure"}$$;
-GLOSS behavior ON service_level.value AS $${
+GLOSS additivity ON service_level.value AS $${
   "value": "ratio", "numerator": "kept", "denominator": "total"
 }$$;
 GLOSS role ON service_level.system AS $${"value": "dimension"}$$;
@@ -116,9 +116,9 @@ GLOSS role ON service_level.system AS $${"value": "dimension"}$$;
 The kit's word, widened by the ratio and its halves:
 
 ```glossql
-DECLARE ASPECT behavior WITH $${
+DECLARE ASPECT additivity WITH $${
   "type": "object", "required": ["value"],
-  "properties": {"value": {"enum": ["stock", "flow", "ratio", "none"]},
+  "properties": {"value": {"enum": ["semi-additive", "additive", "ratio", "none"]},
                  "numerator": {"type": "string"},
                  "denominator": {"type": "string"},
                  "grounds": {"type": "string"}}
@@ -128,13 +128,13 @@ DECLARE ASPECT behavior WITH $${
 ## Findings
 
 - **A and B key a claim about one column of the view by the whole
-  metric definition.** One value holds `sql` and `behavior`: a human's review decision on
-  the behaviour supersedes the agent's `sql` with it, no test bands
-  the behaviour alone, no measurement sits beside it as evidence, and
+  metric definition.** One value holds `sql` and `additivity`: a human's review decision on
+  the additivity supersedes the agent's `sql` with it, no test bands
+  the additivity alone, no measurement sits beside it as evidence, and
   a metric read as another metric definition's source carries none of a
   table's facts.
 - **C gives each claim the value a stored column's claim has.** The
-  test on `behavior` bands it, the behaviour evidence is a
+  test on `additivity` bands it, the additivity evidence is a
   measurement on the column, a review decision is stored on the one fact, `next`
   routes what a new metric's columns require, and the ratio is sayable
   with its halves. The cost is statements: nine where A wrote one.
@@ -142,7 +142,7 @@ DECLARE ASPECT behavior WITH $${
   sources through lineage and proposes its columns' roles, and the
   test bands what it proposed.
 - **The no-claim rule.** At a coarser grain than the period column's
-  cadence, with no behaviour on the value column, a reader refuses and
+  cadence, with no additivity on the value column, a reader refuses and
   names the gloss. A silent default is wrong for a stock and teaches
   nothing.
 - **The SPEC diff under C.** §5.1: "the standard grounding schema"

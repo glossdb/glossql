@@ -8,9 +8,9 @@ said. A workspace runs kits of its own beside these, loaded after them.
 
 | Kit | Brings |
 |---|---|
-| `kpi/` | column and table vocabulary (`meaning`, `role`, `behavior` with `ratio` and its halves, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the `slot_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the tests that bind them; a metric's view carries the same words on its columns |
+| `kpi/` | column and table vocabulary (`meaning`, `role`, `additivity` with `ratio` and its halves, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the `slot_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the tests that bind them; a metric's view carries the same words on its columns |
 | `spatial/` | the geometry vocabulary: `shape` on a geometry column (`WHEN TYPE = 'GEOMETRY'`), the `crs` its coordinates are in, and the `geometry_profile` measurement; its first lines install and load DuckDB's spatial extension |
-| `quality/` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `grounding_collisions` and `behavior_anchors` as table macros, and the six measurements that land them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`, `behavior_evidence`, the stock/flow evidence over declared edges), the `temporal` profile, and the `rate_tolerance` detector that bands an authored expectation against a check value; loaded after `kpi/` |
+| `quality/` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `grounding_collisions` and `additivity_anchors` as table macros, and the six measurements that land them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`, `additivity_evidence`, the stock/flow evidence over declared edges), the `temporal` profile, and the `rate_tolerance` detector that bands an authored expectation against a check value; loaded after `kpi/` |
 
 ## Loading
 
@@ -50,7 +50,7 @@ tests that name both.
   structure.
 - The core validates every VIEW gloss against the metric definition contract
   (`sql` or `stopped`, `assumptions`). What a reader of the view's rows
-  needs — the period, the measure and its behaviour, the slices, the row
+  needs — the period, the measure and its additivity, the slices, the row
   identity — is glossed on the view and its columns under the kit's
   aspects, never keyed in the body. A kit whose readers need a body key
   of their own declares a schema for it, an aspect flavored `"x-kind":

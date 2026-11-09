@@ -70,7 +70,7 @@ FROM glossql_kit('kits/nothing/kit.sql');
 nothing
 
 # --- the vocabulary is owed where a test stands: role on every column, meaning and entity by grain;
-# behavior, unit and dimension wait on a role (WHEN)
+# additivity, unit and dimension wait on a role (WHEN)
 
 query TTT
 SELECT subject, aspect, state FROM GLOSSARY(orders) ORDER BY subject, aspect;
@@ -90,7 +90,7 @@ GLOSS role ON orders.amount AS $${"value": "measure"}$$;
 query TT
 SELECT aspect, state FROM GLOSSARY(orders.amount) ORDER BY aspect;
 ----
-behavior	missing
+additivity	missing
 meaning	missing
 role	current
 unit	missing
@@ -111,7 +111,7 @@ SELECT aspect, band, score FROM TESTS(orders.amount::role);
 ----
 role	red	1.0
 
-# the human's slot wins the WHEN: dimension is owed now, behavior and unit are not
+# the human's slot wins the WHEN: dimension is owed now, additivity and unit are not
 query TTT
 SELECT aspect, value, state FROM GLOSSARY(orders.amount) ORDER BY aspect;
 ----
@@ -139,14 +139,14 @@ GLOSS role ON revenue.revenue AS $${"value": "measure"}$$;
 glossed role on fin.revenue.revenue as agent
 
 statement error
-GLOSS behavior ON revenue.revenue AS $${"value": "stok"}$$;
+GLOSS additivity ON revenue.revenue AS $${"value": "stok"}$$;
 ----
 at $.value
 
 query T
-GLOSS behavior ON revenue.revenue AS $${"value": "ratio", "numerator": "won", "denominator": "offered"}$$;
+GLOSS additivity ON revenue.revenue AS $${"value": "ratio", "numerator": "won", "denominator": "offered"}$$;
 ----
-glossed behavior on fin.revenue.revenue as agent
+glossed additivity on fin.revenue.revenue as agent
 
 # --- the measurements land through extraction and serve beside the glosses
 

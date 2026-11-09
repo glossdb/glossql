@@ -10,8 +10,8 @@ value-at-read spelling, bound when the UI transformation starts;
 the scorecard runs first with the reader inlining served SQL.
 
 The floor under it (fixtures 11 + the dimensions flow) has already
-produced: `entity` glosses with verified grain, `behavior` results
-evidenced by `behavior_evidence`, declared relationships carrying
+produced: `entity` glosses with verified grain, `additivity` results
+evidenced by `additivity_evidence`, declared relationships carrying
 grain-check grounds, units and the sign convention. Every metric definition
 below cites that floor in its assumptions — this is what "ground the
 aspects with the information we expose over functions" means in
@@ -70,16 +70,16 @@ GLOSS revenue ON fin AS $${
      "basis": "conventions gloss (natural balance)", "confidence": 0.95},
     {"dimension": "grain", "assumption": "both joins are grain-preserving; no header-value multiplication",
      "basis": "relationship glosses (grain-check counts on the pairs)", "confidence": 1.0},
-    {"dimension": "behavior", "assumption": "a flow: sums are valid over any partition",
-     "basis": "behavior_evidence on journal_lines.credit", "confidence": 0.95}
+    {"dimension": "additivity", "assumption": "a flow: sums are valid over any partition",
+     "basis": "additivity_evidence on journal_lines.credit", "confidence": 0.95}
   ]
 }$$;
 
 GLOSS accounts_receivable ON fin AS $${
   "sql": "SELECT t.period, t.account_id, t.debit_balance - t.credit_balance AS value FROM trial_balance t JOIN chart_of_accounts a ON t.account_id = a.account_id WHERE a.account_type = 'asset' AND a.name LIKE '%Receivable%'",
   "assumptions": [
-    {"dimension": "behavior", "assumption": "a stock at (account, period) source grain: a window takes its LAST period, never a sum across periods",
-     "basis": "behavior_evidence on trial_balance.debit_balance", "confidence": 0.95},
+    {"dimension": "additivity", "assumption": "a stock at (account, period) source grain: a window takes its LAST period, never a sum across periods",
+     "basis": "additivity_evidence on trial_balance.debit_balance", "confidence": 0.95},
     {"dimension": "scope", "assumption": "AR accounts selected by name within asset type",
      "basis": "chart_of_accounts meaning glosses", "confidence": 0.85}
   ]
@@ -101,7 +101,7 @@ disease the drill re-think kills. The coherent rule:
 - **Possibilities are exposed once, as judged knowledge** — what v0.3
   pre-evaluated per metric, the floor already serves per column:
   `temporal()` cadence says which time grains the data can answer,
-  `dimension` results (with `none`) say which axes slice, `behavior`
+  `dimension` results (with `none`) say which axes slice, `additivity`
   says sum-vs-last, `unit` guards cross-currency sums.
 - **Evaluation is composition at read**, any window, any slice
   (the §6 spelling; until the bind is stored, the reader inlines the
@@ -231,7 +231,7 @@ like any value — the result in words, the measurement beside it
 (`{"outcome": "measured: debits equal credits", "imbalance": 0.0}`).
 One schema, every speaker.
 
-A confirmed behavior_evidence convention is a validation candidate:
+A confirmed additivity_evidence convention is a validation candidate:
 `trial_balance.debit_balance = SUM(journal_lines.debit)` reconciled
 at ~0 residual, so the agent may promote it to a third check — the
 measurement plane produces the hypotheses, the skill teaches the

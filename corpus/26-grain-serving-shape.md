@@ -2,7 +2,7 @@
 
 Source: the 2026-08 finance integration-run harvest — an agent's
 `ar_balance` metric definition, a running balance of signed events marked
-`"behavior": "stock"`. Every row carried the exact cumulative level
+`"additivity": "semi-additive"`. Every row carried the exact cumulative level
 (9,946,340.30 against a ground truth of 9,946,340.31), and the cube
 published ~56× the true value.
 
@@ -19,7 +19,7 @@ of correct duplicates per date:
 ```glossql
 GLOSS ar_balance ON fin AS $${
   "sql": "SELECT date, sum(delta) OVER (ORDER BY date) AS value FROM events",
-  "behavior": "stock"
+  "additivity": "semi-additive"
 }$$;
 ```
 
@@ -29,7 +29,7 @@ first, then runs the level, and declares that grain:
 ```glossql
 GLOSS ar_balance ON fin AS $${
   "sql": "WITH daily AS (SELECT date, sum(delta) AS delta FROM events GROUP BY date) SELECT date, sum(delta) OVER (ORDER BY date) AS value FROM daily",
-  "behavior": "stock",
+  "additivity": "semi-additive",
   "grain": ["date"]
 }$$;
 ```

@@ -538,9 +538,9 @@ gloss, the human's gloss — one value each.
 ### 7.1 Declaration
 
 ```sql
-DECLARE TEST behavior_test ON behavior
+DECLARE TEST additivity_test ON additivity
   BY (AGENT, HUMAN)
-  DETECTOR behavior_entropy
+  DETECTOR additivity_entropy
   THRESHOLD 0.7;
 
 DECLARE TEST reconciliation_test ON reconciliation
@@ -563,7 +563,7 @@ DECLARE TEST reconciliation_test ON reconciliation
 ### 7.2 Test results
 
 ```sql
-SELECT * FROM TESTS(orders.amount::behavior);
+SELECT * FROM TESTS(orders.amount::additivity);
 SELECT subject, band FROM TESTS(fin.trial_balance) WHERE band = 'red';
 ```
 
@@ -587,7 +587,7 @@ its detector: one detector serving three tests holds three results,
 computed from each test's own values against its own threshold.
 Detail lives in the value function's own output, reachable by
 SELECT. Sweeps ("all conflict
-behavior columns") are WHERE clauses over the test-results relation, never a
+additivity columns") are WHERE clauses over the test-results relation, never a
 special form; with no argument, `TESTS()` sweeps the `USE`'d dataset.
 `subject::aspect` — the host's cast spelling — narrows test results to one
 declared aspect, unambiguously: `fin.trial_balance` names a table,
