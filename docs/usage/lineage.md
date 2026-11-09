@@ -26,6 +26,11 @@ could not be resolved.
 every view in a dataset, with the dataset and the view's name first.
 `glossql_views_lineage(NULL)` reads the views of every dataset.
 
+Lineage names the columns that compute a view's outputs. A table a view
+only joins or filters on computes no output column, so it does not
+appear there. `glossql_views_scans(dataset)` lists every table each view
+scans, one row per view and table.
+
 ## Lineage of every load
 
 Each load stores its load query's lineage per column on its `imports`

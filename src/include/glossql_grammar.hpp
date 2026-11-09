@@ -68,6 +68,8 @@ string DatasetOf(const string &subject);
 string DatasetOf(ClientContext &context, const string &subject);
 //! Resolves a subject or pair path to its dataset-qualified form
 string ResolveSubject(ClientContext &context, const string &subject);
+//! Who declares: kit:<name> while a kit runs, else the actor as kind:id (glossql_store.cpp)
+string DeclaredBy(ClientContext &context);
 //! A resolved subject's parts: the dataset, the table, and the column as all that
 //! follows the second dot, since a column's name may hold a dot (SPEC §4)
 vector<string> SubjectParts(const string &subject);
@@ -118,6 +120,8 @@ void RegisterGlossService(ExtensionLoader &loader);
 struct QueryLineage {
 	vector<pair<string, string>> columns;
 	bool complete = true;
+	//! every lake table the plan scans, as schema.table, joins and filters included
+	std::set<string> scans;
 };
 QueryLineage LineageOf(ClientContext &context, const string &sql);
 //! The lineage as one JSON object, column to derivation; a column the walk could

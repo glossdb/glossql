@@ -258,3 +258,33 @@ query TI
 SELECT name, count(*) FROM kits GROUP BY name;
 ----
 kpi	3
+
+# --- declared_by: a kit's declarations name the kit, the connection's own name its actor
+
+query TT
+SELECT DISTINCT declared_by, (SELECT DISTINCT declared_by FROM tests WHERE name = 'unit_test') FROM aspects WHERE name IN ('meaning', 'unit');
+----
+kit:kpi	kit:kpi
+
+statement ok
+DECLARE ASPECT house_rule WITH $${"type": "object"}$$ AS FACT ON DATASET;
+
+statement ok
+SET VARIABLE glossql_actor = 'human';
+
+statement ok
+SET VARIABLE glossql_actor_id = 'ana';
+
+statement ok
+DECLARE TEST house_rule_test ON house_rule BY (AGENT, HUMAN);
+
+statement ok
+RESET VARIABLE glossql_actor_id;
+
+statement ok
+RESET VARIABLE glossql_actor;
+
+query TT
+SELECT (SELECT declared_by FROM aspects WHERE name = 'house_rule'), (SELECT declared_by FROM tests WHERE name = 'house_rule_test');
+----
+agent	human:ana

@@ -295,19 +295,20 @@ struct StoreRelation {
 };
 
 static const StoreRelation STORE_RELATIONS[] = {
-    {"datasets", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL", "name",
-	 "seq, name, settings::JSON AS settings, declared_at", "declared_at"},
+    {"datasets",
+	 "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR", "name",
+	 "seq, name, settings::JSON AS settings, declared_at, declared_by", "declared_at"},
     {"kits",
 	 "name VARCHAR NOT NULL, location VARCHAR NOT NULL, statements INTEGER NOT NULL, loaded_at TIMESTAMP NOT NULL, "
 	 "hash VARCHAR",
 	 "", "*", "loaded_at"},
-    {"sources", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL", "name",
-	 "seq, name, settings::JSON AS settings, declared_at", "declared_at"},
+    {"sources", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
+	 "name", "seq, name, settings::JSON AS settings, declared_at, declared_by", "declared_at"},
     {"recipes",
 	 "dataset VARCHAR NOT NULL, table_name VARCHAR NOT NULL, source VARCHAR NOT NULL, settings VARCHAR NOT NULL, "
-	 "sql VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL",
-	 "dataset, table_name", "seq, dataset, table_name, source, settings::JSON AS settings, sql, declared_at",
-	 "declared_at"},
+	 "sql VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
+	 "dataset, table_name",
+	 "seq, dataset, table_name, source, settings::JSON AS settings, sql, declared_at, declared_by", "declared_at"},
     {"imports",
 	 "dataset VARCHAR NOT NULL, table_name VARCHAR NOT NULL, mode VARCHAR NOT NULL, rows BIGINT NOT NULL, "
 	 "dropped_rows_count BIGINT, lineage VARCHAR NOT NULL, snapshot_id BIGINT, imported_at TIMESTAMP NOT NULL",
@@ -315,10 +316,10 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "imported_at"},
     {"aspects",
 	 "name VARCHAR NOT NULL, kind VARCHAR NOT NULL, grains VARCHAR NOT NULL, condition VARCHAR, "
-	 "schema VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL",
+	 "schema VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "name",
 	 "seq, name, kind, from_json(grains, '[\"VARCHAR\"]') AS grains, condition::JSON AS condition, "
-	 "schema::JSON AS schema, declared_at",
+	 "schema::JSON AS schema, declared_at, declared_by",
 	 "declared_at"},
     {"glossary",
 	 "dataset VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actor_kind VARCHAR NOT NULL, "
@@ -327,11 +328,11 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "written_at"},
     {"relationships",
 	 "dataset VARCHAR NOT NULL, left_side VARCHAR NOT NULL, op VARCHAR NOT NULL, right_side VARCHAR NOT NULL, "
-	 "declared_at TIMESTAMP NOT NULL",
+	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "", "*", "declared_at"},
     {"functions",
 	 "name VARCHAR NOT NULL, scope VARCHAR NOT NULL, script VARCHAR NOT NULL, returns VARCHAR, "
-	 "declared_at TIMESTAMP NOT NULL",
+	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "name, scope", "*", "declared_at"},
     {"measurements",
 	 "dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, "
@@ -339,8 +340,9 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "", "seq, dataset, function, subject, aspect, pin, value::JSON AS value, computed_at, reads", "computed_at"},
     {"tests",
 	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
-	 "declared_at TIMESTAMP NOT NULL",
-	 "aspect", "seq, name, aspect, from_json(actors, '[\"VARCHAR\"]') AS actors, detector, threshold, declared_at",
+	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
+	 "aspect",
+	 "seq, name, aspect, from_json(actors, '[\"VARCHAR\"]') AS actors, detector, threshold, declared_at, declared_by",
 	 "declared_at"},
 };
 
@@ -573,6 +575,18 @@ static string ActorKindOf(ClientContext &context) {
 //! Who the actor is, NULL when the wrapper set none
 static Value ActorIdOf(ClientContext &context) {
 	return Variable(context, "glossql_actor_id");
+}
+
+//! Who declares, for the declaration relations' declared_by: the kit while
+//! glossql_kit runs one (glossql_declared_by on its connection), else the
+//! actor as kind:id, or the kind alone where the wrapper set no id
+string DeclaredBy(ClientContext &context) {
+	auto kit = Variable(context, "glossql_declared_by");
+	if (!kit.IsNull()) {
+		return kit.ToString();
+	}
+	auto id = ActorIdOf(context);
+	return ActorKindOf(context) + (id.IsNull() ? string() : ":" + id.ToString());
 }
 
 //! An aspect as its newest row holds
@@ -922,7 +936,8 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 		throw InternalException("glossql: no write to '%s'", bind.table);
 	}
 	inner.Run("INSERT INTO " + inner.Store(bind.table) + " VALUES (" + inner.Seq(bind.table) + ", " +
-	          StringUtil::Join(values, ", ") + ", now())");
+	          StringUtil::Join(values, ", ") + ", now()" +
+	          (bind.table == "glossary" ? string() : ", " + QuoteText(DeclaredBy(context))) + ")");
 
 	output.data[0].Append(Value(outcome));
 }

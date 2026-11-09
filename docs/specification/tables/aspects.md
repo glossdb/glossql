@@ -13,3 +13,4 @@ again once anything is annotated on it.
 | `condition` | VARCHAR | When the aspect is required, as JSON: `{"aspect": …, "value": …}` for a sibling aspect's value (`WHEN role = 'measure'`), or `{"type": [...]}` for column types (`WHEN TYPE IN (…)`). NULL when it is required wherever its grains apply. The view serves it as JSON. |
 | `schema` | VARCHAR | The JSON Schema every value is validated against. For a `VIEW` aspect it carries the definition's metadata (`title`, `x-kind`) and the annotation is held to the metric-definition contract instead. The view serves it as JSON. |
 | `declared_at` | TIMESTAMP | When the row was written. |
+| `declared_by` | VARCHAR | Who wrote the row: `kit:<name>` for a declaration a kit made, else the actor as `<kind>:<id>` (`agent:builder`, `human:ana`), or the kind alone where the connection named no one. |

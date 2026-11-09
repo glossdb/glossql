@@ -55,7 +55,10 @@ off its bound plan; a leaf is `scan.column:type`.
 
 `glossql_views_lineage(dataset VARCHAR)` → `(dataset, view, column,
 derivation, complete)`: the same for every view of a dataset, or of
-every dataset when `dataset` is NULL. See
+every dataset when `dataset` is NULL.
+`glossql_views_scans(dataset VARCHAR)` → `(dataset, view, table_name)`:
+every table each view scans, joins and filters included, NULL for every
+dataset. See
 [lineage](usage/lineage.md).
 
 ## glossql_columns
