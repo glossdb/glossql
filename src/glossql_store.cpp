@@ -409,18 +409,11 @@ string LegsSQL(const Workspace &ws) {
 	       StoreViewNames() + "))";
 	for (auto &relation : STORE_RELATIONS) {
 		if (string(relation.name) == "measurements") {
-			continue; // every function's output: a leg per function below, never one for all
+			continue; // an output, never an input
 		}
 		sql += " UNION ALL SELECT 'main." + string(relation.name) +
 		       "', coalesce(max(seq)::VARCHAR, '-'), 'store' FROM " + ws.Store(relation.name);
 	}
-	// a function's stored rows are a leg of their own, so a body that reads other
-	// functions' measurements is served while those hold and never pins its own;
-	// what a reader of measurements stores is its output and nobody's evidence,
-	// so readers' rows are no leg, and two readers never stale each other
-	sql += " UNION ALL SELECT 'main.measurements/' || function, max(seq)::VARCHAR, 'store' FROM " +
-	       ws.Store("measurements") +
-	       " GROUP BY function HAVING NOT bool_or(coalesce(reads, '') LIKE '%main.measurements%')";
 	return sql;
 }
 
@@ -429,23 +422,15 @@ string StandsSQL(const Workspace &ws, const string &m) {
 	// every leg of its own pin and the dataset's every table; nothing for ''
 	string parts = "string_split(coalesce(" + m + ".pin, ''), ',')";
 	string name_of = "regexp_replace(p, ':[^:]*$', '')";
-	// for ** the pin's own legs and *, plus the store relations the reads did
-	// enumerate after the **, so a read of measurements selects legs that were
-	// not there at pin time: a function's first evidence
-	string names = "(CASE WHEN " + m + ".reads IS NULL OR starts_with(" + m +
-	               ".reads, '**') THEN list_concat(list_append(list_transform(" + parts + ", lambda p: " + name_of +
-	               "), '*'), list_filter(string_split(coalesce(" + m +
-	               ".reads, ''), ','), lambda r: r <> '**' AND r <> '')) WHEN " + m +
+	string names = "(CASE WHEN " + m + ".reads IS NULL OR " + m + ".reads = '**' THEN list_append(list_transform(" +
+	               parts + ", lambda p: " + name_of + "), '*') WHEN " + m +
 	               ".reads = '' THEN []::VARCHAR[] ELSE string_split(" + m + ".reads, ',') END)";
 	// a leg is selected by its name, or by * when it is one of the dataset's tables
 	// (SPEC: * is the dataset's every table, so a new view moves no * row). A pin
-	// holds the dataset's views only where its reads named them or were **. A
-	// read of the measurements relation selects the other functions' legs
+	// holds the dataset's views only where its reads named them or were **
 	auto selected = [&](const string &name, const string &is_table) {
 		return "(list_contains(" + names + ", " + name + ") OR (list_contains(" + names + ", '*') AND starts_with(" +
-		       name + ", " + m + ".dataset || '.') AND " + is_table + ") OR (list_contains(" + names +
-		       ", 'main.measurements') AND starts_with(" + name + ", 'main.measurements/') AND " + name +
-		       " <> 'main.measurements/' || " + m + ".function))";
+		       name + ", " + m + ".dataset || '.') AND " + is_table + "))";
 	};
 	string then_view = "coalesce(list_aggregate(list_sort(list_filter(" + parts +
 	                   ", lambda p: " + selected(name_of, "true") + ")), 'string_agg', ','), '')";
@@ -1445,9 +1430,7 @@ static string OwedSQL(const vector<TestRow> &tests, const ReadScope &scope) {
 }
 
 //! The collapsed read: one row per (subject, aspect) — the precedence pick,
-//! withheld while two actors' values stand and the test's score exceeds its
-//! threshold; one value is never contested, it is served with its band
-//! (SPEC §5.3); every gap visible
+//! withheld while the test's score exceeds its threshold; every gap visible
 static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const ReadScope &scope, const Value &aspect) {
 	auto aspect_filter = AspectFilter(aspect);
 	auto owed = OwedSQL(tests, scope);
@@ -1465,16 +1448,13 @@ static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const Rea
 	       "), judged AS (SELECT v.subject, v.aspect, v.band, v.score, w.threshold FROM verdicts v LEFT JOIN " +
 	       Newest(scope.ws, "tests") +
 	       " w ON w.name = v.test QUALIFY row_number() OVER (PARTITION BY v.subject, v.aspect"
-	       " ORDER BY v.band = 'error', v.score DESC) = 1), voices AS (SELECT subject, aspect,"
-	       " count(DISTINCT actor) AS n FROM slots GROUP BY subject, aspect), owed AS (" +
+	       " ORDER BY v.band = 'error', v.score DESC) = 1), owed AS (" +
 	       owed +
 	       ") SELECT * FROM ("
-	       "SELECT p.subject, p.aspect, CASE WHEN j.score > j.threshold AND v.n > 1 THEN NULL ELSE p.value END AS "
-	       "value,"
-	       " j.band, j.score, CASE WHEN j.score > j.threshold AND v.n > 1 THEN 'contested' WHEN p.stale THEN 'stale'"
+	       "SELECT p.subject, p.aspect, CASE WHEN j.score > j.threshold THEN NULL ELSE p.value END AS value,"
+	       " j.band, j.score, CASE WHEN j.score > j.threshold THEN 'contested' WHEN p.stale THEN 'stale'"
 	       " ELSE 'current' END AS state"
 	       " FROM picked p LEFT JOIN judged j ON j.subject = p.subject AND j.aspect = p.aspect"
-	       " LEFT JOIN voices v ON v.subject = p.subject AND v.aspect = p.aspect"
 	       " UNION ALL "
 	       "SELECT o.subject, o.aspect, NULL::JSON AS value, NULL::VARCHAR AS band, NULL::DOUBLE AS score,"
 	       " 'unassessed' AS state FROM owed o WHERE NOT EXISTS"

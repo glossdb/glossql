@@ -395,9 +395,8 @@ the read never hides one:
 
 - `unassessed` — a test exists, nobody spoke. The row still appears
   (absence is a visible row, never an omission — fixture 09's benchmark).
-- `contested` — two actors' values stand and the score is above the
-  threshold; value withheld, band and score say how badly. One value is
-  never contested: it is served with its band.
+- `contested` — entropy above the threshold; value withheld, band and
+  score say how badly.
 - `current` — served, basis unchanged.
 - `stale` — served **and marked**: the subject changed since the write
   (§5.2), or an input the serving function value read has moved since
@@ -509,10 +508,7 @@ pin), empty for a body that read nothing. A later extraction
 serves that row while those inputs are unchanged; one of them moving
 makes the next extraction compute — the effect scoped to its cause, so
 there is no invalidation, only a miss, a write the body never reads is
-not its staleness, and old rows stand as the drift record. A body that
-reads the `measurements` relation reads the other functions' rows, and
-what such a reader stores is its output, nobody's input: readers never
-pin themselves or each other. A body that carries a top-level `summary`
+not its staleness, and old rows stand as the drift record. A body that carries a top-level `summary`
 object serves the summary at extraction — the full value reads back
 through `GLOSSARY(subject::aspect)` (a large measurement's extraction
 result would otherwise be write-only at the interface; the summary is the
