@@ -34,7 +34,7 @@ CREATE TABLE fin.customers AS SELECT 'c' || i AS customer, 'seg' || i AS segment
 # --- glossql_lineage(sql): each output column resolved to what computes it; a leaf is scan.column:type
 
 query TTT
-FROM glossql_lineage($$SELECT id, amount * 2 AS twice, id::VARCHAR AS id_text, 'x' AS tag FROM fin.orders WHERE id > 1$$);
+SELECT "column", derivation, complete FROM glossql_lineage($$SELECT id, amount * 2 AS twice, id::VARCHAR AS id_text, 'x' AS tag FROM fin.orders WHERE id > 1$$);
 ----
 id	fin.orders.id:BIGINT	true
 twice	*(fin.orders.amount:DECIMAL(21,1), cast(2 as DECIMAL(31,0)))	true
@@ -42,7 +42,7 @@ id_text	cast(fin.orders.id:BIGINT as VARCHAR)	true
 tag	'x'	true
 
 query TTT
-FROM glossql_lineage($$SELECT customer, sum(amount) AS total, count(*) AS n, count(DISTINCT id) AS ids FROM fin.orders GROUP BY customer$$);
+SELECT "column", derivation, complete FROM glossql_lineage($$SELECT customer, sum(amount) AS total, count(*) AS n, count(DISTINCT id) AS ids FROM fin.orders GROUP BY customer$$);
 ----
 customer	fin.orders.customer:VARCHAR	true
 total	sum(fin.orders.amount:DECIMAL(21,1))	true
@@ -50,14 +50,14 @@ n	count_star()	true
 ids	count(distinct fin.orders.id:BIGINT)	true
 
 query TTT
-FROM glossql_lineage($$SELECT o.id, c.segment FROM fin.orders o JOIN fin.customers c USING (customer)$$);
+SELECT "column", derivation, complete FROM glossql_lineage($$SELECT o.id, c.segment FROM fin.orders o JOIN fin.customers c USING (customer)$$);
 ----
 id	fin.orders.id:BIGINT	true
 segment	fin.customers.segment:VARCHAR	true
 
 # a subquery, a CTE, a union and a window resolve through; a correlated subquery is a mark
 query TTT
-FROM glossql_lineage($$SELECT s.id, s.net FROM (SELECT id, amount * 0.8 AS net FROM fin.orders) s$$);
+SELECT "column", derivation, complete FROM glossql_lineage($$SELECT s.id, s.net FROM (SELECT id, amount * 0.8 AS net FROM fin.orders) s$$);
 ----
 id	fin.orders.id:BIGINT	true
 net	*(fin.orders.amount:DECIMAL(21,1), cast(0.8 as DECIMAL(23,1)))	true
@@ -80,7 +80,7 @@ SELECT count(DISTINCT derivation) FROM (SELECT derivation FROM glossql_lineage($
 1
 
 statement error
-FROM glossql_lineage($$CREATE TABLE x AS SELECT 1$$);
+SELECT "column", derivation, complete FROM glossql_lineage($$CREATE TABLE x AS SELECT 1$$);
 ----
 takes one SELECT
 
@@ -288,3 +288,31 @@ query I
 SELECT count(*) FROM glossql_views_joins('fin') WHERE view = 'no_join';
 ----
 0
+
+# --- shape: how a column was computed, where that decides how it adds up. A division by an aggregate is a ratio, an average an average, a distinct count distinct; a sum over one keeps it, a division by a constant has none
+
+query TT
+SELECT "column", shape FROM glossql_lineage($$SELECT customer, sum(amount) AS total, sum(amount) / 60.0 AS hours, sum(amount) / count(*) AS per_order, avg(amount) AS mean, count(DISTINCT id) AS buyers, amount / id AS row_ratio FROM fin.orders GROUP BY customer, amount, id$$) ORDER BY 1;
+----
+buyers	distinct
+customer	NULL
+hours	NULL
+mean	average
+per_order	ratio
+row_ratio	NULL
+total	NULL
+
+statement ok
+CREATE VIEW fin.daily_rate AS SELECT customer, sum(amount)::DOUBLE / count(*) AS value FROM fin.orders GROUP BY customer;
+
+statement ok
+CREATE VIEW fin.summed_rate AS WITH d AS (SELECT value FROM fin.daily_rate) SELECT sum(value) AS value FROM d;
+
+query TTT
+SELECT view, "column", shape FROM glossql_views_lineage('fin') WHERE view IN ('daily_rate', 'summed_rate', 'revenue') ORDER BY ALL;
+----
+daily_rate	customer	NULL
+daily_rate	value	ratio
+revenue	customer	NULL
+revenue	total	NULL
+summed_rate	value	ratio

@@ -56,7 +56,10 @@ static constexpr const char *UNKNOWN = "<?>";
 //! outputs by their index, and whether every step was followed
 struct Lineage {
 	column_binding_map_t<string> text;
+	//! per binding, the SHAPE_* bits of what computed it
+	column_binding_map_t<uint8_t> shape;
 	unordered_map<TableIndex, vector<string>> ctes;
+	unordered_map<TableIndex, vector<uint8_t>> cte_shapes;
 	bool complete = true;
 	//! the pairs of scanned columns a join or a filter equates, each as scan.column
 	std::set<std::pair<string, string>> joins;
@@ -68,6 +71,82 @@ struct Lineage {
 };
 
 static string Text(const Expression &expr, Lineage &lineage);
+
+//! How a column was computed, where that decides how it adds up: it holds an
+//! aggregate; it divides by one (a ratio); it averages; it counts distinct
+//! values. A sum over any of the last three keeps the bit: adding ratios,
+//! averages or distinct counts gives no total.
+static constexpr uint8_t SHAPE_AGGREGATE = 1;
+static constexpr uint8_t SHAPE_RATIO = 2;
+static constexpr uint8_t SHAPE_AVERAGE = 4;
+static constexpr uint8_t SHAPE_DISTINCT = 8;
+
+static uint8_t Shape(const Expression &expr, Lineage &lineage) {
+	vector<uint8_t> parts;
+	ExpressionIterator::EnumerateChildren(expr,
+	                                      [&](const Expression &child) { parts.push_back(Shape(child, lineage)); });
+	uint8_t all = 0;
+	for (auto part : parts) {
+		all |= part;
+	}
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::BOUND_COLUMN_REF: {
+		auto entry = lineage.shape.find(expr.Cast<BoundColumnRefExpression>().Binding());
+		return entry == lineage.shape.end() ? 0 : entry->second;
+	}
+	case ExpressionClass::BOUND_FUNCTION: {
+		auto name = expr.Cast<BoundFunctionExpression>().Function().GetName().GetIdentifierName();
+		if ((name == "/" || name == "//" || name == "divide") && parts.size() == 2 && (parts[1] & SHAPE_AGGREGATE)) {
+			all |= SHAPE_RATIO;
+		}
+		return all;
+	}
+	case ExpressionClass::BOUND_AGGREGATE: {
+		auto &aggregate = expr.Cast<BoundAggregateExpression>();
+		auto name = aggregate.Function().GetName().GetIdentifierName();
+		all |= SHAPE_AGGREGATE;
+		if (name == "avg" || name == "mean" || name == "median" || StringUtil::StartsWith(name, "quantile")) {
+			all |= SHAPE_AVERAGE;
+		}
+		if (aggregate.IsDistinct() || name == "approx_count_distinct") {
+			all |= SHAPE_DISTINCT;
+		}
+		return all;
+	}
+	case ExpressionClass::BOUND_WINDOW: {
+		auto &window = expr.Cast<BoundWindowExpression>();
+		if (window.AggregateFunction()) {
+			all |= SHAPE_AGGREGATE;
+			auto name = window.AggregateFunction()->GetName().GetIdentifierName();
+			if (name == "avg" || name == "mean" || name == "median" || StringUtil::StartsWith(name, "quantile")) {
+				all |= SHAPE_AVERAGE;
+			}
+		}
+		return all;
+	}
+	default:
+		return all;
+	}
+}
+
+static string ShapeName(uint8_t shape) {
+	return shape & SHAPE_RATIO ? "ratio" : shape & SHAPE_AVERAGE ? "average" : shape & SHAPE_DISTINCT ? "distinct" : "";
+}
+
+//! Records what computes a binding: its derivation text and its shape
+static void Derive(Lineage &lineage, ColumnBinding binding, const Expression &expr) {
+	lineage.text[binding] = Text(expr, lineage);
+	lineage.shape[binding] = Shape(expr, lineage);
+}
+
+static vector<uint8_t> OutputShapes(LogicalOperator &op, Lineage &lineage) {
+	vector<uint8_t> result;
+	for (auto &binding : op.GetColumnBindings()) {
+		auto entry = lineage.shape.find(binding);
+		result.push_back(entry == lineage.shape.end() ? 0 : entry->second);
+	}
+	return result;
+}
 
 static string Children(const Expression &expr, Lineage &lineage) {
 	vector<string> parts;
@@ -191,6 +270,7 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		auto &cte = op.Cast<LogicalMaterializedCTE>();
 		Walk(*op.children[0], lineage);
 		lineage.ctes[cte.table_index] = Outputs(*op.children[0], lineage);
+		lineage.cte_shapes[cte.table_index] = OutputShapes(*op.children[0], lineage);
 		Walk(*op.children[1], lineage);
 		return;
 	}
@@ -221,20 +301,17 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 	case LogicalOperatorType::LOGICAL_PROJECTION: {
 		auto &projection = op.Cast<LogicalProjection>();
 		for (idx_t i = 0; i < projection.expressions.size(); i++) {
-			lineage.text[ColumnBinding(projection.table_index, ProjectionIndex(i))] =
-			    Text(*projection.expressions[i], lineage);
+			Derive(lineage, ColumnBinding(projection.table_index, ProjectionIndex(i)), *projection.expressions[i]);
 		}
 		break;
 	}
 	case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
 		auto &aggregate = op.Cast<LogicalAggregate>();
 		for (idx_t i = 0; i < aggregate.groups.size(); i++) {
-			lineage.text[ColumnBinding(aggregate.group_index, ProjectionIndex(i))] =
-			    Text(*aggregate.groups[i], lineage);
+			Derive(lineage, ColumnBinding(aggregate.group_index, ProjectionIndex(i)), *aggregate.groups[i]);
 		}
 		for (idx_t i = 0; i < aggregate.expressions.size(); i++) {
-			lineage.text[ColumnBinding(aggregate.aggregate_index, ProjectionIndex(i))] =
-			    Text(*aggregate.expressions[i], lineage);
+			Derive(lineage, ColumnBinding(aggregate.aggregate_index, ProjectionIndex(i)), *aggregate.expressions[i]);
 		}
 		for (idx_t i = 0; i < aggregate.grouping_functions.size(); i++) {
 			lineage.text[ColumnBinding(aggregate.groupings_index, ProjectionIndex(i))] = "grouping";
@@ -244,16 +321,14 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 	case LogicalOperatorType::LOGICAL_WINDOW: {
 		auto &window = op.Cast<LogicalWindow>();
 		for (idx_t i = 0; i < window.expressions.size(); i++) {
-			lineage.text[ColumnBinding(window.window_index, ProjectionIndex(i))] =
-			    Text(*window.expressions[i], lineage);
+			Derive(lineage, ColumnBinding(window.window_index, ProjectionIndex(i)), *window.expressions[i]);
 		}
 		break;
 	}
 	case LogicalOperatorType::LOGICAL_UNNEST: {
 		auto &unnest = op.Cast<LogicalUnnest>();
 		for (idx_t i = 0; i < unnest.expressions.size(); i++) {
-			lineage.text[ColumnBinding(unnest.unnest_index, ProjectionIndex(i))] =
-			    Text(*unnest.expressions[i], lineage);
+			Derive(lineage, ColumnBinding(unnest.unnest_index, ProjectionIndex(i)), *unnest.expressions[i]);
 		}
 		break;
 	}
@@ -265,8 +340,10 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		            : op.type == LogicalOperatorType::LOGICAL_EXCEPT ? "except"
 		                                                             : "intersect";
 		vector<vector<string>> sides;
+		vector<vector<uint8_t>> side_shapes;
 		for (auto &child : op.children) {
 			sides.push_back(Outputs(*child, lineage));
+			side_shapes.push_back(OutputShapes(*child, lineage));
 		}
 		for (idx_t i = 0; i < setop.column_count; i++) {
 			vector<string> parts;
@@ -275,6 +352,11 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 			}
 			lineage.text[ColumnBinding(setop.table_index, ProjectionIndex(i))] =
 			    string(word) + "(" + StringUtil::Join(parts, ", ") + ")";
+			uint8_t shape = 0;
+			for (auto &side : side_shapes) {
+				shape |= i < side.size() ? side[i] : 0;
+			}
+			lineage.shape[ColumnBinding(setop.table_index, ProjectionIndex(i))] = shape;
 		}
 		break;
 	}
@@ -284,6 +366,9 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		for (idx_t i = 0; i < ref.chunk_types.size(); i++) {
 			lineage.text[ColumnBinding(ref.table_index, ProjectionIndex(i))] =
 			    entry != lineage.ctes.end() && i < entry->second.size() ? entry->second[i] : lineage.Unknown();
+			auto shapes = lineage.cte_shapes.find(ref.cte_index);
+			lineage.shape[ColumnBinding(ref.table_index, ProjectionIndex(i))] =
+			    shapes != lineage.cte_shapes.end() && i < shapes->second.size() ? shapes->second[i] : 0;
 		}
 		break;
 	}
@@ -390,9 +475,11 @@ QueryLineage LineageOf(ClientContext &context, const string &sql) {
 		Lineage lineage;
 		Walk(*planner.plan, lineage);
 		auto outputs = Outputs(*planner.plan, lineage);
+		auto shapes = OutputShapes(*planner.plan, lineage);
 		for (idx_t i = 0; i < planner.names.size(); i++) {
 			result.columns.emplace_back(planner.names[i].GetIdentifierName(),
 			                            i < outputs.size() ? outputs[i] : lineage.Unknown());
+			result.shapes.push_back(i < shapes.size() ? ShapeName(shapes[i]) : "");
 		}
 		result.complete = lineage.complete;
 		result.joins = lineage.joins;
@@ -440,8 +527,8 @@ static unique_ptr<FunctionData> LineageBind(ClientContext &context, TableFunctio
                                             vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<LineageBindData>();
 	result->sql = input.inputs[0].ToString();
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN};
-	names = {Identifier("column"), Identifier("derivation"), Identifier("complete")};
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::VARCHAR};
+	names = {Identifier("column"), Identifier("derivation"), Identifier("complete"), Identifier("shape")};
 	return result;
 }
 
@@ -466,6 +553,9 @@ static void LineageExec(ClientContext &context, TableFunctionInput &data, DataCh
 		output.data[0].Append(Value(column.first));
 		output.data[1].Append(Value(column.second));
 		output.data[2].Append(Value::BOOLEAN(lineage.complete));
+		output.data[3].Append(row < lineage.shapes.size() && !lineage.shapes[row].empty()
+		                          ? Value(lineage.shapes[row])
+								  : Value(LogicalType::VARCHAR));
 		row++;
 	}
 	output.CheckCardinality(row);
@@ -507,6 +597,7 @@ struct ViewsLineageRow {
 	Value column;
 	Value derivation;
 	bool complete;
+	Value shape = Value(LogicalType::VARCHAR);
 };
 
 struct ViewsLineageState : public GlobalTableFunctionState {
@@ -522,10 +613,10 @@ static unique_ptr<FunctionData> ViewsLineageBind(ClientContext &context, TableFu
 	if (!result->every) {
 		result->dataset = input.inputs[0].ToString();
 	}
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::BOOLEAN};
-	names = {Identifier("dataset"), Identifier("view"), Identifier("column"), Identifier("derivation"),
-	         Identifier("complete")};
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::VARCHAR};
+	names = {Identifier("dataset"),    Identifier("view"),     Identifier("column"),
+	         Identifier("derivation"), Identifier("complete"), Identifier("shape")};
 	return result;
 }
 
@@ -617,9 +708,12 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 				state.rows.push_back({view.first, view.second, Value(), Value(), false});
 				continue;
 			}
-			for (auto &column : lineage.columns) {
+			for (idx_t i = 0; i < lineage.columns.size(); i++) {
+				auto &column = lineage.columns[i];
+				auto shape = i < lineage.shapes.size() && !lineage.shapes[i].empty() ? Value(lineage.shapes[i])
+				                                                                     : Value(LogicalType::VARCHAR);
 				state.rows.push_back(
-				    {view.first, view.second, Value(column.first), Value(column.second), lineage.complete});
+				    {view.first, view.second, Value(column.first), Value(column.second), lineage.complete, shape});
 			}
 		}
 	}
@@ -634,6 +728,7 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 		output.data[3].Append(row.derivation);
 		if (!scans) {
 			output.data[4].Append(Value::BOOLEAN(row.complete));
+			output.data[5].Append(row.shape);
 		}
 		state.offset++;
 		count++;

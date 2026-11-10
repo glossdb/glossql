@@ -22,6 +22,13 @@ from, not how the plan is shaped: two plans that derive a column the
 same way read the same. `complete` is false where a part of the plan
 could not be resolved.
 
+A fourth column, `shape`, says how a column was computed where that
+decides how it adds up: `ratio` for a division by an aggregate
+(`sum(clicks) / sum(impressions)`), `average` for an average or a
+quantile, `distinct` for a distinct count. A sum over one of them keeps
+the shape, since ratios, averages and distinct counts do not add up. A
+plain sum, or a division by a constant, has none.
+
 `glossql_views_lineage(dataset)` returns the same for every column of
 every view in a dataset, with the dataset and the view's name first.
 `glossql_views_lineage(NULL)` reads the views of every dataset.
