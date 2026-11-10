@@ -35,6 +35,7 @@
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_cteref.hpp"
+#include "duckdb/planner/operator/logical_distinct.hpp"
 #include "duckdb/planner/operator/logical_expression_get.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_join.hpp"
@@ -52,6 +53,9 @@ namespace duckdb {
 //! What the walk could not follow: an operator or expression it does not know
 static constexpr const char *UNKNOWN = "<?>";
 
+//! A set of columns no two rows of an operator's output share
+typedef vector<ColumnBinding> Key;
+
 //! The walk's state: a derivation text per binding resolved so far, the CTEs'
 //! outputs by their index, and whether every step was followed
 struct Lineage {
@@ -61,8 +65,17 @@ struct Lineage {
 	unordered_map<TableIndex, vector<string>> ctes;
 	unordered_map<TableIndex, vector<uint8_t>> cte_shapes;
 	bool complete = true;
-	//! the pairs of scanned columns a join or a filter equates, each as scan.column
-	std::set<std::pair<string, string>> joins;
+	//! the pairs of scanned columns a join or a filter equates, each as
+	//! scan.column, and per side whether its rows are one per value there
+	std::map<std::pair<string, string>, std::pair<bool, bool>> joins;
+	//! the unique keys of what a table index yields: the groups of a GROUP BY,
+	//! the targets of a DISTINCT, the partition of a row_number() filtered to 1
+	unordered_map<TableIndex, vector<Key>> keys;
+	//! the keys that hold on an operator's output
+	unordered_map<const LogicalOperator *, vector<Key>> live;
+	//! a row_number() column's partition, and the same per CTE by position
+	column_binding_map_t<Key> row_numbers;
+	unordered_map<TableIndex, vector<vector<idx_t>>> cte_keys;
 
 	string Unknown() {
 		complete = false;
@@ -237,30 +250,128 @@ static string Leaf(const string &text) {
 	return text.substr(0, colon);
 }
 
-//! Two expressions a join or a filter equates: a pair where each is one scanned
-//! column of another scan than the other's
-static void Equated(const Expression &left, const Expression &right, Lineage &lineage) {
-	bool complete = lineage.complete;
-	auto a = Leaf(Text(left, lineage));
-	auto b = Leaf(Text(right, lineage));
-	lineage.complete = complete; // a side the walk cannot follow is no pair and no gap in the lineage
-	if (a.empty() || b.empty() || a == b) {
-		return;
+//! The binding of an expression that is one column reference
+static bool Plain(const Expression &expr, ColumnBinding &binding) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+		return false;
 	}
-	lineage.joins.insert(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
+	binding = expr.Cast<BoundColumnRefExpression>().Binding();
+	return true;
 }
 
+static bool Within(const Key &key, const vector<ColumnBinding> &columns) {
+	for (auto &part : key) {
+		if (std::find(columns.begin(), columns.end(), part) == columns.end()) {
+			return false;
+		}
+	}
+	return !key.empty();
+}
+
+//! A key that holds on an operator's output, kept under its columns' table index
+static void Hold(Lineage &lineage, const LogicalOperator &op, const Key &key) {
+	if (key.empty()) {
+		return;
+	}
+	lineage.keys[key[0].table_index].push_back(key);
+	lineage.live[&op].push_back(key);
+}
+
+//! The keys of the child that hold on the operator's output as they are
+static void Keep(Lineage &lineage, const LogicalOperator &op, const LogicalOperator &child) {
+	auto entry = lineage.live.find(&child);
+	if (entry != lineage.live.end()) {
+		auto keys = entry->second;
+		auto &live = lineage.live[&op];
+		live.insert(live.end(), keys.begin(), keys.end());
+	}
+}
+
+//! Whether some key that holds on an operator's output lies within the columns
+static bool UniqueOn(Lineage &lineage, const LogicalOperator &op, const vector<ColumnBinding> &columns) {
+	auto entry = lineage.live.find(&op);
+	if (entry == lineage.live.end()) {
+		return false;
+	}
+	for (auto &key : entry->second) {
+		if (Within(key, columns)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+//! Two expressions one predicate equates
+struct Equality {
+	const Expression *left;
+	const Expression *right;
+};
+
 //! The column equalities of a predicate: `a = b`, and each side of an AND
-static void Equalities(const Expression &expr, Lineage &lineage) {
+static void Equalities(const Expression &expr, vector<Equality> &equalities) {
 	auto type = expr.GetExpressionType();
 	if (type == ExpressionType::COMPARE_EQUAL) {
 		vector<const Expression *> sides;
 		ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) { sides.push_back(&child); });
 		if (sides.size() == 2) {
-			Equated(*sides[0], *sides[1], lineage);
+			equalities.push_back({sides[0], sides[1]});
 		}
 	} else if (type == ExpressionType::CONJUNCTION_AND) {
-		ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) { Equalities(child, lineage); });
+		ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) { Equalities(child, equalities); });
+	}
+}
+
+//! The equalities of one join or filter: a pair where each side is one scanned
+//! column of another scan than the other's. A side is unique where the columns
+//! the predicate equates cover a key of what yields them: a subquery grouped
+//! by them, or reduced to one row per value of them
+static void Equated(const vector<Equality> &equalities, Lineage &lineage) {
+	vector<ColumnBinding> columns;
+	for (auto &equality : equalities) {
+		ColumnBinding binding;
+		if (Plain(*equality.left, binding)) {
+			columns.push_back(binding);
+		}
+		if (Plain(*equality.right, binding)) {
+			columns.push_back(binding);
+		}
+	}
+	auto unique = [&](const Expression &side) {
+		ColumnBinding binding;
+		if (!Plain(side, binding)) {
+			return false;
+		}
+		auto entry = lineage.keys.find(binding.table_index);
+		if (entry == lineage.keys.end()) {
+			return false;
+		}
+		for (auto &key : entry->second) {
+			if (Within(key, columns)) {
+				return true;
+			}
+		}
+		return false;
+	};
+	for (auto &equality : equalities) {
+		bool complete = lineage.complete;
+		auto a = Leaf(Text(*equality.left, lineage));
+		auto b = Leaf(Text(*equality.right, lineage));
+		lineage.complete = complete; // a side the walk cannot follow is no pair and no gap in the lineage
+		if (a.empty() || b.empty() || a == b) {
+			continue;
+		}
+		auto left = unique(*equality.left);
+		auto right = unique(*equality.right);
+		auto pair = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+		auto flags = a < b ? std::make_pair(left, right) : std::make_pair(right, left);
+		auto entry = lineage.joins.find(pair);
+		if (entry == lineage.joins.end()) {
+			lineage.joins[pair] = flags;
+		} else {
+			// the same pair joined twice is unique on a side where both joins are
+			entry->second.first = entry->second.first && flags.first;
+			entry->second.second = entry->second.second && flags.second;
+		}
 	}
 }
 
@@ -271,7 +382,23 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		Walk(*op.children[0], lineage);
 		lineage.ctes[cte.table_index] = Outputs(*op.children[0], lineage);
 		lineage.cte_shapes[cte.table_index] = OutputShapes(*op.children[0], lineage);
+		auto bindings = op.children[0]->GetColumnBindings();
+		for (auto &key : lineage.live[op.children[0].get()]) {
+			vector<idx_t> positions;
+			for (auto &part : key) {
+				auto at = std::find(bindings.begin(), bindings.end(), part);
+				if (at == bindings.end()) {
+					positions.clear();
+					break;
+				}
+				positions.push_back(NumericCast<idx_t>(at - bindings.begin()));
+			}
+			if (!positions.empty()) {
+				lineage.cte_keys[cte.table_index].push_back(positions);
+			}
+		}
 		Walk(*op.children[1], lineage);
+		Keep(lineage, op, *op.children[1]);
 		return;
 	}
 	for (auto &child : op.children) {
@@ -303,6 +430,41 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		for (idx_t i = 0; i < projection.expressions.size(); i++) {
 			Derive(lineage, ColumnBinding(projection.table_index, ProjectionIndex(i)), *projection.expressions[i]);
 		}
+		// a key holds where the projection passes each of its columns on as it is
+		auto passed = [&](const Key &key, Key &result) {
+			for (auto &part : key) {
+				bool found = false;
+				for (idx_t i = 0; i < projection.expressions.size() && !found; i++) {
+					ColumnBinding binding;
+					if (Plain(*projection.expressions[i], binding) && binding == part) {
+						result.emplace_back(projection.table_index, ProjectionIndex(i));
+						found = true;
+					}
+				}
+				if (!found) {
+					return false;
+				}
+			}
+			return true;
+		};
+		auto below = lineage.live[op.children[0].get()];
+		for (auto &key : below) {
+			Key result;
+			if (passed(key, result)) {
+				Hold(lineage, op, result);
+			}
+		}
+		for (idx_t i = 0; i < projection.expressions.size(); i++) {
+			ColumnBinding binding;
+			if (!Plain(*projection.expressions[i], binding)) {
+				continue;
+			}
+			auto entry = lineage.row_numbers.find(binding);
+			Key result;
+			if (entry != lineage.row_numbers.end() && passed(Key(entry->second), result)) {
+				lineage.row_numbers[ColumnBinding(projection.table_index, ProjectionIndex(i))] = result;
+			}
+		}
 		break;
 	}
 	case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
@@ -316,13 +478,36 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		for (idx_t i = 0; i < aggregate.grouping_functions.size(); i++) {
 			lineage.text[ColumnBinding(aggregate.groupings_index, ProjectionIndex(i))] = "grouping";
 		}
+		if (aggregate.grouping_sets.size() <= 1) {
+			Key key;
+			for (idx_t i = 0; i < aggregate.groups.size(); i++) {
+				key.emplace_back(aggregate.group_index, ProjectionIndex(i));
+			}
+			Hold(lineage, op, key);
+		}
 		break;
 	}
 	case LogicalOperatorType::LOGICAL_WINDOW: {
 		auto &window = op.Cast<LogicalWindow>();
 		for (idx_t i = 0; i < window.expressions.size(); i++) {
 			Derive(lineage, ColumnBinding(window.window_index, ProjectionIndex(i)), *window.expressions[i]);
+			if (window.expressions[i]->GetExpressionType() != ExpressionType::WINDOW_ROW_NUMBER) {
+				continue;
+			}
+			Key partition;
+			for (auto &part : window.expressions[i]->Cast<BoundWindowExpression>().Partitions()) {
+				ColumnBinding binding;
+				if (!Plain(*part, binding)) {
+					partition.clear();
+					break;
+				}
+				partition.push_back(binding);
+			}
+			if (!partition.empty()) {
+				lineage.row_numbers[ColumnBinding(window.window_index, ProjectionIndex(i))] = partition;
+			}
 		}
+		Keep(lineage, op, *op.children[0]);
 		break;
 	}
 	case LogicalOperatorType::LOGICAL_UNNEST: {
@@ -370,6 +555,16 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 			lineage.shape[ColumnBinding(ref.table_index, ProjectionIndex(i))] =
 			    shapes != lineage.cte_shapes.end() && i < shapes->second.size() ? shapes->second[i] : 0;
 		}
+		auto keys = lineage.cte_keys.find(ref.cte_index);
+		if (keys != lineage.cte_keys.end()) {
+			for (auto &positions : keys->second) {
+				Key key;
+				for (auto position : positions) {
+					key.emplace_back(ref.table_index, ProjectionIndex(position));
+				}
+				Hold(lineage, op, key);
+			}
+		}
 		break;
 	}
 	case LogicalOperatorType::LOGICAL_EXPRESSION_GET: {
@@ -389,36 +584,106 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		if (join.join_type == JoinType::MARK) {
 			lineage.text[ColumnBinding(join.mark_index, ProjectionIndex(0))] = "mark";
 		}
+		vector<Equality> equalities;
 		if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
 		    op.type == LogicalOperatorType::LOGICAL_ASOF_JOIN || op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
 			for (auto &condition : op.Cast<LogicalComparisonJoin>().conditions) {
 				if (!condition.IsComparison()) {
-					Equalities(condition.GetLHS(), lineage);
+					Equalities(condition.GetLHS(), equalities);
 				} else if (condition.GetComparisonType() == ExpressionType::COMPARE_EQUAL) {
-					Equated(condition.GetLHS(), condition.GetRHS(), lineage);
+					equalities.push_back({&condition.GetLHS(), &condition.GetRHS()});
 				}
 			}
 		} else if (op.type == LogicalOperatorType::LOGICAL_ANY_JOIN) {
-			Equalities(*op.Cast<LogicalAnyJoin>().condition, lineage);
+			Equalities(*op.Cast<LogicalAnyJoin>().condition, equalities);
+		}
+		Equated(equalities, lineage);
+		if (op.type != LogicalOperatorType::LOGICAL_COMPARISON_JOIN || op.children.size() != 2) {
+			break;
+		}
+		// a side's keys hold on the join where the other side matches each row once at most
+		vector<ColumnBinding> columns;
+		for (auto &equality : equalities) {
+			ColumnBinding binding;
+			if (Plain(*equality.left, binding)) {
+				columns.push_back(binding);
+			}
+			if (Plain(*equality.right, binding)) {
+				columns.push_back(binding);
+			}
+		}
+		auto type = join.join_type;
+		bool once =
+		    type == JoinType::SEMI || type == JoinType::ANTI || type == JoinType::MARK || type == JoinType::SINGLE;
+		bool both =
+		    type == JoinType::INNER || type == JoinType::LEFT || type == JoinType::RIGHT || type == JoinType::OUTER;
+		bool left_unique = UniqueOn(lineage, *op.children[0], columns);
+		bool right_unique = UniqueOn(lineage, *op.children[1], columns);
+		if (once || (both && right_unique)) {
+			Keep(lineage, op, *op.children[0]);
+		}
+		if (both && left_unique) {
+			Keep(lineage, op, *op.children[1]);
 		}
 		break;
 	}
-	case LogicalOperatorType::LOGICAL_FILTER:
+	case LogicalOperatorType::LOGICAL_FILTER: {
 		// a join written in the WHERE clause
+		vector<Equality> equalities;
 		for (auto &expr : op.expressions) {
-			Equalities(*expr, lineage);
+			Equalities(*expr, equalities);
+		}
+		Equated(equalities, lineage);
+		Keep(lineage, op, *op.children[0]);
+		// row_number() = 1 leaves one row per value of its partition
+		for (auto &equality : equalities) {
+			for (auto swap : {false, true}) {
+				auto &column = swap ? *equality.right : *equality.left;
+				auto &other = swap ? *equality.left : *equality.right;
+				ColumnBinding binding;
+				if (!Plain(column, binding)) {
+					continue;
+				}
+				auto entry = lineage.row_numbers.find(binding);
+				if (entry == lineage.row_numbers.end()) {
+					continue;
+				}
+				bool complete = lineage.complete;
+				auto one = Text(other, lineage);
+				lineage.complete = complete;
+				if (one == "1" || StringUtil::StartsWith(one, "cast(1 as ")) {
+					Hold(lineage, op, Key(entry->second));
+				}
+			}
 		}
 		break;
-	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
-	case LogicalOperatorType::LOGICAL_POSITIONAL_JOIN:
+	}
+	case LogicalOperatorType::LOGICAL_DISTINCT: {
+		Keep(lineage, op, *op.children[0]);
+		Key key;
+		for (auto &target : op.Cast<LogicalDistinct>().distinct_targets) {
+			ColumnBinding binding;
+			if (!Plain(*target, binding)) {
+				key.clear();
+				break;
+			}
+			key.push_back(binding);
+		}
+		Hold(lineage, op, key);
+		break;
+	}
 	case LogicalOperatorType::LOGICAL_LIMIT:
 	case LogicalOperatorType::LOGICAL_ORDER_BY:
 	case LogicalOperatorType::LOGICAL_TOP_N:
-	case LogicalOperatorType::LOGICAL_DISTINCT:
 	case LogicalOperatorType::LOGICAL_SAMPLE:
+		// the child's bindings are the outputs: rows leave, columns do not change
+		Keep(lineage, op, *op.children[0]);
+		break;
+	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
+	case LogicalOperatorType::LOGICAL_POSITIONAL_JOIN:
 	case LogicalOperatorType::LOGICAL_DUMMY_SCAN:
 	case LogicalOperatorType::LOGICAL_EMPTY_RESULT:
-		// the children's bindings are the outputs: rows change, columns do not
+		// the children's bindings are the outputs
 		break;
 	default:
 		lineage.complete = false;
@@ -639,7 +904,10 @@ static unique_ptr<FunctionData> ViewsScansBind(ClientContext &context, TableFunc
 
 //! glossql_views_joins(dataset): the pairs of scanned columns each view of a
 //! dataset equates, in a join's condition or in its WHERE clause, one row per
-//! view and pair as schema.table.column; NULL reads every dataset's views
+//! view and pair as schema.table.column; NULL reads every dataset's views.
+//! left_unique and right_unique say the view joins that side reduced to one
+//! row per value: grouped by the join columns, DISTINCT on them, or filtered to
+//! row_number() = 1 over them
 static unique_ptr<FunctionData> ViewsJoinsBind(ClientContext &context, TableFunctionBindInput &input,
                                                vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<ViewsLineageBindData>();
@@ -648,8 +916,10 @@ static unique_ptr<FunctionData> ViewsJoinsBind(ClientContext &context, TableFunc
 		result->dataset = input.inputs[0].ToString();
 	}
 	result->joins = true;
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
-	names = {Identifier("dataset"), Identifier("view"), Identifier("left_column"), Identifier("right_column")};
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::BOOLEAN};
+	names = {Identifier("dataset"),      Identifier("view"),        Identifier("left_column"),
+	         Identifier("right_column"), Identifier("left_unique"), Identifier("right_unique")};
 	return result;
 }
 
@@ -689,7 +959,8 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 			}
 			if (bind.joins) {
 				for (auto &join : lineage.joins) {
-					state.rows.push_back({view.first, view.second, Value(join.first), Value(join.second), true});
+					state.rows.push_back({view.first, view.second, Value(join.first.first), Value(join.first.second),
+					                      join.second.first, Value::BOOLEAN(join.second.second)});
 				}
 				continue;
 			}
@@ -717,8 +988,7 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 			}
 		}
 	}
-	bool scans =
-	    data.bind_data->Cast<ViewsLineageBindData>().scans || data.bind_data->Cast<ViewsLineageBindData>().joins;
+	bool scans = data.bind_data->Cast<ViewsLineageBindData>().scans;
 	idx_t count = 0;
 	while (state.offset < state.rows.size() && count < STANDARD_VECTOR_SIZE) {
 		auto &row = state.rows[state.offset];

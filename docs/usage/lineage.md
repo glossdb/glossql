@@ -38,7 +38,9 @@ only joins or filters on computes no output column, so it does not
 appear there. `glossql_views_scans(dataset)` lists every table each view
 scans, one row per view and scan, with the columns the view reads of it.
 `glossql_views_joins(dataset)` lists the column pairs each view's joins
-equate.
+equate, and per side whether the view joins it with one row per value
+(`left_unique`, `right_unique`): a join to a subquery grouped by the
+join columns cannot multiply rows, whatever the table underneath holds.
 
 ## Lineage of every load
 
