@@ -10,7 +10,7 @@ declares; the kit decides what is said.
 
 | Kit | Brings |
 |---|---|
-| `kpi` | the semantic layer's words for columns and tables: `meaning`, `role`, `additivity` (stock, flow, ratio with its halves), `unit`, `dimension`, `entity`; source `conventions`; the `definitions` handbook; the `slot_entropy` detector; the `column_profile` and `outlier_profile` measurements; the tests that bind them. A metric's view carries the same words on its columns |
+| `kpi` | the semantic layer's words for columns and tables: `meaning`, `role`, `additivity` (additive, semi-additive, ratio with its numerator and denominator, non-additive), `unit`, `dimension`, `entity`; source `conventions`; the `definitions` handbook; the `slot_entropy` detector; the `column_profile` and `outlier_profile` measurements; the tests that bind them. A metric's view carries the same words on its columns |
 | `quality` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `grounding_collisions` and `additivity_anchors` as table macros; the measurements that store them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`, `additivity_evidence`); the `temporal` profile; the `rate_tolerance` detector, which scores a stated expectation against a computed value. Load it after `kpi` |
 | `spatial` | a small domain kit: `shape` on every geometry column (`WHEN TYPE = 'GEOMETRY'`), the `crs` its coordinates are in, and the `geometry_profile` measurement. Its first lines install and load DuckDB's `spatial` extension |
 
