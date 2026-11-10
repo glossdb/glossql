@@ -119,6 +119,9 @@ void RegisterGlossService(ExtensionLoader &loader);
 //! `complete` is false when the walk could not follow a step (glossql_lineage.cpp)
 struct QueryLineage {
 	vector<pair<string, string>> columns;
+	//! per column, how its value was computed where that decides how it adds up:
+	//! "ratio", "average", "distinct", or empty
+	vector<string> shapes;
 	bool complete = true;
 	//! every lake table the plan scans, as schema.table, joins and filters included
 	std::set<std::pair<string, vector<string>>> scans;

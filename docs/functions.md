@@ -50,11 +50,14 @@ FROM glossql_lineage($$SELECT id, amount * 2 AS twice FROM fin.orders$$);
 ```
 
 `glossql_lineage(sql VARCHAR)` → `(column VARCHAR, derivation VARCHAR,
-complete BOOLEAN)`. What computes each output column of a `SELECT`, read
-off its bound plan; a leaf is `scan.column:type`.
+complete BOOLEAN, shape VARCHAR)`. What computes each output column of a
+`SELECT`, read off its bound plan; a leaf is `scan.column:type`. `shape`
+says how the column was computed where that decides how it adds up:
+`ratio` (a division by an aggregate), `average`, `distinct` (a distinct
+count), else NULL. A sum over one of them keeps the shape.
 
 `glossql_views_lineage(dataset VARCHAR)` → `(dataset, view, column,
-derivation, complete)`: the same for every view of a dataset, or of
+derivation, complete, shape)`: the same for every view of a dataset, or of
 every dataset when `dataset` is NULL.
 `glossql_views_joins(dataset VARCHAR)` → `(dataset, view, left_column,
 right_column)`: the pairs of columns each view's joins equate, in a
