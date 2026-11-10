@@ -289,6 +289,45 @@ SELECT count(*) FROM glossql_views_joins('fin') WHERE view = 'no_join';
 ----
 0
 
+# --- left_unique, right_unique: a side the view joins reduced to one row per value of the join columns. A GROUP BY on them, a DISTINCT, a row_number() filtered to 1 and a CTE each count; the plain table does not, nor a GROUP BY on more than the join columns, nor a reduced side joined to rows that repeat it before the join
+
+query TTTT
+SELECT left_column, right_column, left_unique, right_unique FROM glossql_views_joins('fin') WHERE view = 'big_customers';
+----
+fin.customers.customer	fin.orders.customer	false	false
+
+statement ok
+CREATE VIEW fin.join_grouped AS SELECT o.id, c.segment FROM fin.orders o JOIN (SELECT customer, max(segment) AS segment FROM fin.customers GROUP BY customer) c ON o.customer = c.customer;
+
+statement ok
+CREATE VIEW fin.join_latest AS SELECT o.id, c.segment FROM fin.orders o JOIN (SELECT * FROM fin.customers QUALIFY row_number() OVER (PARTITION BY customer ORDER BY segment DESC) = 1) c ON o.customer = c.customer;
+
+statement ok
+CREATE VIEW fin.join_latest_where AS SELECT o.id, c.segment FROM fin.orders o, (SELECT customer, segment FROM (SELECT customer, segment, row_number() OVER (PARTITION BY customer ORDER BY segment DESC) AS rn FROM fin.customers) WHERE rn = 1) c WHERE o.customer = c.customer;
+
+statement ok
+CREATE VIEW fin.join_distinct AS SELECT o.id FROM fin.orders o JOIN (SELECT DISTINCT customer FROM fin.customers) c ON o.customer = c.customer;
+
+statement ok
+CREATE VIEW fin.join_cte AS WITH c AS (SELECT customer, max(segment) AS segment FROM fin.customers GROUP BY ALL) SELECT o.id, c.segment FROM fin.orders o JOIN c USING (customer);
+
+statement ok
+CREATE VIEW fin.join_wider_key AS SELECT o.id, c.segment FROM fin.orders o JOIN (SELECT customer, segment, count(*) AS n FROM fin.customers GROUP BY customer, segment) c ON o.customer = c.customer;
+
+statement ok
+CREATE VIEW fin.join_after_fan AS SELECT o.id FROM fin.orders o JOIN (SELECT g.customer FROM (SELECT customer FROM fin.customers GROUP BY customer) g JOIN fin.orders x ON x.customer = g.customer) c ON o.customer = c.customer;
+
+query TTTTT
+SELECT view, left_column, right_column, left_unique, right_unique FROM glossql_views_joins('fin') WHERE view LIKE 'join_%' ORDER BY ALL;
+----
+join_after_fan	fin.customers.customer	fin.orders.customer	false	false
+join_cte	fin.customers.customer	fin.orders.customer	true	false
+join_distinct	fin.customers.customer	fin.orders.customer	true	false
+join_grouped	fin.customers.customer	fin.orders.customer	true	false
+join_latest	fin.customers.customer	fin.orders.customer	true	false
+join_latest_where	fin.customers.customer	fin.orders.customer	true	false
+join_wider_key	fin.customers.customer	fin.orders.customer	false	false
+
 # --- shape: how a column was computed, where that decides how it adds up. A division by an aggregate is a ratio, an average an average, a distinct count distinct; a sum over one keeps it, a division by a constant has none
 
 query TT

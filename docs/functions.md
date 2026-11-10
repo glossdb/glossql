@@ -60,8 +60,12 @@ count), else NULL. A sum over one of them keeps the shape.
 derivation, complete, shape)`: the same for every view of a dataset, or of
 every dataset when `dataset` is NULL.
 `glossql_views_joins(dataset VARCHAR)` → `(dataset, view, left_column,
-right_column)`: the pairs of columns each view's joins equate, in a
-join's condition or in its `WHERE` clause, as `schema.table.column`.
+right_column, left_unique, right_unique)`: the pairs of columns each
+view's joins equate, in a join's condition or in its `WHERE` clause, as
+`schema.table.column`. `left_unique` and `right_unique` are true where
+the view joins that side with one row per value of the join columns: a
+subquery grouped by them, `DISTINCT` on them, or filtered to
+`row_number() = 1` partitioned by them.
 
 `glossql_views_scans(dataset VARCHAR)` → `(dataset, view, table_name, columns)`:
 every table each view scans, joins and filters included, NULL for every
