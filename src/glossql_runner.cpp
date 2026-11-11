@@ -196,10 +196,22 @@ Value Inner::Snapshot() {
 	return Scalar("SELECT id::BIGINT FROM ducklake_current_snapshot(" + QuoteText(ws.lake) + ")");
 }
 
+// The reason of a statement the inner connection refused. A refusal, raised by
+// error() in a function body or by the extension itself, is carried as it was
+// raised: its error class and the prefix are the ones the rethrow adds, once.
+// An error of another class keeps its class's name.
+static string Reason(ErrorData &error) {
+	if (error.Type() != ExceptionType::INVALID_INPUT) {
+		return error.Message();
+	}
+	auto reason = error.RawMessage();
+	return StringUtil::StartsWith(reason, "glossql: ") ? reason.substr(9) : reason;
+}
+
 unique_ptr<QueryResult> Inner::Run(const string &sql) {
 	auto result = con.Query(sql);
 	if (result->HasError()) {
-		throw InvalidInputException("glossql: %s", result->GetError());
+		throw InvalidInputException("glossql: %s", Reason(result->GetErrorObject()));
 	}
 	return result;
 }
