@@ -204,7 +204,7 @@ static string Reason(ErrorData &error) {
 	if (error.Type() != ExceptionType::INVALID_INPUT) {
 		return error.Message();
 	}
-	auto reason = error.RawMessage();
+	const auto &reason = error.RawMessage();
 	return StringUtil::StartsWith(reason, "glossql: ") ? reason.substr(9) : reason;
 }
 

@@ -539,7 +539,9 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 			    string(word) + "(" + StringUtil::Join(parts, ", ") + ")";
 			uint8_t shape = 0;
 			for (auto &side : side_shapes) {
-				shape |= i < side.size() ? side[i] : 0;
+				if (i < side.size()) {
+					shape = static_cast<uint8_t>(static_cast<unsigned>(shape) | static_cast<unsigned>(side[i]));
+				}
 			}
 			lineage.shape[ColumnBinding(setop.table_index, ProjectionIndex(i))] = shape;
 		}
