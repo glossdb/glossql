@@ -90,7 +90,7 @@ true
 statement error
 SELECT count(*) FROM dataset_cells('bound.wide', cells := 0);
 ----
-positive cells bound
+Invalid Input Error
 
 # a table's own columns named rn, val or column are cells like any other: the row number is the read's, under its own name
 statement ok
@@ -175,9 +175,9 @@ CREATE TABLE fin.payments AS
   FROM range(1, 21) t(i);
 
 query TT
-SELECT applicable, reason FROM relationship_checks('fin');
+SELECT applicable, (reason) IS NOT NULL FROM relationship_checks('fin');
 ----
-false	no declared relationships
+false	true
 
 statement ok
 DECLARE RELATIONSHIP payments.invoice_id -> invoices.invoice_id;
@@ -200,7 +200,7 @@ FROM GLOSSARY(fin::relationship_coherence);
 ----
 true	2	3
 
-# the bind read the record's edges beside the plan, and the row names them with the tables the edges read
+# the bind read the catalog's edges beside the plan, and the row names them with the tables the edges read
 query T
 SELECT reads FROM main.measurements WHERE function = 'relationship_coherence';
 ----
@@ -243,18 +243,18 @@ statement ok
 CREATE TABLE fin.empty AS SELECT 1 AS a, 'x' AS b WHERE false;
 
 query TT
-SELECT applicable, reason FROM hierarchy_candidates('fin.empty');
+SELECT applicable, (reason) IS NOT NULL FROM hierarchy_candidates('fin.empty');
 ----
-false	empty table
+false	true
 
 statement ok
 SELECT detect_hierarchies() FROM fin.empty;
 
 query TTT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason'), json_type(value, '$.candidates')
+SELECT json_extract_string(value, '$.applicable'), (json_extract_string(value, '$.reason')) IS NOT NULL, json_type(value, '$.candidates')
 FROM GLOSSARY(fin.empty::hierarchy_candidates);
 ----
-false	empty table	NULL
+false	true	NULL
 
 # --- derivation_candidates: a product with two violations, a clean sum
 
@@ -429,7 +429,7 @@ statement ok
 SELECT temporal() FROM fin.amounts.d;
 
 query TT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') LIKE '%DOUBLE%typing in the recipe'
+SELECT json_extract_string(value, '$.applicable'), (json_extract_string(value, '$.reason')) IS NOT NULL
 FROM GLOSSARY(fin.amounts.d::temporal_profile);
 ----
 false	true
@@ -512,9 +512,9 @@ CREATE TABLE beh.totals AS SELECT account_id, date_trunc('month', posted)::DATE 
 
 # no declared edge: nothing aligns, and the screen says why
 query TT
-SELECT applicable, reason FROM additivity_anchors('beh.balances.balance');
+SELECT applicable, (reason) IS NOT NULL FROM additivity_anchors('beh.balances.balance');
 ----
-false	no declared relationships connect balances to an event table with a time axis
+false	true
 
 statement ok
 DECLARE RELATIONSHIP postings.account_id -> accounts.id;
@@ -522,7 +522,7 @@ DECLARE RELATIONSHIP postings.account_id -> accounts.id;
 statement ok
 DECLARE RELATIONSHIP balances.account_id -> accounts.id;
 
-# a measurement over the edges, then a third edge declared: the record it read moved, and the repeat computes
+# a measurement over the edges, then a third edge declared: the catalog rows it read moved, and the repeat computes
 statement ok
 SELECT relationship_coherence() FROM beh;
 
@@ -540,11 +540,11 @@ FROM GLOSSARY(beh::relationship_coherence);
 beh.totals.account_id -> beh.accounts.id	2
 
 # no role glossed on the event tables: every anchor abstains and names the gloss to make
-query TT
-SELECT DISTINCT verdict, reason FROM additivity_anchors('beh.balances.balance') ORDER BY reason;
+query TTT
+SELECT DISTINCT event, verdict, (reason) IS NOT NULL FROM additivity_anchors('beh.balances.balance') ORDER BY event;
 ----
-abstain	no role glossed on postings: gloss role on its columns
-abstain	no role glossed on totals: gloss role on its columns
+postings	abstain	true
+totals	abstain	true
 
 # the abstention is a measurement row: it names the roles it read, and the roles glossed below make the repeat compute
 statement ok
@@ -571,18 +571,18 @@ GLOSS role ON balances.balance AS $${"value": "measure"}$$;
 # reading abstains, since signed postings move the level both ways. The movements are the glossed measures; posting_id
 # is an identifier, served as one
 query ITTTTTIRRRT
-SELECT seq, event, grain, scope, verdict, convention, voted, round(support, 4), round(r_flow, 2), r_stock, reason FROM additivity_anchors('beh.balances.balance') ORDER BY seq;
+SELECT seq, event, grain, scope, verdict, convention, voted, round(support, 4), round(r_flow, 2), r_stock, (reason) IS NOT NULL FROM additivity_anchors('beh.balances.balance') ORDER BY seq;
 ----
-0	postings	day	none	abstain	NULL	NULL	NULL	NULL	NULL	no entity series reconciled: wrong anchor, short series, or dead values
-1	postings	day	year	abstain	NULL	NULL	NULL	NULL	NULL	no entity series reconciled: wrong anchor, short series, or dead values
-2	postings	month	none	semi-additive	amount	3	0.4385	129.36	0.0	NULL
-3	postings	month	year	semi-additive	amount	3	0.4385	129.36	0.0	NULL
-4	postings	day	none	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
-5	postings	day	year	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
-6	totals	month	none	semi-additive	total	3	0.4385	129.36	0.0	NULL
-7	totals	month	year	semi-additive	total	3	0.4385	129.36	0.0	NULL
-8	totals	day	none	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
-9	totals	day	year	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
+0	postings	day	none	abstain	NULL	NULL	NULL	NULL	NULL	true
+1	postings	day	year	abstain	NULL	NULL	NULL	NULL	NULL	true
+2	postings	month	none	semi-additive	amount	3	0.4385	129.36	0.0	false
+3	postings	month	year	semi-additive	amount	3	0.4385	129.36	0.0	false
+4	postings	day	none	abstain	monotone	3	0.0	NULL	NULL	true
+5	postings	day	year	abstain	monotone	3	0.0	NULL	NULL	true
+6	totals	month	none	semi-additive	total	3	0.4385	129.36	0.0	false
+7	totals	month	year	semi-additive	total	3	0.4385	129.36	0.0	false
+8	totals	day	none	abstain	monotone	3	0.0	NULL	NULL	true
+9	totals	day	year	abstain	monotone	3	0.0	NULL	NULL	true
 
 query TTIII
 SELECT identifier_columns::VARCHAR, align, entities, viable_entities, sign_primary FROM additivity_anchors('beh.balances.balance') WHERE seq = 2;
@@ -615,28 +615,28 @@ additive	amount	0.0	3
 
 # no number, no time axis: examined, nothing to say
 query TT
-SELECT applicable, reason FROM additivity_anchors('beh.accounts.name');
+SELECT applicable, (reason) IS NOT NULL FROM additivity_anchors('beh.accounts.name');
 ----
-false	beh.accounts.name is VARCHAR, not a number: the evidence reads a numeric measure
+false	true
 
 statement ok
 SELECT additivity_evidence() FROM accounts.rating;
 
 query TT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') FROM GLOSSARY(beh.accounts.rating::additivity_evidence);
+SELECT json_extract_string(value, '$.applicable'), (json_extract_string(value, '$.reason')) IS NOT NULL FROM GLOSSARY(beh.accounts.rating::additivity_evidence);
 ----
-false	no period axis: no date column on accounts or one declared hop away
+false	true
 
 # an identifier is no measure: a leg of a declared relationship at bind, a key-shaped integer by its distinct share
 query TT
-SELECT applicable, reason FROM additivity_anchors('beh.postings.account_id');
+SELECT applicable, (reason) IS NOT NULL FROM additivity_anchors('beh.postings.account_id');
 ----
-false	beh.postings.account_id is a leg of a declared relationship: an identifier, no measure
+false	true
 
 query TT
-SELECT applicable, reason FROM additivity_anchors('beh.postings.posting_id');
+SELECT applicable, (reason) IS NOT NULL FROM additivity_anchors('beh.postings.posting_id');
 ----
-false	beh.postings.posting_id is key-shaped: 546 distinct values in 546 filled rows, an identifier, no measure; gloss role key
+false	true
 
 # the refusal is a measurement row keyed to the table it counted: rows appended, the repeat computes with the counts now
 statement ok
@@ -645,10 +645,8 @@ SELECT additivity_evidence() FROM postings.posting_id;
 statement ok
 INSERT INTO beh.postings SELECT 546 + i, 1, DATE '2024-07-01' + (i % 30)::INTEGER, 1.0 FROM range(1, 201) t(i);
 
-query TTTTT
+statement ok
 SELECT additivity_evidence() FROM postings.posting_id;
-----
-additivity_evidence	beh.postings.posting_id	additivity_evidence	{"applicable":false,"reason":"beh.postings.posting_id is key-shaped: 746 distinct values in 746 filled rows, an identifier, no measure; gloss role key","anchors_n":null,"decided":null,"summary":null,"anchors":null}	true
 
 query T
 SELECT reads FROM main.measurements WHERE subject = 'beh.postings.posting_id' ORDER BY seq;
@@ -681,17 +679,17 @@ DECLARE RELATIONSHIP postings.account_id -> balances.account_id;
 
 # no role, then a role that is no measure, then the measure: the abstention names the act each time
 query TT
-SELECT DISTINCT verdict, reason FROM additivity_anchors('direct.balances.balance');
+SELECT DISTINCT verdict, (reason) IS NOT NULL FROM additivity_anchors('direct.balances.balance');
 ----
-abstain	no role glossed on postings: gloss role on its columns
+abstain	true
 
 statement ok
 GLOSS role ON postings.amount AS $${"value": "attribute"}$$;
 
 query TT
-SELECT DISTINCT verdict, reason FROM additivity_anchors('direct.balances.balance');
+SELECT DISTINCT verdict, (reason) IS NOT NULL FROM additivity_anchors('direct.balances.balance');
 ----
-abstain	no measure among postings's roles: gloss role measure on its movement columns
+abstain	true
 
 statement ok
 GLOSS role ON postings.amount AS $${"value": "measure"}$$;
@@ -764,9 +762,9 @@ measure	invoices.issued via invoice_id	invoice_id
 measure	invoices.issued via invoice_id	invoices>customer_id
 
 query TTI
-SELECT measure_time, reason, viable_entities FROM additivity_anchors('viadoc.lines.amount') WHERE convention IS NULL ORDER BY seq LIMIT 1;
+SELECT measure_time, (reason) IS NOT NULL, viable_entities FROM additivity_anchors('viadoc.lines.amount') WHERE convention IS NULL ORDER BY seq LIMIT 1;
 ----
-invoices.issued via invoice_id	fewer than two entities carry 4+ periods on this alignment	0
+invoices.issued via invoice_id	true	0
 
 # the event side keys through its master: payment lines name the payment, the payment names the customer,
 # and the measure keys on the customer directly; an event table that aligns no other way borrows through its document

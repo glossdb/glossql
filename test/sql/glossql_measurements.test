@@ -37,7 +37,7 @@ DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max"
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 
-# --- extraction lands the row at its pin: every leg the body could have read, at its version now
+# --- extraction stores the row at its pin: every leg the body could have read, at its version now
 
 query TTTTT
 SELECT min_max() FROM orders.amount;
@@ -190,7 +190,7 @@ SELECT tables() FROM orders.amount;
 ----
 tables	fin.orders.amount	tables	2	false
 
-# --- a body that carries a top-level summary serves the summary; the whole value lands
+# --- a body that carries a top-level summary serves the summary; the whole value is stored
 
 statement ok
 DECLARE ASPECT profile WITH $${"type": "object", "required": ["summary", "detail"]}$$ AS MEASUREMENT ON COLUMN;
@@ -322,7 +322,7 @@ SELECT count(*) > 0 FROM GLOSSARY(fin.orders) WHERE subject LIKE 'fin.orders.%';
 ----
 true
 
-# --- * is the dataset's every table: a new view moves no * row, a table's landing does
+# --- * is the dataset's every table: a new view moves no * row, a table's load does
 
 statement ok
 DECLARE ASPECT cell_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;

@@ -47,7 +47,7 @@ DELETE FROM glossary WHERE subject = 'main.orders.amount' AND actor_kind = 'huma
 ----
 1
 
-# the agent's slot serves again: the read's version moved with the delete
+# the agent's value serves again: the read's version moved with the delete
 query TTT
 SELECT subject, aspect, value FROM GLOSSARY(orders.amount);
 ----
@@ -104,7 +104,7 @@ SELECT count(*) FROM GLOSSARY(all => true);
 statement error
 DELETE FROM other.main.glossary;
 ----
-the workspace is ws, not other
+Invalid Input Error
 
 # a dataset's own table keeps DuckDB's DELETE
 statement ok

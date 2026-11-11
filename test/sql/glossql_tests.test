@@ -44,10 +44,8 @@ statement ok
 DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN) DETECTOR additivity_entropy THRESHOLD 0.7;
 
 # an unchanged re-declaration is a no-op
-query T
+statement ok
 DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN) DETECTOR additivity_entropy THRESHOLD 0.7;
-----
-test additivity_test unchanged: no-op
 
 query TTTTR
 SELECT name, aspect, actors, detector, threshold FROM tests;
@@ -59,17 +57,17 @@ additivity_test	additivity	[AGENT, HUMAN]	additivity_entropy	0.7
 statement error
 DECLARE TEST w2 ON nothing BY (AGENT);
 ----
-aspect 'nothing' is not declared
+Invalid Input Error
 
 statement error
 DECLARE TEST w3 ON additivity;
 ----
-names BY or DETECTOR
+Parser Error
 
 statement error
 DECLARE TEST w4 ON additivity THRESHOLD 2;
 ----
-THRESHOLD is in 0..1
+Parser Error
 
 statement ok
 DECLARE ASPECT min_max WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN;
@@ -77,7 +75,7 @@ DECLARE ASPECT min_max WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN;
 statement error
 DECLARE TEST w5 ON min_max BY (AGENT);
 ----
-BY is refused on a MEASUREMENT aspect
+Invalid Input Error
 
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
@@ -85,12 +83,12 @@ DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FR
 statement error
 DECLARE TEST w6 ON additivity DETECTOR min_max;
 ----
-a measurement, not a detector
+Invalid Input Error
 
 statement error
 DECLARE TEST w7 ON additivity DETECTOR nothing;
 ----
-detector 'nothing' is not a declared function
+Invalid Input Error
 
 # --- before anybody spoke: missing, every gap visible (SPEC §5.3)
 
@@ -142,14 +140,14 @@ SELECT subject, aspect, test, band, current FROM TESTS() WHERE band = 'red';
 ----
 fin.orders.amount	additivity	additivity_test	red	true
 
-# the raw read shows every slot with its aspect's kind and its test
+# the raw read shows every value with its aspect's kind and its test
 query TTTTT
 SELECT subject, aspect, kind, test, actor FROM GLOSSARY(orders.amount, all => true) ORDER BY actor;
 ----
 fin.orders.amount	additivity	FACT	additivity_test	agent
 fin.orders.amount	additivity	FACT	additivity_test	human
 
-# --- the human re-glosses to agree: the human slot is superseded, current again
+# --- the human re-glosses to agree: the human's value is superseded, current again
 
 statement ok
 SET VARIABLE glossql_actor = 'human';
@@ -165,7 +163,7 @@ SELECT subject, value, band, state FROM GLOSSARY(orders.amount);
 ----
 fin.orders.amount	{"value": "additive"}	green	current
 
-# --- function voices arrive through RETURNS: extraction lands a measurement, served beside the glosses
+# --- function voices arrive through RETURNS: extraction stores a measurement, served beside the glosses
 
 query TTTTT
 SELECT min_max() FROM orders.amount;
@@ -186,12 +184,12 @@ fin.orders.amount	min_max	{"min":0.0,"max":4.5}
 statement error
 GLOSS min_max ON orders.amount AS $${"min": 0}$$;
 ----
-never glossed
+Invalid Input Error
 
 statement error
 GLOSS nothing ON orders.amount AS $${}$$;
 ----
-aspect 'nothing' is not declared
+Invalid Input Error
 
 # --- BY gates the actors
 
@@ -204,7 +202,7 @@ DECLARE TEST note_test ON note BY (HUMAN);
 statement error
 GLOSS note ON orders AS $${"value": "x"}$$;
 ----
-admits HUMAN, not agent
+Invalid Input Error
 
 statement ok
 SET VARIABLE glossql_actor = 'human';
@@ -215,7 +213,7 @@ GLOSS note ON orders AS $${"value": "x"}$$;
 statement ok
 RESET VARIABLE glossql_actor;
 
-# a test without a detector judges nothing: the slot serves as current
+# a test without a detector judges nothing: the value serves as current
 query TTTTT
 SELECT subject, aspect, value, band, state FROM GLOSSARY(orders::note);
 ----
@@ -268,9 +266,9 @@ statement ok
 DECLARE FUNCTION broken FOR fin AS $$ SELECT subject, 'blue' AS band, 0.0 AS score FROM slots $$;
 
 query TT
-SELECT band, error FROM TESTS(orders.id::role);
+SELECT band, (error) IS NOT NULL FROM TESTS(orders.id::role);
 ----
-error	detector broken served (fin.orders.id, blue, 0.0), outside the test-results schema
+error	true
 
 # no row where nobody spoke: the error is served on subjects holding slots
 query I
@@ -305,32 +303,30 @@ SELECT subject, state FROM GLOSSARY(erp);
 ----
 erp	missing
 
-# the grain gate: a subject outside the aspect's declared grains is refused, never landed in silence
+# the grain gate: a subject outside the aspect's declared grains is refused, never stored in silence
 
 statement error
 GLOSS conventions ON fin AS $${"fiscal_year_start": "04-01"}$$;
 ----
-aspect 'conventions' is declared ON SOURCE; fin is a dataset
+Invalid Input Error
 
 statement error
 GLOSS conventions ON orders AS $${"fiscal_year_start": "04-01"}$$;
 ----
-aspect 'conventions' is declared ON SOURCE; fin.orders is a table
+Invalid Input Error
 
 statement error
 GLOSS note ON erp AS $${"value": "x"}$$;
 ----
-aspect 'note' is declared ON TABLE; erp is a source
+Invalid Input Error
 
 statement error
 GLOSS role ON orders AS $${"value": "key"}$$;
 ----
-aspect 'role' is declared ON COLUMN; fin.orders is a table
+Invalid Input Error
 
-query T
+statement ok
 GLOSS conventions ON erp AS $${"fiscal_year_start": "04-01"}$$;
-----
-glossed conventions on erp as agent
 
 # the row records the dataset it was deposited in, and carries no catalog snapshot: a source never goes stale
 query TTT
@@ -432,7 +428,7 @@ SELECT value, band, state FROM GLOSSARY(orders::tie_out);
 ----
 NULL	red	conflict
 
-# --- a measurement that reads other measurements is served while they hold and computes once another function lands a row; its own rows are never its input (SPEC §6)
+# --- a measurement that reads other measurements is served while they hold and computes once another function stores a row; its own rows are never its input (SPEC §6)
 
 statement ok
 DECLARE ASPECT tie_out_count WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;

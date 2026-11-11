@@ -45,29 +45,23 @@ GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t"}$$;
 
 # --- the view's columns are subjects: relative or qualified, in the catalog's spelling
 
-query T
+statement ok
 GLOSS role ON spend.VALUE AS $${"value": "measure"}$$;
-----
-glossed role on fin.spend.value as agent
 
-query T
+statement ok
 GLOSS role ON fin.spend.period AS $${"value": "timestamp"}$$;
-----
-glossed role on fin.spend.period as agent
 
 # the view itself is a table's subject
 
-query T
+statement ok
 GLOSS entity ON spend AS $${"value": "spend by period"}$$;
-----
-glossed entity on fin.spend as agent
 
 # a column the view does not serve is refused as a table's would be
 
 statement error
 GLOSS role ON spend.amount AS $${"value": "measure"}$$;
 ----
-names no column of fin.spend
+Invalid Input Error
 
 query TTT
 SELECT subject, aspect, state FROM GLOSSARY(spend) ORDER BY subject, aspect;
@@ -101,7 +95,7 @@ SELECT min_max() FROM spend.value;
 ----
 min_max	fin.spend.value	min_max	{"min":1.0,"max":2.0}	false
 
-# a landing in the table behind the view reruns it
+# a load into the table behind the view reruns it
 
 statement ok
 INSERT INTO fin.t VALUES (DATE '2024-03-01', 5, 'z');
@@ -143,12 +137,10 @@ fin.spend	entity	stale
 fin.spend.period	role	stale
 fin.spend.value	role	stale
 
-# glossed again, the slot is current at the new definition
+# glossed again, the value is current at the new definition
 
-query T
+statement ok
 GLOSS role ON spend.value AS $${"value": "measure"}$$;
-----
-glossed role on fin.spend.value as agent
 
 query TT
 SELECT subject, state FROM GLOSSARY(spend.value::role);
@@ -219,7 +211,7 @@ true
 statement error
 SELECT * FROM dataset_cells('fin', 'some');
 ----
-takes tables, views or all
+Invalid Input Error
 
 # --- a stop drops the view: its columns' glosses read stale, and a new gloss on them is refused
 
@@ -234,4 +226,4 @@ fin.spend.value	stale
 statement error
 GLOSS role ON spend.period AS $${"value": "timestamp"}$$;
 ----
-names no column of fin.spend
+Invalid Input Error

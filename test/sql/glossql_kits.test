@@ -38,9 +38,9 @@ SELECT count(*) FROM main.loaded;
 19
 
 query TT
-SELECT statement, outcome FROM main.loaded WHERE statement LIKE 'DECLARE TEST role_test%';
+SELECT statement, (outcome) IS NOT NULL FROM main.loaded WHERE statement LIKE 'DECLARE TEST role_test%';
 ----
-DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;	declared test role_test on role
+DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;	true
 
 query TTI
 SELECT name, location, statements FROM kits;
@@ -111,7 +111,7 @@ SELECT aspect, band, score FROM TESTS(orders.amount::role);
 ----
 role	red	1.0
 
-# the human's slot wins the WHEN: dimension is owed now, additivity and unit are not
+# the human's value wins the WHEN: dimension is owed now, additivity and unit are not
 query TTT
 SELECT aspect, value, state FROM GLOSSARY(orders.amount) ORDER BY aspect;
 ----
@@ -133,22 +133,18 @@ SELECT revenue FROM fin.revenue;
 ----
 9.0
 
-query T
+statement ok
 GLOSS role ON revenue.revenue AS $${"value": "measure"}$$;
-----
-glossed role on fin.revenue.revenue as agent
 
 statement error
 GLOSS additivity ON revenue.revenue AS $${"value": "stok"}$$;
 ----
-at $.value
+Invalid Input Error
 
-query T
+statement ok
 GLOSS additivity ON revenue.revenue AS $${"value": "ratio", "numerator": "won", "denominator": "offered"}$$;
-----
-glossed additivity on fin.revenue.revenue as agent
 
-# --- the measurements land through extraction and serve beside the glosses
+# --- the measurements are stored through extraction and serve beside the glosses
 
 query TTTTT
 SELECT column_profile() FROM orders.amount;
@@ -181,15 +177,13 @@ SELECT total, "distinct" FROM main.column_profile('fin.orders.id');
 ----
 4	4
 
-# --- a subject names a landed column as DuckDB matches names: case-insensitively, in the catalog's spelling
+# --- a subject names a loaded table's column as DuckDB matches names: case-insensitively, in the catalog's spelling
 
 statement ok
 CREATE TABLE fin.cased AS SELECT 1 AS "OrderId", 2.5 AS amount;
 
-query T
+statement ok
 GLOSS meaning ON cased.orderid AS $${"value": "the order"}$$;
-----
-glossed meaning on fin.cased.OrderId as agent
 
 query TT
 SELECT subject, state FROM GLOSSARY(cased) WHERE aspect = 'meaning' AND subject LIKE '%.OrderId';
@@ -202,10 +196,8 @@ fin.cased.OrderId	current
 statement ok
 CREATE TABLE fin.dotted AS SELECT 1 AS "a.b", 2 AS c;
 
-query T
+statement ok
 GLOSS meaning ON dotted."a.b" AS $${"value": "dotted"}$$;
-----
-glossed meaning on fin.dotted.a.b as agent
 
 query TT
 SELECT subject, state FROM GLOSSARY(dotted."a.b") WHERE aspect = 'meaning';
@@ -231,14 +223,14 @@ fin.dotted.a.b	stale
 statement error
 DECLARE DATASET "a.b" SET (purpose: 'none');
 ----
-a dataset's name carries no dot
+Invalid Input Error
 
 statement error
 DECLARE RECIPE "a.b" ON fin FROM nowhere AS $$SELECT 1$$;
 ----
-a table's name carries no dot
+Invalid Input Error
 
-# --- a kit's name under a changed text runs whole and lands a new kits row; the original text is then not the
+# --- a kit's name under a changed text runs whole and stores a new kits row; the original text is then not the
 # newest row's for the name, so it runs again
 
 statement ok

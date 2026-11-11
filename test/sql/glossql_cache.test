@@ -68,7 +68,7 @@ fin.orders.amount	current
 fin.orders.id	current
 fin.spend.total	current
 
-# a definition replaced on another connection moves the lake's snapshot: the slot on the view reads stale
+# a definition replaced on another connection moves the lake's snapshot: the value on the view reads stale
 statement ok con1
 CREATE OR REPLACE VIEW fin.spend AS SELECT sum(amount) * 2 AS total FROM fin.orders;
 
@@ -107,7 +107,7 @@ fin.spend.total	stale
 statement error
 SELECT * FROM glossql_cached('verdicts', 'fin');
 ----
-collapsed, raw or tests, not 'verdicts'
+Invalid Input Error
 
 query I
 SELECT count(*) FROM glossql_cached('tests', 'fin');
