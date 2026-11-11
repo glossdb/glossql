@@ -73,7 +73,7 @@ GLOSS meaning ON orders_enriched AS $${"value": "orders with customer region and
 ```
 
 Cross-fact reconciliation and drivers are measurements with tests; the
-grain check that today drops a bad join is a detector returning a red band on
+grain check that today drops a bad join is a detector returning a red state on
 the view's subject:
 
 ```glossql
@@ -83,12 +83,12 @@ DECLARE ASPECT reconciliation WITH $${
 }$$ AS MEASUREMENT;
 DECLARE FUNCTION reconcile_aggregates FOR fin AS $$/* aggregate against its detail, residual per key */$$
   RETURNS reconciliation;
-DECLARE FUNCTION reconcile_bands FOR fin AS $$/* detector: bands the reconciliation slots */$$;
+DECLARE FUNCTION reconcile_states FOR fin AS $$/* detector: gives the reconciliation values a state */$$;
 DECLARE TEST reconciliation_test ON reconciliation
-  DETECTOR reconcile_bands THRESHOLD 0.5;
+  DETECTOR reconcile_states THRESHOLD 0.5;
 
 SELECT reconcile_aggregates() FROM fin;
-SELECT subject, band FROM TESTS(fin::reconciliation) WHERE band = 'red';
+SELECT subject, state FROM TESTS(fin::reconciliation) WHERE state = 'red';
 
 DECLARE ASPECT driver_rankings WITH $${
   "type": "object", "properties": {"rankings": {"type": "array"}}
@@ -108,7 +108,7 @@ SELECT drivers() FROM fin.orders;
   through `GLOSSARY()`. With `RETURNS` an aspect reference the aspect had
   to exist, so the rankings joined the vocabulary. The grain-check test
   became the model's cleanest form: a measurement aspect with only a
-  detector — `DECLARE TEST … ON reconciliation DETECTOR reconcile_bands`
+  detector — `DECLARE TEST … ON reconciliation DETECTOR reconcile_states`
   — no `BY`, because nobody glosses a measurement.
 - The LLM/deterministic split in the real pipeline maps exactly onto actor
   kinds: every LLM phase becomes an agent connection writing glosses; every

@@ -35,7 +35,7 @@ package once, running the opener's SQL (its dot commands skipped), and
 keeps that connection for its life. Its one tool, `glossql(statements)`,
 runs each call's statements there and renders what each returns: a
 markdown table with `name:TYPE` headers per read, the outcome line per
-write; a refused statement is the tool error, what landed before it
+write; a refused statement is the tool error, what was stored before it
 above the refusal. `USE`, variables and the actor persist from call to
 call, as in any session. The two skills are its resources
 (`skill://glossql/SKILL.md`, `skill://glossql-kpi/SKILL.md`) and its prompts,

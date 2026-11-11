@@ -28,7 +28,7 @@ DECLARE ASPECT currency WITH $${"type": "object", "required": ["value"],
   "properties": {"value": {"type": "string", "pattern": "^[A-Z]{3}$"}}}$$
   AS FACT ON COLUMN WHEN role = 'measure';           -- required on every measure column
 DECLARE TEST currency_test ON currency BY (AGENT, HUMAN)
-  DETECTOR slot_entropy THRESHOLD 0.7;              -- the test: who may annotate it; how disagreement is scored
+  DETECTOR value_entropy THRESHOLD 0.7;              -- the test: who may annotate it; how disagreement is scored
 DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$
   AS MEASUREMENT ON COLUMN;
 DECLARE FUNCTION min_max FOR GLOBAL AS
@@ -66,7 +66,7 @@ IMPORT orders;                                           -- a load: a new DuckLa
 
 ```sql
 SELECT * FROM GLOSSARY(orders);  -- what is known: one row per asset and aspect, state current | stale | conflict | missing
-SELECT * FROM TESTS(orders);    -- the test results: a band and a score per asset and aspect
+SELECT * FROM TESTS(orders);    -- the test results: a state and a score per asset and aspect
 ```
 
 `stale` means the data changed after the annotation; `conflict`, that
@@ -106,14 +106,14 @@ DECLARE RECIPE orders ON fin FROM erp SET (key: id)
 IMPORT orders;                                  -- the recipe runs again; keyed tables merge; every load is a snapshot
 
 DECLARE ASPECT additivity WITH $${"type": "object", "properties": {"value": {"enum": ["semi-additive", "additive"]}}}$$ AS FACT ON COLUMN;
-DECLARE FUNCTION additivity_entropy FOR fin AS $$ SELECT subject, ... AS band, ... AS score FROM slots GROUP BY subject $$;
+DECLARE FUNCTION additivity_entropy FOR fin AS $$ SELECT subject, ... AS state, ... AS score FROM annotations GROUP BY subject $$;
 DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN) DETECTOR additivity_entropy THRESHOLD 0.7;
 
 GLOSS additivity ON orders.amount AS $${"value": "additive"}$$;
 SET VARIABLE glossql_actor = 'human';           -- the actor rides the connection
 GLOSS additivity ON orders.amount AS $${"value": "semi-additive"}$$;
 
-SELECT * FROM GLOSSARY(orders);                 -- (subject, aspect, value, band, score, state): current | conflict | stale | missing
+SELECT * FROM GLOSSARY(orders);                 -- (subject, aspect, value, test_state, score, state): current | conflict | stale | missing
 SELECT * FROM TESTS(orders.amount::additivity);  -- the test results
 SELECT * FROM GLOSSARY(orders.amount, all => true);
 

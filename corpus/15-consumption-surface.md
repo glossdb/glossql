@@ -15,7 +15,7 @@ compose it.
 Review decisions carried (lead, 2026-08-06): the bus-matrix UI was agent
 context in disguise — if the reads cover it, the UI goes, and the
 same test applies to every surface; the metrics graph is the UI
-genuinely worth keeping; and the standing balance — what statistics
+genuinely worth keeping; and the lasting balance — what statistics
 settle deterministically stays out of agent exploration, and
 meaning-shaped judgment never moves into a function.
 
@@ -36,12 +36,12 @@ SELECT * FROM imports;
 SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 SELECT left_path, right_path FROM relationships;
 SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'missing';
-SELECT subject, band, score FROM TESTS(fin) WHERE band != 'green';
+SELECT subject, state, score FROM TESTS(fin) WHERE state != 'green';
 ```
 
 **TRANSCRIBES.** The disclosure duties v0.3 hand-built (curation
 counts, omitted-edge counts, withheld sections) are the collapsed
-read's native shape: `missing` rows and bands ride the same
+read's native shape: `missing` rows and test states ride the same
 relations. Whether an agent actually composes this block well is
 fixture 09's experiment, unchanged — the operating-model run is its
 vehicle.
@@ -80,9 +80,9 @@ name the gap, do not build for it.
 
 ## 3. The answer confidence strip
 
-Band, grounded ratio, assumptions, concepts used. All of it rides
+State, defined ratio, assumptions, concepts used. All of it rides
 constructs that exist: the metric definition's `assumptions[]` array is in
-the gloss body, bands come from `TESTS`, and the concepts used are
+the gloss body, states come from `TESTS`, and the concepts used are
 the VIEW aspects the SQL was composed from.
 
 ```glossql
@@ -110,8 +110,8 @@ SELECT name, kind, grains FROM aspects;
 SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
-**Concepts tab.** Ancestry, reconciliation state, multi-groundings —
-glossary reads plus test bands. TRANSCRIBES.
+**Concepts tab.** Ancestry, reconciliation state, multi-definitions —
+glossary reads plus test states. TRANSCRIBES.
 
 **Bus matrix — the UI dies (decided 2026-08-06).** It was agent
 context: which cross-fact comparisons are composable. The content is
@@ -133,11 +133,11 @@ GLOSS meaning ON results.driver_id -> drivers.driver_id AS $${
 
 ## 5. The governance briefing
 
-The standing state of the union: bands, artifact counts, staleness,
+The current state of the union: test states, artifact counts, staleness,
 a "needs you" inbox. The reads exist; the inbox is a WHERE clause:
 
 ```glossql
-SELECT subject, band, score FROM TESTS(fin) WHERE band = 'red';
+SELECT subject, state, score FROM TESTS(fin) WHERE state = 'red';
 SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'missing';
 SELECT * FROM imports;
 ```

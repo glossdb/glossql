@@ -1,5 +1,5 @@
 # name: test/sql/glossql_functions.test
-# description: functions are table macros; extraction computes them for a subject and lands measurements
+# description: functions are table macros; extraction computes them for a subject and stores measurements
 # group: [sql]
 
 require glossql
@@ -156,10 +156,10 @@ SELECT count() FROM orders WHERE id > 5;
 
 # a detector has no RETURNS and runs at read, never through extraction
 statement ok
-DECLARE FUNCTION bands FOR fin AS $$ SELECT subject, 'green' AS band, 0.0 AS score FROM slots GROUP BY subject $$;
+DECLARE FUNCTION states FOR fin AS $$ SELECT subject, 'green' AS state, 0.0 AS score FROM annotations GROUP BY subject $$;
 
 statement error
-SELECT bands() FROM orders.amount;
+SELECT states() FROM orders.amount;
 ----
 Invalid Input Error
 
@@ -169,6 +169,6 @@ DECLARE FUNCTION x FOR nowhere AS $$ SELECT 1 $$ RETURNS min_max;
 Invalid Input Error
 
 query T
-SELECT trim(script) FROM functions WHERE name = 'bands';
+SELECT trim(script) FROM functions WHERE name = 'states';
 ----
-SELECT subject, 'green' AS band, 0.0 AS score FROM slots GROUP BY subject
+SELECT subject, 'green' AS state, 0.0 AS score FROM annotations GROUP BY subject

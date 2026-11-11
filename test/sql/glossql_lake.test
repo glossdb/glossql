@@ -1,5 +1,5 @@
 # name: test/sql/glossql_lake.test
-# description: the workspace is a DuckLake; the store lives in its catalog, landings are snapshots, glosses carry them and read stale when their subject changed
+# description: the workspace is a DuckLake; the store lives in its catalog, loads are snapshots, glosses carry them and read stale when their subject changed
 # group: [sql]
 
 require glossql
@@ -10,7 +10,7 @@ require parquet
 
 require ducklake
 
-# --- the workspace is the attached lake: without one there is nowhere to stand
+# --- the workspace is the attached lake: without one there is nothing to work in
 
 statement error
 PRAGMA glossql;
@@ -158,7 +158,7 @@ fin.segments	agent	false
 fin.segments.id	agent	false
 fin.segments.segment	agent	true
 
-# a new gloss stands at the new shape
+# a new gloss is current at the new shape
 statement ok
 GLOSS meaning ON segments.id AS $${"value": "the row's number, as text now"}$$;
 
@@ -182,10 +182,10 @@ fin.segments.segment	stale
 # --- the lake keeps every load: time travel is DuckLake's
 
 statement ok
-SET VARIABLE first_landing = (SELECT min(snapshot_id) FROM imports);
+SET VARIABLE first_load = (SELECT min(snapshot_id) FROM imports);
 
 query I
-SELECT count(*) FROM fin.segments AT (VERSION => getvariable('first_landing'));
+SELECT count(*) FROM fin.segments AT (VERSION => getvariable('first_load'));
 ----
 4
 
@@ -194,7 +194,7 @@ SELECT count(*) FROM imports;
 ----
 4
 
-# --- the workspace is the file: re-attached under another alias, the store and the glossary stand, and the views follow the alias
+# --- the workspace is the file: re-attached under another alias, the store and the glossary remain, and the views follow the alias
 
 statement ok
 USE memory;

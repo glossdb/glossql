@@ -335,9 +335,9 @@ static void DatasetExec(ClientContext &context, TableFunctionInput &data, DataCh
 	// the schema is the lake's and the row the store's: two catalogs, two commits;
 	// an unchanged re-declaration is a no-op (SPEC §3)
 	Inner inner(context);
-	auto standing = inner.Row("SELECT settings FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(name) +
-	                          " ORDER BY seq DESC LIMIT 1");
-	if (!standing.empty() && standing[0].ToString() == inputs[1].ToString()) {
+	auto current = inner.Row("SELECT settings FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(name) +
+	                         " ORDER BY seq DESC LIMIT 1");
+	if (!current.empty() && current[0].ToString() == inputs[1].ToString()) {
 		Outcome(output, "dataset " + name + " unchanged: no-op");
 		return;
 	}
@@ -387,7 +387,7 @@ static RecipeRow NewestRecipe(Inner &inner, const string &dataset, const string 
 //! What a load wrote: the table's rows, how they joined it (`mode`: replace
 //! or merge, the key being the recipe's), and the rows dropped on the way
 //! (SPEC §3), NULL where the host cannot count them
-struct Landed {
+struct Loaded {
 	int64_t rows;
 	string mode;
 	//! the outcome's wording of the mode
@@ -412,7 +412,7 @@ struct Landed {
 //! connection holds them and the count is theirs, one per line; when it does
 //! not, the host cannot count what it skipped
 static Value DroppedRows(Inner &inner, const string &sql) {
-	// looked up, never probed: a failing statement would abort the load's transaction
+	// looked up, never previewed: a failing statement would abort the load's transaction
 	auto stored = inner.Scalar("SELECT count(*) FROM information_schema.tables WHERE table_catalog = 'temp'"
 	                           " AND table_schema = 'main' AND table_name = 'reject_errors'");
 	if (stored.GetValue<int64_t>() > 0) {
@@ -449,18 +449,19 @@ static void KeyOnce(Inner &inner, const vector<string> &key, const string &sql) 
 }
 
 //! Runs the recipe at its source and writes the result
-static Landed Land(Inner &inner, const string &dataset, const string &table, const RecipeRow &recipe, bool replace) {
+static Loaded LoadTable(Inner &inner, const string &dataset, const string &table, const RecipeRow &recipe,
+                        bool replace) {
 	auto target = inner.Table(dataset, table);
 	AtSource(inner, LookupSource(inner, recipe.source));
-	Landed landed;
+	Loaded loaded;
 	auto key = recipe.Key();
 	if (!key.empty()) {
 		KeyOnce(inner, key, recipe.sql);
 	}
 	if (replace || key.empty()) {
 		inner.Run("CREATE OR REPLACE TABLE " + target + " AS " + recipe.sql);
-		landed.mode = "replace";
-		landed.how = "replaced";
+		loaded.mode = "replace";
+		loaded.how = "replaced";
 	} else {
 		vector<string> on;
 		for (auto &column : key) {
@@ -468,12 +469,12 @@ static Landed Land(Inner &inner, const string &dataset, const string &table, con
 		}
 		inner.Run("MERGE INTO " + target + " AS t USING (" + recipe.sql + ") AS s ON " + StringUtil::Join(on, " AND ") +
 		          " WHEN MATCHED THEN UPDATE WHEN NOT MATCHED THEN INSERT");
-		landed.mode = "merge";
-		landed.how = "merged by " + StringUtil::Join(key, ", ");
+		loaded.mode = "merge";
+		loaded.how = "merged by " + StringUtil::Join(key, ", ");
 	}
-	landed.rows = inner.Scalar("SELECT count(*) FROM " + target).GetValue<int64_t>();
-	landed.dropped = DroppedRows(inner, recipe.sql);
-	landed.snapshot = inner.Snapshot();
+	loaded.rows = inner.Scalar("SELECT count(*) FROM " + target).GetValue<int64_t>();
+	loaded.dropped = DroppedRows(inner, recipe.sql);
+	loaded.snapshot = inner.Snapshot();
 	// what computed each column, read off the recipe's plan at the source: the
 	// re-derivation rule compares loads by it (SPEC §3), and the loads' diff
 	// is the drift record of what the source sends
@@ -485,10 +486,10 @@ static Landed Land(Inner &inner, const string &dataset, const string &table, con
 	}
 	// the load is the lake's commit, one snapshot; its row in the store follows it
 	inner.Run("INSERT INTO " + inner.Store("imports") + " VALUES (" + inner.Seq("imports") + ", " + QuoteText(dataset) +
-	          ", " + QuoteText(table) + ", " + QuoteText(landed.mode) + ", " + to_string(landed.rows) + ", " +
-	          landed.dropped.ToSQLString() + ", " + QuoteText(lineage) + ", " + landed.snapshot.ToSQLString() +
+	          ", " + QuoteText(table) + ", " + QuoteText(loaded.mode) + ", " + to_string(loaded.rows) + ", " +
+	          loaded.dropped.ToSQLString() + ", " + QuoteText(lineage) + ", " + loaded.snapshot.ToSQLString() +
 	          ", now())");
-	return landed;
+	return loaded;
 }
 
 //===--------------------------------------------------------------------===//
@@ -512,11 +513,11 @@ static void RecipeExec(ClientContext &context, TableFunctionInput &data, DataChu
 
 	Inner inner(context);
 	// identity is content (SPEC §3): an unchanged re-declaration is a no-op
-	auto standing = inner.Row("SELECT source, settings, sql FROM " + inner.Store("recipes") +
-	                          " WHERE dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(name) +
-	                          " ORDER BY seq DESC LIMIT 1");
-	if (!standing.empty() && standing[0].ToString() == recipe.source && standing[1].ToString() == recipe.settings &&
-	    standing[2].ToString() == recipe.sql) {
+	auto current = inner.Row("SELECT source, settings, sql FROM " + inner.Store("recipes") +
+	                         " WHERE dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(name) +
+	                         " ORDER BY seq DESC LIMIT 1");
+	if (!current.empty() && current[0].ToString() == recipe.source && current[1].ToString() == recipe.settings &&
+	    current[2].ToString() == recipe.sql) {
 		Outcome(output, "recipe " + name + " unchanged: no-op");
 		return;
 	}
@@ -526,12 +527,12 @@ static void RecipeExec(ClientContext &context, TableFunctionInput &data, DataChu
 		throw InvalidInputException("glossql: dataset '%s' is not declared", dataset);
 	}
 
-	auto landed = Land(inner, dataset, name, recipe, true);
+	auto loaded = LoadTable(inner, dataset, name, recipe, true);
 	inner.Run("INSERT INTO " + inner.Store("recipes") + " VALUES (" + inner.Seq("recipes") + ", " + QuoteText(dataset) +
 	          ", " + QuoteText(name) + ", " + QuoteText(recipe.source) + ", " + QuoteText(recipe.settings) + ", " +
 	          QuoteText(recipe.sql) + ", now(), " + QuoteText(DeclaredBy(context)) + ")");
-	landed.how = standing.empty() ? "new" : "superseded";
-	Outcome(output, "landed " + dataset + "." + name + ": " + landed.Summary());
+	loaded.how = current.empty() ? "new" : "superseded";
+	Outcome(output, "loaded " + dataset + "." + name + ": " + loaded.Summary());
 }
 
 TableFunction GlossRecipeFunction() {
@@ -557,8 +558,8 @@ static void ImportExec(ClientContext &context, TableFunctionInput &data, DataChu
 
 	Inner inner(context);
 	auto recipe = NewestRecipe(inner, dataset, table);
-	auto landed = Land(inner, dataset, table, recipe, false);
-	Outcome(output, "imported " + dataset + "." + table + ": " + landed.Summary());
+	auto loaded = LoadTable(inner, dataset, table, recipe, false);
+	Outcome(output, "imported " + dataset + "." + table + ": " + loaded.Summary());
 }
 
 TableFunction GlossImportFunction() {
@@ -615,7 +616,7 @@ static void PreviewExec(ClientContext &context, TableFunctionInput &data, DataCh
 }
 
 TableFunction GlossPreviewFunction() {
-	return TableFunction("glossql_probe", {LogicalType::VARCHAR, LogicalType::VARCHAR}, PreviewExec, PreviewBind,
+	return TableFunction("glossql_preview", {LogicalType::VARCHAR, LogicalType::VARCHAR}, PreviewExec, PreviewBind,
 	                     PreviewInit);
 }
 
@@ -669,10 +670,10 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 
 	Inner inner(context);
 	// identity is content (SPEC §3): an unchanged re-declaration is a no-op, so a kit replays silently
-	auto standing = inner.Row("SELECT scope, script, returns FROM " + inner.Store("functions") +
-	                          " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
-	if (!standing.empty() && standing[0].ToString() == scope && standing[1].ToString() == script &&
-	    SameValue(standing[2], returns)) {
+	auto current = inner.Row("SELECT scope, script, returns FROM " + inner.Store("functions") +
+	                         " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
+	if (!current.empty() && current[0].ToString() == scope && current[1].ToString() == script &&
+	    SameValue(current[2], returns)) {
 		Outcome(output, "function " + name + " unchanged: no-op");
 		return;
 	}
@@ -711,7 +712,7 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 	auto &inputs = data.bind_data->Cast<RunnerBindData>().inputs;
 	auto name = inputs[0].ToString();
 	auto aspect = inputs[1].ToString();
-	auto speakers = ListValue::GetChildren(inputs[2]);
+	auto actor_kinds = ListValue::GetChildren(inputs[2]);
 	auto &detector = inputs[3];
 	auto &threshold = inputs[4];
 
@@ -725,16 +726,16 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 		Outcome(output, "test " + name + " unchanged: no-op");
 		return;
 	}
-	auto standing = inner.Row("SELECT kind, schema::JSON->>'x-kind' FROM " + inner.Store("aspects") +
-	                          " WHERE name = " + QuoteText(aspect) + " ORDER BY seq DESC LIMIT 1");
-	if (standing.empty()) {
+	auto current = inner.Row("SELECT kind, schema::JSON->>'x-kind' FROM " + inner.Store("aspects") +
+	                         " WHERE name = " + QuoteText(aspect) + " ORDER BY seq DESC LIMIT 1");
+	if (current.empty()) {
 		throw InvalidInputException("glossql: aspect '%s' is not declared", aspect);
 	}
-	auto &kind = standing[0];
-	if (!standing[1].IsNull() && standing[1].ToString() == "grounding") {
-		throw InvalidInputException("glossql: a test on grounding schema '%s' is refused: it judges nothing", aspect);
+	auto &kind = current[0];
+	if (!current[1].IsNull() && current[1].ToString() == "definition") {
+		throw InvalidInputException("glossql: a test on definition schema '%s' is refused: it judges nothing", aspect);
 	}
-	if (kind.ToString() == "MEASUREMENT" && !speakers.empty()) {
+	if (kind.ToString() == "MEASUREMENT" && !actor_kinds.empty()) {
 		throw InvalidInputException("glossql: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
 	}
 	if (!detector.IsNull()) {
@@ -817,7 +818,7 @@ struct Reads {
 	}
 
 	//! `**` when the reads could not be enumerated, the names it did enumerate
-	//! after it: a store relation the body scanned pins what it holds even then
+	//! after it: a store relation the body scanned is held in the data version even then
 	string Text() const {
 		auto listed = StringUtil::Join(vector<string>(names.begin(), names.end()), ",");
 		if (everything) {
@@ -963,7 +964,7 @@ static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads)
 }
 
 //! The views a relation holds on: itself when it is a view, and the views its
-//! query reads, through views over views — legs the plan does not name, since
+//! query reads, through views over views — parts the plan does not name, since
 //! it expands a view to its tables. A name resolves as the binder resolves it,
 //! an unqualified one in the view's own schema
 static void ViewsOf(ClientContext &context, const Workspace &ws, const string &schema, const string &table,
@@ -1020,7 +1021,7 @@ static void BindRead(ClientContext &context, const string &name) {
 //! The reads of a call on a subject, enumerated from its bound plan: views
 //! expand to their tables, subject_column() to the subject's, before any
 //! optimizer touches it; the views the subject holds on are named beside,
-//! their definitions being legs too, and so is what a bind read beside the plan
+//! their definitions being parts too, and so is what a bind read beside the plan
 static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 	Reads reads;
 	auto &context = *inner.con.context;
@@ -1043,12 +1044,12 @@ static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 	return reads.Text();
 }
 
-//! The pin a computation is stored at: the dataset's tables, the store relations
+//! The data version a computation is stored at: the dataset's tables, the store relations
 //! and whatever else the reads named, each at its version now; the dataset's
 //! views too where the reads could not be enumerated (**). A body that read the
-//! measurements relation pins the other functions' rows, one leg per function:
+//! measurements relation holds the other functions' rows in its data version, one part per function:
 //! its own rows are its output, never its input (SPEC §6)
-static string PinOf(Inner &inner, const string &dataset, const string &function, const string &reads) {
+static string DataVersionOf(Inner &inner, const string &dataset, const string &function, const string &reads) {
 	vector<string> named;
 	bool measurements = false;
 	for (auto &name : StringUtil::Split(reads, ',')) {
@@ -1061,18 +1062,18 @@ static string PinOf(Inner &inner, const string &dataset, const string &function,
 	                             : string();
 	return inner
 	    .Scalar("SELECT coalesce(string_agg(name || ':' || version, ',' ORDER BY name || ':' || version), '') FROM (" +
-	            LegsSQL(inner.ws) + ") WHERE (starts_with(name, " + QuoteText(dataset + ".") + ") AND (kind = 'table'" +
-	            (StringUtil::StartsWith(reads, "**") ? string(" OR true") : string("")) + ")) OR name IN (" +
-	            StoreLegNames() + ") OR name IN (" + StringUtil::Join(named, ", ") + ")" + others)
+	            PartsSQL(inner.ws) + ") WHERE (starts_with(name, " + QuoteText(dataset + ".") +
+	            ") AND (kind = 'table'" + (StringUtil::StartsWith(reads, "**") ? string(" OR true") : string("")) +
+	            ")) OR name IN (" + StorePartNames() + ") OR name IN (" + StringUtil::Join(named, ", ") + ")" + others)
 	    .ToString();
 }
 
 //! The newest stored row for the call while what it read is unchanged, else NULL
 static Value ServedValue(Inner &inner, const string &dataset, const string &name, const string &subject) {
-	return inner.Scalar("SELECT value FROM (WITH legs AS (" + LegsSQL(inner.ws) + ") SELECT m.value, " +
-	                    StandsSQL(inner.ws, "m") + " AS stands FROM " + inner.Store("measurements") +
+	return inner.Scalar("SELECT value FROM (WITH parts AS (" + PartsSQL(inner.ws) + ") SELECT m.value, " +
+	                    IsCurrentSQL(inner.ws, "m") + " AS current FROM " + inner.Store("measurements") +
 	                    " m WHERE m.dataset = " + QuoteText(dataset) + " AND m.function = " + QuoteText(name) +
-	                    " AND m.subject = " + QuoteText(subject) + " ORDER BY m.seq DESC LIMIT 1) WHERE stands");
+	                    " AND m.subject = " + QuoteText(subject) + " ORDER BY m.seq DESC LIMIT 1) WHERE current");
 }
 
 //! What extraction serves of a value: its top-level summary object when the body
@@ -1167,10 +1168,10 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 			throw InvalidInputException("glossql: the output of %s does not conform to the schema of %s: %s", name,
 			                            returns.ToString(), error);
 		}
-		// stored at its pin, with what it read: the next extraction serves it while those are unchanged
+		// stored at its data version, with what it read: the next extraction serves it while those are unchanged
 		inner.Run("INSERT INTO " + inner.Store("measurements") + " VALUES (" + inner.Seq("measurements") + ", " +
 		          QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) + ", " +
-		          returns.ToSQLString() + ", " + QuoteText(PinOf(inner, dataset, name, reads)) + ", " +
+		          returns.ToSQLString() + ", " + QuoteText(DataVersionOf(inner, dataset, name, reads)) + ", " +
 		          QuoteText(value.ToString()) + ", now(), " + QuoteText(reads) + ")");
 		output.data[3].Append(Value(Summary(inner, value.ToString())));
 		output.data[4].Append(Value::BOOLEAN(true));
@@ -1412,10 +1413,10 @@ static TableFunctionSet DatasetCellsFunctions() {
 //===--------------------------------------------------------------------===//
 // glossql_relationship_checks(dataset): whether the declared relationships
 // hold, per edge over its own columns. The quality kit's relationship_checks
-// wraps it. An edge's legs are read from the two tables directly, typed and
+// wraps it. An edge's key columns are read from the two tables directly, typed and
 // linear in their rows, where a screen over dataset_cells pivoted every cell
 // of a table back into rows per edge. Per edge: the filled child rows (every
-// leg present), the orphans (child keys no parent row carries; inside one
+// key column present), the orphans (child keys no parent row carries; inside one
 // table, child keys that reach more than one parent key on the same rows),
 // and for an edge across two tables the temporal pairs: the first three date
 // columns of each side, joined on the edge, how often the child's date
@@ -1424,7 +1425,7 @@ static TableFunctionSet DatasetCellsFunctions() {
 
 struct EdgeSide {
 	string table;
-	vector<string> legs;
+	vector<string> key_columns;
 	//! the first three date columns, in the table's order
 	vector<string> dates;
 };
@@ -1439,9 +1440,9 @@ static EdgeSide ParseSide(ClientContext &context, const string &dataset, const s
 	result.table = parts[1];
 	auto &key = parts[2];
 	if (key.size() > 2 && key.front() == '(' && key.back() == ')') {
-		result.legs = StringUtil::Split(key.substr(1, key.size() - 2), ", ");
+		result.key_columns = StringUtil::Split(key.substr(1, key.size() - 2), ", ");
 	} else {
-		result.legs.push_back(key);
+		result.key_columns.push_back(key);
 	}
 	for (auto &column : DatasetColumns(context, dataset, result.table, false)) {
 		if (result.dates.size() < 3 && (column.type == "DATE" || StringUtil::StartsWith(column.type, "TIMESTAMP"))) {
@@ -1454,13 +1455,14 @@ static EdgeSide ParseSide(ClientContext &context, const string &dataset, const s
 //! One edge's rows: (seq, relationship, filled, orphans, pair_seq, child_column, parent_column, joined, precedes)
 static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const string &relationship, const EdgeSide &child,
                       const EdgeSide &parent) {
-	bool two = child.legs.size() == 2;
+	bool two = child.key_columns.size() == 2;
 	auto keys = [&](const EdgeSide &s, const string &k1, const string &k2) {
-		return QuoteName(s.legs[0]) + "::VARCHAR AS " + k1 + ", " +
-		       (two ? QuoteName(s.legs[1]) + "::VARCHAR" : "NULL::VARCHAR") + " AS " + k2;
+		return QuoteName(s.key_columns[0]) + "::VARCHAR AS " + k1 + ", " +
+		       (two ? QuoteName(s.key_columns[1]) + "::VARCHAR" : "NULL::VARCHAR") + " AS " + k2;
 	};
 	auto present = [&](const EdgeSide &s) {
-		return QuoteName(s.legs[0]) + " IS NOT NULL" + (two ? " AND " + QuoteName(s.legs[1]) + " IS NOT NULL" : "");
+		return QuoteName(s.key_columns[0]) + " IS NOT NULL" +
+		       (two ? " AND " + QuoteName(s.key_columns[1]) + " IS NOT NULL" : "");
 	};
 	auto dates = [&](const EdgeSide &s, const string &prefix) {
 		string out;
@@ -1477,7 +1479,7 @@ static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const stri
 	                      "DISTINCT FROM c.k2))";
 	string orphans = join_orphans;
 	if (child.table == parent.table) {
-		// a nest: the parent legs do not key the table, and a child key is orphaned by
+		// a nest: the parent key columns do not key the table, and a child key is orphaned by
 		// reaching more than one parent key on the rows it sits on
 		sql += ", same_rows AS (SELECT " + keys(child, "k1", "k2") + ", " + keys(parent, "p1", "p2") + " FROM " +
 		       inner.Table(dataset, child.table) + " WHERE " + present(child) + " AND " + present(parent) + ")";
@@ -1533,8 +1535,9 @@ static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context
 			auto right = chunk->GetValue(2, i).ToString();
 			auto child = ParseSide(context, dataset, left);
 			auto parent = ParseSide(context, dataset, right);
-			// legs are one column or a pair, the same count on both sides
-			if (child.legs.empty() || child.legs.size() != parent.legs.size() || child.legs.size() > 2) {
+			// key columns are one column or a pair, the same count on both sides
+			if (child.key_columns.empty() || child.key_columns.size() != parent.key_columns.size() ||
+			    child.key_columns.size() > 2) {
 				continue;
 			}
 			edges.push_back(EdgeSQL(inner, dataset, edges.size(), left + " " + op + " " + right, child, parent));
@@ -1571,9 +1574,9 @@ static TableFunction RelationshipChecksFunction() {
 // over the declared relationships. Per alignment, both sides as cells at the
 // day: the measure side, entity and period to the column's sum, once per
 // measure axis and alignment key; the event side, entity and period to each
-// movement column's sum, the event table's numeric columns minus the legs of
+// movement column's sum, the event table's numeric columns minus the key columns of
 // declared edges, once per event axis. Beside them one row per numeric column
-// of each event table, a declared leg flagged, an integer with its distinct
+// of each event table, a declared key column flagged, an integer with its distinct
 // share over its filled rows, so the screen sets the key-shaped ones aside.
 // An alignment is a declared edge between the two tables, two edges meeting
 // at one dimension key, or an entity borrowed one hop: a measure table whose
@@ -1602,7 +1605,7 @@ static bool IsTemporalType(const string &type) {
 	return type == "DATE" || StringUtil::StartsWith(type, "TIMESTAMP");
 }
 
-//! One direction of a declared relationship: the child table and its legs onto the parent's
+//! One direction of a declared relationship: the child table and its key columns onto the parent's
 struct Pointer {
 	string src_t;
 	vector<string> src_cols;
@@ -1610,7 +1613,7 @@ struct Pointer {
 	vector<string> dst_cols;
 };
 
-//! A join one hop away: this table's legs onto the hop table's key
+//! A join one hop away: this table's key columns onto the hop table's key
 struct Hop {
 	bool set = false;
 	string table;
@@ -1625,7 +1628,7 @@ struct Axis {
 	Hop borrowed;
 };
 
-//! How the measure table and an event table key the same entity: the legs on
+//! How the measure table and an event table key the same entity: the key columns on
 //! each side, and the document each side borrows its entity through, if any
 struct Align {
 	vector<string> m_cols;
@@ -1641,7 +1644,7 @@ static string ColsLabel(const vector<string> &cols) {
 	return cols.size() == 1 ? cols[0] : "(" + StringUtil::Join(cols, ", ") + ")";
 }
 
-//! The entity as text: one column cast, legs joined by a bar
+//! The entity as text: one column cast, several joined by a bar
 static string EntityExpr(const string &base, const vector<string> &cols) {
 	vector<string> parts;
 	for (auto &column : cols) {
@@ -1805,7 +1808,7 @@ static vector<Align> Alignments(const string &table, const string &ev, const vec
 
 //! One side of an alignment as its cells read it: the FROM clause with the
 //! time table and the document joined where borrowed, the time expression, the
-//! entity as text and the guard that every leg and the time are present
+//! entity as text and the guard that every key column and the time are present
 struct SideSQL {
 	string from;
 	string texpr;
@@ -1901,7 +1904,7 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 		}
 	}
 	if (type.empty()) {
-		return reason("no column " + subject + " on a landed table: the evidence reads a table's column");
+		return reason("no column " + subject + " on a loaded table: the evidence reads a table's column");
 	}
 	if (!IsNumericType(type)) {
 		return reason(subject + " is " + type + ", not a number: the evidence reads a numeric measure");
@@ -1915,33 +1918,33 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 		for (idx_t i = 0; i < chunk->size(); i++) {
 			auto child = ParseSide(context, dataset, chunk->GetValue(0, i).ToString());
 			auto parent = ParseSide(context, dataset, chunk->GetValue(2, i).ToString());
-			if (child.legs.empty() || child.legs.size() != parent.legs.size() || !schemas.count(child.table) ||
-			    !schemas.count(parent.table)) {
+			if (child.key_columns.empty() || child.key_columns.size() != parent.key_columns.size() ||
+			    !schemas.count(child.table) || !schemas.count(parent.table)) {
 				continue;
 			}
-			pointers.push_back(Pointer {child.table, child.legs, parent.table, parent.legs});
+			pointers.push_back(Pointer {child.table, child.key_columns, parent.table, parent.key_columns});
 			if (chunk->GetValue(1, i).ToString() == "<->") {
-				pointers.push_back(Pointer {parent.table, parent.legs, child.table, child.legs});
+				pointers.push_back(Pointer {parent.table, parent.key_columns, child.table, child.key_columns});
 			}
 		}
 	}
-	std::set<pair<string, string>> legs;
+	std::set<pair<string, string>> key_columns;
 	for (auto &p : pointers) {
 		BindRead(context, dataset + "." + p.src_t);
 		BindRead(context, dataset + "." + p.dst_t);
 		for (auto &c : p.src_cols) {
-			legs.insert({p.src_t, c});
+			key_columns.insert({p.src_t, c});
 		}
 		for (auto &c : p.dst_cols) {
-			legs.insert({p.dst_t, c});
+			key_columns.insert({p.dst_t, c});
 		}
 	}
-	// the measure column screened as the event side's columns are: a declared leg
+	// the measure column screened as the event side's columns are: a declared key column
 	// is an identifier, no measure; so is an integer distinct on nine filled rows
 	// in ten, read exactly here, the one read of data at bind, since it spares
 	// every cell the screen would otherwise build before refusing
-	if (legs.count({table, column})) {
-		return reason(subject + " is a leg of a declared relationship: an identifier, no measure");
+	if (key_columns.count({table, column})) {
+		return reason(subject + " is a key column of a declared relationship: an identifier, no measure");
 	}
 	auto axes = TimeAxes(tables, schemas, pointers);
 	auto &m_axes = axes[table];
@@ -1992,7 +1995,7 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 		if (aligns.empty() || e_axes.empty()) {
 			continue;
 		}
-		// the movement pool: the event table's numeric columns glossed a measure that are no declared leg
+		// the movement pool: the event table's numeric columns glossed a measure that are no declared key column
 		vector<pair<string, string>> numeric;
 		vector<string> pool;
 		idx_t candidates = 0;
@@ -2001,7 +2004,7 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 				continue;
 			}
 			numeric.push_back(c);
-			if (legs.count({ev, c.first})) {
+			if (key_columns.count({ev, c.first})) {
 				continue;
 			}
 			candidates++;
@@ -2010,7 +2013,7 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 			}
 		}
 		if (candidates == 0) {
-			// nothing numeric beyond its legs: no movement to name, nothing required
+			// nothing numeric beyond its key columns: no movement to name, nothing required
 			continue;
 		}
 		if (pool.empty()) {
@@ -2103,22 +2106,22 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 		if (!emitted) {
 			continue;
 		}
-		// the event table's numeric columns: a leg flagged, an integer with its distinct share
+		// the event table's numeric columns: a key column flagged, an integer with its distinct share
 		string aggs;
 		string names;
 		string flags;
 		for (auto &c : numeric) {
 			auto q = QuoteName(c.first);
-			bool leg = legs.count({ev, c.first}) > 0;
+			bool is_key = key_columns.count({ev, c.first}) > 0;
 			string agg = "NULL::DOUBLE";
-			if (!leg && IsIntegerType(c.second)) {
+			if (!is_key && IsIntegerType(c.second)) {
 				agg = "CASE WHEN count(" + q + ") > 0 AND approx_count_distinct(" + q +
 				      ") >= 2 THEN approx_count_distinct(" + q + ")::DOUBLE / count(" + q + ") END";
 			}
 			aggs += (aggs.empty() ? "" : ", ") + agg + " AS " + q;
 			names += (names.empty() ? "" : ", ") + q;
-			flags +=
-			    (flags.empty() ? "" : ", ") + string("(") + QuoteText(c.first) + ", " + (leg ? "true" : "false") + ")";
+			flags += (flags.empty() ? "" : ", ") + string("(") + QuoteText(c.first) + ", " +
+			         (is_key ? "true" : "false") + ")";
 		}
 		auto from = "(FROM (SELECT " + aggs + " FROM " + inner.Table(dataset, ev) +
 		            ") UNPIVOT INCLUDE NULLS (__gloss_value FOR __gloss_term IN (" + names + "))) u JOIN (VALUES " +
@@ -2150,7 +2153,7 @@ static TableFunction AdditivityCellsFunction() {
 // opens (a local path, or a URL once httpfs is loaded), run statement by
 // statement on a second connection under the glossql grammar, one row per
 // statement. Each statement commits on its own, as it does from a script; a
-// failing statement stops the load, the ones before it stand and no kits row
+// failing statement stops the load, the ones before it stay and no kits row
 // is stored, so the next load runs the kit again. A kit that ran writes a kits row
 // with the hash of its text. Run again with that text, as the opener does at
 // every start-up, the kit holds: what it declared and created is in the lake,
@@ -2244,11 +2247,11 @@ static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk 
 		inner.Run("SET VARIABLE glossql_declared_by = " + QuoteText("kit:" + name));
 		auto newest = inner.Scalar("SELECT hash FROM " + inner.Store("kits") + " WHERE name = " + QuoteText(name) +
 		                           " ORDER BY seq DESC LIMIT 1");
-		bool stands = !newest.IsNull() && newest.ToString() == hash;
+		bool current = !newest.IsNull() && newest.ToString() == hash;
 		auto statements = inner.con.ExtractStatements(script);
 		for (auto &statement : statements) {
 			auto head = FirstLine(statement->query);
-			if (stands && statement->type != StatementType::LOAD_STATEMENT) {
+			if (current && statement->type != StatementType::LOAD_STATEMENT) {
 				continue;
 			}
 			auto result = inner.con.Query(std::move(statement));
@@ -2264,7 +2267,7 @@ static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk 
 			}
 			state.rows.emplace_back(head, outcome);
 		}
-		if (stands) {
+		if (current) {
 			state.rows.emplace_back(name, "current");
 		} else {
 			inner.Run("INSERT INTO " + inner.Store("kits") + " VALUES (" + inner.Seq("kits") + ", " + QuoteText(name) +

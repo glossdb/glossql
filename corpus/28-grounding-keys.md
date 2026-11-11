@@ -41,12 +41,12 @@ admission, so its author writes nothing, or `additive`, which is wrong.
 **B. The contract, and a metric definition schema the kit declares**
 (`.claude/plans/grounding.md`). The body validates against the
 contract, `sql` or `stopped` and `assumptions`, then against every
-aspect flavored `x-kind: grounding`; the KPI kit declares today's three
+aspect flavored `x-kind: definition`; the KPI kit declares today's three
 keys once, closed, and widens the enum:
 
 ```glossql
-DECLARE ASPECT kpi_grounding WITH $${
-  "x-kind": "grounding",
+DECLARE ASPECT kpi_definition WITH $${
+  "x-kind": "definition",
   "type": "object", "additionalProperties": false,
   "properties": {
     "sql": {"type": "string"}, "stopped": {"type": "string"},
@@ -75,7 +75,7 @@ GLOSS role ON revised_budget.period AS $${"value": "timestamp"}$$;
 GLOSS role ON revised_budget.value AS $${"value": "measure"}$$;
 GLOSS additivity ON revised_budget.value AS $${
   "value": "additive",
-  "grounds": "a row is the amount booked in its month; the year is the sum"
+  "basis": "a row is the amount booked in its month; the year is the sum"
 }$$;
 GLOSS role ON revised_budget.fund AS $${"value": "dimension"}$$;
 GLOSS dimension ON revised_budget.fund AS $${"value": "primary"}$$;
@@ -121,7 +121,7 @@ DECLARE ASPECT additivity WITH $${
   "properties": {"value": {"enum": ["semi-additive", "additive", "ratio", "none"]},
                  "numerator": {"type": "string"},
                  "denominator": {"type": "string"},
-                 "grounds": {"type": "string"}}
+                 "basis": {"type": "string"}}
 }$$ AS FACT ON COLUMN WHEN role = 'measure';
 ```
 
@@ -129,24 +129,24 @@ DECLARE ASPECT additivity WITH $${
 
 - **A and B key a claim about one column of the view by the whole
   metric definition.** One value holds `sql` and `additivity`: a human's review decision on
-  the additivity supersedes the agent's `sql` with it, no test bands
+  the additivity supersedes the agent's `sql` with it, no test gives a state to
   the additivity alone, no measurement sits beside it as evidence, and
   a metric read as another metric definition's source carries none of a
   table's facts.
 - **C gives each claim the value a stored column's claim has.** The
-  test on `additivity` bands it, the additivity evidence is a
+  test on `additivity` gives it a state, the additivity evidence is a
   measurement on the column, a review decision is stored on the one fact, `next`
   routes what a new metric's columns require, and the ratio is sayable
   with its halves. The cost is statements: nine where A wrote one.
   Most are proposed rather than written: a detector reads the view's
   sources through lineage and proposes its columns' roles, and the
-  test bands what it proposed.
+  test gives a state to what it proposed.
 - **The no-claim rule.** At a coarser grain than the period column's
   cadence, with no additivity on the value column, a reader refuses and
   names the gloss. A silent default is wrong for a stock and teaches
   nothing.
-- **The SPEC diff under C.** §5.1: "the standard grounding schema"
-  becomes "the grounding contract". §5.2: the block keeps `oneOf`,
+- **The SPEC diff under C.** §5.1: "the standard definition schema"
+  becomes "the definition contract". §5.2: the block keeps `oneOf`,
   `sql`, `stopped` and `assumptions`; the three bullets go, and one
   holds in their place: a metric definition's view is a table of its dataset,
   its columns carry the claims a reader needs under the aspects a kit
@@ -154,6 +154,6 @@ DECLARE ASPECT additivity WITH $${
   claim it needs is unglossed, naming the gloss. B's sentence on a
   kit-declared metric definition schema stays for a key a body truly needs;
   the KPI kit declares none. Fixtures 07 and 26 and the corpus README
-  rows read "grounding contract".
+  rows read "definition contract".
 - **Decided: C.** It is the structure the metrics kit is built on
   (`.claude/plans/modules-design.md` §7.1).

@@ -8,9 +8,9 @@ said. A workspace runs kits of its own beside these, loaded after them.
 
 | Kit | Brings |
 |---|---|
-| `kpi/` | column and table vocabulary (`meaning`, `role`, `additivity` with `ratio` and its halves, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the `slot_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the tests that bind them; a metric's view carries the same words on its columns |
+| `kpi/` | column and table vocabulary (`meaning`, `role`, `additivity` with `ratio` and its halves, `unit`, `dimension`, `entity`), source `conventions`, the `definitions` handbook, the `value_entropy` detector, the `column_profile` and `outlier_profile` measurements, and the tests that bind them; a metric's view carries the same words on its columns |
 | `spatial/` | the geometry vocabulary: `shape` on a geometry column (`WHEN TYPE = 'GEOMETRY'`), the `crs` its coordinates are in, and the `geometry_profile` measurement; its first lines install and load DuckDB's spatial extension |
-| `quality/` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `grounding_collisions` and `additivity_anchors` as table macros, and the six measurements that land them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`, `additivity_evidence`, the stock/flow evidence over declared edges), the `temporal` profile, and the `rate_tolerance` detector that bands an authored expectation against a check value; loaded after `kpi/` |
+| `quality/` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `definition_collisions` and `additivity_anchors` as table macros, and the six measurements that store them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_definition_collisions`, `additivity_evidence`, the stock/flow evidence over declared edges), the `temporal` profile, and the `rate_tolerance` detector that bands an authored expectation against a check value; loaded after `kpi/` |
 
 ## Loading
 
@@ -30,7 +30,7 @@ URL). It runs the statements one by one on a second connection under the
 glossql grammar and serves one row per statement, `(statement, outcome)`.
 Each statement commits on its own, as it does from a script: a failing
 statement stops the load with its error, and the statements before it
-stand. The load is recorded in `kits` with its path and count.
+stay. The load is recorded in `kits` with its path and count.
 
 Loading a kit again with the same text runs only its `LOAD` and
 `INSTALL` lines: what it declared is already in the lake, and one row
@@ -54,7 +54,7 @@ tests that name both.
   identity — is glossed on the view and its columns under the kit's
   aspects, never keyed in the body. A kit whose readers need a body key
   of their own declares a schema for it, an aspect flavored `"x-kind":
-  "grounding"`: the core validates every VIEW gloss against each such
+  "definition"`: the core validates every VIEW gloss against each such
   schema after the contract; it is never glossed, no test names it,
   and re-declaring it is refused while a current VIEW value would stop
   matching.
@@ -63,10 +63,10 @@ tests that name both.
   `GLOBAL`; `$subject` is its parameter and `subject_column($subject)` the
   subject's column as a relation named `v`. Names in the body resolve as
   they would in the declaring session. A detector (no `RETURNS`) runs
-  at read over its test's `slots` with `$threshold` bound, and returns
-  `(subject, band, score)`. A body may open with its own `WITH`. A detector
+  at read over its test's `annotations` with `$threshold` bound, and returns
+  `(subject, state, score)`. A body may open with its own `WITH`. A detector
   that fails serves its test's result `error`, never a failed read.
-- What a measurement scans is what it is pinned to: the lake's tables and
+- What a measurement scans is its data version: the lake's tables and
   the store's relations, by name, read off the bound plan. A later
   extraction serves the stored row while those are unchanged and computes
   once one moved; the row says which (`computed`). A body that reads a
@@ -99,7 +99,7 @@ con.execute("PRAGMA glossql")
 con.execute("FROM glossql_kit('kits/kpi/kit.sql')")
 
 def say(statement: str, kind: str, who: str) -> list[tuple]:
-    """The door: the wrapper knows who speaks, the statement does not."""
+    """The interface: the wrapper knows who annotates, the statement does not."""
     con.execute("SET VARIABLE glossql_actor = ?", [kind])      # human | agent: what supersession keys on
     con.execute("SET VARIABLE glossql_actor_id = ?", [who])    # the writer, for the record
     return con.execute(statement).fetchall()

@@ -477,17 +477,18 @@ GLOSSQL_TRANSFORM(StartExtract, FinalizeExtract)
 
 //! GlossDeclareTest <- 'DECLARE' 'TEST' Identifier 'ON' Identifier GlossBy? GlossDetector?
 //!                          GlossThreshold?
-//! GlossBy <- 'BY' Parens(List(GlossSpeaker)) ; GlossSpeaker <- GlossSpeakerAgent / GlossSpeakerHuman
+//! GlossBy <- 'BY' Parens(List(GlossActorKind)) ; GlossActorKind <- GlossActorKindAgent / GlossActorKindHuman
 //! GlossDetector <- 'DETECTOR' Identifier ; GlossThreshold <- 'THRESHOLD' NumberLiteral
 static arena_ptr<TransformResultValue> FinalizeDeclareTest(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	auto name = Ident(transformer, list.GetChild(2));
 	auto aspect = Ident(transformer, list.GetChild(4));
-	vector<Value> speakers;
+	vector<Value> actor_kinds;
 	auto &by = list.Child<OptionalParseResult>(5);
 	if (by.HasResult()) {
-		for (auto &speaker : ListItems(InParens(by.GetResult().Cast<ListParseResult>().GetChild(1)))) {
-			speakers.push_back(Value(IsRule(GetChoice(speaker.get()), "GlossSpeakerHuman") ? "HUMAN" : "AGENT"));
+		for (auto &actor_kind : ListItems(InParens(by.GetResult().Cast<ListParseResult>().GetChild(1)))) {
+			actor_kinds.push_back(
+			    Value(IsRule(GetChoice(actor_kind.get()), "GlossActorKindHuman") ? "HUMAN" : "AGENT"));
 		}
 	}
 	Value detector(LogicalType::VARCHAR);
@@ -506,12 +507,12 @@ static arena_ptr<TransformResultValue> FinalizeDeclareTest(PEGTransformer &trans
 		}
 		threshold = Value::DOUBLE(value);
 	}
-	if (speakers.empty() && detector.IsNull()) {
+	if (actor_kinds.empty() && detector.IsNull()) {
 		throw ParserException("DECLARE TEST names BY or DETECTOR, or both");
 	}
 	return MakeStatement(
 	    transformer, "test", "",
-	    {Value(name), Value(aspect), Value::LIST(LogicalType::VARCHAR, std::move(speakers)), detector, threshold},
+	    {Value(name), Value(aspect), Value::LIST(LogicalType::VARCHAR, std::move(actor_kinds)), detector, threshold},
 	    "DECLARE TEST " + name + " ON " + aspect);
 }
 GLOSSQL_TRANSFORM(StartDeclareTest, FinalizeDeclareTest)
@@ -584,7 +585,7 @@ static arena_ptr<TransformResultValue> FinalizeDeclareAspect(PEGTransformer &tra
 		}
 	}
 	if (kind == "VIEW" && !grains.empty()) {
-		// SPEC §5.1: a metric is grounded on the dataset; a grain clause is refused
+		// SPEC §5.1: a metric is defined on the dataset; a grain clause is refused
 		throw ParserException("a VIEW aspect takes no grain clause: its grain is the dataset");
 	}
 	return MakeWrite(
@@ -815,10 +816,10 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	statement("GlossDeclareTest <- 'DECLARE' 'TEST' Identifier 'ON' Identifier GlossBy? GlossDetector? "
 	          "GlossThreshold?",
 	          StartDeclareTest);
-	rule("GlossBy <- 'BY' Parens(List(GlossSpeaker))");
-	rule("GlossSpeaker <- GlossSpeakerAgent / GlossSpeakerHuman");
-	rule("GlossSpeakerAgent <- 'AGENT'");
-	rule("GlossSpeakerHuman <- 'HUMAN'");
+	rule("GlossBy <- 'BY' Parens(List(GlossActorKind))");
+	rule("GlossActorKind <- GlossActorKindAgent / GlossActorKindHuman");
+	rule("GlossActorKindAgent <- 'AGENT'");
+	rule("GlossActorKindHuman <- 'HUMAN'");
 	rule("GlossDetector <- 'DETECTOR' Identifier");
 	rule("GlossThreshold <- 'THRESHOLD' NumberLiteral");
 

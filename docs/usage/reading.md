@@ -10,7 +10,7 @@ over the catalog's tables.
 SELECT * FROM GLOSSARY(orders.amount);
 ```
 
-Columns: `(subject, aspect, value, band, score, state)`. The value is
+Columns: `(subject, aspect, value, test_state, score, state)`. The value is
 the winning one: a person's over an agent's over a function's. `state`
 shows every gap; the read never hides one.
 
@@ -18,7 +18,7 @@ shows every gap; the read never hides one.
 |---|---|
 | `current` | the value is served and its basis is unchanged |
 | `stale` | served, and marked: the asset changed after the value was written, or an input of the computed value moved |
-| `conflict` | the values disagree beyond the test's threshold; the value is withheld, `band` and `score` say how far |
+| `conflict` | the values disagree beyond the test's threshold; the value is withheld, `test_state` and `score` say how far |
 | `missing` | the property is required here and nobody has recorded it; the row still appears |
 
 - With no argument, `GLOSSARY()` covers the dataset in use.
@@ -45,7 +45,7 @@ decide. `current` is false for a computed value whose inputs moved.
 
 ## Test results
 
-`TESTS()` returns one row per test and asset: band, score, whether it
+`TESTS()` returns one row per test and asset: state, score, whether it
 is current ([tests](tests.md)).
 
 ## The catalog tables

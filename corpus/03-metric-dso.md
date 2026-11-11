@@ -46,7 +46,7 @@ interpretation:
 ## Transcription
 
 A metric is a **concept** — a VIEW aspect, declared like `revenue`
-(fixture 01) and grounded in SQL like any metric definition (fixture 07). The
+(fixture 01) and defined in SQL like any metric definition (fixture 07). The
 running system says so: metrics move through declare → compose → execute,
 where compose is an agent writing SQL over the input concepts' metric definitions
 and execute runs that SQL (`pipeline/phases/metrics_phase.py`; the working
@@ -76,7 +76,7 @@ DECLARE ASPECT dso WITH $${
 GLOSS dso ON fin AS $${
   "sql": "SELECT (sum(accounts_receivable) / sum(revenue)) * 30 FROM monthly_balances",
   "assumptions": [
-    {"dimension": "inputs", "assumption": "accounts_receivable and revenue read per their concept groundings",
+    {"dimension": "inputs", "assumption": "accounts_receivable and revenue read per their concept definitions",
      "basis": "sql_snippets", "confidence": 0.9}
   ]
 }$$;

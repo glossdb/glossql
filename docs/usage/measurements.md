@@ -45,13 +45,13 @@ body. Several runs go in one statement or in several; the grammar has
 no ordering.
 
 The run stores one row in `measurements`: dataset, function, asset,
-property, `pin`, value, time and `reads`.
+property, `data_version`, value, time and `reads`.
 
 - `reads` names what the body's plan scanned: lake tables as
   `dataset.table`, catalog tables as `glossql.relation`, `**` for a
   scan with no name (a file, a catalog function, another database), and
   nothing for a body that read nothing.
-- `pin` is every input at its version: a table's last snapshot that
+- `data_version` is every input at its version: a table's last snapshot that
   changed it, a catalog table's highest `seq`.
 - The next run serves the stored row while the inputs it names are
   unchanged, and computes again once one moved. The row's `computed`

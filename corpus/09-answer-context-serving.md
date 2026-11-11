@@ -29,7 +29,7 @@ serving document.
 ```glossql
 SELECT * FROM GLOSSARY(fin.orders);
 SELECT * FROM GLOSSARY(fin.orders.amount, all => true);
-SELECT subject, band FROM TESTS(fin.trial_balance) WHERE band = 'red';
+SELECT subject, state FROM TESTS(fin.trial_balance) WHERE state = 'red';
 ```
 
 ## Findings
@@ -42,11 +42,11 @@ SELECT subject, band FROM TESTS(fin.trial_balance) WHERE band = 'red';
   stable enough to cache, curation cuts made visible, confirmation state
   respected. Disclosure stopped being experimental 2026-08-04 ("serving
   wrong information is not an experiment" — project lead): the collapsed
-  read carries `state` — `missing` (a tested aspect nobody spoke to
-  is a visible row, the "9 of 41" cut), `conflict` (value withheld, band
+  read carries `state` — `missing` (a tested aspect nobody annotated
+  is a visible row, the "9 of 41" cut), `conflict` (value withheld, test_state
   says how badly), `current`, `stale` (served and marked — the snapshot
   moved or the column's type decision postdates the gloss). Confirmation
-  state stays the band from `TESTS()`. What remains for the experiment is
+  state stays the state from `TESTS()`. What remains for the experiment is
   only whether agents *use* the surface — sweep `state != 'current'` and
   close what they find.
 - Nothing to fix in the grammar; everything to learn in the experiment. If it

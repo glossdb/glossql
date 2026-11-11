@@ -1,5 +1,5 @@
 # name: test/sql/glossql_kit_quality.test
-# description: the quality kit: the structure screens as table macros over dataset_cells, and the measurements that land them
+# description: the quality kit: the structure screens as table macros over dataset_cells, and the measurements that store them
 # group: [sql]
 
 require glossql
@@ -282,10 +282,10 @@ FROM GLOSSARY(fin.lines::derivation_candidates);
 ----
 true	2	sum
 
-# --- grounding_collisions: the same SQL under two names, and the same series from different SQL
+# --- definition_collisions: the same SQL under two names, and the same series from different SQL
 
 query I
-SELECT groundings FROM grounding_collisions('fin');
+SELECT definitions FROM definition_collisions('fin');
 ----
 0
 
@@ -317,7 +317,7 @@ statement ok
 GLOSS costs ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger WHERE value > 250"}$$;
 
 query ITTI
-SELECT groundings, kind, aspects::VARCHAR, months FROM grounding_collisions('fin') ORDER BY seq;
+SELECT definitions, kind, aspects::VARCHAR, months FROM definition_collisions('fin') ORDER BY seq;
 ----
 4	sql	[revenue, turnover]	NULL
 4	served_series	[open_items, revenue, turnover]	3
@@ -331,7 +331,7 @@ statement ok
 GLOSS margin ON fin AS $${"sql": "SELECT date AS day, value AS amount FROM fin.ledger"}$$;
 
 query T
-SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_series';
+SELECT aspects::VARCHAR FROM definition_collisions('fin') WHERE kind = 'served_series';
 ----
 [open_items, revenue, turnover]
 
@@ -342,7 +342,7 @@ statement ok
 GLOSS role ON margin.amount AS $${"value": "measure"}$$;
 
 query T
-SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_series';
+SELECT aspects::VARCHAR FROM definition_collisions('fin') WHERE kind = 'served_series';
 ----
 [margin, open_items, revenue, turnover]
 
@@ -352,15 +352,15 @@ statement ok
 GLOSS additivity ON open_items.value AS $${"value": "semi-additive"}$$;
 
 query T
-SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_series';
+SELECT aspects::VARCHAR FROM definition_collisions('fin') WHERE kind = 'served_series';
 ----
 [margin, revenue, turnover]
 
 statement ok
-SELECT detect_grounding_collisions() FROM fin;
+SELECT detect_definition_collisions() FROM fin;
 
 query TT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.groundings') FROM GLOSSARY(fin::grounding_collisions);
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.definitions') FROM GLOSSARY(fin::definition_collisions);
 ----
 true	5
 
@@ -446,9 +446,9 @@ DECLARE TEST ids_test ON ids_present BY (AGENT, HUMAN) DETECTOR rate_tolerance T
 statement ok
 GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "tolerance": 0.2}$$;
 
-# no check has spoken: yellow, never green
+# no check has annotated: yellow, never green
 query TTR
-SELECT subject, band, score FROM TESTS(orders::ids_present);
+SELECT subject, state, score FROM TESTS(orders::ids_present);
 ----
 fin.orders	yellow	0.0
 
@@ -464,7 +464,7 @@ SELECT ids_present_check() FROM orders;
 
 # one order in five names no customer: at the tolerance, green, and nothing to score
 query TTR
-SELECT subject, band, score FROM TESTS(orders::ids_present);
+SELECT subject, state, score FROM TESTS(orders::ids_present);
 ----
 fin.orders	green	0.0
 
@@ -479,7 +479,7 @@ statement ok
 RESET VARIABLE glossql_actor;
 
 query TTR
-SELECT subject, band, score FROM TESTS(orders::ids_present);
+SELECT subject, state, score FROM TESTS(orders::ids_present);
 ----
 fin.orders	red	0.2
 
@@ -541,7 +541,7 @@ beh.totals.account_id -> beh.accounts.id	2
 
 # no role glossed on the event tables: every anchor abstains and names the gloss to make
 query TTT
-SELECT DISTINCT event, verdict, (reason) IS NOT NULL FROM additivity_anchors('beh.balances.balance') ORDER BY event;
+SELECT DISTINCT event, result, (reason) IS NOT NULL FROM additivity_anchors('beh.balances.balance') ORDER BY event;
 ----
 postings	abstain	true
 totals	abstain	true
@@ -551,7 +551,7 @@ statement ok
 SELECT additivity_evidence() FROM balances.balance;
 
 query TT
-SELECT json_extract_string(g.value, '$.summary.verdict'), m.reads
+SELECT json_extract_string(g.value, '$.summary.result'), m.reads
 FROM GLOSSARY(beh.balances.balance::additivity_evidence) g, main.measurements m
 WHERE m.subject = 'beh.balances.balance';
 ----
@@ -571,7 +571,7 @@ GLOSS role ON balances.balance AS $${"value": "measure"}$$;
 # reading abstains, since signed postings move the level both ways. The movements are the glossed measures; posting_id
 # is an identifier, served as one
 query ITTTTTIRRRT
-SELECT seq, event, grain, scope, verdict, convention, voted, round(support, 4), round(r_flow, 2), r_stock, (reason) IS NOT NULL FROM additivity_anchors('beh.balances.balance') ORDER BY seq;
+SELECT seq, event, grain, scope, result, convention, voted, round(support, 4), round(r_flow, 2), r_stock, (reason) IS NOT NULL FROM additivity_anchors('beh.balances.balance') ORDER BY seq;
 ----
 0	postings	day	none	abstain	NULL	NULL	NULL	NULL	NULL	true
 1	postings	day	year	abstain	NULL	NULL	NULL	NULL	NULL	true
@@ -594,7 +594,7 @@ statement ok
 SELECT additivity_evidence() FROM balances.balance;
 
 query TTTTTTI
-SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'), json_extract_string(value, '$.summary.event'),
+SELECT json_extract_string(value, '$.summary.result'), json_extract_string(value, '$.summary.convention'), json_extract_string(value, '$.summary.event'),
        json_extract_string(value, '$.summary.grain'), json_extract_string(value, '$.summary.tiebreak'),
        json_extract_string(value, '$.anchors_n') || '/' || json_extract_string(value, '$.decided') || '/' || json_array_length(value, '$.anchors'),
        (SELECT count(*) FROM main.measurements WHERE subject = 'beh.balances.balance')
@@ -602,12 +602,12 @@ FROM GLOSSARY(beh.balances.balance::additivity_evidence);
 ----
 semi-additive	amount	postings	month	event-name	10/4/10	2
 
-# the monthly sums match the postings' movement as they stand: flow
+# the monthly sums match the postings' movement as they are: flow
 statement ok
 SELECT additivity_evidence() FROM totals.total;
 
 query TTTT
-SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'),
+SELECT json_extract_string(value, '$.summary.result'), json_extract_string(value, '$.summary.convention'),
        json_extract_string(value, '$.summary.r_flow'), json_extract_string(value, '$.summary.sign.primary')
 FROM GLOSSARY(beh.totals.total::additivity_evidence);
 ----
@@ -627,7 +627,7 @@ SELECT json_extract_string(value, '$.applicable'), (json_extract_string(value, '
 ----
 false	true
 
-# an identifier is no measure: a leg of a declared relationship at bind, a key-shaped integer by its distinct share
+# an identifier is no measure: a key column of a declared relationship at bind, a key-shaped integer by its distinct share
 query TT
 SELECT applicable, (reason) IS NOT NULL FROM additivity_anchors('beh.postings.account_id');
 ----
@@ -679,7 +679,7 @@ DECLARE RELATIONSHIP postings.account_id -> balances.account_id;
 
 # no role, then a role that is no measure, then the measure: the abstention names the act each time
 query TT
-SELECT DISTINCT verdict, (reason) IS NOT NULL FROM additivity_anchors('direct.balances.balance');
+SELECT DISTINCT result, (reason) IS NOT NULL FROM additivity_anchors('direct.balances.balance');
 ----
 abstain	true
 
@@ -687,7 +687,7 @@ statement ok
 GLOSS role ON postings.amount AS $${"value": "attribute"}$$;
 
 query TT
-SELECT DISTINCT verdict, (reason) IS NOT NULL FROM additivity_anchors('direct.balances.balance');
+SELECT DISTINCT result, (reason) IS NOT NULL FROM additivity_anchors('direct.balances.balance');
 ----
 abstain	true
 
@@ -695,13 +695,13 @@ statement ok
 GLOSS role ON postings.amount AS $${"value": "measure"}$$;
 
 query TTTTTT
-SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM additivity_anchors('direct.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
+SELECT align, grain, scope, result, convention, identifier_columns::VARCHAR FROM additivity_anchors('direct.balances.balance') WHERE result <> 'abstain' ORDER BY seq;
 ----
 balances.account_id = postings.account_id	month	none	semi-additive	amount	[account_id, posting_id]
 balances.account_id = postings.account_id	month	year	semi-additive	amount	[account_id, posting_id]
 
 # the measure side borrows its entity through a document: the levels are per invoice, the invoice names the customer,
-# and the payments key on the customer; a measure table whose every edge lands on a document keys on the document's dimension
+# and the payments key on the customer; a measure table whose every edge ends on a document keys on the document's dimension
 statement ok
 DECLARE DATASET viadoc SET (purpose: 'shape');
 
@@ -748,7 +748,7 @@ statement ok
 GLOSS role ON received.received_to_date AS $${"value": "measure"}$$;
 
 query TTTTTT
-SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM additivity_anchors('viadoc.received.received_to_date') WHERE verdict <> 'abstain' ORDER BY seq;
+SELECT align, grain, scope, result, convention, identifier_columns::VARCHAR FROM additivity_anchors('viadoc.received.received_to_date') WHERE result <> 'abstain' ORDER BY seq;
 ----
 received via invoices.customer_id = payments.customer_id	month	none	semi-additive	amount	[customer_id, payment_id]
 received via invoices.customer_id = payments.customer_id	month	year	semi-additive	amount	[customer_id, payment_id]
@@ -805,12 +805,12 @@ statement ok
 GLOSS role ON payment_lines.amount AS $${"value": "measure"}$$;
 
 query TTTTTT
-SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM additivity_anchors('viamaster.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
+SELECT align, grain, scope, result, convention, identifier_columns::VARCHAR FROM additivity_anchors('viamaster.balances.balance') WHERE result <> 'abstain' ORDER BY seq;
 ----
 balances.customer_id = payment_lines via payments.customer_id	month	none	semi-additive	amount	[line_id, payment_id]
 balances.customer_id = payment_lines via payments.customer_id	month	year	semi-additive	amount	[line_id, payment_id]
 
-# the kit run again with the same text stands: one row, nothing runs
+# the kit run again with the same text is current: one row, nothing runs
 query TT
 FROM glossql_kit('kits/quality/kit.sql');
 ----

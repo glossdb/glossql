@@ -1,5 +1,5 @@
 # name: test/sql/glossql_views.test
-# description: a view counts as a table (SPEC §3) — a grounding's view and its columns are subjects, glossed, measured and owed like a table's; the view's definition is the shape its glosses age by and a leg of what is measured over it
+# description: a view counts as a table (SPEC §3) — a definition's view and its columns are subjects, glossed, measured and required like a table's; the view's definition is the shape its glosses age by and a part of what is measured over it
 # group: [sql]
 
 require glossql
@@ -70,7 +70,7 @@ fin.spend	entity	current
 fin.spend.period	role	current
 fin.spend.value	role	current
 
-# --- measured like a table's column, and served while the view and what it reads stand
+# --- measured like a table's column, and served while the view and what it reads are unchanged
 
 statement ok
 DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max": {}}}$$ AS MEASUREMENT ON COLUMN;
@@ -83,10 +83,10 @@ SELECT min_max() FROM spend.value;
 ----
 min_max	fin.spend.value	min_max	{"min":1.0,"max":2.0}	true
 
-# its reads name the view beside the table behind it, and the pin carries the view at the snapshot that defined it
+# its reads name the view beside the table behind it, and the data version carries the view at the snapshot that defined it
 
 query TI
-SELECT reads, len(list_filter(string_split(pin, ','), lambda p: starts_with(p, 'fin.spend:'))) FROM measurements;
+SELECT reads, len(list_filter(string_split(data_version, ','), lambda p: starts_with(p, 'fin.spend:'))) FROM measurements;
 ----
 fin.spend,fin.t	1
 
@@ -147,7 +147,7 @@ SELECT subject, state FROM GLOSSARY(spend.value::role);
 ----
 fin.spend.value	current
 
-# --- a view over the view: the measurement's legs run through both
+# --- a view over the view: the measurement's parts run through both
 
 statement ok
 DECLARE ASPECT spend_total WITH $${"title": "Spend, total"}$$ AS VIEW;

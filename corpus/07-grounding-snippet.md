@@ -47,7 +47,7 @@ GLOSS accounts_receivable ON fin.journal_lines AS $${
   tables may coexist — two ways to calculate revenue arriving at the same
   number is the correct answer, not a conflict. Whether they reconcile is a
   test's job (a function runs both and reports the residual; a
-  detector bands it — a detector's own query plans over `slots` alone).
+  detector gives it a state — a detector's own query plans over `annotations` alone).
 - The old track's weakest-assumption confidence gate is a detector's business:
   assumptions are in the body, readable by any function.
 - **DROPPED BY DESIGN — retained failures.** `disjoint_collision` and friends

@@ -10,7 +10,7 @@ without `RETURNS` is a detector, run by the tests that name it.
 | `seq` | BIGINT | The row's order in the table, from 1. |
 | `name` | VARCHAR | The function's name. |
 | `scope` | VARCHAR | A dataset's name, or `GLOBAL` for every dataset (its macro lives in `main`). |
-| `script` | VARCHAR | The SQL body. A measurement reads its asset as `$subject`; a detector reads its test's `slots` and `$threshold`. |
+| `script` | VARCHAR | The SQL body. A measurement reads its asset as `$subject`; a detector reads its test's `annotations` and `$threshold`. |
 | `returns` | VARCHAR | The aspect a measurement's result is validated against and stored under; NULL for a detector. |
 | `declared_at` | TIMESTAMP | When the row was written. |
 | `declared_by` | VARCHAR | Who wrote the row: `kit:<name>` for a declaration a kit made, else the actor as `<kind>:<id>` (`agent:builder`, `human:ana`), or the kind alone where the connection named no one. |

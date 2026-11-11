@@ -140,7 +140,7 @@ string JsonSchemaValueEnumCheck(const string &schema, const string &literal);
 //! A top-level string field of a JSON object, empty when absent
 string JsonStringField(const string &document, const string &field);
 //! The metric definition contract: sql or stopped, assumptions disclosed; every other key is a kit's
-extern const char *const GROUNDING_CONTRACT;
+extern const char *const DEFINITION_CONTRACT;
 
 //! Parses plain SQL with the stock grammar into one SELECT
 unique_ptr<SelectStatement> ParseSelect(const string &sql);
@@ -168,21 +168,21 @@ struct Workspace {
 	string Table(const string &dataset, const string &name) const;
 };
 
-//! The legs a measurement can read, each at its version now: (name, version, kind) —
+//! The parts a measurement can read, each at its version now: (name, version, kind) —
 //! every live table of the lake as <schema>.<table> at the last snapshot that
 //! wrote, altered or dropped it, every live view but the store's own as
 //! <schema>.<view> at the snapshot that defined it, every store relation but
 //! measurements as glossql.<relation> at its highest seq ('-' while empty); kind is
-//! table, view or store. A measurement's pin is these parts joined, sorted,
+//! table, view or store. A measurement's data version is these parts joined, sorted,
 //! name:version; glossql_store.cpp
-string LegsSQL(const Workspace &ws);
-//! The store's legs by name, quoted and comma-separated: 'main.aspects', ... (measurements is none)
-string StoreLegNames();
-//! Whether the measurement row `row` (pin, reads, dataset, function, computed_at)
-//! still holds, as a SQL boolean over a CTE named legs (LegsSQL): the legs its
-//! reads name look the same now as in its pin, and its function has not been
+string PartsSQL(const Workspace &ws);
+//! The store's parts by name, quoted and comma-separated: 'main.aspects', ... (measurements is none)
+string StorePartNames();
+//! Whether the measurement row `row` (data_version, reads, dataset, function, computed_at)
+//! still holds, as a SQL boolean over a CTE named parts (PartsSQL): the parts its
+//! reads name look the same now as in its data version, and its function has not been
 //! re-declared since
-string StandsSQL(const Workspace &ws, const string &row);
+string IsCurrentSQL(const Workspace &ws, const string &row);
 
 //! A second connection to the same database, for SQL run while the calling
 //! connection's context lock is held (glossql_runner.cpp)

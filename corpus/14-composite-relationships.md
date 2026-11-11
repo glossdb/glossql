@@ -22,7 +22,7 @@ DECLARE RELATIONSHIP master_txn.(business_id, product_service)
   -> products_services.(business_id, product_name);
 ```
 
-## Grounds ride the pair path
+## The basis rides the pair path
 
 ```glossql
 GLOSS meaning ON master_txn.(business_id, payment_method)
@@ -38,7 +38,7 @@ GLOSS meaning ON master_txn.(business_id, product_service)
 
 ## Findings
 
-- **The unscoped anchor legs were not declared.**
+- **The unscoped anchor parts were not declared.**
   `master_txn.account -> chart_of_accounts.account_name` alone licenses a
   27× fan-out join — the exact over-count the composite exists to
   collapse. A tuple endpoint says the scope; a single-column endpoint on

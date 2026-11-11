@@ -25,14 +25,14 @@ SELECT name, kind, grains FROM aspects;
 |---|---|---|---|
 | `meaning` | table, column, relationship | `value`: a sentence; `term`: the business term | what it is |
 | `role` | column | `value`: `key`, `measure`, `dimension`, `timestamp`, `attribute` | what kind of column; the first claim, the others wait on it |
-| `additivity` | measure columns | `value`: `additive` (a flow: sums over time and members), `semi-additive` (a stock: a level, sums over members, never over time), `ratio`, `non-additive`; `numerator` and `denominator` for a ratio; `grounds` | how the number combines over periods and members; `none`: examined, does not apply |
+| `additivity` | measure columns | `value`: `additive` (a flow: sums over time and members), `semi-additive` (a stock: a level, sums over members, never over time), `ratio`, `non-additive`; `numerator` and `denominator` for a ratio; `basis` | how the number combines over periods and members; `none`: examined, does not apply |
 | `unit` | measure columns | `value`: the unit; `source_column`: where a row's unit sits | what the number counts |
-| `dimension` | dimension columns | `value`: `primary`, `supporting`, `none`; `grounds` | whether reports slice by it |
+| `dimension` | dimension columns | `value`: `primary`, `supporting`, `none`; `basis` | whether reports slice by it |
 | `entity` | table | `value`: what one row is; `role`; `grain`; `time_axis`; `identity_columns` | the identity every aggregate holds on |
 | `conventions` | source | any object | fiscal calendar, signs, what nulls mean |
 | `definitions` | dataset | `definitions`: one object per metric name | the handbook: meaning, unit, owner, source of each metric, and a derived metric's `formula` over its siblings, text a person corrects, never computed |
 
-`role`, `additivity` and `unit` are judged by `slot_entropy`: when the
+`role`, `additivity` and `unit` are judged by `value_entropy`: when the
 agent's and the human's values differ, the claim is in `conflict`, its
 value withheld, the result `red` above 0.7. `meaning`, `entity` and
 `dimension` take both kinds of actor without a detector.
@@ -43,24 +43,24 @@ value withheld, the result `red` above 0.7. `meaning`, `entity` and
    `SELECT * FROM GLOSSARY(orders) WHERE state <> 'current';`
 2. Gloss `role` on every column first. `additivity` and `unit` are required
    only on measures, `dimension` only on dimensions, so the backlog opens
-   as roles land.
+   as roles are annotated.
 3. Extract before claiming. `SELECT column_profile() FROM orders.amount;`
-   and `SELECT outlier_profile() FROM orders.amount;` land evidence that
-   `GLOSSARY()` serves beside the glosses; cite it in `grounds`. With the
+   and `SELECT outlier_profile() FROM orders.amount;` store evidence that
+   `GLOSSARY()` serves beside the glosses; cite it in `basis`. With the
    quality kit loaded and the edges declared, `SELECT additivity_evidence()
    FROM orders.amount;` writes the stock/flow evidence: read its result
    and the anchor that decided before glossing `additivity`. It is
    evidence, never a value.
-4. Gloss with grounds: `GLOSS additivity ON orders.amount AS $${"value":
-   "additive", "grounds": "sums over orders, never a balance"}$$;`. You speak
+4. Gloss with a basis: `GLOSS additivity ON orders.amount AS $${"value":
+   "additive", "basis": "sums over orders, never a balance"}$$;`. You annotate
    as `agent`. A person's review decision arrives as `human`, which the wrapper
    sets with `SET VARIABLE glossql_actor = 'human'`; never set it yourself.
 5. Read the results: `SELECT * FROM TESTS(orders.amount::role);`. A red
-   band is a disagreement to resolve by re-glossing, not to overwrite.
+   state is a disagreement to resolve by re-glossing, not to overwrite.
 
 ## Metrics
 
-A metric is a VIEW aspect, declared thin and grounded by a gloss on the
+A metric is a VIEW aspect, declared thin and defined by a gloss on the
 dataset. The metric definition is served as a view under the metric's name, and
 the view is a table of the dataset: its columns take this kit's words
 like a loaded table's columns do, and that is where a reader of the

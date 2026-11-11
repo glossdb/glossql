@@ -1,7 +1,7 @@
 # The data harness
 
-A harness is what surrounds an agent's work and tells it where it
-stands. For code, that is a type system, a compiler, linters, tests,
+A harness is what surrounds an agent's work and tells it the state of
+that work. For code, that is a type system, a compiler, linters, tests,
 CI and review. glossql is the language for writing the same for data.
 
 ## Why data needs a harness

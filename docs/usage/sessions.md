@@ -46,7 +46,7 @@ SET VARIABLE glossql_actor_id = 'ada@example.com';
 ```
 
 - `glossql_actor` is the kind, `agent` or `human`. A value is kept per
-  asset, property and kind, so a person's value and an agent's stand
+  asset, property and kind, so a person's value and an agent's are kept
   side by side, and the person's wins on read.
 - `glossql_actor_id` is the writer, stored with every value.
 

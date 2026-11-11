@@ -24,8 +24,8 @@ geometry stops at the first `ST_` function.
 
 | Aspect | On | Body | Says |
 |---|---|---|---|
-| `shape` | geometry columns (`WHEN TYPE = 'GEOMETRY'`) | `value`: `point`, `line`, `polygon`, `mixed`; `represents`; `grounds` | what one geometry holds for |
-| `crs` | geometry columns (`WHEN TYPE = 'GEOMETRY'`) | `value`: the identifier, `EPSG:2263`; `unit`: what a coordinate counts; `grounds` | the coordinate reference system the coordinates are in |
+| `shape` | geometry columns (`WHEN TYPE = 'GEOMETRY'`) | `value`: `point`, `line`, `polygon`, `mixed`; `represents`; `basis` | what one geometry holds for |
+| `crs` | geometry columns (`WHEN TYPE = 'GEOMETRY'`) | `value`: the identifier, `EPSG:2263`; `unit`: what a coordinate counts; `basis` | the coordinate reference system the coordinates are in |
 | `geometry_profile` | column, a measurement | `total`, `null_ratio`, `kinds`, `invalid`, `empty`, `extent`, `area_sum` | what the geometries are: `SELECT geometry_profile() FROM zones.geom;` |
 
 Both tests take the agent and the human without a detector.
@@ -51,8 +51,8 @@ Both tests take the agent and the human without a detector.
    'current';`. Both words are required on the geometry columns and nowhere
    else.
 2. Extract first, `SELECT geometry_profile() FROM zones.geom;`, and
-   gloss `shape` with the kinds as grounds.
+   gloss `shape` with the kinds as its basis.
 3. Gloss `crs` on the geometry column from `ST_Read_Meta`, with the
    unit the CRS implies.
-4. Ground what is asked in the CRS's units, the conversion in the
+4. Define what is asked in the CRS's units, the conversion in the
    assumptions.

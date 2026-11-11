@@ -34,7 +34,7 @@ DECLARE ASPECT additivity WITH $${
   "properties": {"value": {"enum": ["semi-additive", "additive", "ratio", "non-additive"]},
                  "numerator": {"type": "string"},
                  "denominator": {"type": "string"},
-                 "grounds": {"type": "string"}}
+                 "basis": {"type": "string"}}
 }$$ AS FACT ON COLUMN WHEN role = 'measure';
 
 DECLARE ASPECT unit WITH $${
@@ -46,10 +46,10 @@ DECLARE ASPECT unit WITH $${
 DECLARE ASPECT dimension WITH $${
   "type": "object", "required": ["value"],
   "properties": {"value": {"enum": ["primary", "supporting", "none"]},
-                 "grounds": {"type": "string"}}
+                 "basis": {"type": "string"}}
 }$$ AS FACT ON COLUMN WHEN role = 'dimension';
 
--- Table identity: the entity verdict every aggregate stands on.
+-- Table identity: the entity every aggregate rests on.
 
 DECLARE ASPECT entity WITH $${
   "type": "object", "required": ["value"],
@@ -74,29 +74,29 @@ DECLARE ASPECT definitions WITH $${
   "type": "object", "properties": {"definitions": {"type": "object"}}
 }$$ AS FACT ON DATASET;
 
--- The detector: one query over the test's slots, a (subject, band,
+-- The detector: one query over the test's annotations, a (subject, state,
 -- score) row per subject. Score is the fraction of extra distinct values
--- across a subject's slots; the band reads it against the test's
+-- across a subject's annotations; the state reads it against the test's
 -- threshold, bound as $threshold.
 
-DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$
+DECLARE FUNCTION value_entropy FOR GLOBAL AS $$
   WITH s AS (
     SELECT subject,
            CASE WHEN count(*) <= 1 THEN 0.0
                 ELSE (count(DISTINCT body->>'value') - 1.0) / (count(*) - 1.0)
            END AS score
-    FROM slots GROUP BY subject)
+    FROM annotations GROUP BY subject)
   SELECT subject,
          CASE WHEN score = 0.0 THEN 'green'
               WHEN score <= coalesce($threshold, 1.0) THEN 'yellow'
-              ELSE 'red' END AS band,
+              ELSE 'red' END AS state,
          score
   FROM s
 $$;
 
 -- Measurements: a function with RETURNS fills its aspect at extraction,
 -- SELECT column_profile() FROM orders.amount; the output meets the aspect's
--- schema, lands in measurements, and GLOSSARY() serves it beside the glosses.
+-- schema, is stored in measurements, and GLOSSARY() serves it beside the glosses.
 
 DECLARE ASPECT column_profile WITH $${
   "type": "object", "required": ["total", "null_ratio", "distinct"],
@@ -115,7 +115,7 @@ $$ RETURNS column_profile;
 -- Outliers: IQR fences and the modified Z-score, distribution facts with no
 -- domain rule. A column that does not parse as numbers is examined and not
 -- applicable; MAD 0 makes every deviation infinite, so that check counts
--- zero and the fences stand alone.
+-- zero and the fences remain alone.
 
 DECLARE ASPECT outlier_profile WITH $${
   "type": "object", "required": ["applicable"],
@@ -141,12 +141,12 @@ DECLARE FUNCTION outlier_profile FOR GLOBAL AS $$
   FROM f CROSS JOIN c
 $$ RETURNS outlier_profile;
 
--- The tests, last: a test names an aspect and a detector that stand.
--- BY says who may speak; slot_entropy judges the enum claims.
+-- The tests, last: a test names an aspect and a detector that are declared.
+-- BY says who may annotate; value_entropy judges the enum claims.
 
 DECLARE TEST meaning_test ON meaning BY (AGENT, HUMAN);
 DECLARE TEST entity_test ON entity BY (AGENT, HUMAN);
-DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE TEST unit_test ON unit BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR value_entropy THRESHOLD 0.7;
+DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN) DETECTOR value_entropy THRESHOLD 0.7;
+DECLARE TEST unit_test ON unit BY (AGENT, HUMAN) DETECTOR value_entropy THRESHOLD 0.7;
 DECLARE TEST dimension_test ON dimension BY (AGENT, HUMAN);

@@ -53,10 +53,10 @@ GLOSS trial_balance ON fin AS $${
 DECLARE FUNCTION trial_balance_check FOR fin AS $$/* debits minus credits per period, as a breach rate */$$
   RETURNS trial_balance;
 
-DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
+DECLARE FUNCTION balance_states FOR fin AS $$/* detector: gives the balance values a state */$$;
 
 DECLARE TEST tb ON trial_balance BY (HUMAN)
-  DETECTOR balance_bands;
+  DETECTOR balance_states;
 
 SELECT * FROM TESTS(fin.trial_balance);
 ```
@@ -75,8 +75,8 @@ SELECT * FROM TESTS(fin.trial_balance);
   detector, legal because its RETURNS transcribed the test-results schema. With
   `RETURNS` an aspect reference, the roles separate: the check is a
   *value* — `RETURNS trial_balance`, full SQL interface, its result is stored as a
-  value beside the human's expectation — and `balance_bands` (no RETURNS)
-  is the detector that reads both values and bands. The test-results schema left
+  value beside the human's expectation — and `balance_states` (no RETURNS)
+  is the detector that reads both values and returns the state. The test-results schema left
   the author's hands: it is the engine's contract, no longer transcribed.
 - **INFORMATION LOST (accepted):** category, tags, version — browsing
   metadata, same relocation as fixture 03.

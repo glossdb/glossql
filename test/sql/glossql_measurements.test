@@ -1,5 +1,5 @@
 # name: test/sql/glossql_measurements.test
-# description: a measurement lands at its pin with what it read; a later extraction serves it while those reads are unchanged, and a function voice is current while they are
+# description: a measurement is stored at its data version with what it read; a later extraction serves it while those reads are unchanged, and a function annotation is current while they are
 # group: [sql]
 
 require glossql
@@ -37,17 +37,17 @@ DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max"
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 
-# --- extraction stores the row at its pin: every leg the body could have read, at its version now
+# --- extraction stores the row at its data version: every part the body could have read, at its version now
 
 query TTTTT
 SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
 
-# reads names what the body read, by name; the pin is the dataset's tables at the
+# reads names what the body read, by name; the data version is the dataset's tables at the
 # last snapshot that wrote them and the store relations at their highest seq
 query TT
-SELECT reads, pin FROM measurements;
+SELECT reads, data_version FROM measurements;
 ----
 fin.orders	fin.orders:13,fin.other:14,main.aspects:1,main.datasets:1,main.functions:1,main.glossary:-,main.imports:-,main.kits:-,main.recipes:-,main.relationships:-,main.sources:-,main.tests:-
 
@@ -72,14 +72,14 @@ statement ok
 DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 statement ok
-GLOSS note ON orders.amount AS $${"text": "landed"}$$;
+GLOSS note ON orders.amount AS $${"text": "loaded"}$$;
 
 query TTTTT
 SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	false
 
-# --- one of its reads moving makes the next extraction compute; old rows stand as the drift record
+# --- one of its reads moving makes the next extraction compute; old rows stay as the drift record
 
 statement ok
 INSERT INTO fin.orders VALUES (9, 9.0);
@@ -105,7 +105,7 @@ SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":10.0}	true
 
-# --- the store relations are legs too: a body that reads the glossary moves with it
+# --- the store relations are parts too: a body that reads the glossary moves with it
 
 statement ok
 DECLARE ASPECT notes WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
@@ -132,14 +132,14 @@ SELECT notes() FROM orders.amount;
 notes	fin.orders.amount	notes	1	false
 
 statement ok
-GLOSS note ON orders.amount AS $${"text": "landed again"}$$;
+GLOSS note ON orders.amount AS $${"text": "loaded again"}$$;
 
 query TTTTT
 SELECT notes() FROM orders.amount;
 ----
 notes	fin.orders.amount	notes	2	true
 
-# --- a body that reads nothing stands for ever; one whose reads cannot be named stands at its exact pin
+# --- a body that reads nothing is current for ever; one whose reads cannot be named is current at its exact data version
 
 statement ok
 DECLARE ASPECT answer WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
@@ -213,10 +213,10 @@ SELECT aspect, value FROM GLOSSARY(orders.amount::profile);
 ----
 profile	{"summary":{"n":6},"detail":[0.0,1.5,3.0,4.5,9.0,10.0]}
 
-# --- a function voice is current while what it read is unchanged, and the verdict says so
+# --- a function annotation is current while what it read is unchanged, and the result says so
 
 statement ok
-DECLARE FUNCTION all_current FOR fin AS $$ SELECT subject, CASE WHEN bool_and(current) THEN 'green' ELSE 'red' END AS band, 0.0 AS score FROM slots GROUP BY subject $$;
+DECLARE FUNCTION all_current FOR fin AS $$ SELECT subject, CASE WHEN bool_and(current) THEN 'green' ELSE 'red' END AS state, 0.0 AS score FROM annotations GROUP BY subject $$;
 
 statement ok
 DECLARE TEST min_max_test ON min_max DETECTOR all_current THRESHOLD 0.5;
@@ -227,7 +227,7 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":11.0}	true
 
 query TTTT
-SELECT subject, band, current, error FROM TESTS(orders.amount::min_max);
+SELECT subject, state, current, error FROM TESTS(orders.amount::min_max);
 ----
 fin.orders.amount	green	true	NULL
 
@@ -237,17 +237,17 @@ SELECT actor, body, current FROM GLOSSARY(orders.amount::min_max, all => true);
 function	{"min":0.0,"max":11.0}	true
 
 query TTT
-SELECT value, band, state FROM GLOSSARY(orders.amount::min_max);
+SELECT value, test_state, state FROM GLOSSARY(orders.amount::min_max);
 ----
 {"min":0.0,"max":11.0}	green	current
 
 statement ok
 DELETE FROM fin.orders WHERE id = 10;
 
-# the detector sees the slot's current; the verdict's current is every function voice it read
+# the detector sees the value's current; the result's current is every function annotation it read
 
 query TTTT
-SELECT subject, band, current, error FROM TESTS(orders.amount::min_max);
+SELECT subject, state, current, error FROM TESTS(orders.amount::min_max);
 ----
 fin.orders.amount	red	false	NULL
 
@@ -256,10 +256,10 @@ SELECT actor, body, current FROM GLOSSARY(orders.amount::min_max, all => true);
 ----
 function	{"min":0.0,"max":11.0}	false
 
-# served and marked: the voice stays, stale beside it
+# served and marked: the annotation stays, stale beside it
 
 query TTT
-SELECT value, band, state FROM GLOSSARY(orders.amount::min_max);
+SELECT value, test_state, state FROM GLOSSARY(orders.amount::min_max);
 ----
 {"min":0.0,"max":11.0}	red	stale
 
@@ -269,11 +269,11 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":10.0}	true
 
 query TTT
-SELECT value, band, state FROM GLOSSARY(orders.amount::min_max);
+SELECT value, test_state, state FROM GLOSSARY(orders.amount::min_max);
 ----
 {"min":0.0,"max":10.0}	green	current
 
-# a gloss's own staleness is the subject's shape (SPEC §5.2), a voice's is its reads: a landing ages the voice only
+# a gloss's own staleness is the subject's shape (SPEC §5.2), a annotation's is its reads: a load ages the annotation only
 
 statement ok
 DECLARE TEST note_test ON note BY (AGENT, HUMAN);

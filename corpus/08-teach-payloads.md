@@ -25,7 +25,7 @@ DECLARE RELATIONSHIP orders.customer_id -> customers.id;
 ```
 
 `hierarchy` teach, `add` action (reconciled 2026-08-06: a hierarchy is
-recorded as same-table relationships, finer → coarser, with the grounds
+recorded as same-table relationships, finer → coarser, with the basis
 on the pair — the dimensions review decision — never a levels blob):
 
 ```glossql
@@ -35,7 +35,7 @@ GLOSS meaning ON customers.city -> customers.region AS $${"value": "taught drill
 ```
 
 `type_pattern` and `null_value` — the workspace-scoped vocabulary teaches the
-old spec wrestled with (§8.3) — land as dataset-scoped FACT glosses, which is
+old spec wrestled with (§8.3) — are stored as dataset-scoped FACT glosses, which is
 their real scope:
 
 ```glossql

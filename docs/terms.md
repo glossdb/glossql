@@ -19,11 +19,11 @@ works](https://github.com/glossdb/glossdb/blob/main/docs/overview/how-it-works.m
 | function | measurement | One SQL query that measures the data; its result is stored with its provenance |
 | detector | scoring function | A function that scores how far the values for an aspect agree |
 | test (`DECLARE TEST`) | data test | Declared on an aspect: who may annotate it and which detector scores agreement, with a threshold |
-| `TESTS()` | test results | One row per asset and aspect: band, score, whether it is current |
+| `TESTS()` | test results | One row per asset and aspect: state, score, whether it is current |
 | `GLOSSARY()` | the glossary | What is known: one row per asset and aspect, with its state |
 | `current` · `stale` · `conflict` · `missing` | valid · outdated · conflict · missing value | The state of an asset's aspect in the glossary |
-| band | severity, confidence | green, yellow, orange, red, or error |
-| `pin`, `reads` | provenance | The versions of what a measurement read |
+| test state (`state` in `TESTS()`, `test_state` in `GLOSSARY()`) | severity, confidence | green, yellow, orange, red, or error |
+| `data_version`, `reads` | provenance | The versions of what a measurement read |
 | source | connection | A directory, a URL prefix, or an attached database |
 | `RECIPE` | load query | The SQL that loads a table from a source |
 | `IMPORT` | load | Runs a load query; every load is a DuckLake snapshot with its row count and column lineage |

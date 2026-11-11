@@ -12,7 +12,7 @@ the scorecard runs first with the reader inlining served SQL.
 The floor under it (fixtures 11 + the dimensions flow) has already
 produced: `entity` glosses with verified grain, `additivity` results
 evidenced by `additivity_evidence`, declared relationships carrying
-grain-check grounds, units and the sign convention. Every metric definition
+grain-check basis, units and the sign convention. Every metric definition
 below cites that floor in its assumptions — this is what "ground the
 aspects with the information we expose over functions" means in
 statements.
@@ -53,7 +53,7 @@ DECLARE ASPECT gross_profit WITH $${
 }$$ AS VIEW;
 ```
 
-## 2. Concepts ground as extracts (fixture 07's shape, taken seriously)
+## 2. Concepts are defined as extracts (fixture 07's shape, taken seriously)
 
 A metric definition carries **no grain**: it is the semantic core — scoping,
 signs, the grain-preserving joins composed inline (`journal_lines`
@@ -132,7 +132,7 @@ consumer asks, the target carries it.
 **What a read proves may be recorded.** Pre-evaluation is computing
 before anyone asks; *recording* is keeping what a real read proved —
 the judged-join pattern. A composed evaluation the agent has verified
-against the oracle may land as the metric's own VIEW gloss (the
+against the oracle may be stored as the metric's own VIEW gloss (the
 durable executable knowledge — v0.3's snippet economy, post-record
 not pre-compute), superseding as definitions change; re-windowing
 recomposes from §2's extracts.
@@ -169,8 +169,8 @@ territory (fixture 07's coexistence finding).
 ## 5. Validations (fixture 04's decided shape)
 
 Expectation as a FACT gloss; the check as a thin function **value**
-(`RETURNS` the aspect, full interface, fresh by the read's pin);
-a detector bands the values; TESTS is the result surface. Two of the
+(`RETURNS` the aspect, full interface, fresh by the read's data version);
+a detector gives the values a state; TESTS is the result surface. Two of the
 scorecard's four shown — the exact one and the one whose expectation
 is deliberately not zero:
 
@@ -213,23 +213,23 @@ DECLARE FUNCTION journal_balance_check FOR fin
 DECLARE FUNCTION reconciliation_check FOR fin
   AS $$/* the reconciled fraction against the source's own dirt */$$
   RETURNS bank_reconciliation;
-DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
+DECLARE FUNCTION balance_states FOR fin AS $$/* detector: gives the balance values a state */$$;
 
 DECLARE TEST journal_balanced_test ON journal_balanced BY (AGENT, HUMAN)
-  DETECTOR balance_bands THRESHOLD 0.5;
+  DETECTOR balance_states THRESHOLD 0.5;
 DECLARE TEST bank_reconciliation_test ON bank_reconciliation BY (AGENT, HUMAN)
-  DETECTOR balance_bands THRESHOLD 0.5;
+  DETECTOR balance_states THRESHOLD 0.5;
 
 SELECT journal_balance_check() FROM journal_lines;
 SELECT reconciliation_check() FROM bank_transactions;
 SELECT * FROM TESTS(journal_lines::journal_balanced);
 ```
 
-A check value **speaks the aspect's schema** (fixture 06's
+A check value **meets the aspect's schema** (fixture 06's
 respelling, enforced by the engine): its output must carry `outcome`
 like any value — the result in words, the measurement beside it
 (`{"outcome": "measured: debits equal credits", "imbalance": 0.0}`).
-One schema, every speaker.
+One schema, every actor kind.
 
 A confirmed additivity_evidence convention is a validation candidate:
 `trial_balance.debit_balance = SUM(journal_lines.debit)` reconciled
@@ -239,11 +239,11 @@ promotion.
 
 ## 6. Reading the framework — and FORK B
 
-The framework's standing state is two reads; the app's metric DAG is
+The framework's current state is two reads; the app's metric DAG is
 the same rows drawn:
 
 ```glossql
-SELECT subject, band, score FROM TESTS(fin) WHERE band = 'red';
+SELECT subject, state, score FROM TESTS(fin) WHERE state = 'red';
 SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
@@ -281,7 +281,7 @@ the `formulas` gloss, not regrouping `read.dso()`.
 ## Findings
 
 - **Exercises 01/03/04/07 end to end for the first time** — declare →
-  ground → check → test as one sequence over real shapes, no new
+  define → check → test as one sequence over real shapes, no new
   constructs anywhere.
 - **The checks are the first workspace-authored functions**
   (`FOR fin`, not `FOR GLOBAL`): the bootstrap ships measurements,
@@ -304,16 +304,16 @@ the `formulas` gloss, not regrouping `read.dso()`.
 - **The pinning agenda** (the run-7 lesson): the
   scorecard run reproduced every uniquely-defined number exactly, and
   its only misses were unflagged *definition choices* — the agent
-  stated each with grounds but presented them as judgments made, not
+  stated each with its basis but presented them as judgments made, not
   decisions required. The flow now ends with every definitional
   assumption served to the user as a multiple-choice question; the
-  pin is a human re-gloss (the human value outranks the agent's — a
+  choice is a human re-gloss (the human value outranks the agent's — a
   tested collapse invariant). Beside the questions and the data
   findings, a third list: **world-coverage wishes** — assumptions
   only more world can settle (an opening balance sheet anchoring
   every cumulative level), named as specific asks with the numbers
-  they would shift. A test convention banding agent-only
-  definitional glosses yellow was decided *later* by the lead.
+  they would shift. A test convention giving agent-only
+  definitional glosses the state yellow was decided *later* by the lead.
 - INFORMATION LOST (accepted): v0.3's interpretation ranges
-  (EXCELLENT/GOOD bands per metric) stay in the aspect's `WITH`
+  (EXCELLENT/GOOD ranges per metric) stay in the aspect's `WITH`
   annotations when wanted — rendering guidance, not glossary content.

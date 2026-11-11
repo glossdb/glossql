@@ -1,5 +1,5 @@
 # name: test/sql/glossql_lineage.test
-# description: lineage: what computes each column of a query, read off its bound plan; a landing records it, a gloss reads stale once the derivation behind its column moved (SPEC §3), and the landings' diff is the drift record of what a source sends
+# description: lineage: what computes each column of a query, read off its bound plan; a load records it, a gloss reads stale once the derivation behind its column moved (SPEC §3), and the loads' diff is the drift record of what a source sends
 # group: [sql]
 
 require glossql
@@ -139,7 +139,7 @@ fin.sales	agent	false
 fin.sales.amount	agent	false
 fin.sales.id	agent	true
 
-# a re-gloss stands at the newest load
+# a re-gloss is current at the newest load
 statement ok
 GLOSS note ON sales.amount AS $${"text": "net"}$$;
 

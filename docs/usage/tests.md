@@ -15,7 +15,7 @@ DECLARE TEST additivity_test ON additivity
   THRESHOLD 0.7;
 
 DECLARE TEST reconciliation_test ON reconciliation
-  DETECTOR reconcile_bands THRESHOLD 0.5;
+  DETECTOR reconcile_states THRESHOLD 0.5;
 ```
 
 - `BY` lists who may record the property: `AGENT`, `HUMAN`. Functions
@@ -30,36 +30,36 @@ DECLARE TEST reconciliation_test ON reconciliation
 
 ## Write a detector
 
-A detector is one query over `slots`: every value on the property, one
-row per asset and source, with `speaker`, `current` and `body`. The
+A detector is one query over `annotations`: every value on the property, one
+row per asset and source, with `actor_kind`, `current` and `body`. The
 threshold binds as `$threshold`. It returns one row per asset:
 
 ```sql
-DECLARE FUNCTION reconcile_bands FOR fin AS $$
+DECLARE FUNCTION reconcile_states FOR fin AS $$
   SELECT subject,
-         CASE WHEN max(body['delta']) <= $threshold THEN 'green' ELSE 'red' END AS band,
+         CASE WHEN max(body['delta']) <= $threshold THEN 'green' ELSE 'red' END AS state,
          coalesce(max(body['delta']), 0.0) AS score
-  FROM slots GROUP BY subject
+  FROM annotations GROUP BY subject
 $$;
 ```
 
-`band` is `green`, `yellow`, `orange` or `red`; `score` is the
+`state` is `green`, `yellow`, `orange` or `red`; `score` is the
 disagreement from 0 to 1.
 
 ## Read the results
 
 ```sql
 SELECT * FROM TESTS(orders.amount::additivity);
-SELECT subject, band FROM TESTS(fin.trial_balance) WHERE band = 'red';
+SELECT subject, state FROM TESTS(fin.trial_balance) WHERE state = 'red';
 ```
 
 Every row has the same columns:
-`(subject, aspect, test, band, score, computed_at, current, error)`.
+`(subject, aspect, test, state, score, computed_at, current, error)`.
 
 - `current` is true when every computed value the result read is
   current.
 - A detector that fails does not fail the read: its rows come back with
-  band `error`, score 0, and the failure in `error`. An error never
+  state `error`, score 0, and the failure in `error`. An error never
   marks an asset `conflict`, and the other tests still answer.
 - One detector can serve several tests; each test gets its own results,
   from its own values and threshold.

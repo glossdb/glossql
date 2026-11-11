@@ -1,5 +1,5 @@
 # name: test/sql/glossql_cache.test
-# description: the instance keeps a dataset's read rows while the store and the lake stand still; a write or a definition on any connection moves them
+# description: the instance keeps a dataset's read rows while the store and the lake are unchanged; a write or a definition on any connection moves them
 # group: [sql]
 
 require glossql
@@ -86,10 +86,10 @@ fin.orders.id	current
 # a view over the read: a catalog scan binds it for its columns while a read
 # is computed, and a read through it serves the rows
 statement ok
-CREATE VIEW fin.standing AS SELECT subject, state FROM glossql_glossary('fin', NULL, false);
+CREATE VIEW fin.states AS SELECT subject, state FROM glossql_glossary('fin', NULL, false);
 
 query I
-SELECT count(*) FROM information_schema.columns WHERE table_schema = 'fin' AND table_name = 'standing';
+SELECT count(*) FROM information_schema.columns WHERE table_schema = 'fin' AND table_name = 'states';
 ----
 2
 
@@ -97,7 +97,7 @@ statement ok con1
 GLOSS meaning ON orders.id AS $${"value": "the order's number, assigned at booking"}$$;
 
 query II
-SELECT subject, state FROM fin.standing ORDER BY subject;
+SELECT subject, state FROM fin.states ORDER BY subject;
 ----
 fin.orders.amount	current
 fin.orders.id	current
@@ -105,7 +105,7 @@ fin.spend.total	stale
 
 # the kept rows are a read's: collapsed, raw or tests
 statement error
-SELECT * FROM glossql_cached('verdicts', 'fin');
+SELECT * FROM glossql_cached('results', 'fin');
 ----
 Invalid Input Error
 

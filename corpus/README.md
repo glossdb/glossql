@@ -41,7 +41,7 @@ simplified language.
 | 17 | relational spine (sqlite run) | TRANSCRIBES (existing surface end to end) · temporal type INFORMATION LOST on this dialect (read-time cast carries it) |
 | 18 | app authoring (model app) | GRAMMAR GAP (`$$`-carried app artifacts, per-artifact form) · publish verb SEMANTICS UNDEFINED |
 | 21 | source conventions (both halves run) | TRANSCRIBES (`AS FACT ON SOURCE`; deposit → read-before-preview → workspace-wide supersede) |
-| 22 | question loop (pin-queue run + elicitation spike) | DECIDED: no question object — GLOSS + actor kind is the whole record; questions are ephemeral transport · `ASK` GRAMMAR GAP kept as evidence · pin_questions DROPPED BY DESIGN |
+| 22 | question loop (decision-queue run + elicitation spike) | DECIDED: no question object — GLOSS + actor kind is the whole record; questions are ephemeral transport · `ASK` GRAMMAR GAP kept as evidence · pin_questions DROPPED BY DESIGN |
 | 23 | conditional relevance (medium run) | DECIDED: `WHEN` narrows what a subject requires — the backlog counts what is real, not columns × vocabulary |
 | 24 | functions in a table (run 4) | DECIDED: a function's body is data — `AS $$…$$` replaces `FROM 'path'`, the `functions/` directory retires, and the shipped library reads back as examples · body-in-a-file INFORMATION LOST |
 | 25 | mixed-case names (avito run) | DECIDED: an unquoted name folds to lowercase at the declaration and at the read; a double-quoted name keeps its case |

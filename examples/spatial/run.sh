@@ -1,12 +1,12 @@
 #!/bin/sh
 # The spatial kit on the TLC taxi zones of New York City: a fresh workspace,
-# the kit in the opener, the statements of taxi_zones.sql through the CLI door.
+# the kit in the opener, the statements of taxi_zones.sql through the CLI interface.
 #
 #   examples/spatial/run.sh /path/to/a/new/workspace
 #
 # The zone polygons come from the TLC (one download, kept under data/). The
 # built extension is loaded by path; a second run on the same directory
-# re-declares what stands.
+# re-declares what is current.
 set -eu
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 WS=${1:?a workspace directory}

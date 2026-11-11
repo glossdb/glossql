@@ -14,7 +14,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 
 | SPEC | Status | Here |
 |---|---|---|
-| `DECLARE SOURCE` with `type`, `location`, `via`; other types refused | holds | the SET pairs land as one JSON `settings`, checked at parse against the schema the statement holds (`type` an enum of the four, `location` required, `via` recorded, no other key); secrets are DuckDB's `CREATE SECRET` |
+| `DECLARE SOURCE` with `type`, `location`, `via`; other types refused | holds | the SET pairs are stored as one JSON `settings`, checked at parse against the schema the statement holds (`type` an enum of the four, `location` required, `via` recorded, no other key); secrets are DuckDB's `CREATE SECRET` |
 | a relational source executes the recipe in its own dialect | softened | a relational source is a database DuckDB has `ATTACH`ed; the recipe runs over it in DuckDB SQL, pushdown being the scanner's |
 | file sources resolve paths under the location | holds | `file_search_path` set to the location for the statement |
 | `PREVIEW` rehearses the recipe, load nothing, schema always carried | holds | the result streams with its schema |
@@ -26,7 +26,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | `DROP TABLE` refuses while the table holds data or glosses | outside | host DDL is DuckDB's; a wrapper's allowlist |
 | the substrate SQL allowlist | outside | a wrapper's |
 | `DECLARE DATASET`, `USE`, path resolution | holds | a dataset is a schema of the workspace's lake; `USE ws.fin`, or `USE ws` then `USE fin`, is DuckDB's; a loaded table wins over a same-named dataset |
-| derived views closed | softened | views are DuckDB's and count as tables: a view and its columns are subjects, glossed, measured and required like a table and its columns; its definition is the shape its glosses age by and a leg of what is measured over it |
+| derived views closed | softened | views are DuckDB's and count as tables: a view and its columns are subjects, glossed, measured and required like a table and its columns; its definition is the shape its glosses age by and a part of what is measured over it |
 
 ## §4 Subjects and relationships
 
@@ -45,8 +45,8 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | a VIEW aspect's grain is the dataset | holds | a grain clause is refused at parse |
 | identical re-declaration no-op; change under glosses refused | holds | |
 | every body JSON, dollar-quoted | holds | |
-| the metric definition contract is fixed and open; the claims a reader needs are glosses on the view's columns | holds | the contract (`sql` or `stopped`, `assumptions`) validates every VIEW gloss, then each aspect flavored `x-kind: grounding` a kit declares; a reader of the view takes the period, the measure and its `additivity`, the slices and the row identity off the view's columns (fixture 28) |
-| a metric definition is a view; a stop ends it; a loaded table's name refused | holds | `CREATE OR REPLACE VIEW` in the dataset's schema; the same sql glossed again keeps the view and its version, so the glosses and measurements on its columns stand |
+| the metric definition contract is fixed and open; the claims a reader needs are glosses on the view's columns | holds | the contract (`sql` or `stopped`, `assumptions`) validates every VIEW gloss, then each aspect flavored `x-kind: definition` a kit declares; a reader of the view takes the period, the measure and its `additivity`, the slices and the row identity off the view's columns (fixture 28) |
+| a metric definition is a view; a stop ends it; a loaded table's name refused | holds | `CREATE OR REPLACE VIEW` in the dataset's schema; the same sql glossed again keeps the view and its version, so the glosses and measurements on its columns stay current |
 | `read.<metric>()` | softened | the view is reached by its bare name under `USE` or as `FROM dataset.metric`, which §5 says plans the same way; no `read` schema, since a schema is lake-wide and metrics are per dataset, and it would be a second interface to the one view |
 | supersession key (subject, aspect, actor kind) | holds | the newest value per key serves |
 | two VIEW glosses of one aspect on different tables coexist | softened | the subject of a VIEW gloss is the dataset, as §5.2 also says; one serving view per metric |
@@ -64,9 +64,9 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | the shape rule: scalar, object, array | holds | |
 | output validated against the aspect's schema at extraction | holds | |
 | a FACT aspect returned by a function is a value | holds, untested | a measurement row serves as actor `function` |
-| extraction is stored in `measurements` with `pin` and `reads`; served while unchanged | holds | `reads` is read off the body's bound plan: lake tables as `dataset.table`, store relations as `glossql.relation`, `**` for a scan that has no name (a file, a catalog function, another database), empty for a body that reads nothing; `pin` is the glossql engine's: every leg at its version, sorted, `name:version`, a table's version being the last snapshot of the lake's change log that inserted, deleted, altered or dropped it (compaction is not a write), a relation's its highest `seq`; the next extraction serves the newest row while the legs its reads name match, `**` while every leg does, and never from a body the function has since re-declared; the row says `computed`; `ducklake_expire_snapshots` can lower a version it never touched, which reads as a move |
+| extraction is stored in `measurements` with `data_version` and `reads`; served while unchanged | holds | `reads` is read off the body's bound plan: lake tables as `dataset.table`, store relations as `glossql.relation`, `**` for a scan that has no name (a file, a catalog function, another database), empty for a body that reads nothing; `data_version` is the glossql engine's: every leg at its version, sorted, `name:version`, a table's version being the last snapshot of the lake's change log that inserted, deleted, altered or dropped it (compaction is not a write), a relation's its highest `seq`; the next extraction serves the newest row while the parts its reads name match, `**` while every part does, and never from a body the function has since re-declared; the row says `computed`; `ducklake_expire_snapshots` can lower a version it never touched, which reads as a move |
 | a top-level `summary` serves at extraction | holds | the whole value is stored and reads back through `GLOSSARY(subject::aspect)` |
-| a detector plans over `slots`, `$threshold` bound, test-results contract per row | holds | run at read by `TESTS()` |
+| a detector plans over `annotations`, `$threshold` bound, test-results contract per row | holds | run at read by `TESTS()` |
 
 ## §7 Tests
 
@@ -75,7 +75,7 @@ named; **outside** the plugin, a wrapper's or a kit's; **not yet**;
 | `BY`, `DETECTOR`, `THRESHOLD`; one of the clauses; `BY` refused on MEASUREMENT | holds | |
 | the test-results schema; result per test; detectors at read; `TESTS()` sweeps the dataset | holds | |
 | a detector that cannot answer serves `error` with the text | holds | the detector runs at read on a second connection; a plan or run it refuses, or a row outside the test-results schema, is the result `error` with the failure's first line, one row per subject holding values; the collapse never withholds on it |
-| `current` on a result | holds | every function value the result read holds at the read's pin; the detector sees `current` per value |
+| `current` on a result | holds | every function value the result read holds at the read's data version; the detector sees `current` per value |
 | judgment never written into data | holds | results are computed at read, never stored |
 
 ## §8 Skills, and the actor

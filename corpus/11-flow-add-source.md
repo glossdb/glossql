@@ -8,7 +8,7 @@ phases in `pipeline/phases/`. Ordered steps and what each produces:
 
 | step | kind | produces (today) |
 |---|---|---|
-| stage upload / probe query | human | staged bytes / recipe spec |
+| stage upload / preview query | human | staged bytes / recipe spec |
 | frame vertical | LLM | concepts, conventions, validations, cycles, metrics rows |
 | register sources | deterministic | `sources` rows |
 | import | deterministic | raw all-VARCHAR tables + table/column rows |
@@ -25,13 +25,13 @@ The actor kinds of the pipeline map onto the ways of speaking:
 deterministic phases are **functions** (MEASUREMENT aspects), LLM phases
 are **agent glosses**, teaches and parks are **human glosses**. The typing
 phase maps to none of them — it becomes **authorship**, the
-probe-and-recipe conversation below.
+preview-and-recipe conversation below.
 
-Human registers the source; the agent probes it — `PREVIEW` is the recipe
+Human registers the source; the agent previews it — `PREVIEW` is the recipe
 rehearsal (decided 2026-08-04): the same SQL surface, the same path
-resolution, executed at the source, load nothing (v0.3's "probe query"
+resolution, executed at the source, load nothing (v0.3's "preview query"
 step, returned to its place). The result always carries its schema, so a
-`LIMIT 0` probe of the final recipe SQL rehearses exactly the identity a
+`LIMIT 0` preview of the final recipe SQL rehearses exactly the identity a
 `DECLARE RECIPE` would stamp:
 
 ```glossql
@@ -45,7 +45,7 @@ FROM read_parquet('orders/*.parquet')$$;
 ```
 
 Typing is authored, not decided (decided 2026-08-04): the recipe carries the
-casts. The agent writes it from the probes and the taught patterns
+casts. The agent writes it from the previews and the taught patterns
 (fixture 13 — still FACT glosses, now read by the author instead of
 consumed by machinery); the human approves. The default is `SELECT *`;
 the loaded table is the typed table, versioned on every
@@ -64,7 +64,7 @@ SELECT sum(amount) FROM orders;
 The table is its recipe's result — identity is content, the hash of the
 SQL and the schema it produces (the v0.3 engine already keys recipes this
 way). The declaration's outcome carries the counts at the decision moment
-(`DECLARE RECIPE orders ON fin (2 rows landed, 1 dropped)`). A data update
+(`DECLARE RECIPE orders ON fin (2 rows loaded, 1 dropped)`). A data update
 re-runs the same recipe and the table becomes its result as the source
 holds now, in one commit; it must reproduce the schema or it errors.
 It is asked for by name, from outside — a schedule
@@ -100,7 +100,7 @@ The deterministic profile plane — declared once (vertical/global), fanned
 out per column (extraction grain is the subject; the fan-out is the
 caller's loop, the grammar carries no ordering). The quality plane chains
 on it in the body: the outlier fences read the profile's stored value
-from `measurements`, and a re-profile moves the pin the outlier cache
+from `measurements`, and a re-profile moves the data version the outlier cache
 sits at. The temporal plane is
 the same shape — window, cadence, completeness, gaps, all pure functions
 of the stored column's instants (v0.3's `temporal_column_profiles`, minus
@@ -162,12 +162,12 @@ GLOSS unit ON orders.amount AS $${"value": "EUR", "source_column": "currency_cod
 ```
 
 Adjudication replaces the detect/resolve/readiness tail: tests on the
-conflict aspects, bands read back; the auto-ground loop is an agent skill
+conflict aspects, states read back; the auto-ground loop is an agent skill
 sweeping the test-results relation and re-glossing where it may:
 
 ```glossql
 SELECT * FROM TESTS(fin::additivity);
-SELECT subject, band, score FROM TESTS(fin::unit) WHERE band = 'red';
+SELECT subject, state, score FROM TESTS(fin::unit) WHERE state = 'red';
 ```
 
 A human closes what the agent could not — the same statements on a human
@@ -192,14 +192,14 @@ that the grammar knows about.
   the M4 build derived the typed view from `type` glosses, with
   `orders_raw` and `orders_quarantined` beside it. Both put typing in
   machinery. The review decision puts it in authorship: the recipe carries the
-  casts, written by the agent from probes and patterns, approved by the
+  casts, written by the agent from previews and patterns, approved by the
   human, and the loaded table is the typed table — served types are
   catalog fact, not judgment. `type`, `type_candidates`, and `eligible`
   leave the engine's vocabulary; the derived pair, the raw twin, and
   reactive view invalidation leave the engine.
 - **Eligibility dissolved into authorship** (decided 2026-08-04, hours after
   the projection gate stored): column selection is the recipe's SELECT
-  list. The v0.3 findings stand — the phase's `ALTER`-drop was
+  list. The v0.3 findings remain — the phase's `ALTER`-drop was
   irreversible with no override, and its `WARN` tier was read by nobody —
   but the corrected answer is a line the author writes, not a gate the
   engine owns.
@@ -208,10 +208,10 @@ that the grammar knows about.
   the recipe-and-schema hash; a data update must reproduce the schema or
   error (the frozen-contract rule); `DROP TABLE` refuses while data
   exists (PoC). Replacement-by-new-name was part of this review decision and was
-  superseded 2026-08-06 — a changed recipe now supersedes and re-lands;
+  superseded 2026-08-06 — a changed recipe now supersedes and loads again;
   the full deletion cascade stays future work — tricky through
   relations and actor-generated SQL. No
-  reactive invalidation of definitions anywhere: the read's pin and
+  reactive invalidation of definitions anywhere: the read's data version and
   snapshot staleness are the only freshness mechanisms.
 - **Filtered rows are the author's judgment** (decided 2026-08-04): the
   engine keeps one number, `dropped_rows_count` — source rows minus
@@ -222,13 +222,13 @@ that the grammar knows about.
   a new convention. Which rows were dropped is the agent's question,
   answered on the files.
 - **`PREVIEW` is a statement head** (decided 2026-08-04, closing the fork):
-  the first transcription bound probes by a path-prefix convention (the
+  the first transcription bound previews by a path-prefix convention (the
   source name as the path's first segment) — magic an agent must be told.
   The decided form mirrors the recipe: `PREVIEW source AS $$sql$$`, one
   concept (recipe-shaped SQL runs FROM a source; PREVIEW rehearses, RECIPE
   is stored). The grammar grew by one head and lost a convention; the router
   stopped sniffing SELECTs for `read_*` references. The deciding
-  advantage: a probe's result carries the schema it would land — `LIMIT 0`
+  advantage: a preview's result carries the schema it would load — `LIMIT 0`
   rehearses the identity.
 - **Benford's law dropped** (decided 2026-08-04): the only domain-leaning
   measurement in the deterministic plane — and the only numpy/scipy

@@ -102,7 +102,7 @@ The body needs `sql`, or `stopped` with the reason no number is served.
 `assumptions` lists what the SQL assumes, each with an optional
 `dimension`, `basis` and `confidence` (0 to 1). Other keys pass, unless
 a kit declares a schema for them (an aspect with `"x-kind":
-"grounding"`).
+"definition"`).
 
 - The view is a table of its dataset: its columns are assets. What a
   reader needs to combine its rows (which column is the period, which

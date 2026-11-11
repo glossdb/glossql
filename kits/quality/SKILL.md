@@ -8,7 +8,7 @@ description: The quality kit's screens for a glossql workspace — how the data 
 For an actor working in a DuckDB that has the glossql extension loaded,
 the KPI kit declared and this kit after it. The extension knows the
 grammar and the store; the KPI kit is the words; this kit is the screens
-that find structure in the data and land what they find as measurements.
+that find structure in the data and store what they find as measurements.
 Everything live is read through the language: the tables, the
 declarations, the glossary.
 
@@ -24,7 +24,7 @@ SELECT name, scope, returns FROM functions WHERE returns IS NOT NULL;
 
 A screen is a table macro over `dataset_cells(subject)`, every cell of a
 dataset's tables, or of one table, as one relation. Run a screen directly
-to look; extract its measurement to land what it found.
+to look; extract its measurement to store what it found.
 
 | Measurement | On | Reads | Is stored |
 |---|---|---|---|
@@ -32,8 +32,8 @@ to look; extract its measurement to land what it found.
 | `relationship_coherence()` | dataset | `relationship_checks(dataset)` | `relationships`: per declared edge `filled`, `orphans`, `orphan_rate`, `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
 | `detect_hierarchies()` | table | `hierarchy_candidates(table)` | `candidates`: `from`, `to`, `g3`, `lambda`, `kind` (`edge` or `alias`); `rows`, the rows read: a sample of a larger table, so the rates are estimates |
 | `detect_derivations()` | table | `derivation_candidates(table)` | `candidates`: `target`, `form` (`product` or `sum`), `operands`, `support`, `violations`, `match_rate`; `truncated`; `rows`, the rows read: a sample of a larger table |
-| `detect_grounding_collisions()` | dataset | `grounding_collisions(dataset)` | `groundings`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |
-| `additivity_evidence()` | column | `additivity_anchors(column)` | `summary`: `verdict` (`semi-additive`, `additive`, `abstain`), `convention`, `support`, `voted`, `event`, `align`, `grain`, `scope`, `r_flow`, `r_stock`, `sign`, `tiebreak`, `reason`; `anchors`: every anchor's row; `anchors_n`, `decided` |
+| `detect_definition_collisions()` | dataset | `definition_collisions(dataset)` | `definitions`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |
+| `additivity_evidence()` | column | `additivity_anchors(column)` | `summary`: `result` (`semi-additive`, `additive`, `abstain`), `convention`, `support`, `voted`, `event`, `align`, `grain`, `scope`, `r_flow`, `r_stock`, `sign`, `tiebreak`, `reason`; `anchors`: every anchor's row; `anchors_n`, `decided` |
 
 What each line means:
 
@@ -73,12 +73,12 @@ What each line means:
   median residuals of the voters; `sign` how many fire only under the
   negated movement, the ledger-signed reading. An anchor abstains with
   its reason: short series, no fit, under the majority. Read the
-  summary, then gloss `additivity` citing the anchor in `grounds`; the
+  summary, then gloss `additivity` citing the anchor in `basis`; the
   result is evidence, never a value in the values.
 - `applicable: false` with a `reason` is a screen that could not run:
   an empty table, too few columns of the right kind, no declared
   relationships, no metric definitions, a column that is no number or an
-  identifier (a leg of a declared relationship, or an integer distinct
+  identifier (a key column of a declared relationship, or an integer distinct
   on nine filled rows in ten), a table with no time axis. Examined,
   nothing to say.
 
@@ -97,12 +97,12 @@ What each line means:
 4. Per table with dimension columns, `SELECT detect_hierarchies() FROM
    fin.geo;`; per table with three numeric columns or more, `SELECT
    detect_derivations() FROM fin.lines;`. Cite a found edge or
-   derivation in the `grounds` of the gloss it supports.
+   derivation in the `basis` of the gloss it supports.
 5. Per measure column, after the edges are declared and the event
    tables' measures carry `role`, `SELECT additivity_evidence() FROM
    fin.balances.amount;`: stock or flow, with the anchor that decided.
-   Gloss `additivity` with the anchor as grounds.
-6. After metric definition metrics, `SELECT detect_grounding_collisions() FROM
+   Gloss `additivity` with the anchor as its basis.
+6. After metric definition metrics, `SELECT detect_definition_collisions() FROM
    fin;`: two names for one number is a definition to settle, not two
    metrics.
 
@@ -122,7 +122,7 @@ DECLARE TEST ids_test ON ids_present BY (AGENT, HUMAN)
   DETECTOR rate_tolerance THRESHOLD 0.0;
 ```
 
-`TESTS()` bands each subject: yellow while no check has spoken, green
+`TESTS()` gives each subject a state: yellow while no check has annotated, green
 at or under the tolerance, red above it. The human's tolerance outranks
 the agent's; the test's threshold holds in while no gloss carries
 one. The detector is one-sided: a source whose expected dirt must not

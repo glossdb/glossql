@@ -35,8 +35,8 @@ corpus_version, estimator, per_class_accuracy, brier, sample sizes, dates.
 ## Transcription
 
 The value model replaces distributions-with-weights: per (subject, aspect) one
-current value per speaker — the function's cached output, the agent's gloss,
-the human's gloss. The detector scores across values and returns band +
+current value per actor kind — the function's cached output, the agent's gloss,
+the human's gloss. The detector scores across values and returns state +
 score; TESTS serves it.
 
 ```glossql
@@ -48,7 +48,7 @@ DECLARE ASPECT additivity WITH $${
 DECLARE FUNCTION temporal_additivity FOR GLOBAL AS $$/* stock/flow from a column's period shape */$$
   RETURNS additivity;
 
-DECLARE FUNCTION additivity_entropy FOR GLOBAL AS $$/* detector: spread across the additivity slots */$$;
+DECLARE FUNCTION additivity_entropy FOR GLOBAL AS $$/* detector: spread across the additivity values */$$;
 
 DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN)
   DETECTOR additivity_entropy THRESHOLD 0.7;
@@ -62,20 +62,20 @@ SELECT * FROM TESTS(orders.amount::additivity);
 ## Findings
 
 - **Values TRANSCRIBE.** target→subject, claim_field→aspect, the detector's
-  result→(band, score). A human re-gloss supersedes the human value; a
-  conflict state is a red/orange band, not a flag.
-- **The data-grounded value is a `RETURNS` binding** (respelled
-  2026-08-04): `temporal_additivity` speaks the `additivity` aspect by
+  result→(state, score). A human re-gloss supersedes the human value; a
+  conflict state is a red/orange state, not a flag.
+- **The value computed from data is a `RETURNS` binding** (respelled
+  2026-08-04): `temporal_additivity` annotates the `additivity` aspect by
   returning it — v0.3's `structural_reconciliation` test, made a typed
   function instead of a `BY (FUNCTION …)` entry. Its output validates
-  against the aspect it speaks; the `BY` gate is for actors only. The
+  against the aspect it annotates; the `BY` gate is for actors only. The
   detector lost its RETURNS transcription: no RETURNS *is* the detector
   shape, and the test-results contract is the engine's. *The example function
   is superseded (2026-08-05): a trajectory read of additivity was falsified
   (a trending flow and a mean-reverting stock look alike), and the shipped
   wiring serves `additivity_evidence` as a MEASUREMENT the agent reads
   before glossing. The value mechanism itself lives on — fixture 16 §5's
-  validation checks speak their aspects exactly this way.*
+  validation checks annotate their aspects exactly this way.*
 - **DROPPED BY DESIGN — the calibration theater.** Per-test calibrated
   reliabilities, calibration provenance (corpus id, estimator, Brier),
   placeholder priors, pooling math: all of it is the DETECTOR function's

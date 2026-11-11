@@ -59,7 +59,7 @@ PREVIEW books AS $$SELECT date('2010-12-27')              AS iso,
 ```
 
 → `iso` wires as string `2010-12-27`, `trap` as int64 `2010`, `epoch`
-as int64 `1293408000`. The honest spellings land untyped; the typed
+as int64 `1293408000`. The honest spellings load untyped; the typed
 read is at read time.
 
 ## Read back what was stored
@@ -70,7 +70,7 @@ SELECT CAST(transaction_date AS DATE) AS d, credit FROM ledger LIMIT 5;
 ```
 
 `DESCRIBE` passes the allowlist (the run burned a
-diagnostic re-landing to learn its types before it did). The second read is the
+diagnostic reload to learn its types before it did). The second read is the
 typed contract this dialect can carry: cast at read over ISO text.
 
 ## The update runs at the source too
@@ -108,7 +108,7 @@ load's row carries `mode = 'merge'`.
 
 ## Results
 
-- **TRANSCRIBES** — the spine (source, harvest probe,
+- **TRANSCRIBES** — the spine (source, harvest preview,
   at-source recipe, read-back) is existing surface; the run needed no
   new grammar.
 - **INFORMATION LOST** — the temporal *type*: SQLite's wire has no

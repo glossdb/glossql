@@ -55,7 +55,7 @@ DECLARE PAGE index ON model AS $$
 … 16,832 bytes of tera, carried opaque …
 $$;
 
-DECLARE SPEC bands ON model AS $$
+DECLARE SPEC ranges ON model AS $$
 { "$schema": "https://vega.github.io/schema/vega-lite/v6.json", … }
 $$;
 

@@ -14,7 +14,7 @@ SELECT * FROM GLOSSARY(fin::dso);
 What is known about an asset and what lies under it. Without an
 argument, the dataset in use.
 
-- Default: `(subject, aspect, value, band, score, state)`, one row per
+- Default: `(subject, aspect, value, test_state, score, state)`, one row per
   asset and property; `state` is `current`, `stale`, `conflict` or
   `missing`.
 - `all => true`: `(subject, aspect, kind, test, actor, body,
@@ -29,7 +29,7 @@ See [reading](usage/reading.md).
 SELECT * FROM TESTS(orders.amount::additivity);
 ```
 
-Test results: `(subject, aspect, test, band, score, computed_at,
+Test results: `(subject, aspect, test, state, score, computed_at,
 current, error)`. Without an argument, the dataset in use. See
 [tests](usage/tests.md).
 

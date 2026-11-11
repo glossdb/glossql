@@ -10,8 +10,8 @@ declares; the kit decides what is said.
 
 | Kit | Brings |
 |---|---|
-| `kpi` | the semantic layer's words for columns and tables: `meaning`, `role`, `additivity` (additive, semi-additive, ratio with its numerator and denominator, non-additive), `unit`, `dimension`, `entity`; source `conventions`; the `definitions` handbook; the `slot_entropy` detector; the `column_profile` and `outlier_profile` measurements; the tests that bind them. A metric's view carries the same words on its columns |
-| `quality` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `grounding_collisions` and `additivity_anchors` as table macros; the measurements that store them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`, `additivity_evidence`); the `temporal` profile; the `rate_tolerance` detector, which scores a stated expectation against a computed value. Load it after `kpi` |
+| `kpi` | the semantic layer's words for columns and tables: `meaning`, `role`, `additivity` (additive, semi-additive, ratio with its numerator and denominator, non-additive), `unit`, `dimension`, `entity`; source `conventions`; the `definitions` handbook; the `value_entropy` detector; the `column_profile` and `outlier_profile` measurements; the tests that bind them. A metric's view carries the same words on its columns |
+| `quality` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `definition_collisions` and `additivity_anchors` as table macros; the measurements that store them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_definition_collisions`, `additivity_evidence`); the `temporal` profile; the `rate_tolerance` detector, which scores a stated expectation against a computed value. Load it after `kpi` |
 | `spatial` | a small domain kit: `shape` on every geometry column (`WHEN TYPE = 'GEOMETRY'`), the `crs` its coordinates are in, and the `geometry_profile` measurement. Its first lines install and load DuckDB's `spatial` extension |
 
 A workspace loads kits of its own after these.
@@ -48,15 +48,15 @@ the tests that name both.
   period, the measure and how it adds up, the slices) is recorded on
   the view's columns under the kit's properties. A kit whose readers
   need a key in the body declares a schema for it as an aspect with
-  `"x-kind": "grounding"`; every `VIEW` value is then checked against
+  `"x-kind": "definition"`; every `VIEW` value is then checked against
   it too.
 - A measurement (`RETURNS aspect`) becomes a table macro in the
   dataset's schema, or in `glossql` for `GLOBAL`. Its body is DuckDB
   SQL; names resolve as in the declaring session. A body may open with
   its own `WITH`.
-- A detector (no `RETURNS`) runs at read over its test's `slots` with
-  `$threshold` bound, and returns `(subject, band, score)`.
-- A measurement is pinned to the tables and catalog tables its plan
+- A detector (no `RETURNS`) runs at read over its test's `annotations` with
+  `$threshold` bound, and returns `(subject, state, score)`.
+- A measurement's data version holds the tables and catalog tables its plan
   scans. One that reads a file, a catalog function or another database
   is served only while nothing in the dataset moved, so read tables.
 - Conditions narrow what is required: `AS FACT ON COLUMN WHEN role =

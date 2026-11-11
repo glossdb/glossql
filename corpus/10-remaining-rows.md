@@ -33,7 +33,7 @@ GLOSS entity ON orders AS $${
 ```
 
 (Each aspect above was declared once with `DECLARE ASPECT … AS FACT`; agent
-glosses land on agent connections, human corrections supersede on the human
+glosses are stored on agent connections, human corrections supersede on the human
 value.)
 
 ## Relationships + composite keys (`relationships`, `surrogate_key_intents`)
