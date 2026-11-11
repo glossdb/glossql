@@ -1,49 +1,39 @@
-# glossql transcription corpus
+# The glossql corpus
 
-Each file pairs a **real artifact** — the predecessor production system's
-(quoted inline, with its original path) or, from fixture 14 on, this
-system's own runs — with its glossql transcription per SPEC.md. These are
-test fixtures, not design docs.
+The corpus is the language's acceptance tests. Each file shows how one
+real artifact of a data team is written in glossql: a metric, a
+convention, a validation, a load, a review question.
 
-Block tags. `test/sql/glossql_corpus.test` holds every block of SPEC.md
-and the corpus to the grammar:
+`test/sql/glossql_corpus.test` checks every fenced block by its tag, and
+`make test` runs it:
 
-- ` ```glossql ` — must parse under `grammar.ebnf`. A failure is a regression.
-- ` ```glossql-gap ` — invented syntax documenting a grammar gap; must **fail**
-  to parse. When the grammar gains the form, the suite lists the block and
-  the tag flips to ` ```glossql `.
+- ` ```glossql ` must parse under `grammar.ebnf`.
+- ` ```glossql-gap ` must fail to parse. It shows a form the language
+  does not have.
 
-Result vocabulary: TRANSCRIBES · GRAMMAR GAP · SEMANTICS UNDEFINED ·
-INFORMATION LOST · DROPPED BY DESIGN (a deliberate cut — the fixture names what
-was dropped and where it went). One fixture may carry several, per field.
-
-The predecessor sources are a fixed snapshot; transcriptions follow the
-simplified language.
-
-| # | fixture | result (dominant) |
-|---|---|---|
-| 01 | concept `revenue` | TRANSCRIBES (concept = VIEW aspect) · pack envelope DROPPED |
-| 02 | convention `sign_natural_balance` | TRANSCRIBES (in-blob, incl. `targets`) |
-| 03 | metric `dso` | TRANSCRIBES (metric = VIEW aspect, run as its SQL; function form superseded · value-at-read parked in SPEC §9) |
-| 04 | validation `trial_balance` | TRANSCRIBES (aspect + test, no dedicated construct) |
-| 05 | cycle `accounts_receivable` | TRANSCRIBES (in-blob) |
-| 06 | tests + reliabilities | values TRANSCRIBE · calibration DROPPED |
-| 07 | metric definition / `sql_snippets` | TRANSCRIBES (metric definition contract) |
-| 08 | teach payloads | TRANSCRIBES (teach = re-gloss) |
-| 09 | answer-agent served context | DROPPED BY DESIGN (the agent experiment) |
-| 10 | remaining engine artifacts | TRANSCRIBES (coverage completion) |
-| 11 | flow: add source | TRANSCRIBES (no flow construct; orchestration app-side) |
-| 12 | flow: begin session | TRANSCRIBES (measure → read → declare → test) |
-| 13 | typing patterns | TRANSCRIBES (patterns as FACT glosses) |
-| 14 | composite relationships (finance_2 run) | TRANSCRIBES (composite = tuple endpoint; view cure retired) |
-| 15 | consumption surface (cockpit sweep) | TRANSCRIBES (reads compose it) · axis additivity SEMANTICS UNDEFINED · conformed-group FORK open |
-| 16 | flow: performance framework (scorecard target) | TRANSCRIBES (extracts + formulas; windows are read policy; `read.` value-at-read decided, bind deferred to UI) |
-| 17 | relational spine (sqlite run) | TRANSCRIBES (existing surface end to end) · temporal type INFORMATION LOST on this dialect (read-time cast carries it) |
-| 18 | app authoring (model app) | GRAMMAR GAP (`$$`-carried app artifacts, per-artifact form) · publish verb SEMANTICS UNDEFINED |
-| 21 | source conventions (both halves run) | TRANSCRIBES (`AS FACT ON SOURCE`; deposit → read-before-preview → workspace-wide supersede) |
-| 22 | question loop (decision-queue run + elicitation spike) | DECIDED: no question object — GLOSS + actor kind is the whole record; questions are ephemeral transport · `ASK` GRAMMAR GAP kept as evidence · pin_questions DROPPED BY DESIGN |
-| 23 | conditional relevance (medium run) | DECIDED: `WHEN` narrows what a subject requires — the backlog counts what is real, not columns × vocabulary |
-| 24 | functions in a table (run 4) | DECIDED: a function's body is data — `AS $$…$$` replaces `FROM 'path'`, the `functions/` directory retires, and the shipped library reads back as examples · body-in-a-file INFORMATION LOST |
-| 25 | mixed-case names (avito run) | DECIDED: an unquoted name folds to lowercase at the declaration and at the read; a double-quoted name keeps its case |
-| 26 | metric definition grain / stock serving shape (finance integration run) | TRANSCRIBES (grain key; since fixture 28 the row identity is the `entity` gloss on the view) |
-| 28 | metric definition keys: additivity, row identity, slices (Baton Rouge budget, finance `ar_balance`, harmonisation service level) | DECIDED: the metric definition contract is `sql` or `stopped` and `assumptions`; the additivity, the row identity and the slices are glosses on the view's columns |
+| File | Shows |
+|---|---|
+| [01](01-concept-revenue.md) | a glossary entry for a measure |
+| [02](02-convention-sign-natural-balance.md) | an accounting convention on a dataset |
+| [03](03-metric-dso.md) | a metric: its declaration and its definition in SQL |
+| [04](04-validation-trial-balance.md) | a validation: expectation, check and test |
+| [05](05-cycle-accounts-receivable.md) | the stages of a business process on a status column |
+| [06](06-test-additivity.md) | a test that compares annotations of a column's additivity |
+| [07](07-view-definition.md) | a view's definition: SQL and assumptions |
+| [08](08-review-decisions.md) | a person's corrections to the glossary |
+| [09](09-glossary-reads.md) | reads of the glossary and the test results |
+| [10](10-catalog-annotations.md) | sources, annotations, relationships, dimensions and statistics |
+| [11](11-flow-add-source.md) | the flow from a new source to tested annotations |
+| [12](12-flow-relationships-and-dimensions.md) | the flow from loaded tables to relationships, dimensions and reconciliation |
+| [13](13-typing-patterns.md) | type patterns and null markers |
+| [14](14-composite-relationships.md) | relationships on composite keys, with their referential integrity |
+| [15](15-data-app-reads.md) | the reads behind a data app |
+| [16](16-flow-performance-framework.md) | a metric scorecard: metrics, formulas, validations |
+| [17](17-relational-source.md) | a load from a relational database, in full and by key |
+| [18](18-app-authoring.md) | data app authoring, which the language does not express |
+| [21](21-source-conventions.md) | conventions annotated on a source and read by every dataset |
+| [22](22-review-question.md) | a review question and the person's answer |
+| [23](23-conditional-relevance.md) | an annotation required only where it applies |
+| [24](24-functions-in-a-table.md) | a function with its body in the statement |
+| [25](25-mixed-case-names.md) | mixed-case table and column names |
+| [28](28-view-definition-keys.md) | a view's additivity, row identity and dimensions |

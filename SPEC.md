@@ -48,12 +48,9 @@ Ground rules:
 ## 2. Origins
 
 The vocabulary was not invented here: every construct began as a
-transcription of a real artifact from the predecessor production system.
-Corpus fixtures 01–13 quote those artifacts inline beside their glossql
-forms, each carrying a transcription result (the corpus README indexes
-them); from fixture 14 on, the fixtures transcribe this system's own runs
-and review decisions. The fixtures are the acceptance tests; the predecessor is not a
-live reference.
+transcription of a real artifact of a data team. The corpus fixtures
+hold those artifacts in their glossql forms, one per file (the corpus
+README indexes them). The fixtures are the acceptance tests.
 
 ## 3. Sources and datasets
 

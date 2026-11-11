@@ -1,18 +1,9 @@
-# 23 · Conditional relevance — DECIDED: WHEN narrows what a subject requires
+# An annotation required only where it applies
 
-Source: our own runs. A validated onboarding run
-stored ~109 columns
-against the kit's six column-grain vocabulary aspects and disclosed
-~607 `missing` values — additivity required on text columns, dimension
-required on keys. Grain answers *which
-subject class* an aspect applies to; nothing could answer *which
-subjects, given what the catalog already knows*. The relevance of
-`additivity`, `unit`, and `dimension` is conditional on `role` — and
-`role` is already an ordinary FACT aspect whose schema pins `value`
-to an enum, so the condition references a vocabulary the store
-already validates.
-
-## The decided form
+Additivity is a property of a measure. It is not required of a key or
+a text column. The example declares the aspect with a condition
+(`WHEN`): the annotation counts as missing on a column only while that
+column's `role` is `measure`.
 
 ```glossql
 DECLARE ASPECT additivity WITH $${
@@ -20,39 +11,3 @@ DECLARE ASPECT additivity WITH $${
   "properties": {"value": {"enum": ["semi-additive", "additive", "none"]}}
 }$$ AS FACT ON COLUMN WHEN role = 'measure';
 ```
-
-TRANSCRIBES — the kit's additivity aspect as shipped
-(`crates/scripts/functions/kpi_kit.glossql`): required on a column only
-while that column's winning `role` value carries `value = 'measure'`.
-
-Semantics, sized to the mechanism:
-
-- **The condition bounds `missing` disclosure only** — and every
-  count derived from it (the coverage backlog, the checks backlog).
-  Writes stay gated by grain alone: an annotated value outside its
-  condition serves normally, so a later new decision on `role` strands
-  nothing (serve-and-mark, as everywhere).
-- The condition reads the **winning sibling value** on the same
-  subject — human over agent, contest notwithstanding. No sibling
-  value annotated means nothing required yet: `role` first, the rest follows,
-  which is the walk's real order.
-- At `DECLARE`, the referenced aspect must exist, and when its schema
-  pins `value` to an enum the literal must be a member — a condition
-  nobody could satisfy is a typo, refused at the interface.
-- `none` (the kit's judged negative — "examined, does not apply")
-  stays meaningful *within* relevance: a ratio column is
-  `role = 'measure'` yet `additivity = 'non-additive'`; the condition removes
-  the columns that were never candidates at all.
-
-## The forks that lost
-
-- **`WHERE` instead of `WHEN`** — reads as a full SQL predicate and
-  invites one (paths, conjunctions, subqueries). `WHEN` states a
-  single equality against a sibling aspect's `value`; a second form
-  enters only when a fixture demands it.
-- **Measurements close irrelevant values** with explicit
-  `applicable: false` glosses — 607 rows become 607 writes; noise
-  moved, not removed.
-- **Read-side joins in every surface** (frames deriving relevance
-  from `role` themselves) — every reader re-implements the rule and
-  the store's own counts stay inflated.

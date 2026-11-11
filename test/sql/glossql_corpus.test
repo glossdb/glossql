@@ -9,8 +9,8 @@ require json
 statement ok
 SET active_grammar_extensions = ['glossql'];
 
-# every ```sql block of SPEC.md and every ```glossql or ```glossql-gap block of the corpus (a ```sql block there quotes
-# the source artifact), with its file and line, judged by the parser: a statement the grammar admits serializes, or is
+# every ```sql block of SPEC.md and every ```glossql or ```glossql-gap block of the corpus, with its file and line,
+# judged by the parser: a statement the grammar admits serializes, or is
 # "not implemented" where there is no SELECT to serialize; one it refuses is a parser error
 statement ok
 CREATE VIEW record AS

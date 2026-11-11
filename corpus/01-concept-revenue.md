@@ -1,23 +1,9 @@
-# 01 · Concept `revenue` — TRANSCRIBES (concept = VIEW aspect)
+# Glossary entry: revenue
 
-Source: `dataraum-context/packages/dataraum-config/verticals/finance/ontology.yaml`
-
-```yaml
-- name: revenue
-  description: Income from sales or services
-  indicators: [revenue, sales, income, turnover, receipts]
-  exclude_patterns: [cost, expense]
-  kind: measure
-  unit_from_concept: currency
-```
-
-Pack envelope around it (same file): `name: financial_reporting`,
-`version: "1.0.0"`, pack-level `description`.
-
-## Transcription
-
-Each concept is its own aspect; the ontology entry rides the `WITH` schema as
-annotations. `AS VIEW` makes its glosses metric definitions (fixture 07).
+A business glossary entry names a measure, describes it and lists the
+column names that point to it. The example declares `revenue` as a view
+aspect (`AS VIEW`), so a dataset can later define it in SQL; the entry's
+other fields are annotations in the schema.
 
 ```glossql
 DECLARE ASPECT revenue WITH $${
@@ -30,9 +16,7 @@ DECLARE ASPECT revenue WITH $${
 }$$ AS VIEW;
 ```
 
-The `compositions:` block in the same file (`whole: current_assets`,
-`parts: [cash, accounts_receivable, inventory]`) goes in-blob on the whole's
-aspect — multiplicity lives inside the schema, never in extra statements:
+A measure made of other measures names its parts in the same schema:
 
 ```glossql
 DECLARE ASPECT current_assets WITH $${
@@ -41,14 +25,3 @@ DECLARE ASPECT current_assets WITH $${
   "x-parts": ["cash", "accounts_receivable", "inventory"]
 }$$ AS VIEW;
 ```
-
-## Findings
-
-- Concept row: clean — one declaration, supersession per concept, roster = the
-  list of declared aspects.
-- In-blob composition drops the declaration-time membership check the engine's
-  lint provides today (`concept_edge_store.py:78-90`): a dangling part name is
-  silent. Accepted with the in-blob decision; a test can check it.
-- **DROPPED BY DESIGN — pack envelope.** `financial_reporting`, `version:
-  "1.0.0"`: portability is postponed entirely; a vertical is a folder of
-  scripts and aspect declarations, ported by copying.

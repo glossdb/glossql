@@ -1,18 +1,12 @@
-# 21 · Source conventions: the per-source deposit — TRANSCRIBES (`AS FACT ON SOURCE`)
+# Source conventions
 
-Source: our own runs, both halves in one workspace (deposited during a
-fresh-workspace onboarding; read back from a second dataset before that
-dataset's first preview). Fork B
-decided in: no new construct, the SOURCE grain added to the
-aspect `ON` list; `DECLARE SOURCE` is the whole definition of what a
-source is. Source-grain values read, supersede, and disclose across
-every dataset in the workspace — a convention is a fact about the
-source *system*, not about any one dataset.
+A source system has conventions that hold for every export from it:
+date format, currency, sign, null markers. The example annotates them
+on the source (`AS FACT ON SOURCE`), reads them from a second dataset
+before its first preview, and adds a convention that both datasets then
+read.
 
-## 1. The deposit — learned once, annotated at source grain
-
-Declared and annotated during the first dataset's onboarding, after the
-conventions were confirmed against the data (never before):
+## Annotate the source
 
 ```glossql
 USE fin;
@@ -28,17 +22,7 @@ GLOSS conventions ON erp_export AS $${
 }$$;
 ```
 
-Dataset-local evidence (orphan populations, grain results) stays in
-dataset glosses; only what the next export from the same system will
-also carry belongs here.
-
-## 2. The read — the next dataset, before its first preview
-
-The source holds outside datasets, so a new dataset from the same
-system reads the deposit immediately — this is the add-source skill's
-"read the source's conventions before probing", and in the real run it
-replaced six format-discovery previews with one (a boolean column the
-deposit did not yet know):
+## Read from a second dataset
 
 ```glossql
 DECLARE DATASET fin_ap SET (purpose: 'AP lane from the same source');
@@ -59,13 +43,9 @@ DECLARE RECIPE bank_transactions ON fin_ap FROM erp_export AS $$
   FROM read_csv('bank_transactions.csv')$$;
 ```
 
-## 3. Supersession is workspace-wide — one value, every dataset
+## Add a convention
 
-What the second onboarding learns joins the deposit by an ordinary
-re-annotation — the supersession key holds one value per actor kind at
-source grain, whichever dataset annotates. The first dataset's channel
-reads the updated deposit with no further act (verified in the run:
-the `booleans` convention annotated from `fin_ap`, read back from `fin`):
+One value is current per source, whichever dataset writes it.
 
 ```glossql
 GLOSS conventions ON erp_export AS $${
@@ -81,8 +61,3 @@ USE fin;
 SELECT json_get_str(value, 'booleans') AS booleans
 FROM GLOSSARY(erp_export) WHERE aspect = 'conventions';
 ```
-
-Result: TRANSCRIBES. Promotion is an ordinary re-annotation at source
-grain; disclosure (`missing`) bounds to declared sources through
-the grain; the persistence of the deposit rides the storage
-integration (proposal §5 in the fork record).
