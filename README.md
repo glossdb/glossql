@@ -11,7 +11,14 @@ extension. It adds a handful of statements and two table functions to
 DuckDB SQL, and keeps its catalog in a DuckLake beside the lake's own
 tables, so what is known about the data is versioned with the data.
 
-Every word glossql uses, beside the industry's: [terms](docs/terms.md).
+[glossdb](https://github.com/glossdb/glossdb) is the server around it.
+There, agents build a company's data intelligence layer in glossql:
+what the data means, how its sources map, whether it can be trusted,
+and who decides.
+
+Why data needs a harness and how its parts fit together:
+[the data harness](docs/harness.md). Every word glossql uses, beside
+the industry's: [terms](docs/terms.md).
 
 ## Declare what must be known
 

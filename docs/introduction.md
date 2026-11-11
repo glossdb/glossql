@@ -5,6 +5,10 @@ table functions to DuckDB SQL, and keeps its catalog in a DuckLake
 beside the lake's own catalog tables, so what is known about the data
 is versioned with the data.
 
+glossql is the language for writing data harnesses. Why data needs a
+harness, and how its parts work together: [the data
+harness](harness.md).
+
 ## What it adds to DuckDB
 
 - **Statements** to declare what must be known (`DECLARE ASPECT`), how

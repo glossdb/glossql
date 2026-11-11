@@ -10,6 +10,8 @@ is [CONFORMANCE.md](../CONFORMANCE.md).
 ## The extension
 
 - [Introduction](introduction.md)
+- [The data harness](harness.md): why data needs one, and how its
+  parts work together.
 - [Installation](installation.md)
 - [Terms](terms.md): every word, beside the industry's.
 
