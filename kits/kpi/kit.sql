@@ -19,17 +19,20 @@
 -- denominator name.
 
 DECLARE ASPECT meaning WITH $${
+  "description": "What the table, column or relationship means, in the words of the business.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"type": "string"}, "term": {"type": "string"}}
 }$$ AS FACT ON TABLE, COLUMN, RELATIONSHIP;
 
 DECLARE ASPECT role WITH $${
+  "description": "What a column is in the semantic model: a key, a measure, a dimension, a timestamp or an attribute.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"enum": ["key", "measure", "dimension",
                                     "timestamp", "attribute"]}}
 }$$ AS FACT ON COLUMN;
 
 DECLARE ASPECT additivity WITH $${
+  "description": "How a measure adds up over time and over the members of a dimension.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"enum": ["semi-additive", "additive", "ratio", "non-additive"]},
                  "numerator": {"type": "string"},
@@ -38,12 +41,14 @@ DECLARE ASPECT additivity WITH $${
 }$$ AS FACT ON COLUMN WHEN role = 'measure';
 
 DECLARE ASPECT unit WITH $${
+  "description": "The unit a measure is in.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"type": "string"},
                  "source_column": {"type": "string"}}
 }$$ AS FACT ON COLUMN WHEN role = 'measure';
 
 DECLARE ASPECT dimension WITH $${
+  "description": "Whether a dimension is a primary way to slice the data, a supporting one, or none.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"enum": ["primary", "supporting", "none"]},
                  "basis": {"type": "string"}}
@@ -52,6 +57,7 @@ DECLARE ASPECT dimension WITH $${
 -- Table identity: the entity every aggregate rests on.
 
 DECLARE ASPECT entity WITH $${
+  "description": "What one row of the table is, with its grain and its time axis.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"type": "string"},
                  "role": {"enum": ["fact", "dimension"]},
