@@ -1,47 +1,29 @@
 # Terms
 
-The words glossql uses, beside the industry's. Each is defined once
-here. The normative definitions are in [SPEC.md](../SPEC.md). How a
-server builds a harness for agents on them: [how the harness
-works](https://github.com/glossdb/glossdb/blob/main/docs/overview/how-it-works.md).
+The keywords of glossql, each beside the word the industry uses. The
+normative definitions are in [SPEC.md](../SPEC.md). The words a kit
+adds are in the kit's `SKILL.md` ([kits](kits.md)).
 
-## The language
-
-| Term | Industry word | What it is |
+| Keyword | Industry word | What it is |
 |---|---|---|
-| asset (subject) | asset | What a value attaches to: a dataset, a table, a column, a relationship, a source, a view and its columns |
-| aspect | property of the harness schema | One property the harness asks for, with a JSON Schema, the assets it applies to, and when it is required |
-| an aspect's grain | scope | What the aspect applies to: `ON COLUMN`, `ON TABLE`, the dataset |
-| `FACT` aspect | asserted property | A value an actor states |
+| subject | asset | What a value is attached to: a dataset, a table, a column, a relationship, a source. A view and its columns count as a table and its columns |
+| `ASPECT` | property | One property the glossary holds, with a JSON Schema, the kinds of asset it applies to, and when it is required |
+| `ON COLUMN`, `ON TABLE`, … (grains) | scope | The kinds of asset an aspect applies to |
+| `FACT` aspect | stated property | A value an agent or a person states |
 | `MEASUREMENT` aspect | computed property | A value a function computes from the data |
-| `VIEW` aspect | view | SQL served as a view under the aspect's name: a metric, a scalar, or a derived relation |
-| gloss | annotation | One actor's value for one aspect on one asset, validated and versioned |
-| function | measurement | One SQL query that measures the data; its result is stored with its provenance |
-| detector | scoring function | A function that scores how far the values for an aspect agree |
-| test (`DECLARE TEST`) | data test | Declared on an aspect: who may annotate it and which detector scores agreement, with a threshold |
-| `TESTS()` | test results | One row per asset and aspect: state, score, whether it is current |
-| `GLOSSARY()` | the glossary | What is known: one row per asset and aspect, with its state |
-| `current` · `stale` · `conflict` · `missing` | valid · outdated · conflict · missing value | The state of an asset's aspect in the glossary |
-| test state (`state` in `TESTS()`, `test_state` in `GLOSSARY()`) | severity, confidence | green, yellow, orange, red, or error |
-| `data_version`, `reads` | provenance | The versions of what a measurement read |
-| source | connection | A directory, a URL prefix, or an attached database |
-| `RECIPE` | load query | The SQL that loads a table from a source |
-| `IMPORT` | load | Runs a load query; every load is a DuckLake snapshot with its row count and column lineage |
-| `PREVIEW` | dry run, preview | Runs a query on a source without loading |
+| `VIEW` aspect | view | SQL served as a view under the aspect's name: a metric, a single value or a table |
+| `GLOSS` | annotation | One actor's value for one aspect on one asset, validated and stored with the lake snapshot |
+| `DECLARE FUNCTION … RETURNS` | measurement | One SQL query over the data; its result is stored with the data version it read |
+| `DECLARE FUNCTION` without `RETURNS` (detector) | scoring function | A query that scores how far the values for an aspect agree |
+| `DECLARE TEST` | test | Declared on an aspect: who may annotate it, which detector scores it, and a threshold |
+| `TESTS()` | test results | One row per asset and test: `state`, `score`, whether it is current |
+| `GLOSSARY()` | business glossary | One row per asset and aspect, with its value and state |
+| `current` · `stale` · `conflict` · `missing` | valid · outdated · conflict · missing value | The state of a row in `GLOSSARY()` |
+| `state` in `TESTS()`, `test_state` in `GLOSSARY()` | test status | `green`, `yellow`, `orange`, `red` or `error` |
+| `data_version`, `reads` | provenance | The tables a measurement read, and the version of each |
+| `DECLARE SOURCE` | connection | A directory, a URL prefix, or an attached database |
+| `DECLARE RECIPE` | load query | The SQL that loads one table from a source |
+| `IMPORT` | load | Runs a load query again; every load is a DuckLake snapshot |
+| `PREVIEW` | preview, dry run | Runs a query at a source and loads nothing |
 | kit | rule pack | A domain's aspects, functions and tests, with a skill that teaches them |
-| actor | user, service account | An agent, a person, or a person working with an agent |
-
-## The semantic layer (the `kpi` kit)
-
-| Term | Industry word | What it is |
-|---|---|---|
-| `meaning` | description | What a table, column or relationship means, and the business term it carries |
-| `role` | column role | key, measure, dimension, timestamp, attribute |
-| `unit` | unit of measure | A measure's unit or currency |
-| `additivity`: additive · semi-additive · ratio · non-additive | additivity | Whether a measure may be summed, and over which axes |
-| `dimension`: primary · supporting | dimension | Whether a dimension column is one to slice a metric by |
-| `entity` | grain and key | What one row of a table is, and the columns that identify it |
-| `definitions` | business glossary | Each metric's meaning, unit, owner, source and formula, kept per dataset |
-| `conventions` | source conventions | A source's fiscal calendar, sign conventions, what its nulls mean |
-| time grains | time grains | day, week, month, quarter: the grains a metric is served at |
-| metric definition | metric | A view whose columns carry role, additivity and time |
+| actor | user, service account | An agent or a person; set on the connection |

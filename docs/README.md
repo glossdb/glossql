@@ -1,43 +1,33 @@
 # Documentation
 
-glossql is the language for writing data harnesses, built as a DuckDB
-extension. This documentation has two parts: the extension, and the
-specification of its catalog. The language itself is
-[SPEC.md](../SPEC.md), with the grammar in
-[grammar.ebnf](../grammar.ebnf); what this extension implements of it
-is [CONFORMANCE.md](../CONFORMANCE.md).
+glossql is a DuckDB extension. These pages say how to use it and list
+what it provides. The language itself is defined in
+[SPEC.md](../SPEC.md); the syntax is [grammar.ebnf](../grammar.ebnf).
 
-## The extension
+Start here:
 
-- [Introduction](introduction.md)
-- [The data harness](harness.md): why data needs one, and how its
-  parts work together.
-- [Installation](installation.md)
-- [Terms](terms.md): every word, beside the industry's.
+- [Installation](installation.md): build, load, open a workspace, the
+  CLI and the example MCP server.
+- [The data harness](harness.md): the idea, and how the parts work
+  together.
+- [Terms](terms.md): each keyword beside the industry's word.
 
 Usage:
 
-- [Sessions and workspaces](usage/sessions.md)
 - [Loading data](usage/loading-data.md)
-- [Describing data](usage/describing-data.md)
+- [Describing data](usage/describing-data.md): properties,
+  annotations, views, relationships.
 - [Measurements](usage/measurements.md)
 - [Tests](usage/tests.md)
-- [Relationships](usage/relationships.md)
-- [Reading what is known](usage/reading.md)
-- [Lineage](usage/lineage.md)
+- [Reading what is known](usage/reading.md): the glossary, the catalog
+  tables, lineage.
 
 Reference:
 
 - [Functions](functions.md)
 - [Kits](kits.md)
-- [Interfaces](interfaces.md): the CLI and the MCP server.
-
-## Specification
-
-- [Introduction](specification/introduction.md): the catalog and its
-  tables.
-- Tables: [datasets](specification/tables/datasets.md),
-  [kits](specification/tables/kits.md),
+- [The catalog](specification/introduction.md), one page per table:
+  [datasets](specification/tables/datasets.md),
   [sources](specification/tables/sources.md),
   [recipes](specification/tables/recipes.md),
   [imports](specification/tables/imports.md),
@@ -46,9 +36,7 @@ Reference:
   [relationships](specification/tables/relationships.md),
   [functions](specification/tables/functions.md),
   [measurements](specification/tables/measurements.md),
-  [tests](specification/tables/tests.md).
+  [tests](specification/tables/tests.md),
+  [kits](specification/tables/kits.md).
 
-## Internals
-
-- [How glossql maps onto DuckDB](internals/duckdb.md)
-- [Updating DuckDB](internals/updating-duckdb.md)
+For maintainers: [updating DuckDB](internals/updating-duckdb.md).

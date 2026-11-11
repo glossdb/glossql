@@ -68,14 +68,13 @@ GLOSS accounts_receivable ON fin AS $${
 
 ## Read at the reader's grain
 
-The reader picks the time grain and the dimension. The reads below
-spell the view as `read.revenue()`; this extension reaches the same
-view by its name, `FROM revenue` (CONFORMANCE.md).
+The reader picks the time grain and the dimension. A view is read by
+its name.
 
 ```glossql
-SELECT date_trunc('month', date) AS month, sum(value) FROM read.revenue() GROUP BY 1 ORDER BY 1;
-SELECT date_trunc('decade', date) AS decade, sum(value) FROM read.revenue() GROUP BY 1;
-SELECT cost_center, sum(value) FROM read.revenue() GROUP BY 1 ORDER BY 2 DESC;
+SELECT date_trunc('month', date) AS month, sum(value) FROM revenue GROUP BY 1 ORDER BY 1;
+SELECT date_trunc('decade', date) AS decade, sum(value) FROM revenue GROUP BY 1;
+SELECT cost_center, sum(value) FROM revenue GROUP BY 1 ORDER BY 2 DESC;
 ```
 
 ## Formulas of the derived metrics
@@ -162,6 +161,6 @@ SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
 ```glossql
-SELECT date_trunc('week', date) AS week, sum(value) FROM read.revenue() GROUP BY 1;
-SELECT * FROM read.dso();
+SELECT date_trunc('week', date) AS week, sum(value) FROM revenue GROUP BY 1;
+SELECT * FROM dso;
 ```

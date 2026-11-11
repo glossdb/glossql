@@ -7,8 +7,8 @@
 A workspace is a directory holding the opener glossql.sql, the lake's
 catalog and its data. The server opens one connection through the duckdb
 package, runs the opener's SQL on it (the CLI's dot commands skipped) and
-keeps it for its life: the tool `gloss` runs each call's statements there,
-one after the other, and renders what each returns. The two skills are
+keeps it open: the tool `glossql` runs each call's statements there,
+one after the other, and renders what each returns. The skills are
 resources and prompts; the opener is a resource.
 
     uv run examples/mcp/glossql_mcp.py /path/to/workspace
@@ -81,11 +81,11 @@ CON = open_workspace()
 mcp = FastMCP(
     "glossql",
     instructions=(
-        "A glossql workspace: DuckDB, a DuckLake and the glossql context language on one connection, "
-        "behind one tool, `gloss`, which runs glossql statements and plain SQL. Read "
-        "skill://glossql/SKILL.md first (the interface, the language, the reads, the store), then "
-        "`SELECT * FROM glossql.datasets;`. The other skill resources are the kits' vocabularies, one per "
-        "kit under kits/, for a workspace that loaded the kit (`SELECT name FROM glossql.kits;`)."
+        "A glossql workspace: DuckDB, a DuckLake and the glossql language on one connection, "
+        "behind one tool, `glossql`, which runs glossql statements and plain SQL. Read "
+        "skill://glossql/SKILL.md first (the statements, the reads, the catalog tables), then "
+        "`SELECT * FROM datasets;`. The other skill resources are the kits' properties, one per "
+        "kit under kits/, for a workspace that loaded the kit (`SELECT name FROM kits;`)."
     ),
 )
 
@@ -101,8 +101,8 @@ def glossql(statements: str, max_rows: int = 1000, max_cell: int = CELL) -> str:
     up to `max_rows` rows, else its first and last rows; a cell over `max_cell`
     chars is cut, with the count of what is missing (0: whole); a write comes back
     as its outcome line. A refused statement stops the call and is the error,
-    naming its place: what was stored before it stays stored, what came after never
-    ran, except inside an explicit transaction, which the refusal rolls back whole.
+    naming its place: what was stored before it stays stored, what came after did not
+    run, except inside an explicit transaction, which the refusal rolls back whole.
     """
     out = []
     for index, statement in enumerate(CON.extract_statements(statements), 1):

@@ -1,137 +1,125 @@
 ---
 name: glossql-quality
-description: The quality kit's screens for a glossql workspace — how the data holds together: which columns key into which, whether declared relationships hold, which columns form hierarchies, which numbers are other numbers combined, which metrics are the same thing twice. Use after glossql_kit('kits/quality/kit.sql'), once roles are glossed, to find structure before declaring it.
+description: The quality kit's checks for a glossql workspace — which columns reference which, whether declared relationships are valid in the data, which columns form hierarchies, which numbers are computed from other numbers, which metrics are defined twice, whether a measure is a stock or a flow. Use after glossql_kit('kits/quality/kit.sql'), once roles are annotated, to find structure before declaring it.
 ---
 
-# The quality kit: what it teaches
+# The quality kit
 
-For an actor working in a DuckDB that has the glossql extension loaded,
-the KPI kit declared and this kit after it. The extension knows the
-grammar and the store; the KPI kit is the words; this kit is the screens
-that find structure in the data and store what they find as measurements.
-Everything live is read through the language: the tables, the
-declarations, the glossary.
+For an agent working in a DuckDB that has the glossql extension, the
+kpi kit and then this kit loaded. The kit's checks find structure in
+the data and store what they find as measurements. A result is input
+for your annotation or declaration. It does not declare anything
+itself.
 
 ## Load and check
 
 ```sql
 FROM glossql_kit('kits/kpi/kit.sql');
-FROM glossql_kit('kits/quality/kit.sql');    -- after the KPI kit; the same two lines in the opener
+FROM glossql_kit('kits/quality/kit.sql');    -- after the kpi kit; both lines in the opener
 SELECT name, scope, returns FROM functions WHERE returns IS NOT NULL;
 ```
 
-## The screens
+## The checks
 
-A screen is a table macro over `dataset_cells(subject)`, every cell of a
-dataset's tables, or of one table, as one relation. Run a screen directly
-to look; extract its measurement to store what it found.
+Each check is a table macro you can call to look, and a measurement
+that stores the result.
 
-| Measurement | On | Reads | Is stored |
+| Measurement | On | Table macro | Stores |
 |---|---|---|---|
 | `detect_relationships()` | dataset | `relationship_candidates(dataset)` | `candidates`: `from`, `to`, `cardinality`, `overlap`, `matched`, `orphans`, `to_unique`, `to_temporal`, `key_columns`; `summary`: the count, the top 16, a note |
-| `relationship_coherence()` | dataset | `relationship_checks(dataset)` | `relationships`: per declared edge `filled`, `orphans`, `orphan_rate`, `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
-| `detect_hierarchies()` | table | `hierarchy_candidates(table)` | `candidates`: `from`, `to`, `g3`, `lambda`, `kind` (`edge` or `alias`); `rows`, the rows read: a sample of a larger table, so the rates are estimates |
-| `detect_derivations()` | table | `derivation_candidates(table)` | `candidates`: `target`, `form` (`product` or `sum`), `operands`, `support`, `violations`, `match_rate`; `truncated`; `rows`, the rows read: a sample of a larger table |
+| `relationship_coherence()` | dataset | `relationship_checks(dataset)` | `relationships`: per declared relationship `filled`, `orphans`, `orphan_rate`, and `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
+| `detect_hierarchies()` | table | `hierarchy_candidates(table)` | `candidates`: `from`, `to`, `g3`, `lambda`, `kind` (`edge` or `alias`); `rows`: the rows read |
+| `detect_derivations()` | table | `derivation_candidates(table)` | `candidates`: `target`, `form` (`product` or `sum`), `operands`, `support`, `violations`, `match_rate`; `truncated`; `rows`: the rows read |
 | `detect_definition_collisions()` | dataset | `definition_collisions(dataset)` | `definitions`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |
-| `additivity_evidence()` | column | `additivity_anchors(column)` | `summary`: `result` (`semi-additive`, `additive`, `abstain`), `convention`, `support`, `voted`, `event`, `align`, `grain`, `scope`, `r_flow`, `r_stock`, `sign`, `tiebreak`, `reason`; `anchors`: every anchor's row; `anchors_n`, `decided` |
+| `additivity_evidence()` | column | `additivity_anchors(column)` | `summary`: `result` (`semi-additive`, `additive`, `abstain`), `convention`, `support`, `voted`, `event`, `align`, `grain`, `scope`, `r_flow`, `r_stock`, `sign`, `tiebreak`, `reason`; `anchors`: one row per anchor; `anchors_n`, `decided` |
+| `temporal()` | timestamp columns | | `temporal_profile`: `granularity`, `confidence`, `completeness`, `gaps` |
 
-What each line means:
+How to read them:
 
-- A relationship candidate is a column whose values appear in another
-  column that is key-like: nearly every filled row distinct. `overlap` is
-  the share of the source's distinct values found in the target;
-  `orphans` the rest. `key_columns` names a second pair that scopes the
-  first, where a reference keys only within its account.
-- `g3` is the share of rows that break `from → to`; a candidate ships at
-  `g3 <= 0.05`, and reads `alias` when both directions are under 0.01.
-  `lambda` is how much better `to` is predicted knowing `from`.
-- A derivation ships at `match_rate >= 0.95` over twenty supporting rows
-  or more.
-- A collision is two metric definitions of one flavor, the aspect's `x-kind`: a
-  `sql` collision two with the same statement once parsed, a
-  `served_series` collision two whose monthly series agree though their
-  SQL differs. The series is read off the view's claims: the column
-  glossed `role` timestamp is the period, the column glossed `role`
-  measure the value, else the columns named `period` and `value`; the
-  `additivity` glossed on the value column folds the month, a flow summed,
-  a stock at its last level, a ratio its summed halves re-divided.
-- The additivity evidence says whether a numeric column is a stock, a
-  level correct at a point in time, or a flow, a movement that sums over
-  a period. A column's own trajectory cannot decide it; the evidence is
-  cross-table: a movement summed per entity and period from an event
-  table a declared relationship aligns with the column's table, scored
-  against both readings, flow where the level matches the movement,
-  stock where its change does. The movements are the event table's
-  columns glossed `role` measure, nothing guessed from a type; an event
-  table with no measure glossed abstains and names the gloss to make,
-  so gloss roles on the event tables first. An anchor is one event table, alignment,
-  time axis on each side, grain and scope; its `convention` is the
-  movement column, or a difference of two, that reconciled, `monotone`
-  the one anchor per alignment that reads the measure's own shape, a
-  level that never decreases. `support` is Wilson's lower bound on the
-  voters among the entities both sides carry; `r_flow` and `r_stock` the
-  median residuals of the voters; `sign` how many fire only under the
-  negated movement, the ledger-signed reading. An anchor abstains with
-  its reason: short series, no fit, under the majority. Read the
-  summary, then gloss `additivity` citing the anchor in `basis`; the
-  result is evidence, never a value in the values.
-- `applicable: false` with a `reason` is a screen that could not run:
-  an empty table, too few columns of the right kind, no declared
-  relationships, no metric definitions, a column that is no number or an
-  identifier (a key column of a declared relationship, or an integer distinct
-  on nine filled rows in ten), a table with no time axis. Examined,
-  nothing to say.
+- **Relationship candidates.** A candidate is a column whose values
+  appear in another column that is nearly unique. `overlap` is the
+  share of the first column's distinct values found in the second;
+  `orphans` is the rest. `key_columns` names a second column pair that
+  is needed for the key to be unique.
+- **Hierarchies.** `g3` is the share of rows that break `from → to`. A
+  candidate is reported at `g3 <= 0.05`. It is an `alias` when both
+  directions are at or under 0.01. `lambda` says how much better `to`
+  is predicted when `from` is known.
+- **Derivations.** A candidate is reported at `match_rate >= 0.95`
+  over at least 20 rows.
+- **Definition collisions.** Two metrics with the same `x-kind` that
+  are the same thing. `sql`: the two SQL texts parse to the same
+  statement. `served_series`: the SQL differs but the monthly series
+  agree. The series is read from the view's annotations: the column
+  with `role` `timestamp` is the period, the column with `role`
+  `measure` the value, else the columns named `period` and `value`.
+  The value's `additivity` says how a month is aggregated.
+- **Additivity evidence.** Says whether a numeric column is a stock (a
+  level at a point in time) or a flow (a movement that sums over a
+  period). The check compares the column with movements in an event
+  table that a declared relationship links to the column's table. A
+  flow matches the movement; a stock's change matches it. The
+  movements are the event table's columns annotated `role` `measure`,
+  so annotate roles on the event tables first. An anchor is one
+  combination of event table, link, time column, grain and scope.
+  `support` is a lower confidence bound on the share of entities that
+  agree. `r_flow` and `r_stock` are the median residuals under each
+  reading. A result of `abstain` carries its `reason`. Read the
+  summary, then annotate `additivity` and name the anchor in `basis`.
+- **`applicable: false`** with a `reason` means the check could not
+  run: an empty table, too few columns of the right kind, no declared
+  relationships, no metrics, a column that is not a number or is an
+  identifier, a table with no time column.
 
-## The order
+## The order of the work
 
-1. Gloss `role` on the columns first. The screens read types, not roles,
-   but what they find is read against the roles.
-2. `SELECT detect_relationships() FROM fin;` then read back:
-   `SELECT value FROM GLOSSARY(fin::relationship_candidates);`. The top
-   16 are ranked: clean keys first, then many-to-one, then overlap.
-   Declare what holds: `DECLARE RELATIONSHIP orders.customer_id ->
-   customers.id;`. A candidate is evidence, never a declaration.
-3. `SELECT relationship_coherence() FROM fin;` after declaring, and
-   after every load: orphans and dates out of order are what a
-   declared edge requires.
+1. Annotate `role` on the columns first.
+2. `SELECT detect_relationships() FROM shop;`, then read the result:
+   `SELECT value FROM GLOSSARY(shop::relationship_candidates);`. The
+   top 16 are ranked: unique targets first, then many-to-one, then
+   overlap. Declare the ones that are right: `DECLARE RELATIONSHIP
+   orders.customer_id -> customers.id;`.
+3. `SELECT relationship_coherence() FROM shop;` after declaring, and
+   after every load: it reports orphans and dates out of order.
 4. Per table with dimension columns, `SELECT detect_hierarchies() FROM
-   fin.geo;`; per table with three numeric columns or more, `SELECT
-   detect_derivations() FROM fin.lines;`. Cite a found edge or
-   derivation in the `basis` of the gloss it supports.
-5. Per measure column, after the edges are declared and the event
-   tables' measures carry `role`, `SELECT additivity_evidence() FROM
-   fin.balances.amount;`: stock or flow, with the anchor that decided.
-   Gloss `additivity` with the anchor as its basis.
-6. After metric definition metrics, `SELECT detect_definition_collisions() FROM
-   fin;`: two names for one number is a definition to settle, not two
-   metrics.
+   shop.regions;`. Per table with three or more numeric columns,
+   `SELECT detect_derivations() FROM shop.order_lines;`. Name what was
+   found in the `basis` of the annotation it supports.
+5. Per measure column, after the relationships are declared and the
+   event tables' measures have `role`: `SELECT additivity_evidence()
+   FROM shop.stock_levels.quantity;`. Then annotate `additivity`.
+6. After defining metrics, `SELECT detect_definition_collisions() FROM
+   shop;`. Two names for one number is a definition to settle with a
+   person.
 
-A measurement is stored with what it read; a repeat serves the stored row
-while that is unchanged and computes once a table moved.
+A measurement is stored with the versions of the tables it read. A
+repeat returns the stored result while those are unchanged.
 
 ## A check of your own
 
-A validation is a FACT aspect whose schema carries `tolerance` and
-`breach_rate`. Gloss the expectation with the tolerance you measured at
-load, never an assumed zero. Declare a function that returns the
-same aspect and measures the violation share as `breach_rate`, 0.0
-passing. A test on the aspect names the kit's detector:
+A check is a `FACT` property whose schema has `tolerance` and
+`breach_rate`. Annotate the tolerance you expect. Declare a function
+that returns the same property and measures the share of violations
+as `breach_rate`. A test on the property names the kit's detector:
 
 ```glossql
 DECLARE TEST ids_test ON ids_present BY (AGENT, HUMAN)
   DETECTOR rate_tolerance THRESHOLD 0.0;
 ```
 
-`TESTS()` gives each subject a state: yellow while no check has annotated, green
-at or under the tolerance, red above it. The human's tolerance outranks
-the agent's; the test's threshold holds in while no gloss carries
-one. The detector is one-sided: a source whose expected dirt must not
-be cleaned away declares its own, red on both sides.
+`TESTS()` gives each asset a state: `yellow` while no function has
+measured a rate, `green` at or under the tolerance, `red` above it.
+The person's tolerance is used before the agent's. The test's
+threshold is used while no annotation has a tolerance. The detector is
+one-sided: it does not flag a rate that is lower than expected.
 
-## What this kit does not do
+## Limits
 
-No test judges these measurements: they are evidence, served beside
-the glosses, not claims. Declaring an edge, a hierarchy gloss or a
-derived metric is the actor's statement, made from the evidence. The
-screens compare values as text within one stored type, read a NULL as
-a category, and scan whole tables, never a sample.
+- No test scores these measurements. They are input for a declaration
+  or an annotation, which you or a person make.
+- The checks compare values as text within one stored type and treat
+  NULL as a category.
+- `hierarchy_candidates` and `derivation_candidates` read at most two
+  million cells of a table. A larger table is read as a sample of its
+  rows, the same rows on every run; `rows` says how many, and the rates
+  are then estimates.

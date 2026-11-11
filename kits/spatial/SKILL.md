@@ -1,58 +1,59 @@
 ---
 name: glossql-spatial
-description: The spatial kit's vocabulary for a glossql workspace — which columns are geometry and what one holds for, the CRS the coordinates are in, the profile that measures them, how geometry is stored. Use after glossql_kit('kits/spatial/kit.sql') when a workspace is stored or reads geometry.
+description: The spatial kit's properties for a glossql workspace — which columns are geometry and what one geometry represents, the CRS of the coordinates, the profile that measures them, how geometry is loaded. Use after glossql_kit('kits/spatial/kit.sql') when a workspace loads or reads geometry.
 ---
 
-# The spatial kit: what it teaches
+# The spatial kit
 
-For an actor working in a DuckDB that has the glossql extension loaded and
-this kit declared. The kit brings DuckDB's spatial extension in, its
-first lines install and load it, and declares two words, one
-measurement and their tests.
+For an agent working in a DuckDB that has the glossql extension and
+this kit loaded. The kit's first lines install and load DuckDB's
+`spatial` extension. It declares two properties, one measurement and
+their tests.
 
 ## Load
 
 ```sql
-FROM glossql_kit('kits/spatial/kit.sql');   -- and the same line in the opener
+FROM glossql_kit('kits/spatial/kit.sql');   -- also in the opener
 ```
 
-A DuckDB extension is loaded per process. The opener's replay of the
-kit is what loads spatial next time; without it a metric definition over
-geometry stops at the first `ST_` function.
+A DuckDB extension is loaded per process. Loading the kit in the
+opener loads `spatial` in every session; without it a view over
+geometry fails at the first `ST_` function.
 
-## The words
+## The properties
 
-| Aspect | On | Body | Says |
+| Property | On | Body | Says |
 |---|---|---|---|
-| `shape` | geometry columns (`WHEN TYPE = 'GEOMETRY'`) | `value`: `point`, `line`, `polygon`, `mixed`; `represents`; `basis` | what one geometry holds for |
-| `crs` | geometry columns (`WHEN TYPE = 'GEOMETRY'`) | `value`: the identifier, `EPSG:2263`; `unit`: what a coordinate counts; `basis` | the coordinate reference system the coordinates are in |
+| `shape` | columns of type `GEOMETRY` | `value`: `point`, `line`, `polygon`, `mixed`; `represents`; `basis` | what one geometry represents |
+| `crs` | columns of type `GEOMETRY` | `value`: the identifier, such as `EPSG:2263`; `unit`: the unit of a coordinate; `basis` | the coordinate reference system |
 | `geometry_profile` | column, a measurement | `total`, `null_ratio`, `kinds`, `invalid`, `empty`, `extent`, `area_sum` | what the geometries are: `SELECT geometry_profile() FROM zones.geom;` |
 
-Both tests take the agent and the human without a detector.
+Both properties are required on geometry columns only. Their tests
+take annotations from an agent and a person and have no detector.
 
 ## Load geometry
 
-- A recipe over the extension's own reader takes the full path:
+- A load query over `ST_Read` takes the full path:
   `ST_Read('/data/taxi_zones/taxi_zones.shp')`. The source's location
-  is a label there; DuckDB's file search path does not reach GDAL.
-- The reader's column carries the CRS in its type,
-  `GEOMETRY('EPSG:2263')`. The lake is stored it as plain `GEOMETRY`, and
+  does not apply: DuckDB's file search path does not reach GDAL.
+- The reader's column has the CRS in its type,
+  `GEOMETRY('EPSG:2263')`. The lake stores it as plain `GEOMETRY`, and
   `st_crs` returns NULL on the stored column. Read the CRS at the
   source, `SELECT layers[1].geometry_fields[1].crs FROM
-  ST_Read_Meta(path)`, and gloss it: the `crs` gloss is where it
-  survives.
-- A metric definition over geometry calls the extension's functions and serves
-  in the CRS's units. Say the unit in its assumptions: EPSG:2263 is US
-  survey feet, so `ST_Area` is square feet there.
+  ST_Read_Meta(path)`, and annotate it as `crs`.
+- A view over geometry returns results in the CRS's units. State the
+  unit in the view's assumptions: EPSG:2263 is in US survey feet, so
+  `ST_Area` returns square feet there.
 
-## The order of a round
+## The order of the work
 
-1. Read what is required: `SELECT * FROM GLOSSARY(zones) WHERE state <>
-   'current';`. Both words are required on the geometry columns and nowhere
-   else.
-2. Extract first, `SELECT geometry_profile() FROM zones.geom;`, and
-   gloss `shape` with the kinds as its basis.
-3. Gloss `crs` on the geometry column from `ST_Read_Meta`, with the
-   unit the CRS implies.
-4. Define what is asked in the CRS's units, the conversion in the
+1. Read what is missing: `SELECT * FROM GLOSSARY(zones) WHERE state <>
+   'current';`.
+2. Measure first, `SELECT geometry_profile() FROM zones.geom;`, and
+   annotate `shape` with the kinds as its basis.
+3. Annotate `crs` on the geometry column from `ST_Read_Meta`, with the
+   unit of the CRS.
+4. Define views in the CRS's units and put the conversion in the
    assumptions.
+
+`examples/spatial/` runs these steps on a public shapefile.

@@ -12,7 +12,7 @@ the newest row per asset, aspect and function.
 | `function` | VARCHAR | The measurement that computed it. |
 | `subject` | VARCHAR | The asset it measured. |
 | `aspect` | VARCHAR | The aspect the function returns. |
-| `data_version` | VARCHAR | Every input at the version read: a lake table at the last snapshot that wrote it, a catalog table at its highest `seq`. The result reads stale once an input moved. |
+| `data_version` | VARCHAR | Every input at the version read: a lake table at the last snapshot that wrote it, a catalog table at its highest `seq`. The result reads stale once one of them has a newer version. |
 | `value` | VARCHAR | The result, validated against the aspect's schema. The view serves it as JSON. |
 | `computed_at` | TIMESTAMP | When the row was written. |
-| `reads` | VARCHAR | What the function's plan scans: lake tables as `dataset.table`, catalog tables as `glossql.<name>`, `**` for a scan that cannot be named (a file, another database). |
+| `reads` | VARCHAR | What the function's plan scans: lake tables as `dataset.table`, catalog tables as `main.<name>`, `**` for a scan that has no table name (a file, a table function, another database). |

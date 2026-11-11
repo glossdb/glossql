@@ -1,186 +1,180 @@
 ---
 name: glossql
-description: Speak glossql in a DuckDB workspace through the duckdb CLI — the opener, the call shape, the statement set, the reads, the store relations, how a refusal looks. Use when reading or writing anything in a glossql workspace (datasets, sources, recipes, glosses, functions, tests, metrics).
+description: Use glossql in a DuckDB workspace through the duckdb CLI or the example MCP server — how to open a workspace, the statements, the reads, the catalog tables, what a failed statement looks like. Use when reading or writing anything in a glossql workspace (datasets, sources, load queries, annotations, functions, tests, views).
 ---
 
-# Speaking glossql through the duckdb CLI
+# Using glossql
 
-glossql is one SQL-shaped surface for a workspace's data and its
-context. Data is stored in tables of a DuckLake; context is JSON attached
-to subjects (`dataset`, `table`, `table.column`; a column named with a
-  dot or a space is spelled quoted, `table."a.b"`) under declared aspects.
-The `gloss` extension gives DuckDB the grammar and the store; a kit
-gives the words (`kits/kpi/SKILL.md` teaches the KPI kit's,
-`kits/quality/SKILL.md` the quality kit's screens). Everything
-live — the vocabulary, the tables, the catalog — is read through the
-language, never assumed.
+glossql adds statements to DuckDB SQL for a workspace's data and its
+glossary. Data is stored in tables of a DuckLake. The glossary is JSON
+values attached to assets (a dataset, a table, a column, a
+relationship, a source) under declared properties (aspects). The
+`glossql` extension provides the grammar and the catalog. A kit adds
+the properties for a domain; each kit has its own skill. Read the
+tables, the properties and the glossary from the workspace before you
+write.
 
-## The interface
+## Open a workspace
 
-A workspace is a directory holding `glossql.sql` (the opener),
+A workspace is a directory with `glossql.sql` (the opener),
 `ws.ducklake` (the lake's catalog) and `ws/` (its data). A call is one
-`duckdb` process run from that directory, the opener first, your
+`duckdb` process run in that directory, the opener first, your
 statements on stdin in a quoted heredoc:
 
 ```sh
 duckdb -unsigned -bail -init glossql.sql <<'SQL'
-USE employees;
-SELECT * FROM GLOSSARY(dept_emp) WHERE state <> 'current';
+USE staff;
+SELECT * FROM GLOSSARY(employees) WHERE state <> 'current';
 SQL
 ```
 
-The opener loads the extension, attaches the lake, activates the grammar,
-makes the store where missing and loads the workspace's kits, each current when its text is unchanged:
+The opener loads the extension, attaches the lake, turns the grammar
+on, creates the catalog where missing and loads the workspace's kits:
 
 ```sql
 .startup_text none
-LOAD '/path/to/glossql.duckdb_extension';                  -- or LOAD glossql, once installed
+LOAD '/path/to/glossql.duckdb_extension';
 ATTACH 'ducklake:ws.ducklake' AS ws (DATA_PATH 'ws/');
 USE ws;
 .output /dev/null
 PRAGMA glossql;
-FROM glossql_kit('/path/to/kits/kpi/kit.sql');            -- every kit the workspace runs
-FROM glossql_kit('/path/to/kits/quality/kit.sql');        -- after the KPI kit, whose words its screens read against
+FROM glossql_kit('/path/to/kits/kpi/kit.sql');
+FROM glossql_kit('/path/to/kits/quality/kit.sql');        -- after the kpi kit
 .output
 ```
 
-- **Nothing but the lake survives a call.** The dataset binding, the
-  actor and every variable reset with the process, so every call that
-  names a dataset's tables opens with `USE <dataset>;`. A qualified
-  `dataset.table.column` reaches across datasets from anywhere.
-- **The quoted heredoc is the shape.** `$$…$$` bodies, single quotes
-  and `"quoted"` names pass through untouched; inside a double-quoted
-  shell string `$$` is the shell's own.
-- **`-bail` stops the call at the first refused statement.** What
-  ran before it stays done; what came after never ran. Without it
-  the rest still runs.
-- **`-unsigned`** until the extension is signed by a repository.
-- **The kits replay at start-up.** A DuckDB extension is loaded per
-  process, so a kit that needs one installs and loads it in its first
-  lines, and the opener's replay is what loads it next time. A kit run
-  again is silent: unchanged declarations are no-ops, no kits row is stored.
+- **Each call is a new process.** The dataset in use, the actor and
+  every variable are reset. Start a call that names a dataset's tables
+  with `USE <dataset>;`. A full `dataset.table.column` path works from
+  anywhere.
+- **Use a quoted heredoc.** `$$…$$` bodies, single quotes and
+  `"quoted"` names pass through unchanged.
+- **`-bail` stops the call at the first statement that fails.** The
+  statements before it stay done; the ones after it do not run.
+- **A kit loaded again with the same text** runs only its `LOAD` and
+  `INSTALL` lines. A DuckDB extension is loaded per process, so the
+  opener is what loads a kit's extension in each call.
 
-Through MCP the interface is the tool `glossql(statements)` on one connection
-the server holds open: the same statements, a markdown table per read,
-an outcome line per write, a refusal as the tool's error, DuckDB's class
-ahead of the `gloss:` message, with what ran before it above. There
-`USE`, variables and the actor persist from call to call. Everything
-below holds unchanged.
+Through the example MCP server the tool is `glossql(statements)`, on
+one connection the server keeps open. The statements are the same.
+`USE`, variables and the actor stay set from call to call. A statement
+that fails is the tool's error, with the output of the statements
+before it.
 
 ## What comes back
 
-The CLI renders for a coding agent when it finds one in the environment
-(`CLAUDECODE` among others; `.help agent` says the rest):
-
-- a read is a markdown table, `name:TYPE` headers, a footer with the
-  row count and a hash of the whole result. A result over 1000 rows or
-  10,000 bytes comes as its first and last rows with the count: refine,
-  never read a cut result as complete. `.maxrows N` on a call lifts it.
-- a statement answers with one `outcome` row saying what it did:
-  `declared dataset fin (schema ws.fin)`, `stored fin.orders: 300024
-  rows, 0 dropped (new)`, `imported …`, `glossed …`. An extraction
-  answers with the measurement row (`function, subject, aspect, value,
-  computed`); twenty extractions in one call are twenty small tables,
-  and `measurements` holds the lot afterwards.
-- a refused statement is one JSON line on stderr and exit status 1.
-  The language's refusals open with `gloss:` and name what was wrong;
-  the parser's and the binder's are DuckDB's own.
+- A read is a table. In the CLI's agent mode it is a markdown table
+  with `name:TYPE` headers and a footer with the row count. A large
+  result is cut; do not read a cut result as complete.
+- A statement answers with one `outcome` row:
+  `declared dataset staff (schema ws.staff)`,
+  `loaded staff.employees: 300024 rows, 0 dropped (new)`,
+  `imported staff.employees: 300024 rows, 0 dropped (replaced)`,
+  `glossed unit on staff.employees.salary as agent`. A declaration
+  repeated without change answers `… unchanged: no-op`.
+- Running a measurement answers with `(function, subject, aspect,
+  value, computed)`.
+- A statement that fails is one JSON line on stderr and exit status 1.
+  The extension's errors start with `glossql:` and say what was wrong.
 
 ## Who annotates
 
-You are `agent`. A person decides through their own call with `SET
-VARIABLE glossql_actor = 'human';` ahead of their statements (and `SET
-VARIABLE glossql_actor_id = '<who>';` for the catalog); never set it
-yourself. The collapsed read prefers the human's value and judges a
-disagreement through the test's detector; a red state is a
-disagreement to resolve by re-glossing with a basis, not to overwrite.
+You are `agent`, the default. A person writes through their own call
+with `SET VARIABLE glossql_actor = 'human';` ahead of their statements,
+and `SET VARIABLE glossql_actor_id = '<who>';` to be named. Do not set
+`human` yourself. `GLOSSARY()` serves the person's value before yours.
+Where a test scores a disagreement as `red`, annotate again with a
+`basis`, or ask the person.
 
-## The statement set
+## The statements
 
-| statement | does |
+| Statement | Does |
 |---|---|
-| `USE fin;` | bind the statements after it in this call to a dataset (a schema of the lake); DuckDB's own `USE` |
-| `DECLARE DATASET fin SET (purpose: '…');` | create a dataset: a schema plus a row; `purpose` is required |
-| `DECLARE SOURCE erp SET (type: parquet, location: '/root');` | register a source: `type` (a word for the kind: `parquet`, `csv`, `json`, `shapefile`, …, or `relational_db` for an attached database), `location` (a directory, a URL prefix, or an attached database's name), `via` optional; relative file paths in a recipe resolve under the location for DuckDB's own readers |
-| `PREVIEW erp AS $$SELECT … LIMIT 5$$;` | run recipe-shaped SQL at the source, load nothing: the rehearsal |
-| `DECLARE RECIPE orders ON fin FROM erp [SET (key: id)] AS $$sql$$;` | load the table the SQL produces, now, as `fin.orders`; a key (`id`, or `'a, b'`) makes every later import merge by it, and the result carries each key once or the load refuses by name; an unchanged re-declaration is a no-op |
-| `IMPORT orders;` | run the recipe again over the source as it holds now: a new snapshot of the lake |
-| `DECLARE RELATIONSHIP dept_emp.emp_no -> employees.emp_no;` | declare a join edge (`<->` both ways; `a.(x, y) -> b.(x, y)` composite) between stored columns |
-| `DECLARE ASPECT name WITH $$json-schema$$ AS FACT\|MEASUREMENT\|VIEW [ON TABLE, COLUMN, DATASET, SOURCE, RELATIONSHIP [WHEN aspect = 'value' \| WHEN TYPE = 'T' \| WHEN TYPE IN ('T', 'U')]];` | add a word; the schema is checked on every body; `ON` is the grain, `WHEN` narrows what is required: to subjects whose sibling aspect says so, or to columns of a data type (the base type, `DECIMAL` for `DECIMAL(18,2)`; `ON COLUMN` alone) |
-| `GLOSS aspect ON subject AS $$json$$;` | annotate a value as your own; a VIEW aspect is glossed on the dataset (`GLOSS revenue ON fin AS …`) and then serves as the view `fin.revenue` |
-| `DELETE FROM glossary WHERE subject = '…' AND aspect = '…';` | take rows out of the catalog for good; what the newest remaining rows say then serves; `main.glossary` and the lake's full name spell the same rows |
-| `SELECT … FROM GLOSSARY(subject);` | the collapsed context, one row per subject and aspect |
-| `SELECT … FROM GLOSSARY(subject, all => true);` | every value, raw |
-| `SELECT … FROM TESTS(subject \| subject::aspect);` | the tests' results |
-| `DECLARE FUNCTION f FOR fin\|GLOBAL AS $$sql$$ [RETURNS aspect];` | a measurement (`RETURNS`: a table macro over `subject_column($subject)`) or a detector (no `RETURNS`: runs at read over the test's `annotations` with `$threshold`) |
-| `SELECT f() FROM orders.amount;` | extract: compute and store the measurement, or serve the stored row while what it read is unchanged (`computed` says which) |
-| `DECLARE TEST w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit actors, wire the scoring |
-| `FROM glossql_kit('path-or-url');` | run a kit's declarations, one row each, and store a kits row with the text's hash; run again unchanged, as the opener does at every start-up, the kit holds in one row and only its LOAD lines run; changed, it runs whole |
-| `FROM glossql_lineage($$sql$$);` | every output column of a SELECT down to the base scans, `(column, derivation, complete)` |
+| `USE staff;` | sets the dataset for the statements after it; DuckDB's own `USE` |
+| `DECLARE DATASET staff SET (purpose: '…');` | creates a dataset: a schema of the lake and a catalog row |
+| `DECLARE SOURCE hr SET (type: csv, location: '/exports');` | declares a source. `type`: `relational_db` for an attached database, any other word for files. `location`: a directory or URL prefix, or the attached database's name. `via`: optional, the name of a DuckDB secret |
+| `PREVIEW hr AS $$SELECT … LIMIT 5$$;` | runs a query at the source and loads nothing |
+| `DECLARE RECIPE employees ON staff FROM hr [SET (key: id)] AS $$sql$$;` | declares a load query and loads the table `staff.employees` now. With a key (`id`, or `'a, b'`) a later load merges by it, and a result with a key twice is refused. Without a key a load replaces the table |
+| `IMPORT employees;` | runs the load query again: a new snapshot of the lake |
+| `DECLARE RELATIONSHIP employees.department_id -> departments.id;` | declares a key between columns: `->` many-to-one, `<->` one-to-one, `a.(x, y) -> b.(x, y)` composite |
+| `DECLARE ASPECT name WITH $$json-schema$$ AS FACT\|MEASUREMENT\|VIEW [ON TABLE, COLUMN, DATASET, SOURCE, RELATIONSHIP [WHEN aspect = 'value' \| WHEN TYPE = 'T' \| WHEN TYPE IN ('T', 'U')]];` | declares a property. Every value is validated against the schema. `ON` lists the kinds of asset it applies to. `WHEN` limits where it is required: where another property has a value, or on columns of a type (`ON COLUMN` only) |
+| `GLOSS aspect ON subject AS $$json$$;` | annotates an asset. A `VIEW` property is annotated on the dataset (`GLOSS headcount ON staff AS …`) and is then served as the view `staff.headcount` |
+| `DELETE FROM glossary WHERE subject = '…' AND aspect = '…';` | removes annotations from the catalog |
+| `SELECT … FROM GLOSSARY(subject);` | the glossary: one row per asset and property |
+| `SELECT … FROM GLOSSARY(subject, all => true);` | every value, one row per actor |
+| `SELECT … FROM TESTS(subject \| subject::aspect);` | the test results |
+| `DECLARE FUNCTION f FOR staff\|GLOBAL AS $$sql$$ [RETURNS aspect];` | with `RETURNS`, a measurement: a query that reads its asset as `$subject`, or its column as `subject_column($subject)`. Without, a detector: a query over a test's `annotations` with `$threshold` |
+| `SELECT f() FROM employees.salary;` | runs a measurement and stores the result, or returns the stored result while the tables it read are unchanged (`computed` says which) |
+| `DECLARE TEST t ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | says who may annotate a property and which detector scores its values |
+| `FROM glossql_kit('path-or-url');` | runs a kit's statements, one row each |
+| `FROM glossql_lineage($$sql$$);` | what computes each output column of a `SELECT`: `(column, derivation, complete, shape)` |
 
-A body rides `$$…$$` as written: plain double quotes inside, nothing
-escaped, closing `}$$;`. A metric definition's `sql` is one line inside its JSON
-string, single quotes for its literals. An unquoted name folds to
-lowercase; a `"Quoted"` one keeps its case. A declaration cannot change
-once anything is glossed on it.
+A body is written between `$$` and `$$` as it is: plain double quotes
+inside, nothing escaped. A view's `sql` is one line inside its JSON
+string, with single quotes for its literals. An unquoted name folds to
+lowercase; a `"Quoted"` one keeps its case. A property that has
+annotations cannot be changed.
 
-## Subjects
+## Assets
 
-A subject is a bare path, never a string: `orders`, `orders.amount`,
-`fin.orders.amount`. Under `USE fin`, one name is the dataset if one
-exists by that name, else a declared source, else a table of the bound
-dataset; two names are `table.column` when the bound dataset's table
-holds that column, else `dataset.table`; three names are
-`dataset.table.column`. A dataset-level aspect is read as `GLOSSARY(fin)`
-or narrowed as `GLOSSARY(fin::revenue)`. A gloss outside its aspect's
-declared grains is refused, never stored. A source's glosses are
-workspace rows: the subject is the bare name (`GLOSS conventions ON
-erp`), every dataset's `GLOSSARY()` owes and serves them, `GLOSSARY(erp)`
-reads the one source, and a gloss from any dataset supersedes.
+Write an asset as a bare path, not a string: `employees`,
+`employees.salary`, `staff.employees.salary`. Quote a column name with
+a dot or a space: `employees."a.b"`.
 
-## Reading live state
+- One name is a dataset if one exists by that name, else a declared
+  source, else a table of the dataset in use.
+- Two names are `table.column` when the dataset in use has that table
+  and column, else `dataset.table`.
+- Three names are `dataset.table.column`.
+- `GLOSSARY(staff)` reads a whole dataset; `GLOSSARY(staff::headcount)`
+  narrows to one property.
+- An annotation on a kind of asset the property is not declared `ON`
+  is refused.
+- A source's annotations are shared: annotate the bare name (`GLOSS
+  conventions ON hr`), and every dataset's `GLOSSARY()` returns them.
 
-- `GLOSSARY(subject)` serves `(subject, aspect, value, test_state, score,
-  state)`; `state` is `current | stale | conflict | missing`; a
-  value in conflict is withheld; every gap is a row. `GLOSSARY(subject,
-  all => true)` is a different shape: `(subject, aspect, kind, test,
-  actor, body, written_at, current)`.
-- `TESTS(subject)` serves `(subject, aspect, test, state, score,
+## Reading
+
+- `GLOSSARY(subject)` returns `(subject, aspect, value, test_state,
+  score, state)`. `state` is `current`, `stale`, `conflict` or
+  `missing`. A value in conflict is NULL. A required property nobody
+  has annotated is a row with state `missing`.
+- `GLOSSARY(subject, all => true)` returns `(subject, aspect, kind,
+  test, actor, body, written_at, current)`.
+- `TESTS(subject)` returns `(subject, aspect, test, state, score,
   computed_at, current, error)`.
-- the store, as views in the lake's `main` schema, bare from any
-  dataset in use (`ws.main.*` from elsewhere); every column, nothing else: `datasets (seq, name,
-  settings, declared_at)` · `sources (seq, name, settings,
-  declared_at)` · `recipes (seq, dataset, table_name, source, settings,
-  sql, declared_at)` · `imports (seq, dataset, table_name, mode, rows,
-  dropped_rows_count, lineage, snapshot_id, imported_at)` ·
-  `relationships (seq, dataset, left_side, op, right_side,
-  declared_at)` · `aspects (seq, name, kind, grains, condition, schema,
-  declared_at)` · `functions (seq, name, scope, script, returns,
-  declared_at)` · `tests (seq, name, aspect, actors, detector,
-  threshold, declared_at)` · `glossary (seq, dataset, subject, aspect,
-  actor_kind, actor_id, body, snapshot_id, written_at)` ·
-  `measurements (seq, dataset, function, subject, aspect, data_version, value,
-  computed_at, reads)` · `kits (seq, name, location, statements,
-  loaded_at)`. History is rows ordered by `seq`; the newest row per key
-  is what holds.
-- the stored schema: `SELECT table_name, column_name, data_type FROM
-  information_schema.columns WHERE table_catalog = 'ws' AND
-  table_schema = '<dataset>'`; `DESCRIBE <name>` for one; `SUMMARIZE
-  <table>` for the shape of the data.
-- plain SELECT over the tables for the data itself; the lake's history
-  as `FROM fin.orders AT (VERSION => n)`.
+- The catalog tables are views in the lake's `main` schema and read by
+  their bare names: `datasets (seq, name, settings, declared_at,
+  declared_by)` · `sources (seq, name, settings, declared_at,
+  declared_by)` · `recipes (seq, dataset, table_name, source, settings,
+  sql, declared_at, declared_by)` · `imports (seq, dataset, table_name,
+  mode, rows, dropped_rows_count, lineage, snapshot_id, imported_at)` ·
+  `relationships (seq, dataset, left_side, op, right_side, declared_at,
+  declared_by)` · `aspects (seq, name, kind, grains, condition, schema,
+  declared_at, declared_by)` · `functions (seq, name, scope, script,
+  returns, declared_at, declared_by)` · `tests (seq, name, aspect,
+  actors, detector, threshold, declared_at, declared_by)` · `glossary
+  (seq, dataset, subject, aspect, actor_kind, actor_id, body,
+  snapshot_id, written_at)` · `measurements (seq, dataset, function,
+  subject, aspect, data_version, value, computed_at, reads)` · `kits
+  (seq, name, location, statements, loaded_at, hash)`. The tables keep
+  history ordered by `seq`; the newest row per key is in force.
+- The tables and columns of a dataset: `FROM
+  glossql_columns('<dataset>')`, or `DESCRIBE <table>`; `SUMMARIZE
+  <table>` for a profile of the data.
+- The data itself is plain `SELECT`. A table's history is `FROM
+  staff.employees AT (VERSION => n)`.
 
-## Measure, then judge
+## Measure before you annotate
 
-A kit's measurements over-produce evidence; call them before claiming
-(`SELECT column_profile() FROM orders.amount;`), cite them in the
-gloss's `basis`, and declare only what the data supports. A question
-the measurements settle — what a column holds, a date's grain, stock or
-flow, which columns join — is your work. What remains askable is
-judgment: definitions, conventions, business meaning, a choice between
-readings. Ask it in chat; the person's review decision is stored through their call.
+Run a kit's measurements first (`SELECT column_profile() FROM
+employees.salary;`), name them in the annotation's `basis`, and
+declare only what the data supports. What a column contains, a date's
+grain, which columns join: the measurements answer these, so work them
+out yourself. Ask the person about meaning: definitions, conventions,
+a choice between two readings. The person's decision is stored through
+their own call.
 
-What the words mean, the order of a round, and the claims a metric's
-view carries on its columns: the KPI kit's skill (`kits/kpi/SKILL.md`).
-Which screens find structure before you declare it, and how to write a
-check of your own: the quality kit's (`kits/quality/SKILL.md`).
+The kits' skills say what each property means and the order of the
+work: `kits/kpi/SKILL.md`, `kits/quality/SKILL.md`,
+`kits/spatial/SKILL.md`.
