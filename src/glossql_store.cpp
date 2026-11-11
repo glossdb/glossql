@@ -332,12 +332,12 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "", "*", "declared_at"},
     {"functions",
 	 "name VARCHAR NOT NULL, scope VARCHAR NOT NULL, script VARCHAR NOT NULL, returns VARCHAR, "
-	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
+	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR, depends_on VARCHAR",
 	 "name, scope", "*", "declared_at"},
     {"measurements",
 	 "dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, "
-	 "data_version VARCHAR, value VARCHAR NOT NULL, computed_at TIMESTAMP NOT NULL, reads VARCHAR",
-	 "", "seq, dataset, function, subject, aspect, data_version, value::JSON AS value, computed_at, reads",
+	 "data_version VARCHAR, value VARCHAR NOT NULL, computed_at TIMESTAMP NOT NULL, reads VARCHAR, depends_on VARCHAR",
+	 "", "seq, dataset, function, subject, aspect, data_version, value::JSON AS value, computed_at, reads, depends_on",
 	 "computed_at"},
     {"tests",
 	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
@@ -425,7 +425,12 @@ string PartsSQL(const Workspace &ws) {
 	return sql;
 }
 
-string IsCurrentSQL(const Workspace &ws, const string &m) {
+//! A part of kind store, by its name: a store relation, or a function's stored rows
+static string IsStorePart(const string &name) {
+	return "(" + name + " IN (" + StorePartNames() + ") OR starts_with(" + name + ", 'main.measurements'))";
+}
+
+string IsCurrentSQL(const Workspace &ws, const string &m, const string &d) {
 	// the names the row's reads select: its list; for ** (and a row without one)
 	// every part of its own data version and the dataset's every table; nothing for ''
 	string parts = "string_split(coalesce(" + m + ".data_version, ''), ',')";
@@ -442,11 +447,15 @@ string IsCurrentSQL(const Workspace &ws, const string &m) {
 	// (SPEC: * is the dataset's every table, so a new view moves no * row). A data version
 	// holds the dataset's views only where its reads named them or were **. A
 	// read of the measurements relation selects the other functions' parts
+	// a row whose function declares DEPENDS ON (its row of the depends relation is
+	// joined as d) holds no store part: its query's value stands for the catalog
 	auto selected = [&](const string &name, const string &is_table) {
-		return "(list_contains(" + names + ", " + name + ") OR (list_contains(" + names + ", '*') AND starts_with(" +
-		       name + ", " + m + ".dataset || '.') AND " + is_table + ") OR (list_contains(" + names +
-		       ", 'main.measurements') AND starts_with(" + name + ", 'main.measurements/') AND " + name +
-		       " <> 'main.measurements/' || " + m + ".function))";
+		auto named = "(list_contains(" + names + ", " + name + ") OR (list_contains(" + names +
+		             ", '*') AND starts_with(" + name + ", " + m + ".dataset || '.') AND " + is_table +
+		             ") OR (list_contains(" + names + ", 'main.measurements') AND starts_with(" + name +
+		             ", 'main.measurements/') AND " + name + " <> 'main.measurements/' || " + m + ".function))";
+		return d.empty() ? named
+		                 : "(" + named + " AND (" + d + ".dep_function IS NULL OR NOT " + IsStorePart(name) + "))";
 	};
 	string then_view = "coalesce(list_aggregate(list_sort(list_filter(" + parts +
 	                   ", lambda p: " + selected(name_of, "true") + ")), 'string_agg', ','), '')";
@@ -456,7 +465,20 @@ string IsCurrentSQL(const Workspace &ws, const string &m) {
 	// a measurement of an older body is never served: the function's newest declaration precedes it
 	string declared = "coalesce(" + m + ".computed_at >= (SELECT max(f.declared_at) FROM " + ws.Store("functions") +
 	                  " f WHERE f.name = " + m + ".function AND f.scope IN (" + m + ".dataset, 'GLOBAL')), true)";
-	return "(" + then_view + " = " + now_view + " AND " + declared + ")";
+	// the query answered one value, and it is the value stored with the row; a read
+	// bound while a query runs takes that as given
+	string same = d.empty() ? string()
+	                        : " AND (" + d + ".dep_function IS NULL OR " + d + ".dep_assumed OR (" + d +
+	                              ".dep_ok AND " + d + ".dep_value IS NOT DISTINCT FROM " + m + ".depends_on))";
+	return "(" + then_view + " = " + now_view + " AND " + declared + same + ")";
+}
+
+string DependsJoinSQL(const string &depends, const string &m, const string &d) {
+	if (depends.empty()) {
+		return string();
+	}
+	return " LEFT JOIN (" + depends + ") " + d + " ON " + d + ".dep_dataset = " + m + ".dataset AND " + d +
+	       ".dep_function = " + m + ".function AND " + d + ".dep_subject = " + m + ".subject";
 }
 
 struct InitState : public GlobalTableFunctionState {
@@ -810,8 +832,9 @@ static void Define(Inner &inner, const string &dataset, const string &metric, co
 }
 
 //! Admission of an aspect (SPEC §5.1): identical content is a no-op, a change
-//! under glosses is refused, a WHEN names a declared sibling whose enum holds
-//! the literal. Returns false for the no-op.
+//! under glosses is refused unless it changes the schema's title or description
+//! alone, a WHEN names a declared sibling whose enum holds the literal. Returns
+//! false for the no-op.
 static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 	auto name = row[0].ToString();
 	auto current = inner.Row("SELECT schema, kind, grains, condition FROM " + inner.Store("aspects") +
@@ -832,7 +855,29 @@ static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 		auto glossed =
 		    inner.Scalar("SELECT count(*) FROM " + inner.Store("glossary") + " WHERE aspect = " + QuoteText(name));
 		if (glossed.GetValue<int64_t>() > 0) {
-			throw InvalidInputException("glossql: aspect '%s' has glosses: delete them before changing it", name);
+			// a title and a description validate nothing: the same kind, grains and condition and the
+			// same schema beside those two top-level keys is the same contract for the bodies stored
+			bool annotated = true;
+			for (idx_t i = 1; i < 4; i++) {
+				annotated = annotated && (current[i].IsNull() || incoming[i].IsNull()
+				                              ? current[i].IsNull() == incoming[i].IsNull()
+				                              : current[i].ToString() == incoming[i].ToString());
+			}
+			if (annotated) {
+				auto bare = [](const string &schema) {
+					return "json_merge_patch(" + schema +
+					       "::JSON, '{\"title\": null, \"description\": null}')::VARCHAR";
+				};
+				auto before = QuoteText(current[0].ToString());
+				auto after = QuoteText(incoming[0].ToString());
+				annotated = inner
+				                .Scalar("SELECT json_type(" + before + "::JSON) = 'OBJECT' AND json_type(" + after +
+				                        "::JSON) = 'OBJECT' AND " + bare(before) + " = " + bare(after))
+				                .GetValue<bool>();
+			}
+			if (!annotated) {
+				throw InvalidInputException("glossql: aspect '%s' has glosses: delete them before changing it", name);
+			}
 		}
 	}
 	if (JsonStringField(row[1].ToString(), "x-kind") == "definition") {
@@ -1110,6 +1155,8 @@ struct ReadScope {
 	string filter;
 	//! the same over subject alone
 	string subjects;
+	//! what each stored result's DEPENDS ON query returns now (DependsSQL), or empty
+	string depends;
 	Workspace ws;
 };
 
@@ -1226,8 +1273,9 @@ static string ValuesSQL(const ReadScope &scope, const string &aspect_filter) {
 	       PartsSQL(scope.ws) +
 	       ") SELECT m.subject, m.aspect, 'function' AS actor, m.value::JSON AS body, m.computed_at AS written_at,"
 	       " NOT " +
-	       IsCurrentSQL(scope.ws, "m") + " AS stale FROM " + scope.ws.Store("measurements") + " m WHERE " +
-	       scope.filter + aspect_filter +
+	       IsCurrentSQL(scope.ws, "m", scope.depends.empty() ? "" : "d") + " AS stale FROM " +
+	       scope.ws.Store("measurements") + " m" + DependsJoinSQL(scope.depends, "m", "d") + " WHERE " + scope.filter +
+	       aspect_filter +
 	       " QUALIFY row_number() OVER (PARTITION BY m.subject, m.aspect, m.function ORDER BY m.seq DESC) = 1)";
 }
 
@@ -1635,6 +1683,162 @@ static string StoreVersionSQL(const Workspace &ws) {
 	return sql;
 }
 
+//===--------------------------------------------------------------------===//
+// DEPENDS ON (SPEC §6): what a stored result depends on in the catalog, as
+// its function's own query says. The query runs on the inner connection in
+// the row's dataset, $subject bound, and its one value is compared with the
+// value stored with the row. A value is kept per store version, so a query
+// runs once per (dataset, function, subject) however many reads a statement
+// binds. A read bound while a query runs takes every such result as current
+// where its tables, views and declaration hold: what a query returns is no
+// input of a query. That read is the dataset's read wherever every query
+// returns its stored value, and is then kept once for both.
+//===--------------------------------------------------------------------===//
+
+//! The mark on a connection while a DEPENDS ON query runs on it
+struct DependsEval : public ClientContextState {
+	bool active = false;
+
+	static DependsEval &Of(ClientContext &context) {
+		return *context.registered_state->GetOrCreate<DependsEval>("glossql_depends_eval");
+	}
+};
+
+DependsValue DependsNow(Inner &inner, const string &dataset, const string &query, const string &subject) {
+	DependsValue result;
+	auto &eval = DependsEval::Of(*inner.con.context);
+	auto was = eval.active;
+	eval.active = true;
+	// the body's context: the row's dataset is the schema in use, the caller's search path behind it
+	bool moved = false;
+	auto schema = inner.con.Query("SELECT current_schema()");
+	if (!schema->HasError()) {
+		auto chunk = schema->Fetch();
+		moved = !chunk || chunk->size() == 0 || chunk->GetValue(0, 0).ToString() != dataset;
+	}
+	if (moved) {
+		auto path =
+		    CatalogSearchEntry::ListToString({CatalogSearchEntry(Identifier(inner.ws.lake), Identifier(dataset))});
+		inner.con.Query("SET search_path = " +
+		                QuoteText(inner.search_path.empty() ? path : path + "," + inner.search_path));
+	}
+	auto answer = inner.con.Query("SELECT COLUMNS(*)::VARCHAR FROM (" +
+	                              ReplacePlaceholder(query, "subject", QuoteText(subject)) + "\n) LIMIT 2");
+	if (answer->HasError()) {
+		result.error = FirstLine(answer->GetErrorObject().RawMessage());
+	} else {
+		result.columns = answer->ColumnCount();
+		while (auto chunk = answer->Fetch()) {
+			if (result.rows == 0 && chunk->size() > 0 && result.columns == 1) {
+				result.value = chunk->GetValue(0, 0);
+			}
+			result.rows += chunk->size();
+		}
+		result.ok = result.rows == 1 && result.columns == 1;
+	}
+	if (moved) {
+		inner.con.Query(inner.search_path.empty() ? string("RESET search_path")
+		                                          : "SET search_path = " + QuoteText(inner.search_path));
+	}
+	eval.active = was;
+	return result;
+}
+
+//! The values kept for a lake at one store version, by dataset, function and subject
+struct CachedDepends : public ObjectCacheEntry {
+	mutex lock;
+	string version;
+	std::map<string, string> rows;
+
+	static string ObjectType() {
+		return "glossql_depends";
+	}
+	string GetObjectType() override {
+		return ObjectType();
+	}
+	optional_idx GetEstimatedCacheMemory() const override {
+		return optional_idx(idx_t(4096));
+	}
+};
+
+string DependsSQL(ClientContext &context, Inner &inner, const string &filter, bool *holds) {
+	bool assumed = DependsEval::Of(context).active;
+	if (holds) {
+		*holds = true;
+	}
+	// the stored results in scope whose function declares the clause, the dataset's own declaration
+	// before GLOBAL's, each with the value its newest row stores ('n' for NULL, 'v' before a value)
+	auto &ws = inner.ws;
+	auto found =
+	    inner.Run("SELECT dataset, function, subject, depends_on, stored FROM (SELECT m.*, f.depends_on,"
+		          " row_number() OVER (PARTITION BY m.dataset, m.function, m.subject"
+		          " ORDER BY f.scope = 'GLOBAL', f.seq DESC) AS rn FROM (SELECT dataset, function, subject,"
+		          " arg_max(coalesce('v' || depends_on, 'n'), seq) AS stored FROM " +
+		          ws.Store("measurements") + " WHERE " + filter + " GROUP BY ALL) m JOIN " + Newest(ws, "functions") +
+		          " f ON f.name = m.function AND f.scope IN (m.dataset, 'GLOBAL'))"
+		          " WHERE rn = 1 AND depends_on IS NOT NULL ORDER BY ALL");
+	vector<vector<string>> calls;
+	while (auto chunk = found->Fetch()) {
+		for (idx_t i = 0; i < chunk->size(); i++) {
+			calls.push_back({chunk->GetValue(0, i).ToString(), chunk->GetValue(1, i).ToString(),
+			                 chunk->GetValue(2, i).ToString(), chunk->GetValue(3, i).ToString(),
+			                 chunk->GetValue(4, i).ToString()});
+		}
+	}
+	if (calls.empty()) {
+		return string();
+	}
+	vector<string> rows;
+	auto row_of = [](const vector<string> &call, const string &now) {
+		// now: 'n' or 'v' before the value where the query answered, empty where it did not
+		return "(" + QuoteText(call[0]) + ", " + QuoteText(call[1]) + ", " + QuoteText(call[2]) + ", " +
+		       (now.empty() ? "false" : "true") + ", " +
+		       (!now.empty() && now[0] == 'v' ? QuoteText(now.substr(1)) : string("NULL")) + "::VARCHAR, ";
+	};
+	if (assumed) {
+		for (auto &call : calls) {
+			rows.push_back(row_of(call, "n") + "true)");
+		}
+	} else {
+		auto version = StoreVersion(inner);
+		auto &cache = ObjectCache::GetObjectCache(context);
+		auto kept = cache.GetOrCreate<CachedDepends>("glossql_depends|" + ws.lake);
+		for (auto &call : calls) {
+			auto key = call[0] + '\x1f' + call[1] + '\x1f' + call[2];
+			string now;
+			bool hit = false;
+			{
+				lock_guard<mutex> guard(kept->lock);
+				if (kept->version != version) {
+					kept->version = version;
+					kept->rows.clear();
+				}
+				auto entry = kept->rows.find(key);
+				if (entry != kept->rows.end()) {
+					now = entry->second;
+					hit = true;
+				}
+			}
+			if (!hit) {
+				auto answer = DependsNow(inner, call[0], call[3], call[2]);
+				if (answer.ok) {
+					now = answer.value.IsNull() ? string("n") : "v" + answer.value.ToString();
+				}
+				lock_guard<mutex> guard(kept->lock);
+				if (kept->version == version) {
+					kept->rows[key] = now;
+				}
+			}
+			if (holds && now != call[4]) {
+				*holds = false;
+			}
+			rows.push_back(row_of(call, now) + "false)");
+		}
+	}
+	return "SELECT * FROM (VALUES " + StringUtil::Join(rows, ", ") +
+	       ") AS t(dep_dataset, dep_function, dep_subject, dep_ok, dep_value, dep_assumed)";
+}
+
 //! The whole dataset a scope lies in: what a cache entry holds, and what a
 //! detector judges over, whatever the read's subject — the dataset's own
 //! rows, and the source-grain rows every dataset reads
@@ -1663,15 +1867,28 @@ static string ReadSQL(Inner &inner, const string &kind, const ReadScope &whole) 
 
 //! One kind of read over a whole dataset: as kept while the store's version
 //! holds, else computed on the inner connection and kept
-static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const string &kind, const ReadScope &whole) {
+static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const string &kind, const ReadScope &scope) {
 	auto &cache = ObjectCache::GetObjectCache(context);
-	auto key = CacheKey(inner.ws.lake, kind, whole.dataset);
-	ReadFill::Of(*inner.con.context).filling = true;
+	// a read bound while a DEPENDS ON query runs holds no query's value: kept under a key of its own
+	bool assumed = DependsEval::Of(context).active;
+	auto assumed_key = CacheKey(inner.ws.lake, kind + "|depends", scope.dataset);
+	auto key = assumed ? assumed_key : CacheKey(inner.ws.lake, kind, scope.dataset);
 	auto version = inner.Scalar(StoreVersionSQL(inner.ws)).ToString();
 	auto kept = cache.Get<CachedRead>(key);
 	if (kept && kept->version == version) {
 		return kept;
 	}
+	auto whole = scope;
+	bool holds = false;
+	whole.depends = DependsSQL(context, inner, whole.filter, &holds);
+	// every query returns its stored value: the read is the one a query sees, computed once for both
+	bool shared = holds && !assumed;
+	auto seen = shared ? cache.Get<CachedRead>(assumed_key) : nullptr;
+	if (seen && seen->version == version) {
+		cache.Put(key, seen);
+		return seen;
+	}
+	ReadFill::Of(*inner.con.context).filling = true;
 	auto result = inner.Run(ReadSQL(inner, kind, whole));
 	auto read = make_shared_ptr<CachedRead>();
 	read->rows = make_shared_ptr<ColumnDataCollection>(Allocator::Get(context), result->GetTypes());
@@ -1682,6 +1899,9 @@ static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const
 	read->types = result->GetTypes();
 	read->version = version;
 	cache.Put(key, read);
+	if (shared) {
+		cache.Put(assumed_key, read);
+	}
 	return read;
 }
 

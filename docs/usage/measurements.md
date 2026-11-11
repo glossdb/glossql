@@ -60,6 +60,33 @@ and stores one row in
   the summary. The whole value is stored; read it with
   `GLOSSARY(subject::aspect)`.
 
+## Say what a result depends on
+
+A result that read the catalog is computed again after any write to
+the catalog table it read. A function can narrow this with a query of
+its own:
+
+```sql
+DECLARE ASPECT unit_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE FUNCTION unit_count FOR GLOBAL AS
+  $$ SELECT count(*) AS n FROM main.glossary g WHERE g.subject = $subject AND g.aspect = 'unit' $$
+  RETURNS unit_count
+  DEPENDS ON
+  $$ SELECT md5(string_agg(g.body::VARCHAR, '|' ORDER BY g.seq)) FROM main.glossary g
+     WHERE g.subject = $subject AND g.aspect = 'unit' $$;
+```
+
+- `DEPENDS ON` carries one read-only query that returns one row with
+  one column. It reads `$subject` as the body does. It is allowed only
+  with `RETURNS`.
+- A run stores the query's value with the result, in `depends_on`.
+- The stored result is current while the query returns the same value
+  and the lake tables and views the body read are unchanged. A write
+  to a catalog table does not make it stale by itself.
+- A query that fails or returns no row at a read marks the result
+  stale. The read still answers. At a run, such a query is an error of
+  the run.
+
 ## Call it as SQL
 
 A measurement function is also a table macro, in the dataset's schema

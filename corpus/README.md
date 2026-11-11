@@ -37,3 +37,4 @@ convention, a validation, a load, a review question.
 | [24](24-functions-in-a-table.md) | a function with its body in the statement |
 | [25](25-mixed-case-names.md) | mixed-case table and column names |
 | [28](28-view-definition-keys.md) | a view's additivity, row identity and dimensions |
+| [29](29-function-depends-on.md) | a function that says what its stored result depends on |

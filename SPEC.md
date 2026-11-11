@@ -269,7 +269,8 @@ statements or values.
 
 Re-declaring an aspect with identical content is a no-op. Changing it while
 glosses under it exist is refused — delete those rows first; existing bodies
-never silently stop matching their schema.
+never silently stop matching their schema. A change to the schema's
+top-level `title` or `description` alone is admitted: they validate nothing.
 
 ### 5.2 Glosses
 
@@ -456,6 +457,10 @@ $$;
   declaration supersedes on re-declare like any other, and
   `SELECT script FROM functions` serves the shipped library as worked
   examples.
+- `DEPENDS ON` says what a stored result depends on in the catalog.
+  It carries one read-only SQL query that returns one row with one
+  column, run in the body's context (`$subject` included). It is
+  allowed only with `RETURNS` (fixture 29).
 - **One language.** Every body is one SQL query, planned and run by the
   engine — read-only. A measurement runs at the statement's data version,
   composing everything a read can; `$subject` arrives as a string
@@ -498,7 +503,7 @@ SELECT outliers() FROM orders.amount;
 Extraction computes at the read's data version — the set of inputs, data and
 declarations, the statement resolved — and writes one row in the
 `measurements` relation:
-`(dataset, function, subject, aspect, data_version, value, computed_at, reads)`,
+`(dataset, function, subject, aspect, data_version, value, computed_at, reads, depends_on)`,
 `reads` naming the inputs the body actually read — tables and store
 relations by name, `*` for the dataset's every table, `**` when the
 reads could not be enumerated (the row then holds only at its exact
@@ -509,7 +514,13 @@ there is no invalidation, only a miss, a write the body never reads is
 not its staleness, and old rows stay as the drift record. A body that
 reads the `measurements` relation reads the other functions' rows, and
 what such a reader stores is its output, nobody's input: readers never
-enter their own or each other's data version. A body that carries a top-level `summary`
+enter their own or each other's data version. A function declared
+with `DEPENDS ON` narrows this for the catalog: its query's value is
+stored with the row (`depends_on`), and the row is current while the
+query returns the same value and the tables and views the body read
+are unchanged. A write to a store relation does not move such a row
+by itself. A query that fails or returns no row leaves the row not
+current. A body that carries a top-level `summary`
 object serves the summary at extraction — the full value reads back
 through `GLOSSARY(subject::aspect)` (a large measurement's extraction
 result would otherwise be write-only at the interface; the summary is the

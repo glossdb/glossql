@@ -14,3 +14,4 @@ without `RETURNS` is a detector, run by the tests that name it.
 | `returns` | VARCHAR | The aspect a measurement's result is validated against and stored under; NULL for a detector. |
 | `declared_at` | TIMESTAMP | When the row was written. |
 | `declared_by` | VARCHAR | Who wrote the row: `kit:<name>` for a declaration a kit made, else the actor as `<kind>:<id>` (`agent:builder`, `human:ana`), or the kind alone where the connection named no one. |
+| `depends_on` | VARCHAR | The `DEPENDS ON` query of a measurement: one SQL query that returns one value, what a stored result depends on in the catalog. NULL where the function declares none. |

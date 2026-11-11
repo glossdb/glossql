@@ -318,7 +318,8 @@ GLOSSQL_TRANSFORM(StartImport, FinalizeImport)
 //! GlossDeclareFunction <- 'DECLARE' 'FUNCTION' Identifier 'FOR' GlossFunctionScope 'AS' StringLiteral
 //!                           GlossReturns?
 //! GlossFunctionScope <- GlossScopeGlobal / Identifier ; GlossScopeGlobal <- 'GLOBAL'
-//! GlossReturns <- 'RETURNS' Identifier
+//! GlossReturns <- 'RETURNS' Identifier GlossDependsOn?
+//! GlossDependsOn <- 'DEPENDS' 'ON' StringLiteral
 static arena_ptr<TransformResultValue> FinalizeDeclareFunction(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	auto name = Ident(transformer, list.GetChild(2));
@@ -326,11 +327,17 @@ static arena_ptr<TransformResultValue> FinalizeDeclareFunction(PEGTransformer &t
 	auto scope = IsRule(scope_choice, "GlossScopeGlobal") ? string("GLOBAL") : Ident(transformer, scope_choice);
 	auto script = Text(transformer, list.GetChild(6));
 	Value returns(LogicalType::VARCHAR);
+	Value depends_on(LogicalType::VARCHAR);
 	auto &returns_opt = list.Child<OptionalParseResult>(7);
 	if (returns_opt.HasResult()) {
-		returns = Value(Ident(transformer, returns_opt.GetResult().Cast<ListParseResult>().GetChild(1)));
+		auto &returns_list = returns_opt.GetResult().Cast<ListParseResult>();
+		returns = Value(Ident(transformer, returns_list.GetChild(1)));
+		auto &depends_opt = returns_list.Child<OptionalParseResult>(2);
+		if (depends_opt.HasResult()) {
+			depends_on = Value(Text(transformer, depends_opt.GetResult().Cast<ListParseResult>().GetChild(2)));
+		}
 	}
-	return MakeStatement(transformer, "function", "", {Value(name), Value(scope), Value(script), returns},
+	return MakeStatement(transformer, "function", "", {Value(name), Value(scope), Value(script), returns, depends_on},
 	                     "DECLARE FUNCTION " + name + " FOR " + scope);
 }
 GLOSSQL_TRANSFORM(StartDeclareFunction, FinalizeDeclareFunction)
@@ -708,7 +715,7 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	// New words are unreserved: still usable as column and table names
 	for (auto keyword :
 	     {"'GLOSS'", "'GLOSSARY'", "'ASPECT'", "'RELATIONSHIP'", "'FACT'", "'MEASUREMENT'", "'DATASET'", "'RECIPE'",
-	      "'PREVIEW'", "'TEST'", "'DETECTOR'", "'THRESHOLD'", "'AGENT'", "'HUMAN'", "'TESTS'"}) {
+	      "'PREVIEW'", "'TEST'", "'DETECTOR'", "'THRESHOLD'", "'DEPENDS'", "'AGENT'", "'HUMAN'", "'TESTS'"}) {
 		changes.push_back(GrammarChange::AddChoice("UnreservedKeyword", keyword));
 	}
 
@@ -767,7 +774,8 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	          StartDeclareFunction);
 	rule("GlossFunctionScope <- GlossScopeGlobal / Identifier");
 	rule("GlossScopeGlobal <- 'GLOBAL'");
-	rule("GlossReturns <- 'RETURNS' Identifier");
+	rule("GlossReturns <- 'RETURNS' Identifier GlossDependsOn?");
+	rule("GlossDependsOn <- 'DEPENDS' 'ON' StringLiteral");
 	// extraction is the whole statement: SELECT f(), g() FROM subject and nothing after it
 	statement("GlossExtract <- 'SELECT' List(GlossCall) 'FROM' GlossSubject GlossEnd", StartExtract);
 	rule("GlossCall <- Identifier '(' ')'");

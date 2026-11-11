@@ -227,6 +227,41 @@ DECLARE ASPECT unit WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 ----
 Invalid Input Error
 
+# a title and a description validate nothing: adding them under glosses is admitted, and so is taking them away
+
+query I
+SELECT count(*) > 0 FROM glossary WHERE aspect = 'unit';
+----
+true
+
+statement ok
+DECLARE ASPECT unit WITH $${"title": "Unit", "description": "The unit a column is measured in.", "type": "object", "properties": {"value": {"type": "string"}, "source_column": {"type": "string"}}, "required": ["value"], "additionalProperties": false}$$ AS FACT ON COLUMN;
+
+query T
+SELECT schema->>'description' FROM aspects WHERE name = 'unit' ORDER BY seq DESC LIMIT 1;
+----
+The unit a column is measured in.
+
+# a description with any other change is a change: a key deeper in the schema, the grain
+
+statement error
+DECLARE ASPECT unit WITH $${"title": "Unit", "description": "The unit.", "type": "object", "properties": {"value": {"type": "string", "description": "the unit"}, "source_column": {"type": "string"}}, "required": ["value"], "additionalProperties": false}$$ AS FACT ON COLUMN;
+----
+Invalid Input Error
+
+statement error
+DECLARE ASPECT unit WITH $${"title": "Unit", "description": "The unit.", "type": "object", "properties": {"value": {"type": "string"}, "source_column": {"type": "string"}}, "required": ["value"], "additionalProperties": false}$$ AS FACT ON TABLE;
+----
+Invalid Input Error
+
+statement ok
+DECLARE ASPECT unit WITH $${"type": "object", "properties": {"value": {"type": "string"}, "source_column": {"type": "string"}}, "required": ["value"], "additionalProperties": false}$$ AS FACT ON COLUMN;
+
+query II
+SELECT count(*), (SELECT schema->>'description' FROM aspects WHERE name = 'unit' ORDER BY seq DESC LIMIT 1) IS NULL FROM aspects WHERE name = 'unit';
+----
+3	true
+
 # --- WHEN names a sibling aspect and a value: required only while the sibling's winning value carries it
 
 statement ok
