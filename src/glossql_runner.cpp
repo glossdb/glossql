@@ -179,8 +179,7 @@ Inner::Inner(ClientContext &context) : con(*context.db), ws(FindWorkspace(contex
 	// a body resolves names and files as the caller's session does: the same search paths
 	auto &paths = ClientData::Get(context).catalog_search_path->GetSetPaths();
 	if (!paths.empty()) {
-		search_path = CatalogSearchEntry::ListToString(paths);
-		Run("SET search_path = " + QuoteText(search_path));
+		Run("SET search_path = " + QuoteText(CatalogSearchEntry::ListToString(paths)));
 	}
 	Value files;
 	if (context.TryGetCurrentSetting(Identifier("file_search_path"), files) && !files.IsNull() &&
@@ -634,14 +633,12 @@ TableFunction GlossPreviewFunction() {
 }
 
 //===--------------------------------------------------------------------===//
-// DECLARE FUNCTION name FOR (dataset | GLOBAL) AS $$sql$$ [RETURNS aspect [DEPENDS ON $$sql$$]]
+// DECLARE FUNCTION name FOR (dataset | GLOBAL) AS $$sql$$ [RETURNS aspect]
 //
 // A function is a DuckDB table macro — a UDF callable from any SQL — in the
 // dataset's schema, or in glossql for GLOBAL. Role by shape (SPEC §6): with
 // RETURNS it is a measurement and takes `subject`; without, a detector that
 // takes `threshold`. The body's $subject / $threshold become the parameter.
-// DEPENDS ON is stored as text and run at extraction and at each read's
-// store version, $subject bound to the row's subject.
 //===--------------------------------------------------------------------===//
 
 string ReplacePlaceholder(const string &sql, const string &name, const string &replacement) {
@@ -682,23 +679,13 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 	auto scope = inputs[1].ToString();
 	auto script = inputs[2].ToString();
 	auto &returns = inputs[3];
-	auto &depends_on = inputs[4];
-	if (!depends_on.IsNull()) {
-		try {
-			ParseSelect(ReplacePlaceholder(depends_on.ToString(), "subject", "''"));
-		} catch (std::exception &ex) {
-			throw InvalidInputException(
-			    "glossql: depends_on_not_a_query: DEPENDS ON of %s takes one read-only SQL query: %s", name,
-			    FirstLine(ErrorData(ex).RawMessage()));
-		}
-	}
 
 	Inner inner(context);
 	// identity is content (SPEC §3): an unchanged re-declaration is a no-op, so a kit replays silently
-	auto current = inner.Row("SELECT scope, script, returns, depends_on FROM " + inner.Store("functions") +
+	auto current = inner.Row("SELECT scope, script, returns FROM " + inner.Store("functions") +
 	                         " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
 	if (!current.empty() && current[0].ToString() == scope && current[1].ToString() == script &&
-	    SameValue(current[2], returns) && SameValue(current[3], depends_on)) {
+	    SameValue(current[2], returns)) {
 		Outcome(output, "function " + name + " unchanged: no-op");
 		return;
 	}
@@ -718,7 +705,7 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 	}
 	inner.Run("INSERT INTO " + inner.Store("functions") + " VALUES (" + inner.Seq("functions") + ", " +
 	          QuoteText(name) + ", " + QuoteText(scope) + ", " + QuoteText(script) + ", " + returns.ToSQLString() +
-	          ", now(), " + QuoteText(DeclaredBy(context)) + ", " + depends_on.ToSQLString() + ")");
+	          ", now(), " + QuoteText(DeclaredBy(context)) + ")");
 	// a detector's body is run by TESTS() over its test's values, $threshold bound there
 	Outcome(output, returns.IsNull() ? "declared detector " + name + " for " + scope
 	                                 : "declared measurement " + schema + "." + name + "($subject)");
@@ -788,10 +775,9 @@ TableFunction GlossTestFunction() {
 }
 
 TableFunction GlossFunctionFunction() {
-	return TableFunction(
-	    "glossql_declare_function",
-	    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
-	    FunctionExec, OutcomeBind, RunnerInit);
+	return TableFunction("glossql_declare_function",
+	                     {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                     FunctionExec, OutcomeBind, RunnerInit);
 }
 
 //===--------------------------------------------------------------------===//
@@ -1095,15 +1081,10 @@ static string DataVersionOf(Inner &inner, const string &dataset, const string &f
 }
 
 //! The newest stored row for the call while what it read is unchanged, else NULL
-static Value ServedValue(ClientContext &context, Inner &inner, const string &dataset, const string &name,
-                         const string &subject) {
-	auto depends = DependsSQL(context, inner,
-	                          "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
-	                              " AND subject = " + QuoteText(subject));
+static Value ServedValue(Inner &inner, const string &dataset, const string &name, const string &subject) {
 	return inner.Scalar("SELECT value FROM (WITH parts AS (" + PartsSQL(inner.ws) + ") SELECT m.value, " +
-	                    IsCurrentSQL(inner.ws, "m", depends.empty() ? "" : "d") + " AS current FROM " +
-	                    inner.Store("measurements") + " m" + DependsJoinSQL(depends, "m", "d") +
-	                    " WHERE m.dataset = " + QuoteText(dataset) + " AND m.function = " + QuoteText(name) +
+	                    IsCurrentSQL(inner.ws, "m") + " AS current FROM " + inner.Store("measurements") +
+	                    " m WHERE m.dataset = " + QuoteText(dataset) + " AND m.function = " + QuoteText(name) +
 	                    " AND m.subject = " + QuoteText(subject) + " ORDER BY m.seq DESC LIMIT 1) WHERE current");
 }
 
@@ -1164,10 +1145,9 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 			throw InvalidInputException("glossql: %s is not a declared function for %s", name, dataset);
 		}
 		auto scope = schema == "main" ? "GLOBAL" : schema;
-		auto declared = inner.Row("SELECT returns, depends_on FROM " + inner.Store("functions") + " WHERE name = " +
-		                          QuoteText(name) + " AND scope = " + QuoteText(scope) + " ORDER BY seq DESC LIMIT 1");
-		const auto &returns = declared[0];
-		const auto &depends_on = declared[1];
+		auto returns =
+		    inner.Scalar("SELECT returns FROM " + inner.Store("functions") + " WHERE name = " + QuoteText(name) +
+			             " AND scope = " + QuoteText(scope) + " ORDER BY seq DESC LIMIT 1");
 		if (returns.IsNull()) {
 			throw InvalidInputException("glossql: %s is a detector: it runs at read, through TESTS()", name);
 		}
@@ -1175,7 +1155,7 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		output.data[1].Append(Value(subject));
 		output.data[2].Append(returns);
 		// served while what it read is unchanged: a repeat is a serve, not a rerun (SPEC §6)
-		auto served = ServedValue(context, inner, dataset, name, subject);
+		auto served = ServedValue(inner, dataset, name, subject);
 		if (!served.IsNull()) {
 			output.data[3].Append(Value(Summary(inner, served.ToString())));
 			output.data[4].Append(Value::BOOLEAN(false));
@@ -1200,26 +1180,11 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 			throw InvalidInputException("glossql: the output of %s does not conform to the schema of %s: %s", name,
 			                            returns.ToString(), error);
 		}
-		// what the result depends on in the catalog, as the function's query says it now (SPEC §6)
-		Value depends(LogicalType::VARCHAR);
-		if (!depends_on.IsNull()) {
-			auto now = DependsNow(inner, dataset, depends_on.ToString(), subject);
-			if (!now.error.empty()) {
-				throw InvalidInputException("glossql: depends_on_failed: the DEPENDS ON query of %s failed: %s", name,
-				                            now.error);
-			}
-			if (!now.ok) {
-				throw InvalidInputException("glossql: depends_on_not_one_value: the DEPENDS ON query of %s returned "
-				                            "%d rows and %d columns: it returns one row with one column",
-				                            name, now.rows, now.columns);
-			}
-			depends = now.value;
-		}
 		// stored at its data version, with what it read: the next extraction serves it while those are unchanged
 		inner.Run("INSERT INTO " + inner.Store("measurements") + " VALUES (" + inner.Seq("measurements") + ", " +
 		          QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) + ", " +
 		          returns.ToSQLString() + ", " + QuoteText(DataVersionOf(inner, dataset, name, reads)) + ", " +
-		          QuoteText(value.ToString()) + ", now(), " + QuoteText(reads) + ", " + depends.ToSQLString() + ")");
+		          QuoteText(value.ToString()) + ", now(), " + QuoteText(reads) + ")");
 		output.data[3].Append(Value(Summary(inner, value.ToString())));
 		output.data[4].Append(Value::BOOLEAN(true));
 		row++;

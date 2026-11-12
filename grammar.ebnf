@@ -176,7 +176,7 @@ gloss             = "GLOSS", name, "ON", subject, "AS", json ;
 
 function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                     "AS", dollar,
-                    [ "RETURNS", name, [ "DEPENDS", "ON", dollar ] ] ;
+                    [ "RETURNS", name ] ;
                     (* the engine's analytical machinery; never a metric
                        (metrics are VIEW aspects run as their SQL).
                        AS carries the body itself (fixture 24): a body
@@ -197,11 +197,7 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                        returning functions are values in its values. No RETURNS
                        declares a detector — role by shape; the test-results
                        contract is the engine's. Results are stored in the
-                       measurements relation. DEPENDS ON carries one SQL
-                       query that returns one value: what the stored
-                       result depends on in the catalog. The result is
-                       current while the query returns the same value
-                       (SPEC §6) *)
+                       measurements relation *)
 
 extract           = "SELECT", call, { ",", call }, "FROM", subject ;
 call              = name, "(", ")" ;

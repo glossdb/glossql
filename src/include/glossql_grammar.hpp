@@ -181,14 +181,8 @@ string StorePartNames();
 //! Whether the measurement row `row` (data_version, reads, dataset, function, computed_at)
 //! still holds, as a SQL boolean over a CTE named parts (PartsSQL): the parts its
 //! reads name look the same now as in its data version, and its function has not been
-//! re-declared since. A row whose function declares DEPENDS ON (SPEC §6) is
-//! joined to its row of the depends relation as `depends` (DependsJoinSQL):
-//! it holds no store part, and holds while the query returns the stored value.
-//! An empty `depends` is the rule without the clause
-string IsCurrentSQL(const Workspace &ws, const string &row, const string &depends);
-//! The left join of the depends relation (DependsSQL) to the measurement row `row` as `alias`; empty for an empty
-//! relation
-string DependsJoinSQL(const string &depends, const string &row, const string &alias);
+//! re-declared since
+string IsCurrentSQL(const Workspace &ws, const string &row);
 
 //! A second connection to the same database, for SQL run while the calling
 //! connection's context lock is held (glossql_runner.cpp)
@@ -215,29 +209,7 @@ public:
 
 	Connection con;
 	Workspace ws;
-	//! the caller's search path, as set on this connection; empty for the default
-	string search_path;
 };
-
-//! What a DEPENDS ON query returned: ok when it ran and returned one row with
-//! one column, the value as text; else the failure, or the shape it returned
-struct DependsValue {
-	bool ok = false;
-	Value value;
-	string error;
-	idx_t rows = 0;
-	idx_t columns = 0;
-};
-//! Runs a function's DEPENDS ON query for a subject, in the dataset's context (glossql_store.cpp)
-DependsValue DependsNow(Inner &inner, const string &dataset, const string &query, const string &subject);
-//! The depends relation, as SQL: (dep_dataset, dep_function, dep_subject, dep_ok,
-//! dep_value, dep_assumed), one row per stored result among the measurement
-//! rows `filter` selects whose function declares DEPENDS ON, with what its
-//! query returns now; each query runs once per store version. Empty where
-//! there is none. `holds` is set where every query returns the value its
-//! newest row stores. Bound while such a query runs, the relation takes
-//! every value as given (dep_assumed) and runs none
-string DependsSQL(ClientContext &context, Inner &inner, const string &filter, bool *holds = nullptr);
 
 //! The store's version — the lake's snapshot and every store relation's
 //! highest seq, row count and newest stamp — that the reads and the kept views
