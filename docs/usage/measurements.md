@@ -45,17 +45,19 @@ The statement returns `(function, subject, aspect, value, computed)`
 and stores one row in
 [measurements](../specification/tables/measurements.md).
 
-- `reads` lists the tables the body's plan scans: lake tables as
-  `dataset.table`, catalog tables as `main.<name>`, and `**` for a scan
-  that has no table name (a file, a table function, another database).
-- `data_version` holds the versions at the run, as `name:version`: for
-  a lake table, the last snapshot that changed it; for a catalog table,
-  its highest `seq`.
+- [inputs](../specification/tables/inputs.md) holds one row per input
+  the body's plan read, with the version at the run: a lake table as
+  `dataset.table`, a catalog table as `main.<name>`, and
+  `<dataset>.**` for a scan that has no table name (a file, a table
+  function, another database). Join it to a result on
+  `begin_snapshot`.
+- A table's version is the last snapshot that changed it; a catalog
+  table's, the last snapshot that wrote or ended a row of it.
 - The next run returns the stored row while those versions are
   unchanged, and computes again once one changed. `computed` is true
-  when the run computed the value. With `**` in `reads`, any change in
-  the dataset or the catalog computes again, so a function should read
-  tables.
+  when the run computed the value. With `<dataset>.**` among the
+  inputs, any change in the dataset or the catalog computes again, so
+  a function should read tables.
 - If the value has a top-level `summary` object, the statement returns
   the summary. The whole value is stored; read it with
   `GLOSSARY(subject::aspect)`.

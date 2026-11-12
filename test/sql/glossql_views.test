@@ -83,10 +83,10 @@ SELECT min_max() FROM spend.value;
 ----
 min_max	fin.spend.value	min_max	{"min":1.0,"max":2.0}	true
 
-# its reads name the view beside the table behind it, and the data version carries the view at the snapshot that defined it
+# its reads name the view beside the table behind it, and its inputs carry the view at the snapshot that defined it
 
 query TI
-SELECT reads, len(list_filter(string_split(data_version, ','), lambda p: starts_with(p, 'fin.spend:'))) FROM measurements;
+SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot), (SELECT count(*) FROM inputs i, __ducklake_metadata_ws.main.ducklake_view v WHERE i.begin_snapshot = m.begin_snapshot AND i.input = 'fin.spend' AND v.view_name = 'spend' AND v.end_snapshot IS NULL AND i.version = v.begin_snapshot::VARCHAR) FROM measurements m;
 ----
 fin.spend,fin.t	1
 
@@ -161,7 +161,7 @@ SELECT min_max() FROM spend_total.value;
 min_max	fin.spend_total.value	min_max	{"min":16.0,"max":16.0}	true
 
 query T
-SELECT reads FROM measurements ORDER BY seq DESC LIMIT 1;
+SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m ORDER BY begin_snapshot DESC LIMIT 1;
 ----
 fin.spend,fin.spend_total,fin.t
 

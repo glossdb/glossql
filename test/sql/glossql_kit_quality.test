@@ -202,7 +202,7 @@ true	2	3
 
 # the bind read the catalog's edges beside the plan, and the row names them with the tables the edges read
 query T
-SELECT reads FROM main.measurements WHERE function = 'relationship_coherence';
+SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements m WHERE function = 'relationship_coherence';
 ----
 fin.invoices,fin.payments,main.relationships
 
@@ -534,7 +534,7 @@ SELECT relationship_coherence() FROM beh;
 
 query TI
 SELECT json_extract_string(value, '$.relationships[2].relationship'),
-       (SELECT count(*) FROM main.measurements WHERE function = 'relationship_coherence' AND dataset = 'beh')
+       (SELECT count(*) FROM main.measurements_history WHERE function = 'relationship_coherence' AND dataset = 'beh')
 FROM GLOSSARY(beh::relationship_coherence);
 ----
 beh.totals.account_id -> beh.accounts.id	2
@@ -551,7 +551,7 @@ statement ok
 SELECT additivity_evidence() FROM balances.balance;
 
 query TT
-SELECT json_extract_string(g.value, '$.summary.result'), m.reads
+SELECT json_extract_string(g.value, '$.summary.result'), (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot)
 FROM GLOSSARY(beh.balances.balance::additivity_evidence) g, main.measurements m
 WHERE m.subject = 'beh.balances.balance';
 ----
@@ -597,7 +597,7 @@ query TTTTTTI
 SELECT json_extract_string(value, '$.summary.result'), json_extract_string(value, '$.summary.convention'), json_extract_string(value, '$.summary.event'),
        json_extract_string(value, '$.summary.grain'), json_extract_string(value, '$.summary.tiebreak'),
        json_extract_string(value, '$.anchors_n') || '/' || json_extract_string(value, '$.decided') || '/' || json_array_length(value, '$.anchors'),
-       (SELECT count(*) FROM main.measurements WHERE subject = 'beh.balances.balance')
+       (SELECT count(*) FROM main.measurements_history WHERE subject = 'beh.balances.balance')
 FROM GLOSSARY(beh.balances.balance::additivity_evidence);
 ----
 semi-additive	amount	postings	month	event-name	10/4/10	2
@@ -649,7 +649,7 @@ statement ok
 SELECT additivity_evidence() FROM postings.posting_id;
 
 query T
-SELECT reads FROM main.measurements WHERE subject = 'beh.postings.posting_id' ORDER BY seq;
+SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs_history i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements_history m WHERE subject = 'beh.postings.posting_id' ORDER BY begin_snapshot;
 ----
 beh.accounts,beh.balances,beh.postings,beh.totals,main.relationships
 beh.accounts,beh.balances,beh.postings,beh.totals,main.relationships

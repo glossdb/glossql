@@ -94,10 +94,9 @@ statement ok
 RESET VARIABLE glossql_actor_id;
 
 query TTTTT
-SELECT dataset, subject, aspect, actor_kind, actor_id FROM glossary ORDER BY actor_kind, seq;
+SELECT dataset, subject, aspect, actor_kind, actor_id FROM glossary ORDER BY actor_kind, begin_snapshot;
 ----
 main	main.orders.amount	unit	agent	NULL
-main	main.orders.amount	unit	human	NULL
 main	main.orders.amount	unit	human	philipp
 
 # a body that is not JSON is refused by the store's JSON column

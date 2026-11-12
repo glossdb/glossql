@@ -7,7 +7,8 @@ are annotated on its path.
 
 | Column | Type | Description |
 |---|---|---|
-| `seq` | BIGINT | The row's order in the table, from 1. |
+| `begin_snapshot` | BIGINT | The lake snapshot the write that made the row took. |
+| `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
 | `dataset` | VARCHAR | The dataset of the left side. |
 | `left_side` | VARCHAR | The referencing column, `dataset.table.column`, or a tuple of columns for a composite key. |
 | `op` | VARCHAR | `->` (many to one) or `<->` (one to one). |

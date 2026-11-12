@@ -7,7 +7,8 @@ without `RETURNS` is a detector, run by the tests that name it.
 
 | Column | Type | Description |
 |---|---|---|
-| `seq` | BIGINT | The row's order in the table, from 1. |
+| `begin_snapshot` | BIGINT | The lake snapshot the write that made the row took. |
+| `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
 | `name` | VARCHAR | The function's name. |
 | `scope` | VARCHAR | A dataset's name, or `GLOBAL` for every dataset (its macro lives in `main`). |
 | `script` | VARCHAR | The SQL body. A measurement reads its asset as `$subject`; a detector reads its test's `annotations` and `$threshold`. |

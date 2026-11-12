@@ -202,7 +202,7 @@ SELECT subject, state FROM GLOSSARY(raw.amount);
 fin.raw.amount	stale
 
 query TT
-SELECT mode, lineage->>'amount' FROM imports WHERE table_name = 'raw' ORDER BY seq;
+SELECT mode, lineage->>'amount' FROM imports_history WHERE table_name = 'raw' ORDER BY begin_snapshot;
 ----
 replace	cast(read_csv.amount:BIGINT as DOUBLE)
 replace	read_csv.amount:DOUBLE

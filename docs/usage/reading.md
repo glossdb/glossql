@@ -68,7 +68,8 @@ SELECT subject, aspect, actor_kind, body FROM glossary WHERE aspect = 'unit';
 SELECT function, subject, computed_at FROM measurements ORDER BY computed_at DESC;
 ```
 
-The tables keep history: rows ordered by `seq`. One page per table:
+The views serve the current rows. Every row a write replaced or
+removed stays readable in `<name>_history`. One page per table:
 [the catalog](../specification/introduction.md).
 
 ## Lineage

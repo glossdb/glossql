@@ -105,12 +105,12 @@ fin.spend.total	stale
 
 # the kept rows are a read's: collapsed, raw or tests
 statement error
-SELECT * FROM glossql_cached('results', 'fin');
+SELECT * FROM glossql_cached('results', 'fin', NULL);
 ----
 Invalid Input Error
 
 query I
-SELECT count(*) FROM glossql_cached('tests', 'fin');
+SELECT count(*) FROM glossql_cached('tests', 'fin', NULL);
 ----
 0
 

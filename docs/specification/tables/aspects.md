@@ -6,7 +6,8 @@ again once anything is annotated on it.
 
 | Column | Type | Description |
 |---|---|---|
-| `seq` | BIGINT | The row's order in the table, from 1. |
+| `begin_snapshot` | BIGINT | The lake snapshot the write that made the row took. |
+| `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
 | `name` | VARCHAR | The aspect's name. Annotations and functions name it. |
 | `kind` | VARCHAR | `FACT` (stated by an actor), `MEASUREMENT` (computed by a function, not annotated) or `VIEW` (SQL, served as a view under the aspect's name). |
 | `grains` | VARCHAR | The kinds of asset it applies to, as a JSON list of `DATASET`, `TABLE`, `COLUMN`, `RELATIONSHIP`, `SOURCE`; empty for all. The view serves it as a list. |

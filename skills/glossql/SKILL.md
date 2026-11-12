@@ -144,21 +144,23 @@ a dot or a space: `employees."a.b"`.
 - `TESTS(subject)` returns `(subject, aspect, test, state, score,
   computed_at, current, error)`.
 - The catalog tables are views in the lake's `main` schema and read by
-  their bare names: `datasets (seq, name, settings, declared_at,
-  declared_by)` · `sources (seq, name, settings, declared_at,
-  declared_by)` · `recipes (seq, dataset, table_name, source, settings,
-  sql, declared_at, declared_by)` · `imports (seq, dataset, table_name,
+  their bare names: `datasets (begin_snapshot, name, settings, declared_at,
+  declared_by)` · `sources (begin_snapshot, name, settings, declared_at,
+  declared_by)` · `recipes (begin_snapshot, dataset, table_name, source, settings,
+  sql, declared_at, declared_by)` · `imports (begin_snapshot, dataset, table_name,
   mode, rows, dropped_rows_count, lineage, snapshot_id, imported_at)` ·
-  `relationships (seq, dataset, left_side, op, right_side, declared_at,
-  declared_by)` · `aspects (seq, name, kind, grains, condition, schema,
-  declared_at, declared_by)` · `functions (seq, name, scope, script,
-  returns, declared_at, declared_by)` · `tests (seq, name, aspect,
+  `relationships (begin_snapshot, dataset, left_side, op, right_side, declared_at,
+  declared_by)` · `aspects (begin_snapshot, name, kind, grains, condition, schema,
+  declared_at, declared_by)` · `functions (begin_snapshot, name, scope, script,
+  returns, declared_at, declared_by)` · `tests (begin_snapshot, name, aspect,
   actors, detector, threshold, declared_at, declared_by)` · `glossary
-  (seq, dataset, subject, aspect, actor_kind, actor_id, body,
-  snapshot_id, written_at)` · `measurements (seq, dataset, function,
-  subject, aspect, data_version, value, computed_at, reads)` · `kits
-  (seq, name, location, statements, loaded_at, hash)`. The tables keep
-  history ordered by `seq`; the newest row per key is in force.
+  (begin_snapshot, dataset, subject, aspect, actor_kind, actor_id, body,
+  written_at)` · `measurements (begin_snapshot, dataset, function,
+  subject, aspect, value, computed_at)` · `inputs
+  (begin_snapshot, input, version)` · `kits
+  (begin_snapshot, name, location, statements, loaded_at, hash)`. The views
+  serve the current rows; `<name>_history` serves every row a write
+  replaced or removed, with its `end_snapshot`.
 - The tables and columns of a dataset: `FROM
   glossql_columns('<dataset>')`, or `DESCRIBE <table>`; `SUMMARIZE
   <table>` for a profile of the data.

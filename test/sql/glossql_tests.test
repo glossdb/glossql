@@ -328,11 +328,11 @@ Invalid Input Error
 statement ok
 GLOSS conventions ON erp AS $${"fiscal_year_start": "04-01"}$$;
 
-# the row records the dataset it was deposited in, and carries no catalog snapshot: a source never goes stale
-query TTT
-SELECT dataset, subject, snapshot_id FROM glossary WHERE aspect = 'conventions';
+# the row records the dataset it was deposited in
+query TT
+SELECT dataset, subject FROM glossary WHERE aspect = 'conventions';
 ----
-fin	erp	NULL
+fin	erp
 
 query TTTT
 SELECT subject, value, test_state, state FROM GLOSSARY(erp);
@@ -434,7 +434,7 @@ statement ok
 DECLARE ASPECT tie_out_count WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
-DECLARE FUNCTION tie_out_count FOR GLOBAL AS $$ SELECT count(*) AS n, 'stored tie-outs' AS what FROM main.measurements WHERE function = 'tie_out_check' $$ RETURNS tie_out_count;
+DECLARE FUNCTION tie_out_count FOR GLOBAL AS $$ SELECT count(*) AS n, 'stored tie-outs' AS what FROM main.measurements_history WHERE function = 'tie_out_check' $$ RETURNS tie_out_count;
 
 query TTTTT
 SELECT tie_out_count() FROM orders;
@@ -443,7 +443,7 @@ tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"stored tie-outs"}	true
 
 # the reader's reads name the function it filtered to, not the whole relation
 query T
-SELECT reads FROM measurements WHERE function = 'tie_out_count' ORDER BY seq DESC LIMIT 1;
+SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function = 'tie_out_count' ORDER BY begin_snapshot DESC LIMIT 1;
 ----
 main.measurements/tie_out_check
 

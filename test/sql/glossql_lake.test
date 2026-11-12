@@ -33,16 +33,29 @@ query T
 SELECT table_name FROM information_schema.tables WHERE table_catalog = 'ws' AND table_schema = 'main' ORDER BY table_name;
 ----
 aspects
+aspects_history
 datasets
+datasets_history
 functions
+functions_history
 glossary
+glossary_history
 imports
+imports_history
+inputs
+inputs_history
 kits
+kits_history
 measurements
+measurements_history
 recipes
+recipes_history
 relationships
+relationships_history
 sources
+sources_history
 tests
+tests_history
 
 # a second init is a no-op for the views
 statement ok
@@ -68,10 +81,10 @@ DECLARE SOURCE files SET (type: csv, location: '{TEST_DIR}');
 statement ok
 DECLARE RECIPE segments ON fin FROM files AS $$SELECT id::INTEGER AS id, segment FROM read_csv('segments.csv')$$;
 
-query I
-SELECT snapshot_id = (SELECT max(snapshot_id) FROM ducklake_snapshots('ws')) FROM imports;
+query II
+SELECT (SELECT list_contains(map_keys(s.changes), 'tables_created') FROM ducklake_snapshots('ws') s WHERE s.snapshot_id = i.snapshot_id), i.snapshot_id < i.begin_snapshot FROM imports i;
 ----
-true
+true	true
 
 # --- a gloss carries the snapshot it was written at; a dataset or a pair path carries none (SPEC §5.2)
 
@@ -90,14 +103,14 @@ GLOSS meaning ON segments AS $${"value": "one row per segment"}$$;
 statement ok
 GLOSS meaning ON fin AS $${"value": "the finance workspace"}$$;
 
-# the snapshot is the lake's: the one the load made, which nothing moved since
+# the snapshot is the lake's: each write took its own, after the one the load made
 query TT
-SELECT subject, snapshot_id = (SELECT snapshot_id FROM imports) FROM glossary ORDER BY seq;
+SELECT subject, begin_snapshot > (SELECT snapshot_id FROM imports) FROM glossary ORDER BY begin_snapshot;
 ----
 fin.segments.id	true
 fin.segments.segment	true
 fin.segments	true
-fin	NULL
+fin	true
 
 query TT
 SELECT subject, state FROM GLOSSARY(fin) ORDER BY subject;
@@ -182,7 +195,7 @@ fin.segments.segment	stale
 # --- the lake keeps every load: time travel is DuckLake's
 
 statement ok
-SET VARIABLE first_load = (SELECT min(snapshot_id) FROM imports);
+SET VARIABLE first_load = (SELECT min(snapshot_id) FROM imports_history);
 
 query I
 SELECT count(*) FROM fin.segments AT (VERSION => getvariable('first_load'));
@@ -190,7 +203,7 @@ SELECT count(*) FROM fin.segments AT (VERSION => getvariable('first_load'));
 4
 
 query I
-SELECT count(*) FROM imports;
+SELECT count(*) FROM imports_history;
 ----
 4
 
@@ -219,7 +232,7 @@ USE ws2.fin;
 query I
 SELECT count(*) FROM glossary;
 ----
-5
+4
 
 query TT
 SELECT subject, state FROM GLOSSARY(segments) ORDER BY subject;

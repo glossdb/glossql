@@ -1,12 +1,14 @@
 # imports
 
 A row is one load of a table. `DECLARE RECIPE` and `IMPORT` write it,
-right after the lake's own commit of the table. No key: the table is the
-history of every load.
+right after the lake's own commit of the table. Key: `dataset`,
+`table_name`: the view serves a table's latest load, and
+`imports_history` serves every load.
 
 | Column | Type | Description |
 |---|---|---|
-| `seq` | BIGINT | The row's order in the table, from 1. |
+| `begin_snapshot` | BIGINT | The lake snapshot the write that made the row took. |
+| `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
 | `dataset` | VARCHAR | The dataset of the loaded table. |
 | `table_name` | VARCHAR | The loaded table. |
 | `mode` | VARCHAR | `replace` (`CREATE OR REPLACE TABLE … AS`) or `merge` (`MERGE INTO` by the load query's key). |

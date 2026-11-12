@@ -249,7 +249,7 @@ SELECT count(*) FROM (FROM glossql_kit('kits/kpi/kit.sql')) WHERE outcome = 'cur
 query TI
 SELECT name, count(*) FROM kits GROUP BY name;
 ----
-kpi	3
+kpi	1
 
 # --- declared_by: a kit's declarations name the kit, the connection's own name its actor
 

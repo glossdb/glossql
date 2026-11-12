@@ -288,7 +288,7 @@ ORDER BY seq;
 CREATE OR REPLACE MACRO main.definition_collisions(ds) AS TABLE
 WITH annotations AS (
   SELECT g.aspect, g.subject, g.body, coalesce(json_extract_string(a.schema, '$."x-kind"'), '') AS flavor,
-         row_number() OVER (PARTITION BY g.aspect, g.subject ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 ELSE 1 END, g.seq DESC) AS rk
+         row_number() OVER (PARTITION BY g.aspect, g.subject ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 ELSE 1 END) AS rk
   FROM main.glossary g JOIN main.aspects a ON a.name = g.aspect
   WHERE g.dataset = ds AND a.kind = 'VIEW' AND json_extract_string(g.body, '$.sql') IS NOT NULL),
 definitions AS (SELECT aspect, subject, flavor, json_extract_string(body, '$.sql') AS sql FROM annotations WHERE rk = 1),

@@ -13,6 +13,13 @@
 //     connections of its own.
 // What one inner statement does is atomic; the glossql statement itself is
 // not atomic with a transaction the caller may have open.
+//
+// A write to the store is one transaction of the catalogue database
+// (Inner::Write). It takes the lake's next snapshot id as DuckLake takes it,
+// from the primary key of ducklake_snapshot, and its rows carry that id as
+// their begin marker, so the data and the catalog have one order. A lake
+// change DuckLake itself commits (a schema, a load, a macro) comes first and
+// its row in the store follows.
 
 #include "glossql_grammar.hpp"
 
@@ -43,7 +50,7 @@
 #include "duckdb/planner/planner.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
-#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -51,9 +58,11 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/main/client_data.hpp"
+#include <chrono>
 #include <functional>
 #include <set>
 #include <map>
+#include <thread>
 
 namespace duckdb {
 
@@ -188,8 +197,87 @@ Inner::Inner(ClientContext &context) : con(*context.db), ws(FindWorkspace(contex
 	}
 }
 
-string Inner::Seq(const string &relation) const {
-	return "(SELECT coalesce(max(seq), 0) + 1 FROM " + Store(relation) + ")";
+string Inner::Current(const string &relation) const {
+	return "(SELECT * FROM " + Store(relation) + " WHERE end_snapshot IS NULL)";
+}
+
+//! A writing statement of a catalog write failed: another writer took the
+//! snapshot id or changed a row this write ends
+struct LostRace : public std::exception {
+	explicit LostRace(string reason_p) : reason(std::move(reason_p)) {
+	}
+	const char *what() const noexcept override {
+		return reason.c_str();
+	}
+	string reason;
+};
+
+int64_t CatalogWrite::Run(const string &sql) {
+	auto result = inner.con.Query(sql);
+	if (result->HasError()) {
+		throw LostRace(FirstLine(result->GetError()));
+	}
+	wrote = true;
+	auto chunk = result->Fetch();
+	if (!chunk || chunk->size() == 0 || chunk->ColumnCount() == 0 || chunk->GetValue(0, 0).IsNull()) {
+		return 0;
+	}
+	return chunk->GetValue(0, 0).GetValue<int64_t>();
+}
+
+int64_t CatalogWrite::End(const string &relation, const string &where) {
+	return Run("UPDATE " + inner.Store(relation) + " SET end_snapshot = " + to_string(snapshot) +
+	           " WHERE end_snapshot IS NULL AND (" + where + ")");
+}
+
+void CatalogWrite::Insert(const string &relation, const string &values) {
+	Run("INSERT INTO " + inner.Store(relation) + " VALUES (" + to_string(snapshot) + ", NULL, " + values + ")");
+}
+
+int64_t CatalogWrite::NewCatalogId() {
+	return next_catalog_id++;
+}
+
+void CatalogWrite::Changed(const string &entry) {
+	changes.push_back(entry);
+}
+
+int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWrite &)> &body) {
+	// the tries a write takes before it gives the caller the last reason
+	static constexpr idx_t TRIES = 60;
+	string lost;
+	for (idx_t attempt = 0; attempt < TRIES; attempt++) {
+		Run("BEGIN");
+		try {
+			auto head = Row("SELECT snapshot_id, schema_version, next_catalog_id, next_file_id FROM " +
+			                ws.Meta("snapshot") + " ORDER BY snapshot_id DESC LIMIT 1");
+			CatalogWrite write(*this, head[0].GetValue<int64_t>() + 1, head[2].GetValue<int64_t>());
+			body(write);
+			if (!write.wrote) {
+				con.Query("ROLLBACK");
+				return 0;
+			}
+			// the snapshot as DuckLake writes one: a lake change moves the schema version, and its
+			// change text names it; a write to the store alone has no change text
+			auto schema_version = head[1].GetValue<int64_t>() + (write.changes.empty() ? 0 : 1);
+			write.Run("INSERT INTO " + ws.Meta("snapshot") + " VALUES (" + to_string(write.snapshot) + ", now(), " +
+			          to_string(schema_version) + ", " + to_string(write.next_catalog_id) + ", " + head[3].ToString() +
+			          ")");
+			write.Run("INSERT INTO " + ws.Meta("snapshot_changes") + " VALUES (" + to_string(write.snapshot) + ", " +
+			          (write.changes.empty() ? string("NULL") : QuoteText(StringUtil::Join(write.changes, ","))) +
+			          ", " + QuoteText(DeclaredBy(context)) + ", NULL, NULL)");
+			write.Run("COMMIT");
+			return write.snapshot;
+		} catch (LostRace &race) {
+			con.Query("ROLLBACK");
+			lost = race.reason;
+			std::this_thread::sleep_for(std::chrono::milliseconds(1 + (std::rand() % (5 * (attempt + 1)))));
+		} catch (...) {
+			con.Query("ROLLBACK");
+			throw;
+		}
+	}
+	throw InvalidInputException("glossql: the write lost %d races to other writers; the last: %s", TRIES, lost);
 }
 
 Value Inner::Snapshot() {
@@ -248,7 +336,7 @@ string Inner::Table(const string &schema, const string &name) const {
 
 string Inner::FunctionSchema(const string &dataset, const string &name) {
 	for (auto &scope : {dataset, string("GLOBAL")}) {
-		auto found = Scalar("SELECT count(*) FROM " + Store("functions") + " WHERE name = " + QuoteText(name) +
+		auto found = Scalar("SELECT count(*) FROM " + Current("functions") + " WHERE name = " + QuoteText(name) +
 		                    " AND scope = " + QuoteText(scope));
 		if (found.GetValue<int64_t>() > 0) {
 			return scope == "GLOBAL" ? "main" : scope;
@@ -266,7 +354,7 @@ struct SourceInfo {
 
 static SourceInfo LookupSource(Inner &inner, const string &name) {
 	auto row = inner.Row("SELECT settings::JSON->>'type', settings::JSON->>'location' FROM " + inner.Store("sources") +
-	                     " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
+	                     " WHERE name = " + QuoteText(name) + " AND end_snapshot IS NULL");
 	if (row.empty()) {
 		throw InvalidInputException("glossql: source '%s' is not declared", name);
 	}
@@ -344,19 +432,22 @@ static void DatasetExec(ClientContext &context, TableFunctionInput &data, DataCh
 		throw InvalidInputException("glossql: a dataset's name carries no dot (SPEC §4): %s", name);
 	}
 
-	// the schema is the lake's and the row the store's: two catalogs, two commits;
+	// the schema is the lake's commit and its row in the store follows;
 	// an unchanged re-declaration is a no-op (SPEC §3)
 	Inner inner(context);
-	auto current = inner.Row("SELECT settings FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(name) +
-	                         " ORDER BY seq DESC LIMIT 1");
-	if (!current.empty() && current[0].ToString() == inputs[1].ToString()) {
-		Outcome(output, "dataset " + name + " unchanged: no-op");
-		return;
-	}
 	inner.Run("CREATE SCHEMA IF NOT EXISTS " + QuoteName(inner.ws.lake) + "." + QuoteName(name));
-	inner.Run("INSERT INTO " + inner.Store("datasets") + " VALUES (" + inner.Seq("datasets") + ", " + QuoteText(name) +
-	          ", " + inputs[1].ToSQLString() + ", now(), " + QuoteText(DeclaredBy(context)) + ")");
-	Outcome(output, "declared dataset " + name + " (schema " + inner.ws.lake + "." + name + ")");
+	auto written = inner.Write(context, [&](CatalogWrite &write) {
+		auto current =
+		    inner.Row("SELECT settings FROM " + inner.Current("datasets") + " WHERE name = " + QuoteText(name));
+		if (!current.empty() && current[0].ToString() == inputs[1].ToString()) {
+			return;
+		}
+		write.End("datasets", "name = " + QuoteText(name));
+		write.Insert("datasets",
+		             QuoteText(name) + ", " + inputs[1].ToSQLString() + ", now(), " + QuoteText(DeclaredBy(context)));
+	});
+	Outcome(output, written == 0 ? "dataset " + name + " unchanged: no-op"
+	                             : "declared dataset " + name + " (schema " + inner.ws.lake + "." + name + ")");
 }
 
 TableFunction GlossDatasetFunction() {
@@ -389,7 +480,7 @@ struct RecipeRow {
 
 static RecipeRow NewestRecipe(Inner &inner, const string &dataset, const string &table) {
 	auto row = inner.Row("SELECT source, settings, sql FROM " + inner.Store("recipes") + " WHERE dataset = " +
-	                     QuoteText(dataset) + " AND table_name = " + QuoteText(table) + " ORDER BY seq DESC LIMIT 1");
+	                     QuoteText(dataset) + " AND table_name = " + QuoteText(table) + " AND end_snapshot IS NULL");
 	if (row.empty()) {
 		throw InvalidInputException("glossql: %s.%s has no recipe — tables come from recipes", dataset, table);
 	}
@@ -461,8 +552,8 @@ static void KeyOnce(Inner &inner, const vector<string> &key, const string &sql) 
 }
 
 //! Runs the recipe at its source and writes the result
-static Loaded LoadTable(Inner &inner, const string &dataset, const string &table, const RecipeRow &recipe,
-                        bool replace) {
+static Loaded LoadTable(ClientContext &context, Inner &inner, const string &dataset, const string &table,
+                        const RecipeRow &recipe, bool replace) {
 	auto target = inner.Table(dataset, table);
 	AtSource(inner, LookupSource(inner, recipe.source));
 	Loaded loaded;
@@ -486,7 +577,8 @@ static Loaded LoadTable(Inner &inner, const string &dataset, const string &table
 	}
 	loaded.rows = inner.Scalar("SELECT count(*) FROM " + target).GetValue<int64_t>();
 	loaded.dropped = DroppedRows(inner, recipe.sql);
-	loaded.snapshot = inner.Snapshot();
+	// the load's own commit, whatever another writer committed since
+	loaded.snapshot = inner.Scalar("SELECT * FROM ducklake_last_committed_snapshot(" + QuoteText(inner.ws.lake) + ")");
 	// what computed each column, read off the recipe's plan at the source: the
 	// re-derivation rule compares loads by it (SPEC §3), and the loads' diff
 	// is the drift record of what the source sends
@@ -496,11 +588,14 @@ static Loaded LoadTable(Inner &inner, const string &dataset, const string &table
 	} catch (std::exception &) {
 		// a recipe the planner will not walk again is stored without its lineage
 	}
-	// the load is the lake's commit, one snapshot; its row in the store follows it
-	inner.Run("INSERT INTO " + inner.Store("imports") + " VALUES (" + inner.Seq("imports") + ", " + QuoteText(dataset) +
-	          ", " + QuoteText(table) + ", " + QuoteText(loaded.mode) + ", " + to_string(loaded.rows) + ", " +
-	          loaded.dropped.ToSQLString() + ", " + QuoteText(lineage) + ", " + loaded.snapshot.ToSQLString() +
-	          ", now())");
+	// the load is the lake's commit, one snapshot; its row in the store follows it and names
+	// that snapshot, and the table's earlier load row ends
+	inner.Write(context, [&](CatalogWrite &write) {
+		write.End("imports", "dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(table));
+		write.Insert("imports", QuoteText(dataset) + ", " + QuoteText(table) + ", " + QuoteText(loaded.mode) + ", " +
+		                            to_string(loaded.rows) + ", " + loaded.dropped.ToSQLString() + ", " +
+		                            QuoteText(lineage) + ", " + loaded.snapshot.ToSQLString() + ", now()");
+	});
 	return loaded;
 }
 
@@ -525,24 +620,26 @@ static void RecipeExec(ClientContext &context, TableFunctionInput &data, DataChu
 
 	Inner inner(context);
 	// identity is content (SPEC §3): an unchanged re-declaration is a no-op
-	auto current = inner.Row("SELECT source, settings, sql FROM " + inner.Store("recipes") +
-	                         " WHERE dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(name) +
-	                         " ORDER BY seq DESC LIMIT 1");
+	auto current = inner.Row("SELECT source, settings, sql FROM " + inner.Store("recipes") + " WHERE dataset = " +
+	                         QuoteText(dataset) + " AND table_name = " + QuoteText(name) + " AND end_snapshot IS NULL");
 	if (!current.empty() && current[0].ToString() == recipe.source && current[1].ToString() == recipe.settings &&
 	    current[2].ToString() == recipe.sql) {
 		Outcome(output, "recipe " + name + " unchanged: no-op");
 		return;
 	}
 	auto dataset_exists =
-	    inner.Scalar("SELECT count(*) FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(dataset));
+	    inner.Scalar("SELECT count(*) FROM " + inner.Current("datasets") + " WHERE name = " + QuoteText(dataset));
 	if (dataset_exists.GetValue<int64_t>() == 0) {
 		throw InvalidInputException("glossql: dataset '%s' is not declared", dataset);
 	}
 
-	auto loaded = LoadTable(inner, dataset, name, recipe, true);
-	inner.Run("INSERT INTO " + inner.Store("recipes") + " VALUES (" + inner.Seq("recipes") + ", " + QuoteText(dataset) +
-	          ", " + QuoteText(name) + ", " + QuoteText(recipe.source) + ", " + QuoteText(recipe.settings) + ", " +
-	          QuoteText(recipe.sql) + ", now(), " + QuoteText(DeclaredBy(context)) + ")");
+	auto loaded = LoadTable(context, inner, dataset, name, recipe, true);
+	inner.Write(context, [&](CatalogWrite &write) {
+		write.End("recipes", "dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(name));
+		write.Insert("recipes", QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(recipe.source) + ", " +
+		                            QuoteText(recipe.settings) + ", " + QuoteText(recipe.sql) + ", now(), " +
+		                            QuoteText(DeclaredBy(context)));
+	});
 	loaded.how = current.empty() ? "new" : "superseded";
 	Outcome(output, "loaded " + dataset + "." + name + ": " + loaded.Summary());
 }
@@ -570,7 +667,7 @@ static void ImportExec(ClientContext &context, TableFunctionInput &data, DataChu
 
 	Inner inner(context);
 	auto recipe = NewestRecipe(inner, dataset, table);
-	auto loaded = LoadTable(inner, dataset, table, recipe, false);
+	auto loaded = LoadTable(context, inner, dataset, table, recipe, false);
 	Outcome(output, "imported " + dataset + "." + table + ": " + loaded.Summary());
 }
 
@@ -682,8 +779,8 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 
 	Inner inner(context);
 	// identity is content (SPEC §3): an unchanged re-declaration is a no-op, so a kit replays silently
-	auto current = inner.Row("SELECT scope, script, returns FROM " + inner.Store("functions") +
-	                         " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
+	auto current = inner.Row("SELECT scope, script, returns FROM " + inner.Current("functions") +
+	                         " WHERE name = " + QuoteText(name) + " ORDER BY begin_snapshot DESC LIMIT 1");
 	if (!current.empty() && current[0].ToString() == scope && current[1].ToString() == script &&
 	    SameValue(current[2], returns)) {
 		Outcome(output, "function " + name + " unchanged: no-op");
@@ -692,7 +789,7 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 	auto schema = scope == "GLOBAL" ? string("main") : scope;
 	if (scope != "GLOBAL") {
 		auto declared =
-		    inner.Scalar("SELECT count(*) FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(scope));
+		    inner.Scalar("SELECT count(*) FROM " + inner.Current("datasets") + " WHERE name = " + QuoteText(scope));
 		if (declared.GetValue<int64_t>() == 0) {
 			throw InvalidInputException("glossql: dataset '%s' is not declared", scope);
 		}
@@ -703,9 +800,12 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 		inner.Run("CREATE OR REPLACE MACRO " + inner.Table(schema, name) + "(\"$subject\") AS TABLE " +
 		          ReplacePlaceholder(script, "subject", "\"$subject\""));
 	}
-	inner.Run("INSERT INTO " + inner.Store("functions") + " VALUES (" + inner.Seq("functions") + ", " +
-	          QuoteText(name) + ", " + QuoteText(scope) + ", " + QuoteText(script) + ", " + returns.ToSQLString() +
-	          ", now(), " + QuoteText(DeclaredBy(context)) + ")");
+	// the macro is the lake's commit and its row in the store follows
+	inner.Write(context, [&](CatalogWrite &write) {
+		write.End("functions", "name = " + QuoteText(name) + " AND scope = " + QuoteText(scope));
+		write.Insert("functions", QuoteText(name) + ", " + QuoteText(scope) + ", " + QuoteText(script) + ", " +
+		                              returns.ToSQLString() + ", now(), " + QuoteText(DeclaredBy(context)));
+	});
 	// a detector's body is run by TESTS() over its test's values, $threshold bound there
 	Outcome(output, returns.IsNull() ? "declared detector " + name + " for " + scope
 	                                 : "declared measurement " + schema + "." + name + "($subject)");
@@ -729,42 +829,47 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 	auto &threshold = inputs[4];
 
 	Inner inner(context);
-	auto declared = inner.Row("SELECT aspect, actors, detector, threshold FROM " + inner.Store("tests") +
-	                          " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
-	if (!declared.empty() && declared[0].ToString() == aspect && declared[1].ToString() == JsonList(inputs[2]) &&
-	    SameValue(declared[2], detector) &&
-	    (declared[3].IsNull() || threshold.IsNull() ? declared[3].IsNull() == threshold.IsNull()
-	                                                : declared[3].GetValue<double>() == threshold.GetValue<double>())) {
-		Outcome(output, "test " + name + " unchanged: no-op");
-		return;
-	}
-	auto current = inner.Row("SELECT kind, schema::JSON->>'x-kind' FROM " + inner.Store("aspects") +
-	                         " WHERE name = " + QuoteText(aspect) + " ORDER BY seq DESC LIMIT 1");
-	if (current.empty()) {
-		throw InvalidInputException("glossql: aspect '%s' is not declared", aspect);
-	}
-	auto &kind = current[0];
-	if (!current[1].IsNull() && current[1].ToString() == "definition") {
-		throw InvalidInputException("glossql: a test on definition schema '%s' is refused: it judges nothing", aspect);
-	}
-	if (kind.ToString() == "MEASUREMENT" && !actor_kinds.empty()) {
-		throw InvalidInputException("glossql: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
-	}
-	if (!detector.IsNull()) {
-		auto row = inner.Row("SELECT returns FROM " + inner.Store("functions") +
-		                     " WHERE name = " + QuoteText(detector.ToString()) + " ORDER BY seq DESC LIMIT 1");
-		if (row.empty()) {
-			throw InvalidInputException("glossql: detector '%s' is not a declared function", detector.ToString());
+	auto written = inner.Write(context, [&](CatalogWrite &write) {
+		auto declared = inner.Row("SELECT aspect, actors, detector, threshold FROM " + inner.Current("tests") +
+		                          " WHERE name = " + QuoteText(name) + " ORDER BY begin_snapshot DESC LIMIT 1");
+		if (!declared.empty() && declared[0].ToString() == aspect && declared[1].ToString() == JsonList(inputs[2]) &&
+		    SameValue(declared[2], detector) &&
+		    (declared[3].IsNull() || threshold.IsNull()
+		         ? declared[3].IsNull() == threshold.IsNull()
+				 : declared[3].GetValue<double>() == threshold.GetValue<double>())) {
+			return;
 		}
-		if (!row[0].IsNull()) {
-			throw InvalidInputException("glossql: '%s' returns %s: a measurement, not a detector", detector.ToString(),
-			                            row[0].ToString());
+		auto current = inner.Row("SELECT kind, schema::JSON->>'x-kind' FROM " + inner.Current("aspects") +
+		                         " WHERE name = " + QuoteText(aspect));
+		if (current.empty()) {
+			throw InvalidInputException("glossql: aspect '%s' is not declared", aspect);
 		}
-	}
-	inner.Run("INSERT INTO " + inner.Store("tests") + " VALUES (" + inner.Seq("tests") + ", " + QuoteText(name) + ", " +
-	          QuoteText(aspect) + ", " + QuoteText(JsonList(inputs[2])) + ", " + detector.ToSQLString() + ", " +
-	          threshold.ToSQLString() + ", now(), " + QuoteText(DeclaredBy(context)) + ")");
-	Outcome(output, "declared test " + name + " on " + aspect);
+		auto &kind = current[0];
+		if (!current[1].IsNull() && current[1].ToString() == "definition") {
+			throw InvalidInputException("glossql: a test on definition schema '%s' is refused: it judges nothing",
+			                            aspect);
+		}
+		if (kind.ToString() == "MEASUREMENT" && !actor_kinds.empty()) {
+			throw InvalidInputException(
+			    "glossql: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
+		}
+		if (!detector.IsNull()) {
+			auto row = inner.Row("SELECT returns FROM " + inner.Current("functions") + " WHERE name = " +
+			                     QuoteText(detector.ToString()) + " ORDER BY begin_snapshot DESC LIMIT 1");
+			if (row.empty()) {
+				throw InvalidInputException("glossql: detector '%s' is not a declared function", detector.ToString());
+			}
+			if (!row[0].IsNull()) {
+				throw InvalidInputException("glossql: '%s' returns %s: a measurement, not a detector",
+				                            detector.ToString(), row[0].ToString());
+			}
+		}
+		write.End("tests", "aspect = " + QuoteText(aspect));
+		write.Insert("tests", QuoteText(name) + ", " + QuoteText(aspect) + ", " + QuoteText(JsonList(inputs[2])) +
+		                          ", " + detector.ToSQLString() + ", " + threshold.ToSQLString() + ", now(), " +
+		                          QuoteText(DeclaredBy(context)));
+	});
+	Outcome(output, written == 0 ? "test " + name + " unchanged: no-op" : "declared test " + name + " on " + aspect);
 }
 
 TableFunction GlossTestFunction() {
@@ -812,12 +917,14 @@ static unique_ptr<FunctionData> ExtractBind(ClientContext &context, TableFunctio
 struct Reads {
 	std::set<string> names;
 	bool everything = false;
-	//! each scan of the measurements relation, with the functions the filters above it name
+	//! each scan of a relation that is read by a key, with the keys the filters above it name:
+	//! the stored results by function, the annotations by property
 	std::map<const LogicalOperator *, std::set<string>> measurements;
+	std::map<const LogicalOperator *, std::set<string>> glossary;
 
-	//! A scan of the measurements relation names the functions its filter equates
-	//! `function` with, `main.measurements/<function>`; a scan with no such filter
-	//! names the whole relation
+	//! A scan names the keys its filter equates the key column with:
+	//! main.measurements/<function>, main.glossary/<property>. A scan with no
+	//! such filter names the whole relation
 	void Close() {
 		for (auto &scan : measurements) {
 			if (scan.second.empty()) {
@@ -827,10 +934,18 @@ struct Reads {
 				names.insert("main.measurements/" + function);
 			}
 		}
+		for (auto &scan : glossary) {
+			if (scan.second.empty()) {
+				names.insert("main.glossary");
+			}
+			for (auto &aspect : scan.second) {
+				names.insert("main.glossary/" + aspect);
+			}
+		}
 	}
 
 	//! `**` when the reads could not be enumerated, the names it did enumerate
-	//! after it: a store relation the body scanned is held in the data version even then
+	//! after it: a store relation the body scanned is among its inputs even then
 	string Text() const {
 		auto listed = StringUtil::Join(vector<string>(names.begin(), names.end()), ",");
 		if (everything) {
@@ -840,10 +955,20 @@ struct Reads {
 	}
 };
 
-//! Table functions that read no input
+//! Table functions whose scan is no input the plan must name: those that read
+//! nothing, and those whose bind names what they read (BindRead)
 static bool ReadsNothing(const string &function) {
-	static const std::set<string> PURE = {"range", "generate_series", "repeat", "repeat_row", "unnest"};
-	return PURE.count(function) > 0;
+	static const std::set<string> NAMED = {"range",
+	                                       "generate_series",
+	                                       "repeat",
+	                                       "repeat_row",
+	                                       "unnest",
+	                                       "glossql_cached",
+	                                       "glossql_columns",
+	                                       "glossql_views_lineage",
+	                                       "glossql_views_scans",
+	                                       "glossql_views_joins"};
+	return NAMED.count(function) > 0;
 }
 
 //! The operator in the subtree that owns a column binding's table index
@@ -862,9 +987,18 @@ static optional_ptr<LogicalOperator> OwnerOf(LogicalOperator &op, TableIndex tab
 	return nullptr;
 }
 
-//! The measurements scan whose `function` column an expression is, followed
+//! A store relation that is read by a key: its table, and the column that is the key
+struct KeyedRelation {
+	const char *table;
+	const char *column;
+};
+static constexpr KeyedRelation RESULTS_BY_FUNCTION = {"glossql_measurements", "function"};
+static constexpr KeyedRelation ANNOTATIONS_BY_PROPERTY = {"glossql_glossary", "aspect"};
+
+//! The scan of the keyed relation whose key column an expression is, followed
 //! through the projections between (a view expands to one), or none
-static optional_ptr<LogicalOperator> FunctionColumnOf(LogicalOperator &root, const Workspace &ws, Expression &expr) {
+static optional_ptr<LogicalOperator> KeyColumnOf(LogicalOperator &root, const Workspace &ws,
+                                                 const KeyedRelation &relation, Expression &expr) {
 	if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
 		return nullptr;
 	}
@@ -878,7 +1012,7 @@ static optional_ptr<LogicalOperator> FunctionColumnOf(LogicalOperator &root, con
 		if (binding.column_index.GetIndex() >= projection.expressions.size()) {
 			return nullptr;
 		}
-		return FunctionColumnOf(*owner, ws, *projection.expressions[binding.column_index.GetIndex()]);
+		return KeyColumnOf(*owner, ws, relation, *projection.expressions[binding.column_index.GetIndex()]);
 	}
 	if (owner->type != LogicalOperatorType::LOGICAL_GET) {
 		return nullptr;
@@ -887,7 +1021,7 @@ static optional_ptr<LogicalOperator> FunctionColumnOf(LogicalOperator &root, con
 	auto table = get.GetTable();
 	if (!table || string(table->ParentCatalog().GetName()) != ws.meta ||
 	    table->ParentSchema().name.GetIdentifierName() != ws.meta_schema ||
-	    table->name.GetIdentifierName() != "glossql_measurements") {
+	    table->name.GetIdentifierName() != relation.table) {
 		return nullptr;
 	}
 	auto &column_ids = get.GetColumnIds();
@@ -895,56 +1029,79 @@ static optional_ptr<LogicalOperator> FunctionColumnOf(LogicalOperator &root, con
 		return nullptr;
 	}
 	auto column = column_ids[binding.column_index.GetIndex()].GetPrimaryIndex();
-	return column < get.names.size() && get.names[column] == "function" ? owner : nullptr;
+	return column < get.names.size() && get.names[column] == relation.column ? owner : nullptr;
 }
 
-//! The constant an expression is, under the casts the binder wraps a literal in
-//! (`function = 'x'` compares to `CAST('x' AS VARCHAR)`); none otherwise
-static optional_ptr<Expression> ConstantOf(Expression &expr) {
-	if (expr.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
-		return &expr;
+//! The value an expression is whatever the row: a literal, under the casts the
+//! binder wraps one in, or an expression over literals alone (a body's
+//! `split_part($subject, '.', 2)`, its subject being a literal); none otherwise
+static bool ConstantOf(ClientContext &context, Expression &expr, string &value) {
+	if (!expr.IsFoldable()) {
+		return false;
 	}
-	if (expr.GetExpressionType() != ExpressionType::OPERATOR_CAST) {
-		return nullptr;
+	Value folded;
+	if (!ExpressionExecutor::TryEvaluateScalar(context, expr, folded) || folded.IsNull()) {
+		return false;
 	}
-	optional_ptr<Expression> found;
-	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
-		if (!found) {
-			found = ConstantOf(child);
-		}
-	});
-	return found;
+	value = folded.ToString();
+	return true;
 }
 
-//! The functions a filter's expression equates the measurements relation's
-//! `function` column with — `function = 'x'`, `function IN (...)`, and each
-//! side of an AND or an OR — recorded on the scan they narrow
-static void FunctionPredicates(LogicalOperator &root, const Workspace &ws, Expression &expr, Reads &reads) {
+//! The keys a filter's expression restricts a keyed relation's scan to: `key =
+//! 'x'`, `key IN (...)`, each side of an AND. An OR restricts a scan only where
+//! every side of it does. Returns whether the expression restricted any scan
+static bool KeyPredicates(ClientContext &context, LogicalOperator &root, const Workspace &ws,
+                          const KeyedRelation &relation, Expression &expr,
+                          std::map<const LogicalOperator *, std::set<string>> &scans) {
 	auto type = expr.GetExpressionType();
 	if (type == ExpressionType::COMPARE_EQUAL || type == ExpressionType::COMPARE_IN) {
 		optional_ptr<LogicalOperator> scan;
 		vector<string> constants;
+		bool other = false;
 		ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
-			if (auto constant = ConstantOf(child)) {
-				constants.push_back(constant->Cast<BoundConstantExpression>().GetValue().ToString());
+			string constant;
+			if (ConstantOf(context, child, constant)) {
+				constants.push_back(constant);
 			} else if (!scan) {
-				scan = FunctionColumnOf(root, ws, child);
+				scan = KeyColumnOf(root, ws, relation, child);
+				other = other || !scan;
+			} else {
+				other = true;
 			}
 		});
-		if (scan) {
-			for (auto &constant : constants) {
-				reads.measurements[scan.get()].insert(constant);
-			}
+		if (!scan || other || constants.empty()) {
+			return false;
 		}
-		return;
+		for (auto &constant : constants) {
+			scans[scan.get()].insert(constant);
+		}
+		return true;
 	}
-	if (type == ExpressionType::CONJUNCTION_AND || type == ExpressionType::CONJUNCTION_OR) {
-		ExpressionIterator::EnumerateChildren(expr,
-		                                      [&](Expression &child) { FunctionPredicates(root, ws, child, reads); });
+	if (type == ExpressionType::CONJUNCTION_AND) {
+		bool any = false;
+		ExpressionIterator::EnumerateChildren(
+		    expr, [&](Expression &child) { any = KeyPredicates(context, root, ws, relation, child, scans) || any; });
+		return any;
 	}
+	if (type == ExpressionType::CONJUNCTION_OR) {
+		// a side that names no key lets every row through: the OR restricts nothing
+		std::map<const LogicalOperator *, std::set<string>> sides;
+		bool every = true;
+		ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
+			every = KeyPredicates(context, root, ws, relation, child, sides) && every;
+		});
+		if (!every || sides.size() != 1) {
+			return false;
+		}
+		for (auto &side : sides) {
+			scans[side.first].insert(side.second.begin(), side.second.end());
+		}
+		return true;
+	}
+	return false;
 }
 
-static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads) {
+static void CollectReads(ClientContext &context, LogicalOperator &op, const Workspace &ws, Reads &reads) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
 		auto &get = op.Cast<LogicalGet>();
 		auto table = get.GetTable();
@@ -952,11 +1109,14 @@ static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads)
 			auto catalog = string(table->ParentCatalog().GetName());
 			auto schema = table->ParentSchema().name.GetIdentifierName();
 			auto name = table->name.GetIdentifierName();
+			bool store = catalog == ws.meta && schema == ws.meta_schema;
 			if (catalog == ws.lake) {
 				reads.names.insert(schema + "." + name);
-			} else if (catalog == ws.meta && schema == ws.meta_schema && name == "glossql_measurements") {
+			} else if (store && name == RESULTS_BY_FUNCTION.table) {
 				reads.measurements.emplace(&op, std::set<string>());
-			} else if (catalog == ws.meta && schema == ws.meta_schema && StringUtil::StartsWith(name, "glossql_")) {
+			} else if (store && name == ANNOTATIONS_BY_PROPERTY.table) {
+				reads.glossary.emplace(&op, std::set<string>());
+			} else if (store && StringUtil::StartsWith(name, "glossql_")) {
 				reads.names.insert("main." + name.substr(8));
 			} else {
 				reads.everything = true;
@@ -967,11 +1127,12 @@ static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads)
 	}
 	if (op.type == LogicalOperatorType::LOGICAL_FILTER) {
 		for (auto &expr : op.expressions) {
-			FunctionPredicates(op, ws, *expr, reads);
+			KeyPredicates(context, op, ws, RESULTS_BY_FUNCTION, *expr, reads.measurements);
+			KeyPredicates(context, op, ws, ANNOTATIONS_BY_PROPERTY, *expr, reads.glossary);
 		}
 	}
 	for (auto &child : op.children) {
-		CollectReads(*child, ws, reads);
+		CollectReads(context, *child, ws, reads);
 	}
 }
 
@@ -1026,7 +1187,7 @@ struct BindReads : public ClientContextState {
 
 //! A bind names an input it read: a lake relation as dataset.table, a store
 //! relation as main.name, the dataset's every relation as *
-static void BindRead(ClientContext &context, const string &name) {
+void BindRead(ClientContext &context, const string &name) {
 	BindReads::Of(context).names.insert(name);
 }
 
@@ -1043,7 +1204,7 @@ static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 	context.RunFunctionInTransaction([&]() {
 		Planner planner(context);
 		planner.CreatePlan(std::move(statement));
-		CollectReads(*planner.plan, inner.ws, reads);
+		CollectReads(context, *planner.plan, inner.ws, reads);
 		reads.Close();
 		reads.names.insert(side.names.begin(), side.names.end());
 		auto parts = StringUtil::Split(subject, '.');
@@ -1056,28 +1217,27 @@ static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 	return reads.Text();
 }
 
-//! The data version a computation is stored at: the dataset's tables, the store relations
-//! and whatever else the reads named, each at its version now; the dataset's
-//! views too where the reads could not be enumerated (**). A body that read the
-//! measurements relation holds the other functions' rows in its data version, one part per function:
-//! its own rows are its output, never its input (SPEC §6)
-static string DataVersionOf(Inner &inner, const string &dataset, const string &function, const string &reads) {
-	vector<string> named;
-	bool measurements = false;
-	for (auto &name : StringUtil::Split(reads, ',')) {
-		named.push_back(QuoteText(name));
-		measurements = measurements || name == "main.measurements";
+//! What a computation read, each input at its version now (SPEC §6): the names
+//! its reads resolve to, an input that is not there with no version. Read before
+//! the computation runs, so that a change under it is a change after it
+static vector<pair<string, Value>> InputsOf(Inner &inner, const string &dataset, const string &function,
+                                            const string &reads) {
+	vector<pair<string, Value>> inputs;
+	vector<string> names;
+	for (auto &read : StringUtil::Split(reads, ',')) {
+		names.push_back("(" + QuoteText(InputName(read, dataset, function)) + ")");
 	}
-	named.push_back("''");
-	string others = measurements ? " OR (starts_with(name, 'main.measurements/') AND name <> " +
-	                                   QuoteText("main.measurements/" + function) + ")"
-	                             : string();
-	return inner
-	    .Scalar("SELECT coalesce(string_agg(name || ':' || version, ',' ORDER BY name || ':' || version), '') FROM (" +
-	            PartsSQL(inner.ws) + ") WHERE (starts_with(name, " + QuoteText(dataset + ".") +
-	            ") AND (kind = 'table'" + (StringUtil::StartsWith(reads, "**") ? string(" OR true") : string("")) +
-	            ")) OR name IN (" + StorePartNames() + ") OR name IN (" + StringUtil::Join(named, ", ") + ")" + others)
-	    .ToString();
+	if (names.empty()) {
+		return inputs;
+	}
+	auto rows = inner.Run("SELECT i.name, p.version FROM (VALUES " + StringUtil::Join(names, ", ") +
+	                      ") i(name) LEFT JOIN (" + PartsSQL(inner.ws) + ") p ON p.name = i.name ORDER BY i.name");
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			inputs.emplace_back(chunk->GetValue(0, r).ToString(), chunk->GetValue(1, r));
+		}
+	}
+	return inputs;
 }
 
 //! The newest stored row for the call while what it read is unchanged, else NULL
@@ -1085,7 +1245,7 @@ static Value ServedValue(Inner &inner, const string &dataset, const string &name
 	return inner.Scalar("SELECT value FROM (WITH parts AS (" + PartsSQL(inner.ws) + ") SELECT m.value, " +
 	                    IsCurrentSQL(inner.ws, "m") + " AS current FROM " + inner.Store("measurements") +
 	                    " m WHERE m.dataset = " + QuoteText(dataset) + " AND m.function = " + QuoteText(name) +
-	                    " AND m.subject = " + QuoteText(subject) + " ORDER BY m.seq DESC LIMIT 1) WHERE current");
+	                    " AND m.subject = " + QuoteText(subject) + " AND m.end_snapshot IS NULL) WHERE current");
 }
 
 //! What extraction serves of a value: its top-level summary object when the body
@@ -1147,7 +1307,7 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		auto scope = schema == "main" ? "GLOBAL" : schema;
 		auto returns =
 		    inner.Scalar("SELECT returns FROM " + inner.Store("functions") + " WHERE name = " + QuoteText(name) +
-			             " AND scope = " + QuoteText(scope) + " ORDER BY seq DESC LIMIT 1");
+			             " AND scope = " + QuoteText(scope) + " AND end_snapshot IS NULL");
 		if (returns.IsNull()) {
 			throw InvalidInputException("glossql: %s is a detector: it runs at read, through TESTS()", name);
 		}
@@ -1164,13 +1324,14 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		}
 		auto invocation = inner.Table(schema, name) + "(" + QuoteText(subject) + ")";
 		auto reads = ReadsOf(inner, invocation, subject);
+		auto inputs = InputsOf(inner, dataset, name, reads);
 		auto value = ValueOf(inner, invocation);
 		if (value.IsNull()) {
 			value = Value("null");
 		}
 		// the aspect's schema is the one contract: the output is validated against it (SPEC §6)
 		auto contract = inner.Scalar("SELECT schema::VARCHAR FROM " + inner.Store("aspects") +
-		                             " WHERE name = " + returns.ToSQLString() + " ORDER BY seq DESC LIMIT 1");
+		                             " WHERE name = " + returns.ToSQLString() + " AND end_snapshot IS NULL");
 		if (contract.IsNull()) {
 			throw InvalidInputException("glossql: %s returns %s, which is not a declared aspect", name,
 			                            returns.ToString());
@@ -1180,11 +1341,24 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 			throw InvalidInputException("glossql: the output of %s does not conform to the schema of %s: %s", name,
 			                            returns.ToString(), error);
 		}
-		// stored at its data version, with what it read: the next extraction serves it while those are unchanged
-		inner.Run("INSERT INTO " + inner.Store("measurements") + " VALUES (" + inner.Seq("measurements") + ", " +
-		          QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) + ", " +
-		          returns.ToSQLString() + ", " + QuoteText(DataVersionOf(inner, dataset, name, reads)) + ", " +
-		          QuoteText(value.ToString()) + ", now(), " + QuoteText(reads) + ")");
+		// stored with what it read, each input at its version: the next extraction serves it
+		// while those are unchanged. The result it replaces ends, and its inputs with it
+		inner.Write(context, [&](CatalogWrite &write) {
+			auto key = "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
+			           " AND subject = " + QuoteText(subject);
+			auto replaced =
+			    inner.Scalar("SELECT begin_snapshot FROM " + inner.Current("measurements") + " WHERE " + key);
+			if (!replaced.IsNull()) {
+				write.End("inputs", "begin_snapshot = " + replaced.ToString());
+				write.End("measurements", key);
+			}
+			write.Insert("measurements", QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) +
+			                                 ", " + returns.ToSQLString() + ", " + QuoteText(value.ToString()) +
+			                                 ", now()");
+			for (auto &input : inputs) {
+				write.Insert("inputs", QuoteText(input.first) + ", " + input.second.ToSQLString());
+			}
+		});
 		output.data[3].Append(Value(Summary(inner, value.ToString())));
 		output.data[4].Append(Value::BOOLEAN(true));
 		row++;
@@ -1269,6 +1443,23 @@ static unique_ptr<TableRef> SubjectColumnBindReplace(ClientContext &context, Tab
 static TableFunction SubjectColumnFunction() {
 	TableFunction function("subject_column", {LogicalType::VARCHAR}, nullptr);
 	function.bind_replace = SubjectColumnBindReplace;
+	return function;
+}
+
+//===--------------------------------------------------------------------===//
+// glossql_parts(): what a stored result can read, each at its version now —
+// (name, version, kind). Joined to `inputs` on the name, it says which result
+// is out of date and which input moved
+//===--------------------------------------------------------------------===//
+
+static unique_ptr<TableRef> PartsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	Inner inner(context);
+	return make_uniq<SubqueryRef>(ParseSelect(PartsSQL(inner.ws)));
+}
+
+static TableFunction PartsFunction() {
+	TableFunction function("glossql_parts", {}, nullptr);
+	function.bind_replace = PartsBindReplace;
 	return function;
 }
 
@@ -1538,8 +1729,9 @@ static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context
 	auto dataset = ResolveSubject(context, input.inputs[0].ToString());
 	BindRead(context, "main.relationships");
 	vector<string> edges;
-	auto rows = inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
-	                      " WHERE dataset = " + QuoteText(dataset) + " ORDER BY seq");
+	auto rows =
+	    inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
+		          " WHERE dataset = " + QuoteText(dataset) + " AND end_snapshot IS NULL ORDER BY begin_snapshot");
 	while (auto chunk = rows->Fetch()) {
 		for (idx_t i = 0; i < chunk->size(); i++) {
 			auto left = chunk->GetValue(0, i).ToString();
@@ -1924,8 +2116,9 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 	// the dataset's declared edges as pointers, both ways for <->, over tables it has
 	vector<Pointer> pointers;
 	BindRead(context, "main.relationships");
-	auto rows = inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
-	                      " WHERE dataset = " + QuoteText(dataset) + " ORDER BY seq");
+	auto rows =
+	    inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
+		          " WHERE dataset = " + QuoteText(dataset) + " AND end_snapshot IS NULL ORDER BY begin_snapshot");
 	while (auto chunk = rows->Fetch()) {
 		for (idx_t i = 0; i < chunk->size(); i++) {
 			auto child = ParseSide(context, dataset, chunk->GetValue(0, i).ToString());
@@ -2257,8 +2450,7 @@ static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk 
 		inner.Run("SET active_grammar_extensions = ['glossql']");
 		// every declaration the kit makes names it as its author
 		inner.Run("SET VARIABLE glossql_declared_by = " + QuoteText("kit:" + name));
-		auto newest = inner.Scalar("SELECT hash FROM " + inner.Store("kits") + " WHERE name = " + QuoteText(name) +
-		                           " ORDER BY seq DESC LIMIT 1");
+		auto newest = inner.Scalar("SELECT hash FROM " + inner.Current("kits") + " WHERE name = " + QuoteText(name));
 		bool current = !newest.IsNull() && newest.ToString() == hash;
 		auto statements = inner.con.ExtractStatements(script);
 		for (auto &statement : statements) {
@@ -2282,9 +2474,11 @@ static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk 
 		if (current) {
 			state.rows.emplace_back(name, "current");
 		} else {
-			inner.Run("INSERT INTO " + inner.Store("kits") + " VALUES (" + inner.Seq("kits") + ", " + QuoteText(name) +
-			          ", " + QuoteText(path) + ", " + to_string(state.rows.size()) + ", now(), " + QuoteText(hash) +
-			          ")");
+			inner.Write(context, [&](CatalogWrite &write) {
+				write.End("kits", "name = " + QuoteText(name));
+				write.Insert("kits", QuoteText(name) + ", " + QuoteText(path) + ", " + to_string(state.rows.size()) +
+				                         ", now(), " + QuoteText(hash));
+			});
 		}
 	}
 	idx_t count = 0;
@@ -2312,6 +2506,7 @@ void RegisterGlossRunner(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossExtractFunction());
 	loader.RegisterFunction(GlossSelectOrExtractFunction());
 	loader.RegisterFunction(SubjectColumnFunction());
+	loader.RegisterFunction(PartsFunction());
 	loader.RegisterFunction(DatasetCellsFunctions());
 	loader.RegisterFunction(RelationshipChecksFunction());
 	loader.RegisterFunction(AdditivityCellsFunction());

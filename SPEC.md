@@ -368,8 +368,9 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';
 ```
 
-- Every row carries `snapshot_id` — the catalog snapshot at write time
-  (NULL for dataset-level subjects and pair paths). A gloss reads `stale`
+- Every row carries `begin_snapshot` — the lake snapshot its write
+  took. A removed or replaced row leaves the relation's reads and stays
+  in the store with the snapshot that ended it. A gloss reads `stale`
   once its subject changed after that snapshot: a column re-derived,
   retyped or dropped, a table one of whose columns did. Rows arriving
   under the same shape do not age it. Provenance and staleness are a
@@ -498,11 +499,12 @@ SELECT outliers() FROM orders.amount;
 Extraction computes at the read's data version — the set of inputs, data and
 declarations, the statement resolved — and writes one row in the
 `measurements` relation:
-`(dataset, function, subject, aspect, data_version, value, computed_at, reads)`,
-`reads` naming the inputs the body actually read — tables and store
-relations by name, `*` for the dataset's every table, `**` when the
-reads could not be enumerated (the row then holds only at its exact
-data version), empty for a body that read nothing. A later extraction
+`(dataset, function, subject, aspect, value, computed_at)`,
+and one row per input the body actually read, at the version read, in
+the `inputs` relation — tables and store relations by name,
+`<dataset>.*` for the dataset's every table, `<dataset>.**` when the
+reads could not be enumerated (the row then holds only while nothing
+in the dataset moves), no row for a body that read nothing. A later extraction
 serves that row while those inputs are unchanged; one of them moving
 makes the next extraction compute — the effect scoped to its cause, so
 there is no invalidation, only a miss, a write the body never reads is

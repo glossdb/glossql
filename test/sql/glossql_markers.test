@@ -1,0 +1,325 @@
+# name: test/sql/glossql_markers.test
+# description: a write to the store takes a lake snapshot in one transaction; its rows begin at it and end at the write that replaces or removes them; a definition's view is in that transaction; writers on several connections find one order
+# group: [sql]
+
+require glossql
+
+require json
+
+require ducklake
+
+require parquet
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/markers.ducklake' AS ws (DATA_PATH '{TEST_DIR}/markers_data/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET d SET (purpose: 'markers');
+
+statement ok
+USE d;
+
+statement ok
+CREATE TABLE t AS SELECT 1 AS a;
+
+statement ok
+DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;
+
+statement ok
+DECLARE ASPECT m WITH $${"title": "m"}$$ AS VIEW;
+
+# --- an annotation: its row begins at a snapshot of the lake that names no lake change
+
+statement ok
+GLOSS note ON d AS $${"value": 1}$$;
+
+query I
+SELECT begin_snapshot = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot) FROM glossary WHERE aspect = 'note';
+----
+true
+
+query TT
+SELECT changes_made, author FROM __ducklake_metadata_ws.main.ducklake_snapshot_changes
+WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'note');
+----
+NULL	agent
+
+# the lake lists the snapshot, and a write of its own follows it
+query I
+SELECT count(*) FROM ducklake_snapshots('ws') WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'note');
+----
+1
+
+statement ok
+INSERT INTO t VALUES (2);
+
+# --- a replacing annotation ends the row it replaces, at its own snapshot; the view serves the current row
+
+statement ok
+GLOSS note ON d AS $${"value": 2}$$;
+
+query TI
+SELECT body::VARCHAR, begin_snapshot = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot) FROM glossary WHERE aspect = 'note';
+----
+{"value": 2}	true
+
+query TI
+SELECT body, end_snapshot IS NOT DISTINCT FROM lead(begin_snapshot) OVER (ORDER BY begin_snapshot)
+FROM __ducklake_metadata_ws.main.glossql_glossary WHERE aspect = 'note' ORDER BY begin_snapshot;
+----
+{"value": 1}	true
+{"value": 2}	true
+
+# --- an unchanged declaration writes nothing: no row, no snapshot
+
+statement ok
+SET VARIABLE before = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot);
+
+query T
+DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;
+----
+aspect note unchanged: no-op
+
+query I
+SELECT max(snapshot_id) = getvariable('before') FROM __ducklake_metadata_ws.main.ducklake_snapshot;
+----
+true
+
+# --- a removal ends the rows it selects: they leave the view and stay in the store
+
+query I
+DELETE FROM glossary WHERE aspect = 'note';
+----
+1
+
+query I
+SELECT count(*) FROM glossary WHERE aspect = 'note';
+----
+0
+
+query II
+SELECT count(*), count(end_snapshot) FROM __ducklake_metadata_ws.main.glossql_glossary WHERE aspect = 'note';
+----
+2	2
+
+# a removal that selects nothing takes no snapshot
+statement ok
+SET VARIABLE before = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot);
+
+query I
+DELETE FROM glossary WHERE aspect = 'note';
+----
+0
+
+query I
+SELECT max(snapshot_id) = getvariable('before') FROM __ducklake_metadata_ws.main.ducklake_snapshot;
+----
+true
+
+# --- a definition: the view's row is written in the transaction of its glossary row, as the lake writes one
+
+statement ok
+GLOSS m ON d AS $${"sql": "SELECT a FROM t"}$$;
+
+query I
+SELECT sum(a) FROM m;
+----
+3
+
+query I
+SELECT v.begin_snapshot = g.begin_snapshot
+FROM __ducklake_metadata_ws.main.ducklake_view v, glossary g
+WHERE v.view_name = 'm' AND v.end_snapshot IS NULL AND g.aspect = 'm';
+----
+true
+
+# the lake's own view of the same statement, beside it: the rows agree in everything but their ids
+statement ok
+CREATE VIEW n AS SELECT a FROM t;
+
+query TTTT
+SELECT dialect, column_aliases, sql, schema_id = (SELECT schema_id FROM __ducklake_metadata_ws.main.ducklake_view WHERE view_name = 'n')
+FROM __ducklake_metadata_ws.main.ducklake_view WHERE view_name = 'm' AND end_snapshot IS NULL;
+----
+duckdb	(empty)	SELECT a FROM t	true
+
+query TTTT
+SELECT dialect, column_aliases, sql, true FROM __ducklake_metadata_ws.main.ducklake_view WHERE view_name = 'n';
+----
+duckdb	(empty)	SELECT a FROM t	true
+
+query TT
+SELECT replace(c.changes_made, '"m"', '"n"') = d.changes_made, c.changes_made
+FROM __ducklake_metadata_ws.main.ducklake_snapshot_changes c, __ducklake_metadata_ws.main.ducklake_snapshot_changes d
+WHERE c.snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'm')
+  AND d.snapshot_id = (SELECT begin_snapshot FROM __ducklake_metadata_ws.main.ducklake_view WHERE view_name = 'n');
+----
+true	created_view:"d"."m"
+
+# the snapshot of a definition moves the lake's schema version and its next catalog id, as the lake's own does
+query II
+SELECT ours.schema_version - before_ours.schema_version, ours.next_catalog_id - before_ours.next_catalog_id
+FROM __ducklake_metadata_ws.main.ducklake_snapshot ours, __ducklake_metadata_ws.main.ducklake_snapshot before_ours
+WHERE ours.snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'm') AND before_ours.snapshot_id = ours.snapshot_id - 1;
+----
+1	1
+
+# a definition that does not bind is refused and writes nothing
+statement error
+GLOSS m ON d AS $${"sql": "SELECT nope FROM t"}$$;
+----
+nope
+
+query T
+SELECT body->>'sql' FROM glossary WHERE aspect = 'm';
+----
+SELECT a FROM t
+
+# a replacing definition ends the view's row and makes the next, in one snapshot
+statement ok
+GLOSS m ON d AS $${"sql": "SELECT a + 1 AS a FROM t"}$$;
+
+query I
+SELECT sum(a) FROM m;
+----
+5
+
+query T
+SELECT changes_made LIKE 'dropped_view:%,created_view:"d"."m"' FROM __ducklake_metadata_ws.main.ducklake_snapshot_changes
+WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'm');
+----
+true
+
+# the view follows the serving definition: a person's over an agent's
+statement ok
+SET VARIABLE glossql_actor = 'human';
+
+statement ok
+GLOSS m ON d AS $${"sql": "SELECT a + 10 AS a FROM t"}$$;
+
+statement ok
+RESET VARIABLE glossql_actor;
+
+statement ok
+GLOSS m ON d AS $${"sql": "SELECT a + 100 AS a FROM t"}$$;
+
+query I
+SELECT sum(a) FROM m;
+----
+23
+
+# a stop ends the view
+statement ok
+SET VARIABLE glossql_actor = 'human';
+
+statement ok
+GLOSS m ON d AS $${"stopped": "the source is incomplete"}$$;
+
+statement ok
+RESET VARIABLE glossql_actor;
+
+statement error
+SELECT sum(a) FROM m;
+----
+Catalog Error
+
+query T
+SELECT changes_made LIKE 'dropped_view:%' AND changes_made NOT LIKE '%created_view%' FROM __ducklake_metadata_ws.main.ducklake_snapshot_changes
+WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'm' AND actor_kind = 'human');
+----
+true
+
+statement ok
+SET VARIABLE glossql_actor = 'human';
+
+statement ok
+GLOSS m ON d AS $${"sql": "SELECT a FROM t"}$$;
+
+statement ok
+RESET VARIABLE glossql_actor;
+
+# --- eight connections annotate and define at once: one order, and the view is the serving definition
+
+statement ok
+SET VARIABLE before = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot);
+
+statement ok
+DECLARE ASPECT w WITH $${"title": "w"}$$ AS VIEW;
+
+concurrentloop i 0 8
+
+statement ok
+USE ws.d;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+GLOSS note ON d AS $${"value": {i}}$$;
+
+statement ok
+GLOSS w ON d AS $${"sql": "SELECT {i} AS v"}$$;
+
+statement ok
+GLOSS note ON d.t AS $${"value": {i}}$$;
+
+statement ok
+GLOSS w ON d AS $${"sql": "SELECT {i} + 100 AS v"}$$;
+
+endloop
+
+# every snapshot id is taken once, and every row of the store begins at one
+query I
+SELECT count(*) = count(DISTINCT snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot;
+----
+true
+
+query I
+SELECT count(*) FROM __ducklake_metadata_ws.main.glossql_glossary g
+WHERE NOT EXISTS (SELECT 1 FROM __ducklake_metadata_ws.main.ducklake_snapshot s WHERE s.snapshot_id = g.begin_snapshot);
+----
+0
+
+# no two rows of the store begin at one snapshot: each write took its own
+query I
+SELECT count(*) FROM (SELECT begin_snapshot FROM __ducklake_metadata_ws.main.glossql_glossary GROUP BY 1 HAVING count(*) > 1);
+----
+0
+
+# one current row per value, and each replaced row ends where the next begins
+query TI
+SELECT aspect || ' on ' || subject, count(*) FROM glossary WHERE aspect IN ('note', 'w') GROUP BY ALL ORDER BY 1;
+----
+note on d	1
+note on d.t	1
+w on d	1
+
+query I
+SELECT count(*) FROM (
+  SELECT end_snapshot, lead(begin_snapshot) OVER (PARTITION BY subject, aspect, actor_kind ORDER BY begin_snapshot) AS next
+  FROM __ducklake_metadata_ws.main.glossql_glossary WHERE aspect IN ('note', 'w') AND begin_snapshot > getvariable('before'))
+WHERE end_snapshot IS DISTINCT FROM next;
+----
+0
+
+# the view is the current definition, and one view row is current
+query I
+SELECT (SELECT v FROM w)::VARCHAR || ' AS v' = replace((SELECT body->>'sql' FROM glossary WHERE aspect = 'w'), ' + 100', '')
+    OR (SELECT v - 100 FROM w)::VARCHAR || ' + 100 AS v' = replace((SELECT body->>'sql' FROM glossary WHERE aspect = 'w'), 'SELECT ', '');
+----
+true
+
+query I
+SELECT count(*) FROM __ducklake_metadata_ws.main.ducklake_view WHERE view_name = 'w' AND end_snapshot IS NULL;
+----
+1
+
+# the lake's own write follows
+statement ok
+INSERT INTO t VALUES (3);

@@ -6,6 +6,8 @@
 #include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 
+#include <functional>
+
 namespace duckdb {
 
 //! The glossql grammar (glossql_grammar.cpp): activated per connection with
@@ -168,20 +170,29 @@ struct Workspace {
 	string Table(const string &dataset, const string &name) const;
 };
 
-//! The parts a measurement can read, each at its version now: (name, version, kind) —
-//! every live table of the lake as <schema>.<table> at the last snapshot that
-//! wrote, altered or dropped it, every live view but the store's own as
-//! <schema>.<view> at the snapshot that defined it, every store relation but
-//! measurements as glossql.<relation> at its highest seq ('-' while empty); kind is
-//! table, view or store. A measurement's data version is these parts joined, sorted,
-//! name:version; glossql_store.cpp
+//! The parts a stored result can read, each at its version now: (name, version, kind).
+//! Every live table of the lake as <schema>.<table> at the last snapshot that
+//! wrote, altered or dropped it; every live view but the store's own as
+//! <schema>.<view> at the snapshot that defined it; every store relation but
+//! the results' as main.<relation> at its highest marker; a function's results
+//! as main.measurements/<function>. A set of parts is a part too, its version a
+//! digest of its members: <dataset>.* the dataset's tables, <dataset>.** what a
+//! body whose reads could not be named may have read, main.measurements/~<function>
+//! every other function's results. kind is table, view, store or set (glossql_store.cpp)
 string PartsSQL(const Workspace &ws);
-//! The store's parts by name, quoted and comma-separated: 'main.aspects', ... (measurements is none)
-string StorePartNames();
-//! Whether the measurement row `row` (data_version, reads, dataset, function, computed_at)
-//! still holds, as a SQL boolean over a CTE named parts (PartsSQL): the parts its
-//! reads name look the same now as in its data version, and its function has not been
-//! re-declared since
+//! A bind names an input it read beside the plan, by the part's name: a table
+//! function whose rows come from the catalog or the lake's shape leaves a plan
+//! that cannot show them (glossql_runner.cpp)
+void BindRead(ClientContext &context, const string &name);
+//! The lake's shape as a part: its tables' columns and its views' definitions
+constexpr const char *LAKE_SHAPE = "lake.shape";
+//! The part a read names: `*`, `**` and the whole of the results resolve to the
+//! set of the dataset, or of the other functions
+string InputName(const string &read, const string &dataset, const string &function);
+//! Whether the stored result `row` (begin_snapshot, dataset, function) still
+//! holds, as a SQL boolean over a CTE named parts (PartsSQL): each input it read
+//! (the rows of `inputs` that begin with it) has the version it read, and its
+//! function has not been declared again since
 string IsCurrentSQL(const Workspace &ws, const string &row);
 
 //! A second connection to the same database, for SQL run while the calling
@@ -198,8 +209,15 @@ public:
 	vector<Value> Row(const string &sql);
 	//! The store relation, in the workspace's metadata catalog
 	string Store(const string &relation) const;
-	//! The next seq of a store relation, as SQL: rows are ordered by it
-	string Seq(const string &relation) const;
+	//! The store relation's current rows, as a subquery: those no write has ended
+	string Current(const string &relation) const;
+	//! One catalog write. `body` reads and writes the store through the write it
+	//! is handed; its rows, the lake snapshot whose id they carry and that
+	//! snapshot's change row commit as one transaction of the catalogue database.
+	//! A write that loses a race to another writer runs again, whole. Returns the
+	//! snapshot id, or 0 for a body that wrote nothing. A body touches the store
+	//! and the lake's metadata tables only: one transaction writes one database
+	int64_t Write(ClientContext &context, const std::function<void(class CatalogWrite &)> &body);
 	//! "lake"."schema"."name"
 	string Table(const string &schema, const string &name) const;
 	//! The lake's current snapshot id
@@ -211,9 +229,36 @@ public:
 	Workspace ws;
 };
 
-//! The store's version — the lake's snapshot and every store relation's
-//! highest seq, row count and newest stamp — that the reads and the kept views
-//! are kept under; any write or delete moves it (glossql_store.cpp)
+//! A catalog write in progress (Inner::Write): the snapshot id its rows carry,
+//! and the statements that write. A statement of these that fails has lost a
+//! race, and the write runs again
+class CatalogWrite {
+public:
+	CatalogWrite(Inner &inner, int64_t snapshot, int64_t next_catalog_id)
+	    : inner(inner), snapshot(snapshot), next_catalog_id(next_catalog_id) {
+	}
+
+	//! Runs one writing statement; returns the rows it changed
+	int64_t Run(const string &sql);
+	//! Ends the relation's current rows that `where` selects; returns how many
+	int64_t End(const string &relation, const string &where);
+	//! Appends a row that begins at this write: `values` are the relation's columns after the markers
+	void Insert(const string &relation, const string &values);
+	//! An id for a lake object this write creates
+	int64_t NewCatalogId();
+	//! Names a lake change this write makes itself, in DuckLake's change text
+	void Changed(const string &entry);
+
+	Inner &inner;
+	int64_t snapshot;
+	int64_t next_catalog_id;
+	//! the lake changes this write makes itself: none for a write to the store alone
+	vector<string> changes;
+	bool wrote = false;
+};
+
+//! The store's version, that the reads and the kept views are kept under: the
+//! lake's snapshot, which every catalog write and every load moves (glossql_store.cpp)
 string StoreVersion(Inner &inner);
 
 } // namespace duckdb

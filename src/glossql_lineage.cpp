@@ -875,6 +875,8 @@ struct ViewsLineageState : public GlobalTableFunctionState {
 
 static unique_ptr<FunctionData> ViewsLineageBind(ClientContext &context, TableFunctionBindInput &input,
                                                  vector<LogicalType> &return_types, vector<Identifier> &names) {
+	// the views' definitions and the columns they bind to: the lake's shape
+	BindRead(context, LAKE_SHAPE);
 	auto result = make_uniq<ViewsLineageBindData>();
 	result->every = input.inputs[0].IsNull();
 	if (!result->every) {
@@ -892,6 +894,8 @@ static unique_ptr<FunctionData> ViewsLineageBind(ClientContext &context, TableFu
 //! every dataset's views. A view that does not plan serves no row
 static unique_ptr<FunctionData> ViewsScansBind(ClientContext &context, TableFunctionBindInput &input,
                                                vector<LogicalType> &return_types, vector<Identifier> &names) {
+	// the views' definitions and the columns they bind to: the lake's shape
+	BindRead(context, LAKE_SHAPE);
 	auto result = make_uniq<ViewsLineageBindData>();
 	result->every = input.inputs[0].IsNull();
 	if (!result->every) {
@@ -912,6 +916,8 @@ static unique_ptr<FunctionData> ViewsScansBind(ClientContext &context, TableFunc
 //! row_number() = 1 over them
 static unique_ptr<FunctionData> ViewsJoinsBind(ClientContext &context, TableFunctionBindInput &input,
                                                vector<LogicalType> &return_types, vector<Identifier> &names) {
+	// the views' definitions and the columns they bind to: the lake's shape
+	BindRead(context, LAKE_SHAPE);
 	auto result = make_uniq<ViewsLineageBindData>();
 	result->every = input.inputs[0].IsNull();
 	if (!result->every) {

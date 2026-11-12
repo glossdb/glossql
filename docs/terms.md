@@ -20,7 +20,7 @@ adds are in the kit's `SKILL.md` ([kits](kits.md)).
 | `GLOSSARY()` | business glossary | One row per asset and aspect, with its value and state |
 | `current` · `stale` · `conflict` · `missing` | valid · outdated · conflict · missing value | The state of a row in `GLOSSARY()` |
 | `state` in `TESTS()`, `test_state` in `GLOSSARY()` | test status | `green`, `yellow`, `orange`, `red` or `error` |
-| `data_version`, `reads` | provenance | The tables a measurement read, and the version of each |
+| the `inputs` table | provenance | What a measurement read, and the version of each input |
 | `DECLARE SOURCE` | connection | A directory, a URL prefix, or an attached database |
 | `DECLARE RECIPE` | load query | The SQL that loads one table from a source |
 | `IMPORT` | load | Runs a load query again; every load is a DuckLake snapshot |

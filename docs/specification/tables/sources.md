@@ -7,7 +7,8 @@ annotated on its name.
 
 | Column | Type | Description |
 |---|---|---|
-| `seq` | BIGINT | The row's order in the table, from 1. |
+| `begin_snapshot` | BIGINT | The lake snapshot the write that made the row took. |
+| `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
 | `name` | VARCHAR | The source's name. |
 | `settings` | VARCHAR | The `SET` pairs as one JSON object: `type`, `location`, `via`. Checked at parse against the statement's schema. The view serves it as JSON. |
 | `declared_at` | TIMESTAMP | When the row was written. |

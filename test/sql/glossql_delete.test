@@ -53,7 +53,7 @@ SELECT subject, aspect, value FROM GLOSSARY(orders.amount);
 ----
 main.orders.amount	unit	{"value": "EUR"}
 
-# a gloss after the delete takes the freed seq; the read serves it, never the read kept before
+# a gloss after the delete takes a later snapshot; the read serves it, never the read kept before
 statement ok
 GLOSS unit ON orders.amount AS $${"value": "CHF"}$$;
 

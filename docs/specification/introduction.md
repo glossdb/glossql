@@ -11,12 +11,16 @@ columns as lists. Read the views; the statements write the tables.
 
 ## How rows are written and read
 
-- **Statements add rows.** A statement does not update a row. `DELETE
-  FROM glossary` is the one statement that removes rows.
-- **`seq` orders the rows.** Each table numbers its rows from 1.
-- **A key says what a new row replaces.** In a table with a key, the
-  newest row per key is the one in force. A table without a key is
-  history; `GLOSSARY()` and `TESTS()` decide which of its rows count.
+- **A write takes a lake snapshot.** Each row carries `begin_snapshot`,
+  the snapshot its write took, and `end_snapshot`, the snapshot of the
+  write that replaced or removed it. No row is deleted, so the data and
+  the catalog have one order.
+- **The views serve the current rows**, those with no end. Each table
+  also reads whole as `<name>_history`, every row with its
+  `end_snapshot`.
+- **A key says what a new row replaces.** A new row ends the current
+  row with the same key. `DELETE FROM glossary` ends the rows it
+  selects.
 - **An unchanged declaration adds no row.**
 
 ## Tables
