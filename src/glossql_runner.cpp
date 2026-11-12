@@ -201,21 +201,11 @@ string Inner::Current(const string &relation) const {
 	return "(SELECT * FROM " + Store(relation) + " WHERE end_snapshot IS NULL)";
 }
 
-//! A writing statement of a catalog write failed: another writer took the
-//! snapshot id or changed a row this write ends
-struct LostRace : public std::exception {
-	explicit LostRace(string reason_p) : reason(std::move(reason_p)) {
-	}
-	const char *what() const noexcept override {
-		return reason.c_str();
-	}
-	string reason;
-};
-
 int64_t CatalogWrite::Run(const string &sql) {
 	auto result = inner.con.Query(sql);
 	if (result->HasError()) {
-		throw LostRace(FirstLine(result->GetError()));
+		// the catalog database's own error, its class kept: Inner::Write tells a lost race from a refusal
+		result->ThrowError();
 	}
 	wrote = true;
 	auto chunk = result->Fetch();
@@ -242,16 +232,41 @@ void CatalogWrite::Changed(const string &entry) {
 	changes.push_back(entry);
 }
 
+// A failed write lost a race when another writer overtook it: the catalog
+// database refused the snapshot row because its id is taken (DuckDB's primary key,
+// raised once the other writer commits), reports a transaction conflict with a
+// writer still open (DuckDB's write-write conflict), or the lake's newest snapshot
+// is past the one the write read (Postgres raises its unique or serialization
+// error, of whatever class the scanner gives it, once the other writer has
+// committed). Any other failure is the write's own and is refused as it is.
+bool Inner::Overtaken(const ErrorData &error, int64_t head, bool taking_snapshot) {
+	if (error.Type() == ExceptionType::TRANSACTION || (taking_snapshot && error.Type() == ExceptionType::CONSTRAINT)) {
+		return true;
+	}
+	if (head < 0) {
+		return false;
+	}
+	auto newest = con.Query("SELECT max(snapshot_id) > " + to_string(head) + " FROM " + ws.Meta("snapshot"));
+	if (newest->HasError()) {
+		return false;
+	}
+	auto chunk = newest->Fetch();
+	return chunk && chunk->size() > 0 && chunk->GetValue(0, 0) == Value::BOOLEAN(true);
+}
+
 int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWrite &)> &body) {
 	// the tries a write takes before it gives the caller the last reason
 	static constexpr idx_t TRIES = 60;
 	string lost;
 	for (idx_t attempt = 0; attempt < TRIES; attempt++) {
 		Run("BEGIN");
+		int64_t head_id = -1;
+		bool taking_snapshot = false;
 		try {
 			auto head = Row("SELECT snapshot_id, schema_version, next_catalog_id, next_file_id FROM " +
 			                ws.Meta("snapshot") + " ORDER BY snapshot_id DESC LIMIT 1");
-			CatalogWrite write(*this, head[0].GetValue<int64_t>() + 1, head[2].GetValue<int64_t>());
+			head_id = head[0].GetValue<int64_t>();
+			CatalogWrite write(*this, head_id + 1, head[2].GetValue<int64_t>());
 			body(write);
 			if (!write.wrote) {
 				con.Query("ROLLBACK");
@@ -260,6 +275,7 @@ int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWri
 			// the snapshot as DuckLake writes one: a lake change moves the schema version, and its
 			// change text names it; a write to the store alone has no change text
 			auto schema_version = head[1].GetValue<int64_t>() + (write.changes.empty() ? 0 : 1);
+			taking_snapshot = true;
 			write.Run("INSERT INTO " + ws.Meta("snapshot") + " VALUES (" + to_string(write.snapshot) + ", now(), " +
 			          to_string(schema_version) + ", " + to_string(write.next_catalog_id) + ", " + head[3].ToString() +
 			          ")");
@@ -268,13 +284,14 @@ int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWri
 			          ", " + QuoteText(DeclaredBy(context)) + ", NULL, NULL)");
 			write.Run("COMMIT");
 			return write.snapshot;
-		} catch (LostRace &race) {
+		} catch (std::exception &ex) {
+			ErrorData error(ex);
 			con.Query("ROLLBACK");
-			lost = race.reason;
+			if (!Overtaken(error, head_id, taking_snapshot)) {
+				throw;
+			}
+			lost = FirstLine(error.Message());
 			std::this_thread::sleep_for(std::chrono::milliseconds(1 + (std::rand() % (5 * (attempt + 1)))));
-		} catch (...) {
-			con.Query("ROLLBACK");
-			throw;
 		}
 	}
 	throw InvalidInputException("glossql: the write lost %d races to other writers; the last: %s", TRIES, lost);

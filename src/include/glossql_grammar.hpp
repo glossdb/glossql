@@ -218,6 +218,9 @@ public:
 	//! snapshot id, or 0 for a body that wrote nothing. A body touches the store
 	//! and the lake's metadata tables only: one transaction writes one database
 	int64_t Write(ClientContext &context, const std::function<void(class CatalogWrite &)> &body);
+	//! Whether a write that failed with `error`, having read the snapshot `head`, lost a
+	//! race; `taking_snapshot` while it writes its snapshot row and commits
+	bool Overtaken(const ErrorData &error, int64_t head, bool taking_snapshot);
 	//! "lake"."schema"."name"
 	string Table(const string &schema, const string &name) const;
 	//! The lake's current snapshot id
@@ -230,8 +233,8 @@ public:
 };
 
 //! A catalog write in progress (Inner::Write): the snapshot id its rows carry,
-//! and the statements that write. A statement of these that fails has lost a
-//! race, and the write runs again
+//! and the statements that write. A statement of these that fails raises the
+//! catalog database's error; Inner::Write runs the write again if it lost a race
 class CatalogWrite {
 public:
 	CatalogWrite(Inner &inner, int64_t snapshot, int64_t next_catalog_id)
