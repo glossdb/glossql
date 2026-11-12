@@ -9,7 +9,6 @@ results.
 ```glossql
 DECLARE ASPECT trial_balance WITH $${
   "type": "object",
-  "required": ["outcome"],
   "properties": {
     "tolerance": {"type": "number"},
     "severity": {"enum": ["critical", "warning", "info"]},

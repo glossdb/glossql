@@ -104,7 +104,7 @@ deliberately not 100 percent.
 
 ```glossql
 DECLARE ASPECT journal_balanced WITH $${
-  "type": "object", "required": ["outcome"],
+  "type": "object",
   "properties": {
     "outcome": {"type": "string"},
     "tolerance": {"type": "number"},
@@ -119,7 +119,7 @@ GLOSS journal_balanced ON journal_lines AS $${
 }$$;
 
 DECLARE ASPECT bank_reconciliation WITH $${
-  "type": "object", "required": ["outcome"],
+  "type": "object",
   "properties": {
     "outcome": {"type": "string"},
     "expected_rate": {"type": "number"},
