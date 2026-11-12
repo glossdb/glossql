@@ -1,0 +1,116 @@
+# name: test/sql/glossql_load_shape.test
+# description: a load in place, replace or merge, of a table whose columns did not change leaves the lake's shape where it was, and a result that read the shape stays current
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_load_shape_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'load shape');
+
+statement ok
+USE fin;
+
+statement ok
+COPY (SELECT i AS id, 'seg' || (i % 2) AS segment FROM range(4) t(i)) TO '{TEST_DIR}/load_shape.csv' (HEADER);
+
+statement ok
+DECLARE SOURCE files SET (type: csv, location: '{TEST_DIR}');
+
+statement ok
+DECLARE RECIPE whole ON fin FROM files AS $$SELECT id::INTEGER AS id, segment FROM read_csv('load_shape.csv')$$;
+
+statement ok
+DECLARE RECIPE keyed ON fin FROM files SET (key: id) AS $$SELECT id::INTEGER AS id, segment FROM read_csv('load_shape.csv')$$;
+
+# a result that reads the column listing reads the lake's shape
+statement ok
+DECLARE ASPECT width WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION width FOR fin AS $$ SELECT count(*) AS n FROM glossql_columns('fin.whole') $$ RETURNS width;
+
+query TTTTT
+SELECT width() FROM whole.id;
+----
+width	fin.whole.id	width	2	true
+
+query T
+SELECT list_contains(list(i.input), 'lake.shape') FROM measurements m JOIN inputs i USING (begin_snapshot) WHERE m.function = 'width';
+----
+true
+
+statement ok
+SET VARIABLE shape = (SELECT version FROM glossql_parts() WHERE name = 'lake.shape');
+
+# --- a replace load of the same columns
+
+statement ok
+IMPORT whole;
+
+query T
+SELECT version = getvariable('shape') FROM glossql_parts() WHERE name = 'lake.shape';
+----
+true
+
+query TTTTT
+SELECT width() FROM whole.id;
+----
+width	fin.whole.id	width	2	false
+
+# --- a merge load of the same columns
+
+statement ok
+IMPORT keyed;
+
+query T
+SELECT version = getvariable('shape') FROM glossql_parts() WHERE name = 'lake.shape';
+----
+true
+
+query TTTTT
+SELECT width() FROM whole.id;
+----
+width	fin.whole.id	width	2	false
+
+# --- a load that changes the columns moves the shape, and the result is computed again
+
+statement ok
+DECLARE RECIPE whole ON fin FROM files AS $$SELECT id::INTEGER AS id, segment, id * 2 AS twice FROM read_csv('load_shape.csv')$$;
+
+query T
+SELECT version = getvariable('shape') FROM glossql_parts() WHERE name = 'lake.shape';
+----
+false
+
+query TTTTT
+SELECT width() FROM whole.id;
+----
+width	fin.whole.id	width	3	true
+
+statement ok
+SET VARIABLE shape = (SELECT version FROM glossql_parts() WHERE name = 'lake.shape');
+
+# --- a view the lake did not have moves the shape
+
+statement ok
+CREATE VIEW fin.halves AS SELECT id FROM fin.whole WHERE id % 2 = 0;
+
+query T
+SELECT version = getvariable('shape') FROM glossql_parts() WHERE name = 'lake.shape';
+----
+false

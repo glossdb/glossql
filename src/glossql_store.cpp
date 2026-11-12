@@ -430,9 +430,24 @@ string PartsSQL(const Workspace &ws) {
 	base += " UNION ALL SELECT 'main.measurements@' || aspect, max(greatest(begin_snapshot, coalesce(end_snapshot, 0)))"
 	        "::VARCHAR, 'store' FROM " +
 	        ws.Store("measurements") + " GROUP BY aspect";
-	// the lake's shape: DuckLake's schema version, which a view or a column moves and a load does not
-	base += " UNION ALL SELECT '" + string(LAKE_SHAPE) + "', max(schema_version)::VARCHAR, 'set' FROM " +
-	        ws.Meta("snapshot");
+	// the lake's shape: its datasets, their tables' columns and their views as they are now,
+	// as one digest. DuckLake's schema version moves at every DDL, a replace load's
+	// CREATE OR REPLACE TABLE among them; a table made again with the same columns keeps
+	// their ids, names and types, and leaves the shape where it was
+	string current_schemas =
+	    "(SELECT schema_id, schema_name FROM " + ws.Meta("schema") + " WHERE end_snapshot IS NULL)";
+	base += " UNION ALL SELECT '" + string(LAKE_SHAPE) +
+	        "', md5(coalesce(string_agg(shape, ',' ORDER BY shape), '')), 'set' FROM ("
+	        "SELECT schema_name AS shape FROM " +
+	        current_schemas +
+	        " UNION ALL SELECT (s.schema_name, t.table_name, c.column_id, c.column_order, c.column_name,"
+	        " c.column_type, c.default_value, c.nulls_allowed, c.parent_column)::VARCHAR FROM " +
+	        ws.Meta("column") + " c JOIN " + ws.Meta("table") +
+	        " t ON t.table_id = c.table_id AND t.end_snapshot IS NULL JOIN " + current_schemas +
+	        " s ON s.schema_id = t.schema_id WHERE c.end_snapshot IS NULL"
+	        " UNION ALL SELECT (s.schema_name, v.view_name, v.dialect, v.sql, v.column_aliases)::VARCHAR FROM " +
+	        ws.Meta("view") + " v JOIN " + current_schemas +
+	        " s ON s.schema_id = v.schema_id WHERE v.end_snapshot IS NULL)";
 	// an input that is many parts is one part too, its version their names and versions
 	// together: a part that joins or leaves the set moves it, as one that changes does
 	string digest = "md5(coalesce(string_agg(b.name || ':' || b.version, ',' ORDER BY b.name), ''))";
