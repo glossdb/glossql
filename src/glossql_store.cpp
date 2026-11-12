@@ -1957,6 +1957,30 @@ string StoreVersion(Inner &inner) {
 	return inner.Scalar(StoreVersionSQL(inner.ws)).ToString();
 }
 
+static unique_ptr<FunctionData> StoreVersionBind(ClientContext &context, TableFunctionBindInput &input,
+                                                 vector<LogicalType> &return_types, vector<Identifier> &names) {
+	return_types.push_back(LogicalType::VARCHAR);
+	names.emplace_back("version");
+	return nullptr;
+}
+
+//! glossql_store_version(): the store's version as one value, for a host that
+//! keeps a read's result of its own. It moves with every write to the lake
+//! and to the store
+static void StoreVersionExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &state = data.global_state->Cast<InitState>();
+	if (state.done) {
+		return;
+	}
+	state.done = true;
+	Inner inner(context);
+	output.data[0].Append(Value(StoreVersion(inner)));
+}
+
+static TableFunction GlossStoreVersionFunction() {
+	return TableFunction("glossql_store_version", {}, StoreVersionExec, StoreVersionBind, InitInit);
+}
+
 //===--------------------------------------------------------------------===//
 // A view kept: a dataset's view, its rows computed once per store version and
 // kept in the object cache beside the reads, so that a cells read over the
@@ -2076,6 +2100,7 @@ void RegisterGlossStore(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossGlossaryFunction());
 	loader.RegisterFunction(GlossTestsFunction());
 	loader.RegisterFunction(GlossCachedFunction());
+	loader.RegisterFunction(GlossStoreVersionFunction());
 	loader.RegisterFunction(GlossKeptViewFunction());
 	loader.RegisterFunction(GlossColumnsFunctions());
 }
