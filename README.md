@@ -42,7 +42,7 @@ DECLARE RECIPE orders ON shop FROM exports SET (key: id)
 DECLARE ASPECT unit WITH $${"type": "object", "required": ["value"]}$$ AS FACT ON COLUMN;
 GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;
 
--- measure: a function over the data, stored with the data version it read
+-- measure: a function over the data, stored with the inputs it read
 DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$ AS MEASUREMENT ON COLUMN;
 DECLARE FUNCTION min_max FOR GLOBAL AS
   $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;

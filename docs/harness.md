@@ -32,7 +32,7 @@ data it read. A person can review and decide.
 | linter | quality checks: keys, joins, hierarchies | the `quality` kit |
 | unit test | measurements and tests on the data | `DECLARE FUNCTION`, `DECLARE TEST` |
 | test coverage | coverage of the required annotations | `GLOSSARY()`, state `missing` |
-| CI on every commit | results tied to the data version they read; outdated when it changes | state `stale` |
+| CI on every commit | results stored with the inputs they read; out of date when one changes | state `stale` |
 | git history | snapshots of the data and the catalog together | DuckLake |
 | code review | a person's annotation beside the agent's; a test scores where they differ | `BY (AGENT, HUMAN)` |
 | rule packs | kits: a domain's properties, measurements and tests, with a skill | `glossql_kit()` |

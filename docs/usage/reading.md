@@ -53,8 +53,10 @@ An annotation on a table or a column reads `stale` once:
 
 A new column, or a changed filter in the load query, leaves
 annotations current. An annotation on a view or its column is stale
-once the view's SQL changed. A computed value is stale once a table in
-its `reads` has a newer version.
+once the view's SQL changed. A computed value is stale once one of its
+`inputs` has another version, or a computed value it read is stale.
+A computation that failed shows its `error` in the raw read and no
+value.
 
 ## The catalog tables
 

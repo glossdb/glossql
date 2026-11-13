@@ -187,7 +187,7 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                        two homes for one body is the staleness the registry
                        review decisions exist against. Every body is one SQL query
                        the engine plans — read-only: a RETURNS body runs
-                       over data at the statement's data version; a detector body
+                       over the data as the statement reads it; a detector body
                        runs over its test's `annotations` relation.
                        Settings are context, never call arguments; a SQL
                        body composes its context inline. RETURNS names
@@ -203,9 +203,9 @@ extract           = "SELECT", call, { ",", call }, "FROM", subject ;
 call              = name, "(", ")" ;
                     (* calls are bare — settings are context,
                        never arguments.
-                       extraction computes at the read's data version and writes a
-                       measurements row; the same data version serves it back, any
-                       input moving recomputes — there is no REFRESH.
+                       extraction writes a measurements row with the inputs
+                       it read; it serves back while current, an input
+                       moving recomputes — there is no REFRESH.
                        Functions never write the glossary. *)
 
 (* -- tests ---------------------------------------------------------- *)

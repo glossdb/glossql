@@ -140,7 +140,8 @@ a dot or a space: `employees."a.b"`.
   `missing`. A value in conflict is NULL. A required property nobody
   has annotated is a row with state `missing`.
 - `GLOSSARY(subject, all => true)` returns `(subject, aspect, kind,
-  test, actor, body, written_at, current)`.
+  test, actor, body, written_at, current, error)`. A computation that
+  failed is a row with its `error` and no `body`.
 - `TESTS(subject)` returns `(subject, aspect, test, state, score,
   computed_at, current, error)`.
 - The catalog tables are views in the lake's `main` schema and read by
@@ -156,7 +157,7 @@ a dot or a space: `employees."a.b"`.
   actors, detector, threshold, declared_at, declared_by)` · `glossary
   (begin_snapshot, dataset, subject, aspect, actor_kind, actor_id, body,
   written_at)` · `measurements (begin_snapshot, dataset, function,
-  subject, aspect, value, computed_at)` · `inputs
+  subject, aspect, value, computed_at, error)` · `inputs
   (begin_snapshot, input, version)` · `kits
   (begin_snapshot, name, location, statements, loaded_at, hash)`. The views
   serve the current rows; `<name>_history` serves every row a write

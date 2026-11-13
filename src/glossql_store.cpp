@@ -1434,7 +1434,7 @@ static constexpr const char *TESTS_COLUMNS = "subject, aspect, test, state, scor
 //! The result `error` (SPEC §7.2): one row per subject holding values, score 0,
 //! the failure text; the detector's failure is its test's result, never the read's
 //! `current` on a result (SPEC §7.2): every function value the result read
-//! holds at the read's data version; true where none annotated
+//! is current; true where none annotated
 static string CurrentSQL(const string &values) {
 	return "coalesce((SELECT bool_and(c.current) FROM (" + values +
 	       ") c WHERE c.subject = d.subject AND c.actor_kind = 'function'), true) AS current";

@@ -1,5 +1,5 @@
 # name: test/sql/glossql_measurements.test
-# description: a measurement is stored at its data version with what it read; a later extraction serves it while those reads are unchanged, and a function annotation is current while they are
+# description: a measurement is stored with the inputs it read, each at its version; a later extraction serves it while it is current, and a result that read a result that is out of date is out of date
 # group: [sql]
 
 require glossql
@@ -141,7 +141,7 @@ SELECT notes() FROM orders.amount;
 ----
 notes	fin.orders.amount	notes	1	true
 
-# --- a body that reads nothing is current for ever; one whose reads cannot be named is current at its exact data version
+# --- a body that reads nothing is current for ever; one whose reads cannot be named is current while nothing in its dataset or the catalog moves
 
 statement ok
 DECLARE ASPECT answer WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;

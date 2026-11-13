@@ -39,7 +39,7 @@ Ground rules:
   spellings refuse the name and name both. A table is reached as
   declared.
 - **A function's body is one SQL query.** A function with `RETURNS` is
-  a measurement — its query runs over data at the read's data version; a
+  a measurement — its query runs over the data as the statement reads it; a
   detector's query runs over its test's `annotations` relation. A
   function is either a measurement or a detector, never a
   metric. Metrics are concepts: VIEW aspects, run as their SQL (§5.1).
@@ -225,7 +225,7 @@ The kind fixes the aspect's role:
   in conflict or outranked.
 - **MEASUREMENT** — a statistical evaluation (min_max, outliers,
   relationship_candidates). Never glossed: its value is the bound
-  function's stored output (§6, §7), extracted at the read's data version and
+  function's stored output (§6, §7), stored with the inputs it read and
   served by `GLOSSARY()` beside facts and metric definitions.
 
 The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP | SOURCE, …` list
@@ -370,9 +370,13 @@ DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';
 
 - Every row carries `begin_snapshot` — the lake snapshot its write
   took. A removed or replaced row leaves the relation's reads and stays
-  in the store with the snapshot that ended it. A gloss reads `stale`
+  in the store with the snapshot that ended it: `<name>` serves the
+  current rows, `<name>_history` every row. A gloss reads `stale`
   once its subject changed after that snapshot: a column re-derived,
-  retyped or dropped, a table one of whose columns did. Rows arriving
+  retyped or dropped, a table one of whose columns did, a view whose
+  definition was replaced or dropped, and each column of that view. A
+  subject with none of its catalog rows from the write left, after an
+  expiry of the lake's snapshots, reads as changed. Rows arriving
   under the same shape do not age it. Provenance and staleness are a
   join against the catalog's column history, never a guess. The read
   shapes in §5.3 are unchanged; the column lives on the relation.
@@ -407,11 +411,12 @@ SELECT * FROM GLOSSARY(orders.amount, all => true);
 ```
 
 The raw read: one row per (subject, aspect, kind, test) —
-`(subject, aspect, kind, test, actor, body, written_at, current)` —
+`(subject, aspect, kind, test, actor, body, written_at, current, error)` —
 every value side by side; precedence between them is the reader's
 business. `kind` is the aspect's kind; who annotated is `actor`, under
-`test`; `current` is false for a function value an input of which
-has moved since it stored (§7).
+`test`; `current` is false for a function value that is out of date
+(§6). A computation that failed is a row with its `error` and no
+`body`; the collapsed read and the tests never count it as a value.
 
 With no subject, `GLOSSARY()` sweeps the `USE`'d dataset. A subject serves
 itself and what lies under it: a table serves its columns and every
@@ -458,8 +463,8 @@ $$;
   `SELECT script FROM functions` serves the shipped library as worked
   examples.
 - **One language.** Every body is one SQL query, planned and run by the
-  engine — read-only. A measurement runs at the statement's data version,
-  composing everything a read can; `$subject` arrives as a string
+  engine — read-only. A measurement runs over the data as the statement
+  reads it, composing everything a read can; `$subject` arrives as a string
   literal, and `subject_column($subject)` is the subject's column as a
   relation named `v`. The result is stored by shape: one row and one column
   is the value, one row is an object of its columns, many rows are an
@@ -496,22 +501,39 @@ SELECT profile_min_max() FROM orders;
 SELECT outliers() FROM orders.amount;
 ```
 
-Extraction computes at the read's data version — the set of inputs, data and
-declarations, the statement resolved — and writes one row in the
-`measurements` relation:
-`(dataset, function, subject, aspect, value, computed_at)`,
+Extraction writes one row in the `measurements` relation:
+`(dataset, function, subject, aspect, value, computed_at, error)`,
 and one row per input the body actually read, at the version read, in
-the `inputs` relation — tables and store relations by name,
-`<dataset>.*` for the dataset's every table, `<dataset>.**` when the
-reads could not be enumerated (the row then holds only while nothing
-in the dataset moves), no row for a body that read nothing. A later extraction
-serves that row while those inputs are unchanged; one of them moving
-makes the next extraction compute — the effect scoped to its cause, so
-there is no invalidation, only a miss, a write the body never reads is
-not its staleness, and old rows stay as the drift record. A body that
-reads the `measurements` relation reads the other functions' rows, and
-what such a reader stores is its output, nobody's input: readers never
-enter their own or each other's data version. A body that carries a top-level `summary`
+the `inputs` relation; no row for a body that read nothing. The inputs
+come from the plan of the body; nobody declares them. An input is one of:
+
+- a table or view, `<dataset>.<name>`;
+- a catalog relation, `main.<relation>`;
+- one property's annotations, `main.glossary/<aspect>`;
+- one function's results, `main.measurements/<function>`;
+- the other functions' results of one property,
+  `main.measurements@<aspect>~<function>`;
+- every other function's results, `main.measurements/~<function>`;
+- the dataset's every table, `<dataset>.*`;
+- what the body could have read where its reads could not be named,
+  `<dataset>.**`: the dataset's tables and views and the catalog's
+  declarations and annotations;
+- the lake's shape, `lake.shape`: its datasets, columns and views.
+
+`glossql_parts()` serves each input's version now: `(name, version, kind)`.
+A stored result is current while each input has the version it read
+and no input that is a stored result is out of date. A function
+declared again, or the property it fills declared again, makes its
+results out of date. A later extraction serves a current row; an
+out-of-date one makes the next extraction compute. A write the body
+never reads leaves it current, and old rows stay in
+`measurements_history`. A function's own results are never its input,
+and the results of a function that reads every other function's
+results are no input of another such function. A computation that
+fails, in the body or in the schema check, is stored too, with its
+inputs and its `error` and no value: the call fails with that error
+while the result is current, and computes again once it is out of
+date. A body that carries a top-level `summary`
 object serves the summary at extraction — the full value reads back
 through `GLOSSARY(subject::aspect)` (a large measurement's extraction
 result would otherwise be write-only at the interface; the summary is the
@@ -530,8 +552,8 @@ are stored in `measurements`.
 
 A test is declared per aspect, dataset-wide. Per (subject, aspect) it
 holds one value per actor kind: each function value (the newest measurement
-of a function whose `RETURNS` names the aspect, §6 — served whatever
-its data version, marked `current` while what it read is unchanged), the agent's
+of a function whose `RETURNS` names the aspect, §6 — served whether
+current or not, and marked), the agent's
 gloss, the human's gloss — one value each.
 
 ### 7.1 Declaration
@@ -570,7 +592,7 @@ The **standard test-results schema** is fixed:
 `(subject, aspect, test, state, score, computed_at, current, error)` —
 `state` in `green | yellow | orange | red | error`, `score` the
 disagreement/entropy in 0..1, `current` whether every function value
-the result read holds at the read's data version, `error` null except where
+the result read is current (§6), `error` null except where
 `state` is `error`.
 A detector's query returns the authored third of it — one
 `(subject, state, score)` row per subject — and the engine completes
