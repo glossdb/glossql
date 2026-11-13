@@ -29,6 +29,13 @@ CREATE OR REPLACE MACRO main.read_subject() AS coalesce(getvariable('glossql_sub
 --   relates   relationship -> each of its columns
 --   plans     plan -> the metric it plans (x-plan-of)
 --===------------------------------------------------------------------===--
+-- contains_edges(dataset): the lineage's contains edges alone
+CREATE OR REPLACE MACRO main.contains_edges(dataset_name) AS TABLE
+WITH cols AS (SELECT table_name, column_name FROM glossql_columns(dataset_name))
+SELECT DISTINCT dataset_name AS "from", dataset_name || '.' || table_name AS "to", 'contains' AS kind FROM cols
+UNION ALL SELECT dataset_name || '.' || table_name, dataset_name || '.' || table_name || '.' || column_name, 'contains' FROM cols
+UNION ALL SELECT dataset_name, left_side || ' ' || op || ' ' || right_side, 'contains' FROM main.relationships WHERE dataset = dataset_name;
+
 CREATE OR REPLACE MACRO main.lineage(dataset_name) AS TABLE
 WITH cols AS (SELECT table_name, column_name, table_type FROM glossql_columns(dataset_name)),
 views AS (SELECT DISTINCT table_name AS name FROM cols WHERE table_type = 'VIEW'),
@@ -46,9 +53,7 @@ definitions AS (
 named AS (
   SELECT d.name, unnest(json_extract_string(json_serialize_sql(d.sql), '$..table_name')) AS other
   FROM definitions d WHERE d.sql IS NOT NULL)
-SELECT DISTINCT dataset_name AS "from", dataset_name || '.' || table_name AS "to", 'contains' AS kind FROM cols
-UNION ALL SELECT dataset_name || '.' || table_name, dataset_name || '.' || table_name || '.' || column_name, 'contains' FROM cols
-UNION ALL SELECT dataset_name, rel, 'contains' FROM rels
+SELECT * FROM main.contains_edges(dataset_name)
 UNION ALL SELECT DISTINCT rel, tbl || '.' || col, 'relates' FROM sides
 UNION ALL SELECT DISTINCT * FROM (
   SELECT dataset_name || '.' || s.view, s.table_name, 'reads' FROM glossql_views_scans(dataset_name) s
@@ -85,25 +90,44 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --   'the dataset'              the subject's dataset and every asset in it
 -- Any other where names no asset.
 --===------------------------------------------------------------------===--
-CREATE OR REPLACE MACRO main.place(where_) AS TABLE
+-- Each where is a macro of its own, place_<where>(), and place() plans the
+-- one its constant names (query()), so a read plans no walk it does not take.
+CREATE OR REPLACE MACRO main.place_itself() AS TABLE SELECT main.read_subject() AS asset;
+
+CREATE OR REPLACE MACRO main.place_columns() AS TABLE
+SELECT "to" AS asset FROM main.contains_edges(split_part(main.read_subject(), '.', 1)) WHERE "from" = main.read_subject();
+
+CREATE OR REPLACE MACRO main.place_sources() AS TABLE
+SELECT "to" AS asset FROM main.lineage(split_part(main.read_subject(), '.', 1)) WHERE "from" = main.read_subject() AND kind = 'reads';
+
+CREATE OR REPLACE MACRO main.place_joined() AS TABLE
+SELECT DISTINCT side AS asset FROM glossql_views_joins(split_part(main.read_subject(), '.', 1)) j, unnest([j.left_column, j.right_column]) u(side)
+WHERE split_part(main.read_subject(), '.', 1) || '.' || j.view = main.read_subject();
+
+CREATE OR REPLACE MACRO main.place_relationships() AS TABLE
 WITH here AS (SELECT main.read_subject() AS subject, split_part(main.read_subject(), '.', 1) AS dataset_name),
-walked AS MATERIALIZED (SELECT * FROM main.lineage(split_part(main.read_subject(), '.', 1))),
+walked AS MATERIALIZED (SELECT * FROM main.lineage(split_part(main.read_subject(), '.', 1)) WHERE kind IN ('reads', 'relates')),
 source_tables AS (SELECT walked."to" AS t FROM walked, here WHERE walked."from" = here.subject AND walked.kind = 'reads' AND main.asset_grain(walked."to") = 'TABLE'),
 endpoints AS (SELECT walked."from" AS rel, walked."to" AS endpoint, regexp_extract(walked."to", '^([^.]+\.[^.]+)\.', 1) AS t FROM walked WHERE walked.kind = 'relates')
-SELECT subject AS asset FROM here WHERE where_ = 'itself' AND subject IS NOT NULL
-UNION ALL SELECT walked."to" FROM walked, here WHERE where_ = 'its columns' AND walked."from" = here.subject AND walked.kind = 'contains'
-UNION ALL SELECT walked."to" FROM walked, here WHERE where_ = 'its sources' AND walked."from" = here.subject AND walked.kind = 'reads'
-UNION ALL SELECT DISTINCT side FROM glossql_views_joins(split_part(main.read_subject(), '.', 1)) j, here, unnest([j.left_column, j.right_column]) u(side)
-          WHERE where_ = 'the columns it joins on' AND here.dataset_name || '.' || j.view = here.subject
-UNION ALL SELECT DISTINCT rel FROM endpoints, here WHERE where_ = 'its relationships'
-            AND CASE WHEN here.subject = here.dataset_name THEN true
-                     WHEN main.asset_grain(here.subject) = 'RELATIONSHIP' THEN rel = here.subject
-                     WHEN EXISTS (FROM source_tables)
-                       THEN NOT EXISTS (SELECT 1 FROM endpoints x WHERE x.rel = endpoints.rel AND x.t NOT IN (FROM source_tables))
-                     ELSE EXISTS (SELECT 1 FROM endpoints x WHERE x.rel = endpoints.rel AND here.subject IN (x.t, x.endpoint)) END
-UNION ALL SELECT walked."to" FROM walked, here WHERE where_ = 'its metric' AND walked."from" = here.subject AND walked.kind = 'plans'
-UNION ALL SELECT dataset_name FROM here WHERE where_ = 'the dataset' AND subject IS NOT NULL
-UNION ALL SELECT DISTINCT walked."to" FROM walked WHERE where_ = 'the dataset' AND walked.kind = 'contains';
+SELECT DISTINCT rel AS asset FROM endpoints, here
+WHERE CASE WHEN here.subject = here.dataset_name THEN true
+           WHEN main.asset_grain(here.subject) = 'RELATIONSHIP' THEN rel = here.subject
+           WHEN EXISTS (FROM source_tables)
+             THEN NOT EXISTS (SELECT 1 FROM endpoints x WHERE x.rel = endpoints.rel AND x.t NOT IN (FROM source_tables))
+           ELSE EXISTS (SELECT 1 FROM endpoints x WHERE x.rel = endpoints.rel AND here.subject IN (x.t, x.endpoint)) END;
+
+CREATE OR REPLACE MACRO main.place_metric() AS TABLE
+SELECT "to" AS asset FROM main.lineage(split_part(main.read_subject(), '.', 1)) WHERE "from" = main.read_subject() AND kind = 'plans';
+
+CREATE OR REPLACE MACRO main.place_dataset() AS TABLE
+SELECT split_part(main.read_subject(), '.', 1) AS asset
+UNION ALL SELECT DISTINCT "to" FROM main.contains_edges(split_part(main.read_subject(), '.', 1));
+
+CREATE OR REPLACE MACRO main.place(where_) AS TABLE
+FROM query(CASE where_ WHEN 'itself' THEN 'FROM main.place_itself()' WHEN 'its columns' THEN 'FROM main.place_columns()'
+                       WHEN 'its sources' THEN 'FROM main.place_sources()' WHEN 'the columns it joins on' THEN 'FROM main.place_joined()'
+                       WHEN 'its relationships' THEN 'FROM main.place_relationships()' WHEN 'its metric' THEN 'FROM main.place_metric()'
+                       WHEN 'the dataset' THEN 'FROM main.place_dataset()' ELSE 'SELECT NULL::VARCHAR AS asset WHERE false' END);
 
 --===------------------------------------------------------------------===--
 -- annotations(property, where): one row per asset of the place the
@@ -113,18 +137,31 @@ UNION ALL SELECT DISTINCT walked."to" FROM walked WHERE where_ = 'the dataset' A
 -- annotated the asset). A property declared on tables returns no row
 -- for a column. A what of the form 'x-kind <kind>' names every property
 -- declared with that x-kind, a scenario's among them: one row per
--- property and asset.
+-- property and asset, the value a person's newest annotation, else an
+-- agent's, state current, or missing.
 --===------------------------------------------------------------------===--
-CREATE OR REPLACE MACRO main.annotations(property, where_) AS TABLE
-WITH props AS (
-  SELECT name, grains FROM main.aspects
-  WHERE name = property OR (starts_with(property, 'x-kind ') AND json_extract_string(schema, '$.x-kind') = substr(property, 8)))
-SELECT p.asset, pr.name AS property, g.value, coalesce(g.state, 'missing') AS state
+CREATE OR REPLACE MACRO main.annotations_of(property, where_) AS TABLE
+WITH grains AS (SELECT grains FROM main.aspects WHERE name = property)
+SELECT p.asset, property AS property, g.value, coalesce(g.state, 'missing') AS state
+FROM main.place(where_) p
+LEFT JOIN glossql_glossary(split_part(main.read_subject(), '.', 1), property, false) g ON g.subject = p.asset
+WHERE EXISTS (SELECT 1 FROM grains WHERE len(grains) = 0 OR list_contains(grains, main.asset_grain(p.asset)));
+
+CREATE OR REPLACE MACRO main.annotations_of_kind(kind, where_) AS TABLE
+WITH props AS (SELECT name, grains FROM main.aspects WHERE json_extract_string(schema, '$.x-kind') = kind),
+held AS (
+  SELECT subject, aspect, body FROM main.glossary
+  WHERE dataset = split_part(main.read_subject(), '.', 1) AND aspect IN (SELECT name FROM props) AND actor_kind IN ('human', 'agent')
+  QUALIFY row_number() OVER (PARTITION BY subject, aspect ORDER BY CASE actor_kind WHEN 'human' THEN 0 ELSE 1 END, begin_snapshot DESC) = 1)
+SELECT p.asset, pr.name AS property, h.body AS value, CASE WHEN h.body IS NULL THEN 'missing' ELSE 'current' END AS state
 FROM main.place(where_) p
 JOIN props pr ON len(pr.grains) = 0 OR list_contains(pr.grains, main.asset_grain(p.asset))
-LEFT JOIN glossql_glossary(split_part(main.read_subject(), '.', 1),
-                           CASE WHEN starts_with(property, 'x-kind ') THEN NULL ELSE property END, false) g
-  ON g.subject = p.asset AND g.aspect = pr.name;
+LEFT JOIN held h ON h.subject = p.asset AND h.aspect = pr.name;
+
+CREATE OR REPLACE MACRO main.annotations(property, where_) AS TABLE
+FROM query(CASE WHEN starts_with(property, 'x-kind ')
+                THEN 'FROM main.annotations_of_kind(''' || replace(substr(property, 8), '''', '''''') || ''', ''' || replace(where_, '''', '''''') || ''')'
+                ELSE 'FROM main.annotations_of(''' || replace(property, '''', '''''') || ''', ''' || replace(where_, '''', '''''') || ''')' END);
 
 --===------------------------------------------------------------------===--
 -- results(function, where): one row per asset of the place, with the

@@ -39,7 +39,7 @@ says where. Both are constants.
 
 | Read | Returns, one row per asset of the place |
 |---|---|
-| `annotations(property, where)` | `asset`, `property`, `value`, `state`; state `missing` where nobody annotated the asset. A property declared on tables returns no row for a column |
+| `annotations(property, where)` | `asset`, `property`, `value`, `state`; state `missing` where nobody annotated the asset. A property declared on tables returns no row for a column. `'x-kind <kind>'` as the property reads every property declared with that `x-kind`, a scenario's among them: a person's newest annotation, else an agent's |
 | `results(function, where)` | `asset`, `function`, `value`, `error`; both empty where no result is stored |
 | `definition(where)` | one row per view: `view`, `kind`, `plan_of`, `covers`, `body`, `sql`, `stopped`, `columns`, `reads`, `joins` |
 
@@ -62,8 +62,9 @@ DECLARE FUNCTION unlabelled_columns FOR GLOBAL AS $$
 $$ RETURNS unlabelled_columns;
 ```
 
-The engine sets the subject while it computes a result. To read by
-hand, set it yourself:
+The engine sets the subject while it computes a result. Read by
+hand, the subject is the dataset in use; to read from another
+subject, set it:
 
 ```sql
 SET VARIABLE glossql_subject = 'fin.revenue';
