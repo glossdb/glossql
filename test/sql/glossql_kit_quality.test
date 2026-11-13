@@ -546,16 +546,29 @@ SELECT DISTINCT event, result, (reason) IS NOT NULL FROM additivity_anchors('beh
 postings	abstain	true
 totals	abstain	true
 
-# the abstention is a measurement row: it names the roles it read, and the roles glossed below make the repeat compute
+# the abstention is a measurement row: it read the roles, so an annotation of another property leaves it current,
+# and the roles glossed below make the repeat compute
 statement ok
 SELECT additivity_evidence() FROM balances.balance;
 
-query TT
-SELECT json_extract_string(g.value, '$.summary.result'), (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot)
-FROM GLOSSARY(beh.balances.balance::additivity_evidence) g, main.measurements m
-WHERE m.subject = 'beh.balances.balance';
+query T
+SELECT json_extract_string(value, '$.summary.result') FROM GLOSSARY(beh.balances.balance::additivity_evidence);
 ----
-abstain	beh.accounts,beh.balances,beh.postings,beh.totals,main.glossary,main.relationships
+abstain
+
+statement ok
+DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+statement ok
+GLOSS remark ON postings.amount AS $${"text": "not a role"}$$;
+
+statement ok
+SELECT additivity_evidence() FROM balances.balance;
+
+query I
+SELECT count(*) FROM main.measurements_history WHERE subject = 'beh.balances.balance';
+----
+1
 
 statement ok
 GLOSS role ON postings.amount AS $${"value": "measure"}$$;

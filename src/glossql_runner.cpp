@@ -1208,6 +1208,11 @@ void BindRead(ClientContext &context, const string &name) {
 	BindReads::Of(context).names.insert(name);
 }
 
+void BindProperty(ClientContext &context, const string &aspect) {
+	BindRead(context, "main.glossary/" + aspect);
+	BindRead(context, "main.measurements@" + aspect);
+}
+
 //! The reads of a call on a subject, enumerated from its bound plan: views
 //! expand to their tables, subject_column() to the subject's, before any
 //! optimizer touches it; the views the subject holds on are named beside,
@@ -1242,7 +1247,10 @@ static vector<pair<string, Value>> InputsOf(Inner &inner, const string &dataset,
 	vector<pair<string, Value>> inputs;
 	vector<string> names;
 	for (auto &read : StringUtil::Split(reads, ',')) {
-		names.push_back("(" + QuoteText(InputName(read, dataset, function)) + ")");
+		auto name = InputName(read, dataset, function);
+		if (!name.empty()) {
+			names.push_back("(" + QuoteText(name) + ")");
+		}
 	}
 	if (names.empty()) {
 		return inputs;
@@ -1257,12 +1265,11 @@ static vector<pair<string, Value>> InputsOf(Inner &inner, const string &dataset,
 	return inputs;
 }
 
-//! The newest stored row for the call while what it read is unchanged, else NULL
+//! The stored row for the call while it is current, else NULL
 static Value ServedValue(Inner &inner, const string &dataset, const string &name, const string &subject) {
-	return inner.Scalar("SELECT value FROM (WITH parts AS (" + PartsSQL(inner.ws) + ") SELECT m.value, " +
-	                    IsCurrentSQL(inner.ws, "m") + " AS current FROM " + inner.Store("measurements") +
-	                    " m WHERE m.dataset = " + QuoteText(dataset) + " AND m.function = " + QuoteText(name) +
-	                    " AND m.subject = " + QuoteText(subject) + " AND m.end_snapshot IS NULL) WHERE current");
+	return inner.Scalar("SELECT value FROM (" + CurrentResultsSQL(inner.ws) +
+	                    ") WHERE current AND dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
+	                    " AND subject = " + QuoteText(subject));
 }
 
 //! What extraction serves of a value: its top-level summary object when the body
@@ -2189,9 +2196,9 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 	// a type; an event table with no measure glossed abstains and names the gloss
 	std::map<string, std::set<string>> measures;
 	std::set<string> roled;
-	BindRead(context, "main.glossary");
+	BindProperty(context, "role");
 	auto roles = inner.Run("SELECT subject, value->>'value' FROM glossql_glossary(" + QuoteText(dataset) +
-	                       ", NULL, false) WHERE aspect = 'role' AND state IN ('current', 'stale')");
+	                       ", 'role', false) WHERE state IN ('current', 'stale')");
 	while (auto chunk = roles->Fetch()) {
 		for (idx_t i = 0; i < chunk->size(); i++) {
 			auto claimed = SubjectParts(chunk->GetValue(0, i).ToString());

@@ -374,3 +374,191 @@ WHERE p.version IS DISTINCT FROM i.version AND m.subject = 'fin.orders.amount' A
 GROUP BY i.input;
 ----
 fin.orders	true	true
+
+# --- a read of the glossary names the property it read: an annotation on another property leaves the result current, one on its own outdates it
+
+statement ok
+DECLARE ASPECT note_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION note_count FOR fin AS $$ SELECT count(*) AS n FROM glossql_glossary('fin', 'note', true) WHERE subject = $subject $$ RETURNS note_count;
+
+query TTTTT
+SELECT note_count() FROM orders.amount;
+----
+note_count	fin.orders.amount	note_count	1	true
+
+statement ok
+DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+statement ok
+GLOSS remark ON orders.amount AS $${"text": "another property"}$$;
+
+query TTTTT
+SELECT note_count() FROM orders.amount;
+----
+note_count	fin.orders.amount	note_count	1	false
+
+statement ok
+GLOSS note ON orders.id AS $${"text": "the same property"}$$;
+
+query TTTTT
+SELECT note_count() FROM orders.amount;
+----
+note_count	fin.orders.amount	note_count	1	true
+
+# a declaration and a load in another dataset leave a reader of the glossary current
+
+statement ok
+DECLARE DATASET other SET (purpose: 'elsewhere');
+
+statement ok
+CREATE TABLE other.t AS SELECT 1 AS a, 2 AS b;
+
+statement ok
+DECLARE FUNCTION elsewhere FOR other AS $$ SELECT 1 AS n $$ RETURNS answer;
+
+statement ok
+USE other;
+
+statement ok
+DECLARE RELATIONSHIP t.a -> t.b;
+
+statement ok
+USE fin;
+
+query TTTTT
+SELECT note_count() FROM orders.amount;
+----
+note_count	fin.orders.amount	note_count	1	false
+
+# --- a result that read a result: top reads min_max's value, top_twice reads top's. Each is current while nothing moved
+
+statement ok
+DECLARE ASPECT top WITH $${"type": "number"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION top FOR fin AS $$ SELECT max((body->>'max')::DOUBLE) AS top FROM glossql_glossary('fin', 'min_max', true) WHERE subject = $subject $$ RETURNS top;
+
+statement ok
+DECLARE ASPECT top_twice WITH $${"type": "number"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION top_twice FOR fin AS $$ SELECT max(body::DOUBLE) * 2 AS v FROM glossql_glossary('fin', 'top', true) WHERE subject = $subject $$ RETURNS top_twice;
+
+query TTTTT
+SELECT min_max(), top(), top_twice() FROM orders.amount;
+----
+min_max	fin.orders.amount	min_max	{"min":0.0,"max":12.0}	true
+top	fin.orders.amount	top	12.0	true
+top_twice	fin.orders.amount	top_twice	24.0	true
+
+query TTTTT
+SELECT min_max(), top(), top_twice() FROM orders.amount;
+----
+min_max	fin.orders.amount	min_max	{"min":0.0,"max":12.0}	false
+top	fin.orders.amount	top	12.0	false
+top_twice	fin.orders.amount	top_twice	24.0	false
+
+# min_max's input moves: it is out of date, and so is every result that read it, directly or through another
+
+statement ok
+INSERT INTO fin.orders VALUES (12, 12.0);
+
+query TT
+SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top', 'top_twice') ORDER BY aspect;
+----
+min_max	false
+top	false
+top_twice	false
+
+# min_max computed again: top and top_twice stay out of date until they are computed again
+
+query TTTTT
+SELECT min_max() FROM orders.amount;
+----
+min_max	fin.orders.amount	min_max	{"min":0.0,"max":13.0}	true
+
+query TT
+SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top', 'top_twice') ORDER BY aspect;
+----
+min_max	true
+top	false
+top_twice	false
+
+query TTTTT
+SELECT top(), top_twice() FROM orders.amount;
+----
+top	fin.orders.amount	top	13.0	true
+top_twice	fin.orders.amount	top_twice	26.0	true
+
+query TT
+SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top', 'top_twice') ORDER BY aspect;
+----
+min_max	true
+top	true
+top_twice	true
+
+# a result computed while the result it read was out of date is out of date
+
+statement ok
+INSERT INTO fin.orders VALUES (13, 1.0);
+
+query TTTTT
+SELECT top() FROM orders.amount;
+----
+top	fin.orders.amount	top	13.0	true
+
+query TT
+SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top') ORDER BY aspect;
+----
+min_max	false
+top	false
+
+# --- a function that reads its own property: what it stored is no input of its own, on any subject
+
+statement ok
+DECLARE ASPECT seen WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION seen FOR fin AS $$ SELECT count(*) AS n FROM glossql_glossary('fin', 'seen', true) $$ RETURNS seen;
+
+statement ok
+SELECT seen() FROM orders.amount;
+
+statement ok
+SELECT seen() FROM orders.id;
+
+query TT
+SELECT subject, current FROM GLOSSARY(fin, all => true) WHERE aspect = 'seen' ORDER BY subject;
+----
+fin.orders.amount	true
+fin.orders.id	true
+
+# two functions that read every property: each reads the other's results, and neither outdates the other
+
+statement ok
+DECLARE ASPECT values_a WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION values_a FOR fin AS $$ SELECT count(*) AS n FROM glossql_glossary('fin', NULL, true) $$ RETURNS values_a;
+
+statement ok
+DECLARE ASPECT values_b WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION values_b FOR fin AS $$ SELECT count(*) AS n FROM glossql_glossary('fin', NULL, true) $$ RETURNS values_b;
+
+statement ok
+SELECT values_a(), values_b() FROM orders;
+
+statement ok
+SET VARIABLE others = (SELECT version FROM glossql_parts() WHERE name = 'main.measurements/~values_a');
+
+statement ok
+SELECT values_b() FROM fin.other;
+
+query T
+SELECT version = getvariable('others') FROM glossql_parts() WHERE name = 'main.measurements/~values_a';
+----
+true

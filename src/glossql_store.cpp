@@ -381,6 +381,13 @@ static string StorePartNames() {
 	return StringUtil::Join(names, ", ");
 }
 
+//! The functions whose current results read every other function's results
+static string WideReadersSQL(const Workspace &ws) {
+	return "SELECT DISTINCT r.function FROM " + ws.Store("measurements") + " r JOIN " + ws.Store("inputs") +
+	       " i ON i.begin_snapshot = r.begin_snapshot WHERE r.end_snapshot IS NULL AND i.end_snapshot IS NULL"
+	       " AND starts_with(i.input, 'main.measurements/~')";
+}
+
 string PartsSQL(const Workspace &ws) {
 	// a table's version is the last snapshot that wrote, altered or dropped it: the
 	// lake's own change log, where compaction is not a write
@@ -413,23 +420,14 @@ string PartsSQL(const Workspace &ws) {
 		        "', max(greatest(begin_snapshot, coalesce(end_snapshot, 0)))::VARCHAR, 'store' FROM " +
 		        ws.Store(relation.name) + " HAVING count(*) > 0";
 	}
-	// a function's stored rows are a part of their own, so a body that reads other
-	// functions' results is served while those hold and never holds its own among its inputs;
-	// what a reader of the results stores is its output and nobody's evidence,
-	// so readers' rows are no part, and two readers never stale each other
+	// a function's stored rows are a part of their own: its version moves when one is computed
 	base += " UNION ALL SELECT 'main.measurements/' || function, max(begin_snapshot)::VARCHAR, 'store' FROM " +
-	        ws.Store("measurements") + " WHERE function NOT IN (SELECT r.function FROM " + ws.Store("measurements") +
-	        " r JOIN " + ws.Store("inputs") +
-	        " i ON i.begin_snapshot = r.begin_snapshot WHERE starts_with(i.input, 'main.measurements/'))"
-	        " GROUP BY function";
-	// a property's annotations and its results are parts of their own: a read of one
-	// property holds while those hold, whatever is written about another
+	        ws.Store("measurements") + " GROUP BY function";
+	// a property's annotations are a part of their own: a read of one property holds
+	// while they hold, whatever is written about another
 	base += " UNION ALL SELECT 'main.glossary/' || aspect, max(greatest(begin_snapshot, coalesce(end_snapshot, 0)))"
 	        "::VARCHAR, 'store' FROM " +
 	        ws.Store("glossary") + " GROUP BY aspect";
-	base += " UNION ALL SELECT 'main.measurements@' || aspect, max(greatest(begin_snapshot, coalesce(end_snapshot, 0)))"
-	        "::VARCHAR, 'store' FROM " +
-	        ws.Store("measurements") + " GROUP BY aspect";
 	// the lake's shape: its datasets, their tables' columns and their views as they are now,
 	// as one digest. DuckLake's schema version moves at every DDL, a replace load's
 	// CREATE OR REPLACE TABLE among them; a table made again with the same columns keeps
@@ -462,11 +460,23 @@ string PartsSQL(const Workspace &ws) {
 	        " LEFT JOIN base b ON (b.kind IN ('table', 'view') AND starts_with(b.name, s.schema_name || '.'))"
 	        " OR b.name IN (" +
 	        StorePartNames() + ") GROUP BY s.schema_name";
-	// main.measurements/~<function>: every other function's results
-	sets += " UNION ALL SELECT 'main.measurements/~' || f.name, " + digest + ", 'set' FROM (SELECT name FROM " +
-	        ws.Store("functions") + " UNION SELECT function FROM " + ws.Store("measurements") +
-	        ") f LEFT JOIN base b ON starts_with(b.name, 'main.measurements/')"
-	        " AND b.name <> 'main.measurements/' || f.name GROUP BY f.name";
+	// a reader's sets of results leave out its own: what it stored is no input of its own
+	string functions = "(SELECT name FROM " + ws.Store("functions") + " UNION SELECT function FROM " +
+	                   ws.Store("measurements") + ") f";
+	// main.measurements/~<function>: every other function's results, but those of a function
+	// that reads every other's too, so two such readers never outdate each other
+	sets +=
+	    " UNION ALL SELECT 'main.measurements/~' || f.name, " + digest + ", 'set' FROM " + functions +
+	    " LEFT JOIN base b ON starts_with(b.name, 'main.measurements/') AND b.name <> 'main.measurements/' || f.name"
+	    " AND b.name NOT IN (SELECT 'main.measurements/' || function FROM (" +
+	    WideReadersSQL(ws) + ")) GROUP BY f.name";
+	// main.measurements@<property>~<function>: every other function's results of one property
+	sets += " UNION ALL SELECT 'main.measurements@' || a.aspect || '~' || f.name, " + digest +
+	        ", 'set' FROM (SELECT name AS aspect FROM " + ws.Store("aspects") + " UNION SELECT aspect FROM " +
+	        ws.Store("measurements") + ") a CROSS JOIN " + functions +
+	        " LEFT JOIN (SELECT DISTINCT function, aspect FROM " + ws.Store("measurements") +
+	        ") r ON r.aspect = a.aspect AND r.function <> f.name"
+	        " LEFT JOIN base b ON b.name = 'main.measurements/' || r.function GROUP BY a.aspect, f.name";
 	return "WITH base AS (" + base + ") SELECT * FROM base UNION ALL " + sets;
 }
 
@@ -480,20 +490,40 @@ string InputName(const string &read, const string &dataset, const string &functi
 	if (read == "main.measurements") {
 		return "main.measurements/~" + function;
 	}
+	if (StringUtil::StartsWith(read, "main.measurements@")) {
+		return read + "~" + function;
+	}
+	// what a function stored itself is no input of its own
+	if (read == "main.measurements/" + function) {
+		return string();
+	}
 	return read;
 }
 
-string IsCurrentSQL(const Workspace &ws, const string &m) {
-	// every input the result read has the version it read: one that changed, appeared
-	// or is gone differs
-	string unchanged = "NOT EXISTS (SELECT 1 FROM " + ws.Store("inputs") +
-	                   " i LEFT JOIN parts n ON n.name = i.input WHERE i.begin_snapshot = " + m +
-	                   ".begin_snapshot AND n.version IS DISTINCT FROM i.version)";
-	// a result of an older body is never served: the function's newest declaration precedes it
-	string declared = "coalesce(" + m + ".begin_snapshot >= (SELECT max(f.begin_snapshot) FROM " +
-	                  ws.Store("functions") + " f WHERE f.name = " + m + ".function AND f.scope IN (" + m +
-	                  ".dataset, 'GLOBAL')), true)";
-	return "(" + unchanged + " AND " + declared + ")";
+string CurrentResultsSQL(const Workspace &ws) {
+	auto results = ws.Store("measurements");
+	// an input has another version now: one that changed, appeared or is gone
+	string moved = "SELECT i.begin_snapshot AS id FROM " + ws.Store("inputs") + " i JOIN " + results +
+	               " m ON m.begin_snapshot = i.begin_snapshot AND m.end_snapshot IS NULL LEFT JOIN parts n"
+	               " ON n.name = i.input WHERE n.version IS DISTINCT FROM i.version";
+	// or its function was declared again since: a result of an older body
+	string declared = "SELECT m.begin_snapshot FROM " + results + " m JOIN " + ws.Store("functions") +
+	                  " f ON f.name = m.function AND f.scope IN (m.dataset, 'GLOBAL')"
+	                  " AND f.begin_snapshot > m.begin_snapshot WHERE m.end_snapshot IS NULL";
+	// or an input is results, one of which is out of date. A function's own results are no
+	// input of its own, and those of a reader of every other function's results no member
+	// of another's such read: the same sets the parts digest
+	string through = "SELECT m.begin_snapshot FROM outdated d JOIN " + results + " o ON o.begin_snapshot = d.id JOIN " +
+	                 ws.Store("inputs") +
+	                 " i ON i.end_snapshot IS NULL AND starts_with(i.input, 'main.measurements') JOIN " + results +
+	                 " m ON m.begin_snapshot = i.begin_snapshot AND m.end_snapshot IS NULL AND m.function <> o.function"
+	                 " AND (i.input = 'main.measurements/' || o.function"
+	                 " OR i.input = 'main.measurements@' || o.aspect || '~' || m.function"
+	                 " OR (i.input = 'main.measurements/~' || m.function AND o.function NOT IN (" +
+	                 WideReadersSQL(ws) + ")))";
+	return "WITH RECURSIVE parts AS (" + PartsSQL(ws) + "), outdated(id) AS (" + moved + " UNION " + declared +
+	       " UNION " + through + ") SELECT m.*, m.begin_snapshot NOT IN (SELECT id FROM outdated) AS current FROM " +
+	       results + " m WHERE m.end_snapshot IS NULL";
 }
 
 struct InitState : public GlobalTableFunctionState {
@@ -1337,14 +1367,9 @@ static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter
 //! its staleness, and `ord`, the snapshot it was written at
 static string ValuesSQL(const ReadScope &scope, const string &aspect_filter) {
 	return "(" + AnnotationsSQL(scope, aspect_filter) +
-	       ")"
-	       " UNION ALL "
-	       "(WITH parts AS (" +
-	       PartsSQL(scope.ws) +
-	       ") SELECT m.subject, m.aspect, 'function' AS actor, m.value::JSON AS body, m.computed_at AS written_at,"
-	       " NOT " +
-	       IsCurrentSQL(scope.ws, "m") + " AS stale, m.begin_snapshot AS ord FROM " + scope.ws.Store("measurements") +
-	       " m WHERE m.end_snapshot IS NULL AND " + scope.filter + aspect_filter + ")";
+	       ") UNION ALL SELECT subject, aspect, 'function' AS actor, value::JSON AS body, computed_at AS written_at,"
+	       " NOT current AS stale, begin_snapshot AS ord FROM (" +
+	       CurrentResultsSQL(scope.ws) + ") WHERE " + scope.filter + aspect_filter;
 }
 
 struct TestRow {
@@ -1804,29 +1829,13 @@ static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const
 }
 
 //! What a read of the glossary or of the test results serves, named for the
-//! result that reads it (BindRead). The rows of one property rest on its
-//! annotations, the declarations, the loads (a column re-derived) and the lake's
-//! shape. Where a function fills the property, or the read names none, the rows
-//! carry stored results, whose own currency rests on the data: every table of
-//! the dataset and every other function's results
-static void NameRead(ClientContext &context, Inner &inner, const ReadScope &whole, const Value &aspect) {
-	for (auto part : {"main.aspects", "main.tests", "main.functions", "main.imports", "main.relationships",
-	                  "main.sources", LAKE_SHAPE}) {
-		BindRead(context, part);
-	}
-	bool results = aspect.IsNull();
-	if (!aspect.IsNull()) {
-		BindRead(context, "main.glossary/" + aspect.ToString());
-		BindRead(context, "main.measurements@" + aspect.ToString());
-		results = inner
-		              .Scalar("SELECT count(*) FROM " + inner.Current("measurements") +
-		                      " m WHERE m.aspect = " + QuoteText(aspect.ToString()) + " AND " + whole.filter)
-		              .GetValue<int64_t>() > 0;
-	}
-	if (results) {
+//! result that reads it: one property, or every property where the read names none
+static void NameRead(ClientContext &context, const Value &aspect) {
+	if (aspect.IsNull()) {
 		BindRead(context, "main.glossary");
 		BindRead(context, "main.measurements");
-		BindRead(context, "*");
+	} else {
+		BindProperty(context, aspect.ToString());
 	}
 }
 
@@ -1854,7 +1863,7 @@ static unique_ptr<FunctionData> CachedBind(ClientContext &context, TableFunction
                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
 	Inner inner(context);
 	auto whole = WholeOf(ScopeOf(context, input.inputs[1]), inner.ws);
-	NameRead(context, inner, whole, input.inputs[2]);
+	NameRead(context, input.inputs[2]);
 	auto result = make_uniq<CachedBindData>();
 	result->read = Cached(context, inner, input.inputs[0].ToString(), whole);
 	return_types = result->read->types;

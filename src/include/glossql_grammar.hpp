@@ -175,25 +175,29 @@ struct Workspace {
 //! wrote, altered or dropped it; every live view but the store's own as
 //! <schema>.<view> at the snapshot that defined it; every store relation but
 //! the results' as main.<relation> at its highest marker; a function's results
-//! as main.measurements/<function>. A set of parts is a part too, its version a
-//! digest of its members: <dataset>.* the dataset's tables, <dataset>.** what a
-//! body whose reads could not be named may have read, main.measurements/~<function>
-//! every other function's results. kind is table, view, store or set (glossql_store.cpp)
+//! as main.measurements/<function>; a property's annotations as
+//! main.glossary/<property>; the lake's shape. A set of parts is a part too, its
+//! version a digest of its members: <dataset>.* the dataset's tables,
+//! <dataset>.** what a body whose reads could not be named may have read,
+//! main.measurements/~<function> every other function's results, and
+//! main.measurements@<property>~<function> every other function's results of
+//! one property. kind is table, view, store or set (glossql_store.cpp)
 string PartsSQL(const Workspace &ws);
 //! A bind names an input it read beside the plan, by the part's name: a table
 //! function whose rows come from the catalog or the lake's shape leaves a plan
 //! that cannot show them (glossql_runner.cpp)
 void BindRead(ClientContext &context, const string &name);
+//! A bind names one property it read: its annotations and the results stored under it
+void BindProperty(ClientContext &context, const string &aspect);
 //! The lake's shape as a part: its tables' columns and its views' definitions
 constexpr const char *LAKE_SHAPE = "lake.shape";
-//! The part a read names: `*`, `**` and the whole of the results resolve to the
-//! set of the dataset, or of the other functions
+//! The part a read names: `*`, `**` and the results resolve to the set of the
+//! dataset, or of the other functions; empty for the function's own results
 string InputName(const string &read, const string &dataset, const string &function);
-//! Whether the stored result `row` (begin_snapshot, dataset, function) still
-//! holds, as a SQL boolean over a CTE named parts (PartsSQL): each input it read
-//! (the rows of `inputs` that begin with it) has the version it read, and its
-//! function has not been declared again since
-string IsCurrentSQL(const Workspace &ws, const string &row);
+//! The current stored results, each row with `current`: every input it read has
+//! the version it read, no input that is results holds one that is out of date,
+//! and its function has not been declared again since
+string CurrentResultsSQL(const Workspace &ws);
 
 //! A second connection to the same database, for SQL run while the calling
 //! connection's context lock is held (glossql_runner.cpp)
