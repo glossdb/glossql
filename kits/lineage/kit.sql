@@ -38,10 +38,8 @@ sides AS (
          unnest(string_split(regexp_replace(regexp_replace(side, '^[^.]+\.[^.]+\.', ''), '^\((.*)\)$', '\1'), ', ')) AS col
   FROM (SELECT rel, left_side AS side FROM rels UNION ALL SELECT rel, right_side FROM rels)),
 definitions AS (
-  SELECT g.aspect AS name, json_extract_string(g.body, '$.sql') AS sql
-  FROM main.glossary g
-  WHERE g.dataset = dataset_name AND g.subject = dataset_name AND g.aspect IN (SELECT name FROM views)
-  QUALIFY row_number() OVER (PARTITION BY g.aspect ORDER BY g.begin_snapshot DESC) = 1),
+  SELECT view AS name, json_extract_string(body, '$.sql') AS sql
+  FROM glossql_views_definitions(dataset_name) WHERE view IN (SELECT name FROM views)),
 named AS (
   SELECT d.name, unnest(json_extract_string(json_serialize_sql(d.sql), '$..table_name')) AS other
   FROM definitions d WHERE d.sql IS NOT NULL)
@@ -149,9 +147,8 @@ lin AS (FROM glossql_views_lineage(split_part(getvariable('glossql_subject'), '.
 sc AS (FROM glossql_views_scans(split_part(getvariable('glossql_subject'), '.', 1))),
 jo AS (FROM glossql_views_joins(split_part(getvariable('glossql_subject'), '.', 1))),
 bodies AS (
-  SELECT g.aspect AS name, g.body FROM main.glossary g
-  WHERE g.dataset = split_part(getvariable('glossql_subject'), '.', 1) AND g.subject = split_part(getvariable('glossql_subject'), '.', 1) AND g.aspect IN (SELECT name FROM v)
-  QUALIFY row_number() OVER (PARTITION BY g.aspect ORDER BY g.begin_snapshot DESC) = 1)
+  SELECT view AS name, body FROM glossql_views_definitions(split_part(getvariable('glossql_subject'), '.', 1))
+  WHERE view IN (SELECT name FROM v))
 SELECT v.view,
        json_extract_string(a.schema, '$.x-kind') AS kind,
        json_extract_string(a.schema, '$.x-plan-of') AS plan_of,

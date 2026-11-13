@@ -62,6 +62,7 @@
 #include <chrono>
 #include <functional>
 #include <set>
+#include <tuple>
 #include <map>
 #include <thread>
 
@@ -1346,7 +1347,8 @@ static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 //! a column of one: the view and its columns, its definition (the dataset's row
 //! of the view's property), the tables and columns it scans and joins on and
 //! the views it reads, each with its own closure, the metric a plan names
-//! (x-plan-of), and the results stored on the dataset. A loaded table, or a
+//! (x-plan-of), the results stored on the dataset, and the results stored on
+//! each relationship between the tables it reads. A loaded table, or a
 //! column of one: the tables the dataset's declared relationships connect it
 //! to, itself among them, and their columns. Anything else (a relationship's
 //! pair path): the dataset. `determinants` takes what the closure was drawn
@@ -1453,6 +1455,20 @@ static shared_ptr<RunClosure> ClosureOf(Inner &inner, const string &subject, con
 			plans[chunk->GetValue(0, r).ToString()] = chunk->GetValue(1, r).ToString();
 		}
 	}
+	// the relationships between the tables a view reads: their checks' results, one per relationship
+	determinants.insert("main.relationships");
+	vector<std::tuple<string, string, string>> relationships;
+	auto declared = inner.Run("SELECT left_side, right_side, left_side || ' ' || op || ' ' || right_side FROM " +
+	                          inner.Current("relationships") + " WHERE dataset = " + ds);
+	while (auto chunk = declared->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			auto left = SubjectParts(chunk->GetValue(0, r).ToString());
+			auto right = SubjectParts(chunk->GetValue(1, r).ToString());
+			if (left.size() == 3 && right.size() == 3) {
+				relationships.emplace_back(prefix + left[1], prefix + right[1], chunk->GetValue(2, r).ToString());
+			}
+		}
+	}
 	std::map<string, std::set<string>> held;
 	auto &context = *inner.con.context;
 	context.RunFunctionInTransaction([&]() {
@@ -1468,9 +1484,16 @@ static shared_ptr<RunClosure> ClosureOf(Inner &inner, const string &subject, con
 		add_relation(view);
 		closure->properties.insert(std::make_pair(dataset, view));
 		closure->results.insert(dataset);
+		std::set<string> tables;
 		for (auto &read : scanned[view]) {
 			if (StringUtil::StartsWith(read, prefix)) {
 				closure->subjects.insert(read);
+				tables.insert(read);
+			}
+		}
+		for (auto &relationship : relationships) {
+			if (tables.count(std::get<0>(relationship)) && tables.count(std::get<1>(relationship))) {
+				closure->results.insert(std::get<2>(relationship));
 			}
 		}
 		for (auto &other : held[view]) {
@@ -1817,6 +1840,40 @@ static unique_ptr<TableRef> PartsBindReplace(ClientContext &context, TableFuncti
 static TableFunction PartsFunction() {
 	TableFunction function("glossql_parts", {}, nullptr);
 	function.bind_replace = PartsBindReplace;
+	return function;
+}
+
+//===--------------------------------------------------------------------===//
+// glossql_views_definitions(dataset): the annotation that defines each view
+// of a dataset, (view, body), the newest on the dataset. Read through the
+// glossary's view by each view's property by name, so a result that read it
+// names the properties of the views it read, and no other annotation
+//===--------------------------------------------------------------------===//
+
+static unique_ptr<TableRef> ViewsDefinitionsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	Inner inner(context);
+	auto dataset = input.inputs[0].IsNull() ? string() : input.inputs[0].ToString();
+	BindRead(context, "main.aspects");
+	vector<string> views;
+	auto rows = inner.Run("SELECT name FROM " + inner.Current("aspects") + " WHERE kind = 'VIEW' ORDER BY name");
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t i = 0; i < chunk->size(); i++) {
+			views.push_back(QuoteText(chunk->GetValue(0, i).ToString()));
+		}
+	}
+	if (views.empty() || dataset.empty()) {
+		return make_uniq<SubqueryRef>(ParseSelect("SELECT NULL::VARCHAR AS view, NULL::JSON AS body WHERE false"));
+	}
+	return make_uniq<SubqueryRef>(
+	    ParseSelect("SELECT aspect AS view, body FROM " + QuoteName(inner.ws.lake) +
+		            ".main.glossary WHERE dataset = " + QuoteText(dataset) + " AND subject = " + QuoteText(dataset) +
+		            " AND aspect IN (" + StringUtil::Join(views, ", ") +
+		            ") QUALIFY row_number() OVER (PARTITION BY aspect ORDER BY begin_snapshot DESC) = 1"));
+}
+
+static TableFunction ViewsDefinitionsFunction() {
+	TableFunction function("glossql_views_definitions", {LogicalType::VARCHAR}, nullptr);
+	function.bind_replace = ViewsDefinitionsBindReplace;
 	return function;
 }
 
@@ -2873,6 +2930,7 @@ void RegisterGlossRunner(ExtensionLoader &loader) {
 	loader.RegisterFunction(PartsFunction());
 	loader.RegisterFunction(DatasetCellsFunctions());
 	loader.RegisterFunction(RelationshipChecksFunction());
+	loader.RegisterFunction(ViewsDefinitionsFunction());
 	loader.RegisterFunction(AdditivityCellsFunction());
 }
 
