@@ -503,68 +503,70 @@ SELECT outliers() FROM orders.amount;
 
 Extraction writes one row in the `measurements` relation:
 `(dataset, function, subject, aspect, value, computed_at, error)`,
-and one row per input the body actually read, at the version read, in
-the `inputs` relation; no row for a body that read nothing. The inputs
-come from the plan of the body; nobody declares them.
+and one row per read of the body in the `inputs` relation. Nobody
+declares the inputs: the body is SQL, and what it reads is taken from
+its text when the function is declared, macros followed, and stored
+with the function (`functions.reads`).
 
-A function runs on a subject, and the subject has a closure: the
-assets whose glossary rows and results the function can read.
+A body reads the catalog through three read functions. Each takes a
+what and a where, as constants:
 
-- A dataset: everything in it.
-- A view, or a column of a view: the view and its columns, its
-  definition (the dataset's annotation of the view's property), the
-  tables and columns it scans and joins on, the views it reads (each
-  with its own closure), the metric a plan names (`x-plan-of`), and
-  the results stored on the dataset.
-- A loaded table, or a column of one: the tables that declared
-  relationships connect it to, itself among them, and their columns.
-- Any other subject, such as a relationship: the dataset.
+```sql
+SELECT * FROM annotations('role', 'its columns');
+SELECT * FROM results('column_profile', 'the columns it joins on');
+SELECT * FROM definition('itself');
+```
 
-While the function runs, every read of the glossary, the results and
-the declarations about assets returns the rows within the closure and
-no other: `GLOSSARY()`, `TESTS()` and the catalog's views alike. A
-body that reads the catalog's tables past those views is refused. A
-property's declaration and tests are visible where the closure holds
-the view of that property or the body names the property.
+- `annotations(property, where)`: the annotations of one property;
+- `results(function, where)`: the stored results of one function;
+- `definition(where)`: a view's SQL and what it reads.
+
+The where is a place, walked from the function's subject over the
+lineage (`lineage(dataset)`: what a dataset contains, what a view
+reads and joins on, the two columns of a relationship, the metric a
+plan plans):
+
+| Where | The assets |
+|---|---|
+| `itself` | the subject |
+| `its columns` | what the subject contains |
+| `its sources` | the tables, columns and views a view reads |
+| `the columns it joins on` | the two columns of each join in a view |
+| `its relationships` | a view's: those between the tables it reads; a table's or a column's: those that touch it; a dataset's: all |
+| `its metric` | the metric a plan plans |
+| `the dataset's metrics` | the metrics of the subject's dataset and their columns |
+| `the dataset` | the subject's dataset and every asset in it |
 
 An input is one of:
 
-- a table or view, `<dataset>.<name>`, at the last snapshot that
-  changed it;
-- the dataset's every table, `<dataset>.*`;
-- what the body could have read where its reads could not be named,
-  `<dataset>.**`: the dataset's tables and views and the catalog's
-  declarations and annotations;
-- the lake's shape, `lake.shape`, or one dataset's,
-  `lake.shape/<dataset>`: its columns and views;
-- a catalog relation that holds no rows about assets, such as
-  `main.functions`, at its last change;
-- rows of the closure, as a digest of what they hold now:
-  one property's annotations, `main.glossary/<aspect>` (with the
-  property's declaration and tests), or every annotation,
-  `main.glossary`; one function's results,
-  `main.measurements/<function>`, the other functions' results of one
-  property, `main.measurements@<aspect>`, or every other function's
-  results, `main.measurements`; the declarations it can see,
-  `main.aspects` and `main.tests`; the dataset's relationships and its
-  own declaration, `main.relationships` and `main.datasets`; the loads
-  and load queries of its tables, `main.imports` and `main.recipes`;
-- the closure itself, `closure`, its members as a list. A result on a
-  table or a view also stores what its closure was drawn from: the
-  dataset's shape, and its relationships or its views' declarations.
+- a read, named as the body wrote it, such as
+  `annotations(role, its columns)`. Its version is a digest of what
+  the read returns for the subject: for annotations, each asset of the
+  place with every actor's annotation of the property and whether it
+  is stale, and the property's declaration and tests; for results,
+  each asset with the function's value and error; for a definition,
+  the view's SQL, columns, reads and joins;
+- data, such as `data(data, itself)`: DuckLake's version of each
+  table the assets read, and of each view among them;
+- `function` and `property`: the function's own declaration and that
+  of the property it fills;
+- `unnamed: <read>`, where the body reaches the catalog past the read
+  functions. A result with such an input is out of date once stored.
 
-An annotation's row in a digest is its asset, property, actor, value
-and whether it is stale; a result's is its asset, function, value and
-error. `glossql_parts()` serves each input's version now: `(name,
-version, kind, result)`, a digest once per result that read it.
+The assets of the place are part of each digest, so a view that reads
+another table, or a relationship declared between a view's tables,
+changes the inputs that name that place. `glossql_outdated()` serves
+each stored result that is out of date with the input that differs:
+`(dataset, function, subject, input, reason)`, the reason `changed`
+or `outdated` (a result it read is out of date).
 
-A stored result is current while each input has the version it read
-and no result it read within its closure is out of date. What counts
+A stored result is current while each read returns what it returned
+and no result it read is out of date. What counts
 is what the rows hold, not when they were written: an annotation
 changed and changed back leaves the result current, and a result
 computed again with the value it had leaves its readers current. An
-annotation outside the closure, or of a property the body did not
-read, leaves the result current. A column retyped makes its
+annotation on an asset outside the place, or of a property the body
+did not read, leaves the result current. A column retyped makes its
 annotations stale, and so the results that read them out of date. A
 function declared again, or the property it fills declared again,
 makes its results out of date. A later extraction serves a current
