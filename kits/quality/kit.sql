@@ -196,8 +196,9 @@ WHERE NOT EXISTS (SELECT 1 FROM found)
 ORDER BY seq;
 
 --===------------------------------------------------------------------===--
--- relationship_checks(dataset): whether the declared relationships hold,
--- the engine's glossql_relationship_checks: per edge, over its own two or
+-- relationship_checks(subject): whether the declared relationships hold, a
+-- dataset's every one or one relationship by its pair path, the engine's
+-- glossql_relationship_checks: per edge, over its own two or
 -- four columns, typed and linear in the rows, where a screen over the cells
 -- pivoted every cell of a table back into rows per edge. Per edge: filled
 -- rows, the orphans (child values no parent row carries; inside one table,
@@ -286,12 +287,9 @@ ORDER BY seq;
 -- twin. No definitions is one row with definitions 0.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.definition_collisions(ds) AS TABLE
-WITH annotations AS (
-  SELECT g.aspect, g.subject, g.body, coalesce(json_extract_string(a.schema, '$."x-kind"'), '') AS flavor,
-         row_number() OVER (PARTITION BY g.aspect, g.subject ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 ELSE 1 END) AS rk
-  FROM main.glossary g JOIN main.aspects a ON a.name = g.aspect
-  WHERE g.dataset = ds AND a.kind = 'VIEW' AND json_extract_string(g.body, '$.sql') IS NOT NULL),
-definitions AS (SELECT aspect, subject, flavor, json_extract_string(body, '$.sql') AS sql FROM annotations WHERE rk = 1),
+WITH definitions AS (
+  SELECT split_part(view, '.', 2) AS aspect, ds AS subject, coalesce(kind, '') AS flavor, sql
+  FROM definition('the dataset') WHERE sql IS NOT NULL),
 canon AS (
   SELECT aspect, subject, flavor, sql,
          lower(coalesce(regexp_replace(json_serialize_sql(sql)::VARCHAR, '"query_location(_length)?":\d+,?', '', 'g'),
@@ -304,12 +302,12 @@ sql_hits AS (
 vcells AS (SELECT * FROM dataset_cells(ds, 'views') WHERE "table" IN (SELECT aspect FROM definitions)),
 vcols AS (SELECT DISTINCT "table", "column", ci, column_type FROM vcells),
 claims AS (
-  SELECT split_part(subject, '.', 2) AS aspect,
-         substr(subject, length(split_part(subject, '.', 1)) + length(split_part(subject, '.', 2)) + 3) AS col,
-         g.aspect AS claim, value
-  FROM glossql_glossary(ds, NULL, false) g
-  WHERE g.aspect IN ('role', 'additivity') AND state IN ('current', 'stale') AND value IS NOT NULL
-    AND len(string_split(subject, '.')) >= 3 AND split_part(subject, '.', 2) IN (SELECT aspect FROM definitions)),
+  SELECT split_part(asset, '.', 2) AS aspect,
+         substr(asset, length(split_part(asset, '.', 1)) + length(split_part(asset, '.', 2)) + 3) AS col,
+         property AS claim, value
+  FROM (FROM annotations('role', 'the dataset') UNION ALL FROM annotations('additivity', 'the dataset'))
+  WHERE state IN ('current', 'stale') AND value IS NOT NULL
+    AND len(string_split(asset, '.')) >= 3 AND split_part(asset, '.', 2) IN (SELECT aspect FROM definitions)),
 roles AS (
   SELECT aspect, value->>'value' AS role,
          list(col ORDER BY CASE WHEN col IN ('period', 'value') THEN 0 ELSE 1 END, col) AS cols
@@ -689,29 +687,39 @@ $$ RETURNS relationship_candidates;
 
 DECLARE ASPECT relationship_coherence WITH $${
   "type": "object", "required": ["applicable"],
-  "properties": {"applicable": {"type": "boolean"},
-                 "relationships": {"type": ["array", "null"], "items": {"type": "object",
-                   "properties": {"relationship": {"type": "string"}, "filled": {"type": "integer"},
-                                  "orphans": {"type": "integer"}, "orphan_rate": {"type": "number"},
-                                  "temporal": {"type": "array", "items": {"type": "object",
-                                    "properties": {"child_column": {"type": "string"}, "parent_column": {"type": "string"},
-                                                   "joined": {"type": "integer"}, "precedes": {"type": "integer"},
-                                                   "precedes_rate": {"type": "number"}}}}}}}}
-}$$ AS MEASUREMENT ON DATASET;
+  "properties": {"applicable": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
+                 "relationship": {"type": ["string", "null"]}, "filled": {"type": ["integer", "null"]},
+                 "orphans": {"type": ["integer", "null"]}, "orphan_rate": {"type": ["number", "null"]},
+                 "temporal": {"type": ["array", "null"], "items": {"type": "object",
+                   "properties": {"child_column": {"type": "string"}, "parent_column": {"type": "string"},
+                                  "joined": {"type": "integer"}, "precedes": {"type": "integer"},
+                                  "precedes_rate": {"type": "number"}}}}}
+}$$ AS MEASUREMENT ON RELATIONSHIP;
 
+-- One result per relationship, stored on its pair path:
+-- SELECT relationship_coherence() FROM orders.customer_id -> customers.customer_id
 DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$
   WITH r AS (
-    SELECT applicable, reason, seq, relationship, filled, orphans, orphan_rate,
+    SELECT applicable, reason, relationship, filled, orphans, orphan_rate,
            coalesce(list({'child_column': child_column, 'parent_column': parent_column, 'joined': joined,
                           'precedes': precedes, 'precedes_rate': precedes_rate} ORDER BY pair_seq)
                     FILTER (WHERE child_column IS NOT NULL), []) AS temporal
     FROM relationship_checks($subject)
-    GROUP BY applicable, reason, seq, relationship, filled, orphans, orphan_rate)
-  SELECT bool_and(applicable) AS applicable, min(reason) AS reason,
-         CASE WHEN bool_and(applicable) THEN coalesce(list({
-           'relationship': relationship, 'filled': filled, 'orphans': orphans, 'orphan_rate': orphan_rate, 'temporal': temporal
-         } ORDER BY seq) FILTER (WHERE relationship IS NOT NULL), []) END AS relationships
-  FROM r
+    GROUP BY applicable, reason, relationship, filled, orphans, orphan_rate),
+  -- a dataset's subject would read every relationship as one: the check is one relationship's
+  one AS (SELECT contains($subject, ' -> ') OR contains($subject, ' <-> ') AS pair),
+  c AS (SELECT bool_and(r.applicable) AND any_value(one.pair) AS applicable,
+               CASE WHEN NOT any_value(one.pair)
+                    THEN 'the check is one relationship''s: SELECT relationship_coherence() FROM <child.key> -> <parent.key>'
+                    ELSE min(r.reason) END AS reason,
+               any_value(r.relationship) AS relationship, any_value(r.filled) AS filled, any_value(r.orphans) AS orphans,
+               any_value(r.orphan_rate) AS orphan_rate, any_value(r.temporal) AS temporal
+        FROM r, one)
+  SELECT applicable, reason,
+         CASE WHEN applicable THEN relationship END AS relationship, CASE WHEN applicable THEN filled END AS filled,
+         CASE WHEN applicable THEN orphans END AS orphans, CASE WHEN applicable THEN orphan_rate END AS orphan_rate,
+         CASE WHEN applicable THEN temporal END AS temporal
+  FROM c
 $$ RETURNS relationship_coherence;
 
 DECLARE ASPECT derivation_candidates WITH $${

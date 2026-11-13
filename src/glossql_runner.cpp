@@ -196,9 +196,14 @@ Inner::Inner(ClientContext &context) : con(*context.db), ws(FindWorkspace(contex
 	    !files.ToString().empty()) {
 		Run("SET file_search_path = " + QuoteText(files.ToString()));
 	}
-	// and sees what the caller's run sees: a primitive's own reads keep to the run's closure
+	// and sees what the caller's run sees: a primitive's own reads keep to the run's closure,
+	// and the read functions to the run's subject
 	if (auto closure = RunClosureOf(context)) {
 		SetRunClosure(*con.context, std::move(closure));
+	}
+	Value subject;
+	if (ClientConfig::GetConfig(context).GetUserVariable(string(RUN_SUBJECT), subject)) {
+		ClientConfig::GetConfig(*con.context).SetUserVariable(RUN_SUBJECT, subject);
 	}
 }
 
@@ -787,6 +792,66 @@ static bool SameValue(const Value &before, const Value &after) {
 	return before.ToString() == after.ToString();
 }
 
+//! What a body reads, taken from its text as written (SPEC §6): DuckDB's parse of
+//! it as JSON (json_serialize_sql), every node of the tree, the names of its CTEs
+//! subtracted, the macros it calls followed through their definitions. One JSON
+//! object per read: kind `read` a call of a read function (annotations, results,
+//! definition), its what and its where as written, `constant` false where one of
+//! them is not a constant; `data` a table of the lake named in FROM, or a
+//! primitive over the data of the subject; `catalog` the catalog reached
+//! otherwise; `other` a table function that reads neither (range, unnest). A
+//! detector's body reads the annotations its test hands it, a relation by that name
+static string BodyReads(Inner &inner, const string &script, bool detector) {
+	auto text = detector ? "WITH annotations AS (SELECT 1) SELECT * FROM (" + script + ")" : script;
+	return inner
+	    .Scalar(
+	        "WITH RECURSIVE boundary(fn) AS (VALUES ('annotations'), ('results'), ('definition')),"
+	        " macros AS (SELECT function_name AS fn, any_value(function_type) AS function_type,"
+	        " any_value(macro_definition) AS macro_definition FROM duckdb_functions()"
+	        " WHERE macro_definition IS NOT NULL AND database_name <> 'system'"
+	        " AND function_name NOT IN (SELECT fn FROM boundary) GROUP BY function_name),"
+	        " src(via, depth, sql_text) AS (SELECT '', 0, 'SELECT * FROM (' || " +
+	        QuoteText(text) +
+	        " || ')' UNION SELECT s.via || CASE WHEN s.via = '' THEN '' ELSE ' > ' END || m.fn, s.depth + 1,"
+	        " CASE WHEN m.function_type = 'table_macro' THEN 'SELECT * FROM (' || m.macro_definition || ')'"
+	        " ELSE 'SELECT ' || m.macro_definition END"
+	        " FROM src s, unnest(json_extract(json_serialize_sql(s.sql_text), '$..*')) t(n) JOIN macros m ON m.fn ="
+	        " coalesce(json_extract_string(n, '$.function_name'), json_extract_string(n, '$.function.function_name'))"
+	        " WHERE s.depth < 8 AND (json_extract_string(n, '$.class') = 'FUNCTION'"
+	        " OR json_extract_string(n, '$.type') = 'TABLE_FUNCTION')),"
+	        " tree AS (SELECT via, json_serialize_sql(sql_text) AS j FROM src),"
+	        " ctes AS (SELECT DISTINCT via, unnest(json_extract_string(j, '$..cte_map.map[*].key')) AS cte FROM tree),"
+	        " nodes AS (SELECT via, n FROM tree, unnest(json_extract(j, '$..*')) t(n)),"
+	        " calls AS (SELECT via, json_extract_string(n, '$.function.function_name') AS fn,"
+	        " [CASE WHEN json_extract_string(a, '$.expression.class') = 'CONSTANT'"
+	        " THEN json_extract_string(a, '$.expression.literal.text')"
+	        " WHEN json_extract_string(a, '$.expression.class') = 'PARAMETER'"
+	        " THEN '$' || json_extract_string(a, '$.expression.identifier')"
+	        " ELSE '<' || json_extract_string(a, '$.expression.class') || '>' END"
+	        " FOR a IN json_extract(n, '$.function.arguments[*]')] AS args"
+	        " FROM nodes WHERE json_extract_string(n, '$.type') = 'TABLE_FUNCTION'),"
+	        " tables AS (SELECT via, nullif(json_extract_string(n, '$.schema_name'), '') AS schema_name,"
+	        " json_extract_string(n, '$.table_name') AS table_name FROM nodes"
+	        " WHERE json_extract_string(n, '$.type') = 'BASE_TABLE'),"
+	        " reads AS (SELECT DISTINCT via, 'read' AS kind, fn AS read,"
+	        " CASE WHEN fn = 'definition' THEN 'definition' ELSE args[1] END AS what, args[-1] AS \"where\","
+	        " NOT coalesce(list_bool_or([x IS NULL OR starts_with(x, '<') OR starts_with(x, '$')"
+	        " FOR x IN args]), false) AS constant FROM calls WHERE fn IN (SELECT fn FROM boundary)"
+	        " UNION ALL SELECT DISTINCT via, CASE WHEN fn IN ('subject_column', 'dataset_cells',"
+	        " 'glossql_relationship_checks') THEN 'data' WHEN fn LIKE 'glossql_%' OR fn IN ('glossary', 'tests')"
+	        " THEN 'catalog' ELSE 'other' END, fn, array_to_string(args, ', '), NULL, NULL FROM calls"
+	        " WHERE fn NOT IN (SELECT fn FROM boundary) AND fn NOT IN (SELECT fn FROM macros)"
+	        " UNION ALL SELECT DISTINCT t.via, CASE WHEN t.schema_name = 'main' OR regexp_replace(t.table_name,"
+	        " '_history$', '') IN ('datasets', 'kits', 'sources', 'recipes', 'imports', 'aspects', 'glossary',"
+	        " 'relationships', 'functions', 'measurements', 'inputs', 'tests') THEN 'catalog' ELSE 'data' END,"
+	        " coalesce(t.schema_name || '.', '') || t.table_name, NULL, NULL, NULL FROM tables t"
+	        " WHERE NOT EXISTS (SELECT 1 FROM ctes c WHERE c.via = t.via AND c.cte = t.table_name"
+	        " AND t.schema_name IS NULL))"
+	        " SELECT coalesce(to_json(list({'kind': kind, 'read': read, 'what': what, 'where': \"where\","
+	        " 'constant': constant, 'via': via} ORDER BY kind, read, what, \"where\", via)), '[]')::VARCHAR FROM reads")
+	    .ToString();
+}
+
 static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<RunnerState>();
 	if (state.done) {
@@ -801,10 +866,11 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 
 	Inner inner(context);
 	// identity is content (SPEC §3): an unchanged re-declaration is a no-op, so a kit replays silently
-	auto current = inner.Row("SELECT scope, script, returns FROM " + inner.Current("functions") +
+	auto reads = BodyReads(inner, script, returns.IsNull());
+	auto current = inner.Row("SELECT scope, script, returns, reads FROM " + inner.Current("functions") +
 	                         " WHERE name = " + QuoteText(name) + " ORDER BY begin_snapshot DESC LIMIT 1");
 	if (!current.empty() && current[0].ToString() == scope && current[1].ToString() == script &&
-	    SameValue(current[2], returns)) {
+	    SameValue(current[2], returns) && SameValue(current[3], Value(reads))) {
 		Outcome(output, "function " + name + " unchanged: no-op");
 		return;
 	}
@@ -826,7 +892,8 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 	inner.Write(context, [&](CatalogWrite &write) {
 		write.End("functions", "name = " + QuoteText(name) + " AND scope = " + QuoteText(scope));
 		write.Insert("functions", QuoteText(name) + ", " + QuoteText(scope) + ", " + QuoteText(script) + ", " +
-		                              returns.ToSQLString() + ", now(), " + QuoteText(DeclaredBy(context)));
+		                              returns.ToSQLString() + ", " + QuoteText(reads) + ", now(), " +
+		                              QuoteText(DeclaredBy(context)));
 	});
 	// a detector's body is run by TESTS() over its test's values, $threshold bound there
 	Outcome(output, returns.IsNull() ? "declared detector " + name + " for " + scope
@@ -1550,6 +1617,8 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 	auto dataset = DatasetOf(context, subject);
 
 	Inner inner(context);
+	// the read functions a body reads the catalog through walk from the subject this run computes for
+	ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(subject));
 	idx_t row = 0;
 	for (auto &call : ListValue::GetChildren(inputs[1])) {
 		auto name = call.ToString();
@@ -1902,8 +1971,9 @@ static TableFunctionSet DatasetCellsFunctions() {
 }
 
 //===--------------------------------------------------------------------===//
-// glossql_relationship_checks(dataset): whether the declared relationships
-// hold, per edge over its own columns. The quality kit's relationship_checks
+// glossql_relationship_checks(subject): whether the declared relationships
+// hold, per edge over its own columns: a dataset's every one, or one
+// relationship named by its pair path. The quality kit's relationship_checks
 // wraps it. An edge's key columns are read from the two tables directly, typed and
 // linear in their rows, where a screen over dataset_cells pivoted every cell
 // of a table back into rows per edge. Per edge: the filled child rows (every
@@ -2014,7 +2084,10 @@ static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const stri
 
 static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	Inner inner(context);
-	auto dataset = ResolveSubject(context, input.inputs[0].ToString());
+	// a dataset's every declared relationship, or one relationship by its pair path
+	auto subject = ResolveSubject(context, input.inputs[0].ToString());
+	bool one = subject.find(" -> ") != string::npos || subject.find(" <-> ") != string::npos;
+	auto dataset = one ? DatasetOf(subject) : subject;
 	BindRead(context, "main.relationships");
 	vector<string> edges;
 	auto rows =
@@ -2025,6 +2098,9 @@ static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context
 			auto left = chunk->GetValue(0, i).ToString();
 			auto op = chunk->GetValue(1, i).ToString();
 			auto right = chunk->GetValue(2, i).ToString();
+			if (one && left + " " + op + " " + right != subject) {
+				continue;
+			}
 			auto child = ParseSide(context, dataset, left);
 			auto parent = ParseSide(context, dataset, right);
 			// key columns are one column or a pair, the same count on both sides

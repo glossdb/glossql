@@ -66,11 +66,13 @@ required and nobody has recorded it).
 ## Kits
 
 A kit is a script of declarations for one domain, with a `SKILL.md`
-that teaches an agent its words. Three ship with the extension: `kpi`
-(the semantic model's vocabulary), `quality` (data quality checks) and
-`spatial` (geometry columns). See [kits](docs/kits.md).
+that teaches an agent its words. Four ship with the extension:
+`lineage` (a dataset's lineage and the read functions a function's
+body reads through), `kpi` (the semantic model's vocabulary), `quality`
+(data quality checks) and `spatial` (geometry columns). See [kits](docs/kits.md).
 
 ```sql
+FROM glossql_kit('kits/lineage/kit.sql');
 FROM glossql_kit('kits/kpi/kit.sql');
 FROM glossql_kit('kits/quality/kit.sql');
 ```

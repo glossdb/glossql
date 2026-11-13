@@ -26,6 +26,9 @@ statement ok
 USE fin;
 
 statement ok
+CREATE TABLE main.lineage AS FROM glossql_kit('kits/lineage/kit.sql');
+
+statement ok
 CREATE TABLE main.kpi AS FROM glossql_kit('kits/kpi/kit.sql');
 
 statement ok
@@ -35,6 +38,7 @@ query TTI
 SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
+lineage	kits/lineage/kit.sql	6
 quality	kits/quality/kit.sql	23
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
@@ -191,20 +195,35 @@ SELECT relationship, filled, orphans, orphan_rate, child_column, parent_column, 
 fin.payments.invoice_id -> fin.invoices.invoice_id	20	2	0.1	pay_date	inv_date	18	3
 fin.payments.city -> fin.payments.country	20	10	0.5	NULL	NULL	NULL	NULL
 
+# one result per relationship, stored on its pair path: its own two tables
+statement ok
+SELECT relationship_coherence() FROM payments.invoice_id -> invoices.invoice_id;
+
+statement ok
+SELECT relationship_coherence() FROM payments.city -> payments.country;
+
+query TTTT
+SELECT subject, json_extract_string(value, '$.applicable'), json_extract_string(value, '$.orphans'), json_extract_string(value, '$.temporal[0].precedes')
+FROM main.measurements WHERE function = 'relationship_coherence' ORDER BY subject;
+----
+fin.payments.city -> fin.payments.country	true	10	NULL
+fin.payments.invoice_id -> fin.invoices.invoice_id	true	2	3
+
+# the bind read the catalog's edges beside the plan, and the row names them with the tables the edge reads
+query T
+SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot AND i.input <> 'closure') FROM main.measurements m
+WHERE function = 'relationship_coherence' AND subject = 'fin.payments.invoice_id -> fin.invoices.invoice_id';
+----
+fin.invoices,fin.payments,main.relationships
+
+# over a dataset it computes nothing: the check is one relationship's
 statement ok
 SELECT relationship_coherence() FROM fin;
 
-query TTT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.relationships[0].orphans'), json_extract_string(value, '$.relationships[0].temporal[0].precedes')
-FROM GLOSSARY(fin::relationship_coherence);
-----
-true	2	3
-
-# the bind read the catalog's edges beside the plan, and the row names them with the tables the edges read
 query T
-SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot AND i.input <> 'closure') FROM main.measurements m WHERE function = 'relationship_coherence';
+SELECT json_extract_string(value, '$.applicable') FROM main.measurements WHERE function = 'relationship_coherence' AND subject = 'fin';
 ----
-fin.invoices,fin.payments,main.relationships
+false
 
 # --- hierarchy_candidates: the two planted dependencies, the exclusions, the measurement's ship line
 
@@ -283,6 +302,11 @@ FROM GLOSSARY(fin.lines::derivation_candidates);
 true	2	sum
 
 # --- definition_collisions: the same SQL under two names, and the same series from different SQL
+# the screen reads the definitions and the claims through the read functions, from the subject a
+# run sets; read by hand, the session names it
+
+statement ok
+SET VARIABLE glossql_subject = 'fin';
 
 query I
 SELECT definitions FROM definition_collisions('fin');
@@ -355,6 +379,9 @@ query T
 SELECT aspects::VARCHAR FROM definition_collisions('fin') WHERE kind = 'served_series';
 ----
 [margin, revenue, turnover]
+
+statement ok
+RESET VARIABLE glossql_subject;
 
 statement ok
 SELECT detect_definition_collisions() FROM fin;
@@ -522,22 +549,22 @@ DECLARE RELATIONSHIP postings.account_id -> accounts.id;
 statement ok
 DECLARE RELATIONSHIP balances.account_id -> accounts.id;
 
-# a measurement over the edges, then a third edge declared: the catalog rows it read moved, and the repeat computes
+# a result on one relationship, then a third relationship declared: the catalog rows it read moved, and the repeat computes
 statement ok
-SELECT relationship_coherence() FROM beh;
+SELECT relationship_coherence() FROM postings.account_id -> accounts.id;
 
 statement ok
 DECLARE RELATIONSHIP totals.account_id -> accounts.id;
 
 statement ok
-SELECT relationship_coherence() FROM beh;
+SELECT relationship_coherence() FROM postings.account_id -> accounts.id;
 
 query TI
-SELECT json_extract_string(value, '$.relationships[2].relationship'),
+SELECT json_extract_string(value, '$.relationship'),
        (SELECT count(*) FROM main.measurements_history WHERE function = 'relationship_coherence' AND dataset = 'beh')
-FROM GLOSSARY(beh::relationship_coherence);
+FROM main.measurements WHERE function = 'relationship_coherence' AND dataset = 'beh';
 ----
-beh.totals.account_id -> beh.accounts.id	2
+beh.postings.account_id -> beh.accounts.id	2
 
 # no role glossed on the event tables: every anchor abstains and names the gloss to make
 query TTT
@@ -827,3 +854,16 @@ query TT
 FROM glossql_kit('kits/quality/kit.sql');
 ----
 quality	current
+
+# --- every shipped measurement reads the catalog through the read functions alone, with constant
+# arguments. additivity_evidence is the known exception, by name: its primitive,
+# glossql_additivity_cells, reads the roles and the relationships at its bind, out of the body's text
+
+query TT
+SELECT f.name, r.read
+FROM main.functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "constant": "BOOLEAN"}]')) u(r)
+WHERE f.returns IS NOT NULL AND f.declared_by IN ('kit:kpi', 'kit:quality')
+  AND (r.kind = 'catalog' OR NOT coalesce(r.constant, true))
+ORDER BY ALL;
+----
+additivity_evidence	glossql_additivity_cells

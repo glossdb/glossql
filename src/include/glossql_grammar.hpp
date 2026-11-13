@@ -226,6 +226,9 @@ void SetRunClosure(ClientContext &context, shared_ptr<RunClosure> closure);
 //! Whether an input names rows of a closure: the glossary, the results and
 //! the declarations about subjects, main.<relation>[/<key>|@<property>]
 bool ScopedInput(const string &name);
+//! The session variable that names the subject a function computes a result for: the
+//! engine sets it on the connection of the run, and the read functions walk from it
+constexpr const char *RUN_SUBJECT = "glossql_subject";
 //! The input that stores a result's closure; its version is the members as a JSON list
 constexpr const char *CLOSURE_INPUT = "closure";
 //! The closure members (id, kind, subject, property) of a JSON list of members, per id

@@ -334,10 +334,11 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "dataset VARCHAR NOT NULL, left_side VARCHAR NOT NULL, op VARCHAR NOT NULL, right_side VARCHAR NOT NULL, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "* EXCLUDE (end_snapshot)", "glossql_sees('relationships', dataset, NULL, NULL)"},
+    // reads: what the body reads, taken from its text at the declaration (FunctionReadsSQL)
     {"functions",
-	 "name VARCHAR NOT NULL, scope VARCHAR NOT NULL, script VARCHAR NOT NULL, returns VARCHAR, "
+	 "name VARCHAR NOT NULL, scope VARCHAR NOT NULL, script VARCHAR NOT NULL, returns VARCHAR, reads VARCHAR, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
-	 "* EXCLUDE (end_snapshot)", nullptr},
+	 "begin_snapshot, name, scope, script, returns, reads::JSON AS reads, declared_at, declared_by", nullptr},
     {"measurements",
 	 "dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, "
 	 "value VARCHAR, computed_at TIMESTAMP NOT NULL, error VARCHAR",

@@ -14,8 +14,9 @@ itself.
 ## Load and check
 
 ```sql
+FROM glossql_kit('kits/lineage/kit.sql');
 FROM glossql_kit('kits/kpi/kit.sql');
-FROM glossql_kit('kits/quality/kit.sql');    -- after the kpi kit; both lines in the opener
+FROM glossql_kit('kits/quality/kit.sql');    -- after the lineage and kpi kits; all three lines in the opener
 SELECT name, scope, returns FROM functions WHERE returns IS NOT NULL;
 ```
 
@@ -27,10 +28,10 @@ that stores the result.
 | Measurement | On | Table macro | Stores |
 |---|---|---|---|
 | `detect_relationships()` | dataset | `relationship_candidates(dataset)` | `candidates`: `from`, `to`, `cardinality`, `overlap`, `matched`, `orphans`, `to_unique`, `to_temporal`, `key_columns`; `summary`: the count, the top 16, a note |
-| `relationship_coherence()` | dataset | `relationship_checks(dataset)` | `relationships`: per declared relationship `filled`, `orphans`, `orphan_rate`, and `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
+| `relationship_coherence()` | relationship | `relationship_checks(dataset or relationship)` | `relationship`, `filled`, `orphans`, `orphan_rate`, and `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
 | `detect_hierarchies()` | table | `hierarchy_candidates(table)` | `candidates`: `from`, `to`, `g3`, `lambda`, `kind` (`edge` or `alias`); `rows`: the rows read |
 | `detect_derivations()` | table | `derivation_candidates(table)` | `candidates`: `target`, `form` (`product` or `sum`), `operands`, `support`, `violations`, `match_rate`; `truncated`; `rows`: the rows read |
-| `detect_definition_collisions()` | dataset | `definition_collisions(dataset)` | `definitions`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |
+| `detect_definition_collisions()` | dataset | `definition_collisions(dataset)`, after `SET VARIABLE glossql_subject = '<dataset>'` | `definitions`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |
 | `additivity_evidence()` | column | `additivity_anchors(column)` | `summary`: `result` (`semi-additive`, `additive`, `abstain`), `convention`, `support`, `voted`, `event`, `align`, `grain`, `scope`, `r_flow`, `r_stock`, `sign`, `tiebreak`, `reason`; `anchors`: one row per anchor; `anchors_n`, `decided` |
 | `temporal()` | timestamp columns | | `temporal_profile`: `granularity`, `confidence`, `completeness`, `gaps` |
 
@@ -79,8 +80,9 @@ How to read them:
    top 16 are ranked: unique targets first, then many-to-one, then
    overlap. Declare the ones that are right: `DECLARE RELATIONSHIP
    orders.customer_id -> customers.id;`.
-3. `SELECT relationship_coherence() FROM shop;` after declaring, and
-   after every load: it reports orphans and dates out of order.
+3. `SELECT relationship_coherence() FROM orders.customer_id ->
+   customers.id;` per relationship, after declaring it and after every
+   load: it reports orphans and dates out of order.
 4. Per table with dimension columns, `SELECT detect_hierarchies() FROM
    shop.regions;`. Per table with three or more numeric columns,
    `SELECT detect_derivations() FROM shop.order_lines;`. Name what was
