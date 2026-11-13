@@ -103,12 +103,36 @@ SELECT "from", "to" FROM lineage('fin') WHERE kind = 'plans';
 ----
 fin.sales_plan	fin.sales
 
-# --- the read functions walk from the subject: outside a run nothing is named
+# --- the read functions walk from the subject: outside a run, and where none is set, the subject is the bound dataset
 
-query I
-SELECT count(*) FROM annotations('role', 'itself');
+query T
+SELECT asset FROM place('itself');
 ----
-0
+fin
+
+query TT
+SELECT asset, state FROM annotations('role', 'the dataset') WHERE asset LIKE 'fin.sales.%' ORDER BY asset;
+----
+fin.sales.name	missing
+fin.sales.period	current
+fin.sales.value	missing
+
+# a what of the form 'x-kind <kind>' names every property declared with that x-kind: one row per property
+# and asset, missing where nobody annotated it
+statement ok
+DECLARE ASPECT price_cut WITH $${"type": "object", "x-kind": "scenario"}$$ AS FACT ON DATASET;
+
+statement ok
+DECLARE ASPECT price_hold WITH $${"type": "object", "x-kind": "scenario"}$$ AS FACT ON DATASET;
+
+statement ok
+GLOSS price_cut ON fin AS $${"levers": []}$$;
+
+query TTTT
+SELECT asset, property, json_array_length(value, '$.levers'), state FROM annotations('x-kind scenario', 'the dataset') ORDER BY property;
+----
+fin	price_cut	0	current
+fin	price_hold	NULL	missing
 
 statement ok
 SET VARIABLE glossql_subject = 'fin.sales';

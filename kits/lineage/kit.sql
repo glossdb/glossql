@@ -11,8 +11,11 @@
 -- constants. The subject is the running function's: the engine sets
 -- glossql_subject on the connection that computes a result, and a person
 -- reading by hand sets it the same way (SET VARIABLE glossql_subject =
--- 'fin.revenue'). The engine stores the reads of each function's body
+-- 'fin.revenue'); where it is not set, the subject is the bound dataset
+-- (read_subject()). The engine stores the reads of each function's body
 -- with the function (the functions relation, `reads`).
+
+CREATE OR REPLACE MACRO main.read_subject() AS coalesce(getvariable('glossql_subject'), current_schema());
 
 --===------------------------------------------------------------------===--
 -- lineage(dataset): the assets of a dataset and the edges between them,
@@ -83,14 +86,14 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 -- Any other where names no asset.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.place(where_) AS TABLE
-WITH here AS (SELECT getvariable('glossql_subject') AS subject, split_part(getvariable('glossql_subject'), '.', 1) AS dataset_name),
-walked AS MATERIALIZED (SELECT * FROM main.lineage(split_part(getvariable('glossql_subject'), '.', 1)) WHERE getvariable('glossql_subject') IS NOT NULL),
+WITH here AS (SELECT main.read_subject() AS subject, split_part(main.read_subject(), '.', 1) AS dataset_name),
+walked AS MATERIALIZED (SELECT * FROM main.lineage(split_part(main.read_subject(), '.', 1))),
 source_tables AS (SELECT walked."to" AS t FROM walked, here WHERE walked."from" = here.subject AND walked.kind = 'reads' AND main.asset_grain(walked."to") = 'TABLE'),
 endpoints AS (SELECT walked."from" AS rel, walked."to" AS endpoint, regexp_extract(walked."to", '^([^.]+\.[^.]+)\.', 1) AS t FROM walked WHERE walked.kind = 'relates')
 SELECT subject AS asset FROM here WHERE where_ = 'itself' AND subject IS NOT NULL
 UNION ALL SELECT walked."to" FROM walked, here WHERE where_ = 'its columns' AND walked."from" = here.subject AND walked.kind = 'contains'
 UNION ALL SELECT walked."to" FROM walked, here WHERE where_ = 'its sources' AND walked."from" = here.subject AND walked.kind = 'reads'
-UNION ALL SELECT DISTINCT side FROM glossql_views_joins(split_part(getvariable('glossql_subject'), '.', 1)) j, here, unnest([j.left_column, j.right_column]) u(side)
+UNION ALL SELECT DISTINCT side FROM glossql_views_joins(split_part(main.read_subject(), '.', 1)) j, here, unnest([j.left_column, j.right_column]) u(side)
           WHERE where_ = 'the columns it joins on' AND here.dataset_name || '.' || j.view = here.subject
 UNION ALL SELECT DISTINCT rel FROM endpoints, here WHERE where_ = 'its relationships'
             AND CASE WHEN here.subject = here.dataset_name THEN true
@@ -108,14 +111,20 @@ UNION ALL SELECT DISTINCT walked."to" FROM walked WHERE where_ = 'the dataset' A
 -- collapsed: asset, property, value (JSON), state (current, stale,
 -- conflict, as GLOSSARY() says; missing, and no value, where nobody
 -- annotated the asset). A property declared on tables returns no row
--- for a column.
+-- for a column. A what of the form 'x-kind <kind>' names every property
+-- declared with that x-kind, a scenario's among them: one row per
+-- property and asset.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.annotations(property, where_) AS TABLE
-WITH grains AS (SELECT grains FROM main.aspects WHERE name = property)
-SELECT p.asset, property AS property, g.value, coalesce(g.state, 'missing') AS state
+WITH props AS (
+  SELECT name, grains FROM main.aspects
+  WHERE name = property OR (starts_with(property, 'x-kind ') AND json_extract_string(schema, '$.x-kind') = substr(property, 8)))
+SELECT p.asset, pr.name AS property, g.value, coalesce(g.state, 'missing') AS state
 FROM main.place(where_) p
-LEFT JOIN glossql_glossary(split_part(getvariable('glossql_subject'), '.', 1), property, false) g ON g.subject = p.asset
-WHERE EXISTS (SELECT 1 FROM grains WHERE len(grains) = 0 OR list_contains(grains, main.asset_grain(p.asset)));
+JOIN props pr ON len(pr.grains) = 0 OR list_contains(pr.grains, main.asset_grain(p.asset))
+LEFT JOIN glossql_glossary(split_part(main.read_subject(), '.', 1),
+                           CASE WHEN starts_with(property, 'x-kind ') THEN NULL ELSE property END, false) g
+  ON g.subject = p.asset AND g.aspect = pr.name;
 
 --===------------------------------------------------------------------===--
 -- results(function, where): one row per asset of the place, with the
@@ -126,7 +135,7 @@ CREATE OR REPLACE MACRO main.results(function_, where_) AS TABLE
 SELECT p.asset, function_ AS function, m.value, m.error
 FROM main.place(where_) p
 LEFT JOIN main.measurements m
-  ON m.dataset = split_part(getvariable('glossql_subject'), '.', 1) AND m.function = function_ AND m.subject = p.asset;
+  ON m.dataset = split_part(main.read_subject(), '.', 1) AND m.function = function_ AND m.subject = p.asset;
 
 --===------------------------------------------------------------------===--
 -- definition(where): one row per view of the place: view (its path), kind
@@ -137,17 +146,17 @@ LEFT JOIN main.measurements m
 -- left_unique, right_unique).
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.definition(where_) AS TABLE
-WITH cols AS (FROM glossql_columns(split_part(getvariable('glossql_subject'), '.', 1))),
+WITH cols AS (FROM glossql_columns(split_part(main.read_subject(), '.', 1))),
 v AS (
   SELECT DISTINCT p.asset AS view, split_part(p.asset, '.', 2) AS name
   FROM main.place(where_) p
   WHERE main.asset_grain(p.asset) = 'TABLE'
     AND split_part(p.asset, '.', 2) IN (SELECT name FROM main.aspects WHERE kind = 'VIEW')),
-lin AS (FROM glossql_views_lineage(split_part(getvariable('glossql_subject'), '.', 1))),
-sc AS (FROM glossql_views_scans(split_part(getvariable('glossql_subject'), '.', 1))),
-jo AS (FROM glossql_views_joins(split_part(getvariable('glossql_subject'), '.', 1))),
+lin AS (FROM glossql_views_lineage(split_part(main.read_subject(), '.', 1))),
+sc AS (FROM glossql_views_scans(split_part(main.read_subject(), '.', 1))),
+jo AS (FROM glossql_views_joins(split_part(main.read_subject(), '.', 1))),
 bodies AS (
-  SELECT view AS name, body FROM glossql_views_definitions(split_part(getvariable('glossql_subject'), '.', 1))
+  SELECT view AS name, body FROM glossql_views_definitions(split_part(main.read_subject(), '.', 1))
   WHERE view IN (SELECT name FROM v))
 SELECT v.view,
        json_extract_string(a.schema, '$.x-kind') AS kind,

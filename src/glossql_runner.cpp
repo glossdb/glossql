@@ -801,12 +801,19 @@ static bool SameValue(const Value &before, const Value &after) {
 //! them is not a constant; `data` a table of the lake named in FROM, or a
 //! primitive over the data of the subject; `catalog` the catalog reached
 //! otherwise; `other` a table function that reads neither (range, unnest). A
+//! primitive that reads the catalog at its bind, out of the body's text, is
+//! stated here by what it reads (`stated`): glossql_additivity_cells reads the
+//! dataset's data, its roles and its relationships (the lineage's `relates`). A
 //! detector's body reads the annotations its test hands it, a relation by that name
 static string BodyReads(Inner &inner, const string &script, bool detector) {
 	auto text = detector ? "WITH annotations AS (SELECT 1) SELECT * FROM (" + script + ")" : script;
 	return inner
 	    .Scalar(
 	        "WITH RECURSIVE boundary(fn) AS (VALUES ('annotations'), ('results'), ('definition')),"
+	        " stated(fn, kind, read, what, \"where\", constant) AS (VALUES"
+	        " ('glossql_additivity_cells', 'data', 'glossql_additivity_cells', 'data', 'the dataset', NULL),"
+	        " ('glossql_additivity_cells', 'read', 'annotations', 'role', 'the dataset', true),"
+	        " ('glossql_additivity_cells', 'read', 'lineage', 'relates', 'the dataset', true)),"
 	        " macros AS (SELECT function_name AS fn, any_value(function_type) AS function_type,"
 	        " any_value(macro_definition) AS macro_definition FROM duckdb_functions()"
 	        " WHERE macro_definition IS NOT NULL AND database_name <> 'system'"
@@ -842,6 +849,9 @@ static string BodyReads(Inner &inner, const string &script, bool detector) {
 	        " 'glossql_relationship_checks') THEN 'data' WHEN fn LIKE 'glossql_%' OR fn IN ('glossary', 'tests')"
 	        " THEN 'catalog' ELSE 'other' END, fn, array_to_string(args, ', '), NULL, NULL FROM calls"
 	        " WHERE fn NOT IN (SELECT fn FROM boundary) AND fn NOT IN (SELECT fn FROM macros)"
+	        " AND fn NOT IN (SELECT fn FROM stated)"
+	        " UNION ALL SELECT DISTINCT c.via, s.kind, s.read, s.what, s.\"where\", s.constant FROM calls c"
+	        " JOIN stated s USING (fn)"
 	        " UNION ALL SELECT DISTINCT t.via, CASE WHEN t.schema_name = 'main' OR regexp_replace(t.table_name,"
 	        " '_history$', '') IN ('datasets', 'kits', 'sources', 'recipes', 'imports', 'aspects', 'glossary',"
 	        " 'relationships', 'functions', 'measurements', 'inputs', 'tests') THEN 'catalog' ELSE 'data' END,"

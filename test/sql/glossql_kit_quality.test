@@ -38,7 +38,7 @@ query TTI
 SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
-lineage	kits/lineage/kit.sql	6
+lineage	kits/lineage/kit.sql	7
 quality	kits/quality/kit.sql	23
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
@@ -856,14 +856,24 @@ FROM glossql_kit('kits/quality/kit.sql');
 quality	current
 
 # --- every shipped measurement reads the catalog through the read functions alone, with constant
-# arguments. additivity_evidence is the known exception, by name: its primitive,
-# glossql_additivity_cells, reads the roles and the relationships at its bind, out of the body's text
+# arguments
 
-query TT
-SELECT f.name, r.read
+query I
+SELECT count(*)
 FROM main.functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "constant": "BOOLEAN"}]')) u(r)
 WHERE f.returns IS NOT NULL AND f.declared_by IN ('kit:kpi', 'kit:quality')
-  AND (r.kind = 'catalog' OR NOT coalesce(r.constant, true))
+  AND (r.kind = 'catalog' OR NOT coalesce(r.constant, true));
+----
+0
+
+# the stock/flow evidence's primitive reads the roles and the relationships at its bind: its reads are stated
+# with the primitive, so the function's reads say them
+query TTTT
+SELECT r.kind, r.read, r.what, r."where"
+FROM main.functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR"}]')) u(r)
+WHERE f.name = 'additivity_evidence' AND r.kind <> 'other'
 ORDER BY ALL;
 ----
-additivity_evidence	glossql_additivity_cells
+data	glossql_additivity_cells	data	the dataset
+read	annotations	role	the dataset
+read	lineage	relates	the dataset
