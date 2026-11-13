@@ -1012,8 +1012,8 @@ struct Read {
 };
 
 //! The data a body reads, as a place: subject_column() and the relationship checks the subject's
-//! own; dataset_cells() its dataset's tables, its views ('views'), both ('all', true), or the one
-//! table it names; a table the body names in FROM, that table
+//! own; dataset_cells() its dataset's tables, its views ('views'), its metrics ('metrics'), both
+//! tables and views ('all', true), or the one table it names; a table the body names in FROM, that table
 static Read DataRead(const string &read, const string &args, const string &dataset) {
 	if (read == "subject_column" || read == "glossql_relationship_checks") {
 		return {"data", "data", "itself"};
@@ -1022,6 +1022,9 @@ static Read DataRead(const string &read, const string &args, const string &datas
 		auto list = StringUtil::Split(args, ", ");
 		string what = "tables";
 		for (idx_t i = 1; i < list.size(); i++) {
+			if (list[i] == "metrics") {
+				return {"data", "data", METRICS_PLACE};
+			}
 			if (list[i] == "views") {
 				what = "views";
 			} else if (list[i] == "all" || list[i] == "true") {
@@ -1381,15 +1384,19 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	// metric definitions — a metric's series, a plan's rows — binds no table
 	bool views = false;
 	bool only_views = false;
+	bool only_metrics = false;
 	if (input.inputs.size() > 1 && !input.inputs[1].IsNull()) {
 		if (input.inputs[1].type().id() == LogicalTypeId::VARCHAR) {
 			auto mode = input.inputs[1].ToString();
 			if (mode == "views") {
 				views = only_views = true;
+			} else if (mode == "metrics") {
+				views = only_views = only_metrics = true;
 			} else if (mode == "all") {
 				views = true;
 			} else if (mode != "tables") {
-				throw InvalidInputException("glossql: dataset_cells takes tables, views or all, got '%s'", mode);
+				throw InvalidInputException("glossql: dataset_cells takes tables, views, metrics or all, got '%s'",
+				                            mode);
 			}
 		} else {
 			views = input.inputs[1].GetValue<bool>();
@@ -1397,12 +1404,23 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	}
 	const string empty = "SELECT NULL::VARCHAR AS \"table\", NULL::VARCHAR AS \"column\", NULL::BIGINT AS ci,"
 	                     " NULL::VARCHAR AS column_type, NULL::BIGINT AS rn, NULL::VARCHAR AS val WHERE false";
+	// 'metrics' takes the views whose property is a metric's, not a plan's
+	std::set<string> metrics;
+	if (only_metrics) {
+		auto rows = inner.Run("SELECT name FROM " + inner.Current("aspects") +
+		                      " WHERE kind = 'VIEW' AND coalesce(schema::JSON->>'x-kind', '') <> 'plan'");
+		while (auto chunk = rows->Fetch()) {
+			for (idx_t r = 0; r < chunk->size(); r++) {
+				metrics.insert(chunk->GetValue(0, r).ToString());
+			}
+		}
+	}
 	// the columns per table, in the order listed
 	vector<string> tables;
 	std::map<string, vector<pair<string, string>>> columns;
 	std::set<string> kept;
 	for (auto &column : DatasetColumns(context, parts[0], parts.size() == 2 ? parts[1] : string(), views)) {
-		if (only_views && !column.view) {
+		if ((only_views && !column.view) || (only_metrics && !metrics.count(column.table))) {
 			continue;
 		}
 		if (columns.find(column.table) == columns.end()) {

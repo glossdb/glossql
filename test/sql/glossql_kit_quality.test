@@ -38,7 +38,7 @@ query TTI
 SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
-lineage	kits/lineage/kit.sql	20
+lineage	kits/lineage/kit.sql	21
 quality	kits/quality/kit.sql	23
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation

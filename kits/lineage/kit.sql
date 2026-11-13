@@ -95,6 +95,8 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --                              a dataset's: all; a relationship: itself
 --   'its metric'               the metric a plan plans
 --   'the dataset'              the subject's dataset and every asset in it
+--   'the dataset's metrics'    the views of the subject's dataset that are
+--                              metrics, not plans, and their columns
 -- Any other where names no asset.
 --===------------------------------------------------------------------===--
 -- Each where is a macro of its own over the whole dataset, place_<where>
@@ -131,6 +133,13 @@ CREATE OR REPLACE MACRO main.place_dataset(dataset_name) AS TABLE
 SELECT dataset_name AS subject, dataset_name AS asset
 UNION SELECT dataset_name, "to" FROM main.contains_edges(dataset_name);
 
+CREATE OR REPLACE MACRO main.place_metrics(dataset_name) AS TABLE
+WITH metrics AS (
+  SELECT dataset_name || '.' || name AS m FROM main.aspects
+  WHERE kind = 'VIEW' AND coalesce(json_extract_string(schema, '$.x-kind'), '') <> 'plan')
+SELECT DISTINCT dataset_name AS subject, "to" AS asset FROM main.contains_edges(dataset_name)
+WHERE "to" IN (SELECT m FROM metrics) OR "from" IN (SELECT m FROM metrics);
+
 -- places(dataset): every place of every subject of a dataset, (subject,
 -- where, asset); 'itself' is the subject and has no row here
 CREATE OR REPLACE MACRO main.places(dataset_name) AS TABLE
@@ -139,7 +148,8 @@ UNION ALL SELECT subject, 'its sources', asset FROM main.place_sources(dataset_n
 UNION ALL SELECT subject, 'the columns it joins on', asset FROM main.place_joined(dataset_name)
 UNION ALL SELECT subject, 'its relationships', asset FROM main.place_relationships(dataset_name)
 UNION ALL SELECT subject, 'its metric', asset FROM main.place_metric(dataset_name)
-UNION ALL SELECT subject, 'the dataset', asset FROM main.place_dataset(dataset_name);
+UNION ALL SELECT subject, 'the dataset', asset FROM main.place_dataset(dataset_name)
+UNION ALL SELECT subject, 'the dataset''s metrics', asset FROM main.place_metrics(dataset_name);
 
 CREATE OR REPLACE MACRO main.place(where_) AS TABLE
 FROM query(CASE where_
@@ -150,6 +160,7 @@ FROM query(CASE where_
   WHEN 'its relationships' THEN 'SELECT asset FROM main.place_relationships(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'its metric' THEN 'SELECT asset FROM main.place_metric(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'the dataset' THEN 'SELECT asset FROM main.place_dataset(split_part(main.read_subject(), ''.'', 1))'
+  WHEN 'the dataset''s metrics' THEN 'SELECT asset FROM main.place_metrics(split_part(main.read_subject(), ''.'', 1))'
   ELSE 'SELECT NULL::VARCHAR AS asset WHERE false' END);
 
 -- tables_read(dataset): the relations of the lake whose rows each

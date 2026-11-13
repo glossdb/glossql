@@ -306,3 +306,43 @@ query I
 SELECT count(*) FROM measurements_history WHERE function = 'raw_rows';
 ----
 2
+
+# --- the dataset's metrics: the views that are metrics, not plans. A plan declared and annotated leaves a
+# reader of the metrics, their annotations and their data, current
+
+statement ok
+DECLARE ASPECT metric_cells WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
+
+statement ok
+DECLARE FUNCTION metric_cells FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM dataset_cells('f1', 'metrics')) + (SELECT count(value) FROM annotations('role', 'the dataset''s metrics')) AS n $$ RETURNS metric_cells;
+
+statement ok
+SELECT metric_cells() FROM f1;
+
+query T
+SELECT string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot) WHERE m.function = 'metric_cells';
+----
+annotations(role, the dataset's metrics),data(data, the dataset's metrics),function,property
+
+statement ok
+DECLARE ASPECT points_target WITH $${"title": "Points target", "x-kind": "plan", "x-plan-of": "points"}$$ AS VIEW;
+
+statement ok
+GLOSS points_target ON f1 AS $${"sql": "SELECT period, value * 1.1 AS value FROM f1.points"}$$;
+
+statement ok
+GLOSS role ON points_target.value AS $${"value": "measure"}$$;
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'metric_cells';
+----
+0
+
+# a role on a metric's column outdates it
+statement ok
+GLOSS role ON points.value AS $${"value": "measure"}$$;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'metric_cells';
+----
+annotations(role, the dataset's metrics)

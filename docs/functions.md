@@ -102,8 +102,9 @@ scalar cell of a dataset's tables, or of one table, as one relation.
 - `val` is the value as text. `column_type` is the stored type. `ci`
   numbers the columns, `rn` the rows of each table. Nested columns are
   left out.
-- The second argument is `'tables'` (the default), `'views'` or
-  `'all'`; `true` means `'all'`.
+- The second argument is `'tables'` (the default), `'views'`,
+  `'metrics'` (the views that are metrics, not plans) or `'all'`;
+  `true` means `'all'`.
 - `cells => n` bounds what is read. A table with more scalar cells
   than `n` is read as a sample of its rows. The sample is chosen by a
   hash of each row, so the same rows come back on every run. A result

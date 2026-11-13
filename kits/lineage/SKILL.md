@@ -54,6 +54,7 @@ The places, walked from the function's subject:
 | `its relationships` | a view's: those between the tables it reads; a table's or a column's: those that touch it; a dataset's: all |
 | `its metric` | the metric a plan plans |
 | `the dataset` | the dataset and every asset in it |
+| `the dataset's metrics` | the views of the dataset that are metrics, not plans, and their columns |
 
 ```sql
 DECLARE FUNCTION unlabelled_columns FOR GLOBAL AS $$
