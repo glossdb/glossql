@@ -1299,7 +1299,9 @@ static string LoadsSQL(const Workspace &ws) {
 //! it in the newest load differing from the one in the load that held at the
 //! write; rows arriving under the same shape and derivation do not age it. A
 //! view, or a column of one, changed when the definition that held at the
-//! write was replaced or dropped. Dataset subjects and pair paths never do.
+//! write was replaced or dropped. A subject none of whose rows at the write
+//! are left, an expiry of the lake's snapshots having removed the ended ones,
+//! changed. Dataset subjects and pair paths never do.
 //! Each fact is one join over the annotations, keyed by the snapshot a row
 //! began at, which no two rows share: the rule plans as joins, where the same
 //! rule as subqueries per row took the planner a tenth of a second
@@ -1340,7 +1342,9 @@ static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter
 		return "json_extract_string(" + lineage + "::JSON, '$.\"' || " + key + " || '\"')";
 	};
 	string loaded_twice = "lt.lineage IS NOT NULL AND ln.lineage IS NOT NULL";
-	string column_stale = "(ct.type IS NOT NULL AND (cn.type IS NULL OR cn.type <> ct.type))";
+	// a subject with no row of the lake's catalog live at the write is one whose rows a later write
+	// ended and an expiry of the lake's snapshots removed: it changed
+	string column_stale = "(CASE WHEN ct.type IS NULL THEN vt.id IS NULL ELSE cn.type IS DISTINCT FROM ct.type END)";
 	string column_rederived = "(" + loaded_twice + " AND " + derivation("lt.lineage", "g.col") + " IS DISTINCT FROM " +
 	                          derivation("ln.lineage", "g.col") + ")";
 	string table_rederived = "(" + loaded_twice +
@@ -1350,8 +1354,8 @@ static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter
 	                         ")), false))";
 	string view_stale = "(vt.id IS NOT NULL AND NOT vt.still)";
 	string stale = "CASE WHEN g.depth >= 3 THEN " + column_stale + " OR " + column_rederived + " OR " + view_stale +
-	               " WHEN g.depth = 2 THEN coalesce(tt.changed, false) OR " + table_rederived + " OR " + view_stale +
-	               " ELSE false END";
+	               " WHEN g.depth = 2 THEN coalesce(tt.changed, vt.id IS NULL) OR " + table_rederived + " OR " +
+	               view_stale + " ELSE false END";
 	return "WITH cols AS (" + ColumnsSQL(scope.ws) + "), views AS (" + ViewsSQL(scope.ws) + "), loads AS (" +
 	       LoadsSQL(scope.ws) + "), " + g + ", " + col_then + ", " + col_now + ", " + tbl_then + ", " + load_then +
 	       ", " + load_now + ", " + view_then +
