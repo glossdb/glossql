@@ -1,5 +1,5 @@
-# name: test/sql/glossql_closure.test
-# description: a result on a subject reads the glossary, the results and the declarations about subjects within the subject's closure, and depends on what those rows hold: an annotation outside it leaves the result current, one inside outdates the results whose closure holds it, a change undone makes it current again, a retyped column outdates the readers of its annotation (SPEC §6)
+# name: test/sql/glossql_inputs.test
+# description: a result's inputs are what its reads returned: an annotation outside the place a read names leaves the result current, one inside outdates it, a change undone makes it current again, a retyped column outdates the readers of its annotation, a result read out of date outdates its reader, and a read of the catalog past the read functions is out of date once stored (SPEC §6)
 # group: [sql]
 
 require glossql
@@ -11,7 +11,7 @@ require parquet
 require ducklake
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_closure_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_inputs_lake/');
 
 statement ok
 USE ws;
@@ -20,7 +20,10 @@ statement ok
 PRAGMA glossql;
 
 statement ok
-DECLARE DATASET f1 SET (purpose: 'closure');
+FROM glossql_kit('kits/lineage/kit.sql');
+
+statement ok
+DECLARE DATASET f1 SET (purpose: 'inputs');
 
 statement ok
 USE f1;
@@ -54,19 +57,19 @@ DECLARE ASPECT race_count WITH $${"title": "Races"}$$ AS VIEW;
 statement ok
 GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1"}$$;
 
-# a check over a metric that reads one property, and one that reads every row it can see
+# a check over a metric that reads one property on its sources, and one that reads its definition
 
 statement ok
 DECLARE ASPECT role_check WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
-DECLARE FUNCTION role_check FOR GLOBAL AS $$ SELECT count(*) AS n FROM glossql_glossary(split_part($subject, '.', 1), 'role', false) WHERE value IS NOT NULL $$ RETURNS role_check;
+DECLARE FUNCTION role_check FOR GLOBAL AS $$ SELECT count(value) AS n FROM annotations('role', 'its sources') $$ RETURNS role_check;
 
 statement ok
-DECLARE ASPECT seen WITH $${"type": "string"}$$ AS MEASUREMENT ON TABLE;
+DECLARE ASPECT scans WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
-DECLARE FUNCTION seen FOR GLOBAL AS $$ SELECT coalesce(string_agg(DISTINCT subject || '::' || aspect, ',' ORDER BY subject || '::' || aspect), '') AS s FROM main.glossary $$ RETURNS seen;
+DECLARE FUNCTION scans FOR GLOBAL AS $$ SELECT coalesce(sum(len(reads)), 0) AS n FROM definition('itself') $$ RETURNS scans;
 
 statement ok
 GLOSS role ON results.points AS $${"value": "measure"}$$;
@@ -75,36 +78,30 @@ statement ok
 GLOSS meaning ON circuits.name AS $${"text": "the circuit's name"}$$;
 
 query TTTTT
-SELECT role_check() FROM points;
+SELECT role_check(), scans() FROM points;
 ----
 role_check	f1.points	role_check	1	true
+scans	f1.points	scans	2	true
 
 query TTTTT
-SELECT role_check() FROM race_count;
+SELECT role_check(), scans() FROM race_count;
 ----
 role_check	f1.race_count	role_check	0	true
+scans	f1.race_count	scans	1	true
 
-# --- a function sees the rows of its subject's closure and no other: the metric's definition, its
-# columns, what it scans and joins on. The other metric's definition and the circuit are outside it
+# the inputs: one per read, named by the read function, its what and its where, and the declarations
 
-query TTTTT
-SELECT seen() FROM points;
+query T
+SELECT string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot) WHERE m.function = 'role_check' AND m.subject = 'f1.points';
 ----
-seen	f1.points	seen	"f1.results.points::role,f1::points"	true
+annotations(role, its sources),function,property
 
-query TTTTT
-SELECT seen() FROM race_count;
+query T
+SELECT string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot) WHERE m.function = 'scans' AND m.subject = 'f1.points';
 ----
-seen	f1.race_count	seen	"f1::race_count"	true
+definition(definition, itself),function,property
 
-# the dataset's closure is everything in it
-
-query TTTTT
-SELECT seen() FROM f1;
-----
-seen	f1	seen	"f1.circuits.name::meaning,f1.results.points::role,f1::points,f1::race_count"	true
-
-# --- an annotation outside the closure leaves the results current: nothing is computed
+# --- an annotation outside the place leaves the results current: nothing is computed
 
 statement ok
 GLOSS role ON circuits.name AS $${"value": "attribute"}$$;
@@ -113,48 +110,39 @@ statement ok
 GLOSS meaning ON circuits.circuit_id AS $${"text": "the key"}$$;
 
 query TTTTT
-SELECT role_check(), seen() FROM points;
+SELECT role_check(), scans() FROM points;
 ----
 role_check	f1.points	role_check	1	false
-seen	f1.points	seen	"f1.results.points::role,f1::points"	false
+scans	f1.points	scans	2	false
 
-query TTTTT
-SELECT role_check(), seen() FROM race_count;
-----
-role_check	f1.race_count	role_check	0	false
-seen	f1.race_count	seen	"f1::race_count"	false
-
-# a declaration of a property no closure holds leaves them current too
+# a declaration of a property no read names leaves them current too
 
 statement ok
 DECLARE ASPECT unrelated WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
-query TTTTT
-SELECT role_check() FROM points;
+query I
+SELECT count(*) FROM glossql_outdated();
 ----
-role_check	f1.points	role_check	1	false
+0
 
-# --- an annotation inside a closure outdates the results whose closure holds it, and no other: races.date
-# is scanned by both metrics, results.race_id by points alone, and another property than role leaves role_check current
+# --- an annotation inside the place outdates the results whose read names it, and no other: races.date
+# is a source of both metrics, results.race_id of points alone, and another property than role leaves role_check current
 
 statement ok
 GLOSS meaning ON results.race_id AS $${"text": "the race"}$$;
 
-query TTT
-SELECT subject, aspect, current FROM GLOSSARY(f1, all => true) WHERE actor = 'function' AND subject IN ('f1.points', 'f1.race_count') ORDER BY ALL;
+query I
+SELECT count(*) FROM glossql_outdated();
 ----
-f1.points	role_check	true
-f1.points	seen	false
-f1.race_count	role_check	true
-f1.race_count	seen	true
+0
 
 statement ok
 GLOSS role ON results.race_id AS $${"value": "key"}$$;
 
-query TTTTT
-SELECT role_check() FROM race_count;
+query TTTT
+SELECT function, subject, input, reason FROM glossql_outdated() ORDER BY ALL;
 ----
-role_check	f1.race_count	role_check	0	false
+role_check	f1.points	annotations(role, its sources)	changed
 
 query TTTTT
 SELECT role_check() FROM points;
@@ -164,17 +152,18 @@ role_check	f1.points	role_check	2	true
 statement ok
 GLOSS role ON races.date AS $${"value": "timestamp"}$$;
 
-query TTTTT
-SELECT role_check() FROM points;
+query TTT
+SELECT function, subject, input FROM glossql_outdated() ORDER BY ALL;
 ----
-role_check	f1.points	role_check	3	true
+role_check	f1.points	annotations(role, its sources)
+role_check	f1.race_count	annotations(role, its sources)
 
 query TTTTT
 SELECT role_check() FROM race_count;
 ----
 role_check	f1.race_count	role_check	1	true
 
-# --- what the rows hold, not when they were written: a change undone makes the result current again
+# --- what the reads return, not when it was written: a change undone makes the result current again
 
 statement ok
 GLOSS role ON races.date AS $${"value": "attribute"}$$;
@@ -192,10 +181,24 @@ SELECT current FROM GLOSSARY(race_count, all => true) WHERE aspect = 'role_check
 ----
 true
 
-query TTTTT
-SELECT role_check() FROM race_count;
+# --- the definition a body reads is the view's SQL and what it reads: an assumption added leaves it
+# current; other SQL outdates it, and a reader of its sources too, since it reads race_id now
+
+statement ok
+GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1", "assumptions": [{"assumption": "a race counts once"}]}$$;
+
+query TT
+SELECT function, input FROM glossql_outdated() WHERE subject = 'f1.race_count' ORDER BY ALL;
 ----
-role_check	f1.race_count	role_check	1	false
+
+statement ok
+GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(DISTINCT race_id) AS value FROM f1.races GROUP BY 1"}$$;
+
+query TT
+SELECT function, input FROM glossql_outdated() WHERE subject = 'f1.race_count' ORDER BY ALL;
+----
+role_check	annotations(role, its sources)
+scans	definition(definition, itself)
 
 # --- a retyped column outdates the readers of its annotation, through the annotation's state: a reader of
 # role over the dataset holds while a column nobody annotated is retyped, and is out of date once the
@@ -205,7 +208,7 @@ statement ok
 DECLARE ASPECT role_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
 
 statement ok
-DECLARE FUNCTION role_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM glossql_glossary($subject, 'role', true) $$ RETURNS role_rows;
+DECLARE FUNCTION role_rows FOR GLOBAL AS $$ SELECT count(value) FILTER (WHERE state = 'current') AS n FROM annotations('role', 'the dataset') $$ RETURNS role_rows;
 
 query TTTTT
 SELECT role_rows() FROM f1;
@@ -231,10 +234,9 @@ f1.results.points	stale
 query TTTTT
 SELECT role_rows() FROM f1;
 ----
-role_rows	f1	role_rows	4	true
+role_rows	f1	role_rows	3	true
 
-# --- a result read within the closure: a reader of a column measurement is out of date when the one it read
-# is, and an out-of-date one outside its closure leaves it current
+# --- a result a read returned: its reader is out of date while it is, and a result outside the place leaves the reader current
 
 statement ok
 DECLARE ASPECT width WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
@@ -246,7 +248,7 @@ statement ok
 DECLARE ASPECT widths WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
-DECLARE FUNCTION widths FOR GLOBAL AS $$ SELECT coalesce(sum(value::INTEGER), 0) AS n FROM main.measurements WHERE function = 'width' $$ RETURNS widths;
+DECLARE FUNCTION widths FOR GLOBAL AS $$ SELECT coalesce(sum(value::INTEGER), 0) AS n FROM results('width', 'its sources') $$ RETURNS widths;
 
 statement ok
 SELECT width() FROM results.points;
@@ -275,12 +277,13 @@ widths	f1.points	widths	10	false
 statement ok
 INSERT INTO f1.results VALUES (0, 0, 11);
 
-query T
-SELECT current FROM GLOSSARY(points, all => true) WHERE aspect = 'widths';
+query TTT
+SELECT function, input, reason FROM glossql_outdated() WHERE subject = 'f1.points' AND function = 'widths';
 ----
-false
+widths	results(width, its sources)	outdated
 
-# --- a function reads the rows about subjects through the catalog's views, never past them
+# --- a body that reads the catalog past the read functions: what it read cannot be told again, so the
+# result is out of date once it is stored, and a call computes it again
 
 statement ok
 DECLARE ASPECT raw_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
@@ -288,7 +291,18 @@ DECLARE ASPECT raw_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 statement ok
 DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM __ducklake_metadata_ws.main.glossql_glossary $$ RETURNS raw_rows;
 
-statement error
+statement ok
 SELECT raw_rows() FROM points;
+
+query TT
+SELECT input, reason FROM glossql_outdated() WHERE function = 'raw_rows';
 ----
-past the catalog's views
+unnamed: main.glossql_glossary	changed
+
+statement ok
+SELECT raw_rows() FROM points;
+
+query I
+SELECT count(*) FROM measurements_history WHERE function = 'raw_rows';
+----
+2

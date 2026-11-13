@@ -36,6 +36,13 @@ SELECT DISTINCT dataset_name AS "from", dataset_name || '.' || table_name AS "to
 UNION ALL SELECT dataset_name || '.' || table_name, dataset_name || '.' || table_name || '.' || column_name, 'contains' FROM cols
 UNION ALL SELECT dataset_name, left_side || ' ' || op || ' ' || right_side, 'contains' FROM main.relationships WHERE dataset = dataset_name;
 
+-- view_bodies(dataset): the annotation that defines each view of a
+-- dataset, (view, body), the newest on the dataset
+CREATE OR REPLACE MACRO main.view_bodies(dataset_name) AS TABLE
+SELECT aspect AS view, body FROM main.glossary
+WHERE dataset = dataset_name AND subject = dataset_name AND aspect IN (SELECT name FROM main.aspects WHERE kind = 'VIEW')
+QUALIFY row_number() OVER (PARTITION BY aspect ORDER BY begin_snapshot DESC) = 1;
+
 CREATE OR REPLACE MACRO main.lineage(dataset_name) AS TABLE
 WITH cols AS (SELECT table_name, column_name, table_type FROM glossql_columns(dataset_name)),
 views AS (SELECT DISTINCT table_name AS name FROM cols WHERE table_type = 'VIEW'),
@@ -49,7 +56,7 @@ sides AS (
   FROM (SELECT rel, left_side AS side FROM rels UNION ALL SELECT rel, right_side FROM rels)),
 definitions AS (
   SELECT view AS name, json_extract_string(body, '$.sql') AS sql
-  FROM glossql_views_definitions(dataset_name) WHERE view IN (SELECT name FROM views)),
+  FROM main.view_bodies(dataset_name) WHERE view IN (SELECT name FROM views)),
 named AS (
   SELECT d.name, unnest(json_extract_string(json_serialize_sql(d.sql), '$..table_name')) AS other
   FROM definitions d WHERE d.sql IS NOT NULL)
@@ -90,44 +97,84 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --   'the dataset'              the subject's dataset and every asset in it
 -- Any other where names no asset.
 --===------------------------------------------------------------------===--
--- Each where is a macro of its own, place_<where>(), and place() plans the
--- one its constant names (query()), so a read plans no walk it does not take.
-CREATE OR REPLACE MACRO main.place_itself() AS TABLE SELECT main.read_subject() AS asset;
+-- Each where is a macro of its own over the whole dataset, place_<where>
+-- (dataset): (subject, asset) for every subject at once, so that the
+-- engine evaluates the reads of every stored result in one pass
+-- (places()); 'the dataset' is anchored at the dataset. place() plans the
+-- one its constant names (query()) for the running function's subject.
+CREATE OR REPLACE MACRO main.place_columns(dataset_name) AS TABLE
+SELECT "from" AS subject, "to" AS asset FROM main.contains_edges(dataset_name);
 
-CREATE OR REPLACE MACRO main.place_columns() AS TABLE
-SELECT "to" AS asset FROM main.contains_edges(split_part(main.read_subject(), '.', 1)) WHERE "from" = main.read_subject();
+CREATE OR REPLACE MACRO main.place_sources(dataset_name) AS TABLE
+SELECT "from" AS subject, "to" AS asset FROM main.lineage(dataset_name) WHERE kind = 'reads';
 
-CREATE OR REPLACE MACRO main.place_sources() AS TABLE
-SELECT "to" AS asset FROM main.lineage(split_part(main.read_subject(), '.', 1)) WHERE "from" = main.read_subject() AND kind = 'reads';
+CREATE OR REPLACE MACRO main.place_joined(dataset_name) AS TABLE
+SELECT DISTINCT dataset_name || '.' || j.view AS subject, side AS asset
+FROM glossql_views_joins(dataset_name) j, unnest([j.left_column, j.right_column]) u(side);
 
-CREATE OR REPLACE MACRO main.place_joined() AS TABLE
-SELECT DISTINCT side AS asset FROM glossql_views_joins(split_part(main.read_subject(), '.', 1)) j, unnest([j.left_column, j.right_column]) u(side)
-WHERE split_part(main.read_subject(), '.', 1) || '.' || j.view = main.read_subject();
+CREATE OR REPLACE MACRO main.place_relationships(dataset_name) AS TABLE
+WITH walked AS MATERIALIZED (SELECT * FROM main.lineage(dataset_name) WHERE kind IN ('reads', 'relates')),
+endpoints AS (SELECT "from" AS rel, "to" AS endpoint, regexp_extract("to", '^([^.]+\.[^.]+)\.', 1) AS t FROM walked WHERE kind = 'relates'),
+sources AS (SELECT "from" AS subject, "to" AS t FROM walked WHERE kind = 'reads' AND main.asset_grain("to") = 'TABLE'),
+rels AS (SELECT DISTINCT rel FROM endpoints)
+SELECT dataset_name AS subject, rel AS asset FROM rels
+UNION SELECT rel, rel FROM rels
+UNION SELECT s.subject, r.rel FROM (SELECT DISTINCT subject FROM sources) s, rels r
+      WHERE NOT EXISTS (SELECT 1 FROM endpoints x WHERE x.rel = r.rel
+                        AND NOT EXISTS (SELECT 1 FROM sources y WHERE y.subject = s.subject AND y.t = x.t))
+UNION SELECT u.a, e.rel FROM endpoints e, unnest([e.t, e.endpoint]) u(a) WHERE u.a NOT IN (SELECT subject FROM sources);
 
-CREATE OR REPLACE MACRO main.place_relationships() AS TABLE
-WITH here AS (SELECT main.read_subject() AS subject, split_part(main.read_subject(), '.', 1) AS dataset_name),
-walked AS MATERIALIZED (SELECT * FROM main.lineage(split_part(main.read_subject(), '.', 1)) WHERE kind IN ('reads', 'relates')),
-source_tables AS (SELECT walked."to" AS t FROM walked, here WHERE walked."from" = here.subject AND walked.kind = 'reads' AND main.asset_grain(walked."to") = 'TABLE'),
-endpoints AS (SELECT walked."from" AS rel, walked."to" AS endpoint, regexp_extract(walked."to", '^([^.]+\.[^.]+)\.', 1) AS t FROM walked WHERE walked.kind = 'relates')
-SELECT DISTINCT rel AS asset FROM endpoints, here
-WHERE CASE WHEN here.subject = here.dataset_name THEN true
-           WHEN main.asset_grain(here.subject) = 'RELATIONSHIP' THEN rel = here.subject
-           WHEN EXISTS (FROM source_tables)
-             THEN NOT EXISTS (SELECT 1 FROM endpoints x WHERE x.rel = endpoints.rel AND x.t NOT IN (FROM source_tables))
-           ELSE EXISTS (SELECT 1 FROM endpoints x WHERE x.rel = endpoints.rel AND here.subject IN (x.t, x.endpoint)) END;
+CREATE OR REPLACE MACRO main.place_metric(dataset_name) AS TABLE
+SELECT "from" AS subject, "to" AS asset FROM main.lineage(dataset_name) WHERE kind = 'plans';
 
-CREATE OR REPLACE MACRO main.place_metric() AS TABLE
-SELECT "to" AS asset FROM main.lineage(split_part(main.read_subject(), '.', 1)) WHERE "from" = main.read_subject() AND kind = 'plans';
+CREATE OR REPLACE MACRO main.place_dataset(dataset_name) AS TABLE
+SELECT dataset_name AS subject, dataset_name AS asset
+UNION SELECT dataset_name, "to" FROM main.contains_edges(dataset_name);
 
-CREATE OR REPLACE MACRO main.place_dataset() AS TABLE
-SELECT split_part(main.read_subject(), '.', 1) AS asset
-UNION ALL SELECT DISTINCT "to" FROM main.contains_edges(split_part(main.read_subject(), '.', 1));
+-- places(dataset): every place of every subject of a dataset, (subject,
+-- where, asset); 'itself' is the subject and has no row here
+CREATE OR REPLACE MACRO main.places(dataset_name) AS TABLE
+SELECT subject, 'its columns' AS "where", asset FROM main.place_columns(dataset_name)
+UNION ALL SELECT subject, 'its sources', asset FROM main.place_sources(dataset_name)
+UNION ALL SELECT subject, 'the columns it joins on', asset FROM main.place_joined(dataset_name)
+UNION ALL SELECT subject, 'its relationships', asset FROM main.place_relationships(dataset_name)
+UNION ALL SELECT subject, 'its metric', asset FROM main.place_metric(dataset_name)
+UNION ALL SELECT subject, 'the dataset', asset FROM main.place_dataset(dataset_name);
 
 CREATE OR REPLACE MACRO main.place(where_) AS TABLE
-FROM query(CASE where_ WHEN 'itself' THEN 'FROM main.place_itself()' WHEN 'its columns' THEN 'FROM main.place_columns()'
-                       WHEN 'its sources' THEN 'FROM main.place_sources()' WHEN 'the columns it joins on' THEN 'FROM main.place_joined()'
-                       WHEN 'its relationships' THEN 'FROM main.place_relationships()' WHEN 'its metric' THEN 'FROM main.place_metric()'
-                       WHEN 'the dataset' THEN 'FROM main.place_dataset()' ELSE 'SELECT NULL::VARCHAR AS asset WHERE false' END);
+FROM query(CASE where_
+  WHEN 'itself' THEN 'SELECT main.read_subject() AS asset'
+  WHEN 'its columns' THEN 'SELECT asset FROM main.place_columns(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
+  WHEN 'its sources' THEN 'SELECT asset FROM main.place_sources(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
+  WHEN 'the columns it joins on' THEN 'SELECT asset FROM main.place_joined(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
+  WHEN 'its relationships' THEN 'SELECT asset FROM main.place_relationships(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
+  WHEN 'its metric' THEN 'SELECT asset FROM main.place_metric(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
+  WHEN 'the dataset' THEN 'SELECT asset FROM main.place_dataset(split_part(main.read_subject(), ''.'', 1))'
+  ELSE 'SELECT NULL::VARCHAR AS asset WHERE false' END);
+
+-- tables_read(dataset): the relations of the lake whose rows each
+-- asset's data is, (asset, asset_kind, table_name): a table its own; a
+-- view itself, the views it reads and the tables it scans; a column those
+-- of its table or view; a relationship those of its columns; the dataset
+-- every table. What a stored result that read data depends on: each at
+-- DuckLake's version of it, a view's the definition it holds
+CREATE OR REPLACE MACRO main.tables_read(dataset_name) AS TABLE
+WITH cols AS (SELECT table_name, column_name, table_type FROM glossql_columns(dataset_name)),
+tables AS (SELECT DISTINCT dataset_name || '.' || table_name AS t FROM cols WHERE table_type = 'BASE TABLE'),
+views AS (SELECT DISTINCT dataset_name || '.' || table_name AS v FROM cols WHERE table_type = 'VIEW'),
+lin AS MATERIALIZED (FROM main.lineage(dataset_name)),
+relations AS (
+  SELECT t AS asset, 'table' AS asset_kind, t AS table_name FROM tables
+  UNION SELECT v, 'view', v FROM views
+  UNION SELECT dataset_name || '.' || s.view, 'view', s.table_name FROM glossql_views_scans(dataset_name) s
+  UNION SELECT l."from", 'view', l."to" FROM lin l WHERE l.kind = 'reads' AND l."to" IN (SELECT v FROM views))
+SELECT asset, asset_kind, table_name FROM relations
+UNION ALL SELECT dataset_name || '.' || c.table_name || '.' || c.column_name, 'column', r.table_name
+          FROM cols c JOIN relations r ON r.asset = dataset_name || '.' || c.table_name
+UNION ALL SELECT DISTINCT l."from", 'relationship', r.table_name
+          FROM lin l JOIN relations r ON r.asset = regexp_extract(l."to", '^([^.]+\.[^.]+)\.', 1)
+          WHERE l.kind = 'relates'
+UNION ALL SELECT dataset_name, 'dataset', t FROM tables;
 
 --===------------------------------------------------------------------===--
 -- annotations(property, where): one row per asset of the place the
@@ -175,41 +222,40 @@ LEFT JOIN main.measurements m
   ON m.dataset = split_part(main.read_subject(), '.', 1) AND m.function = function_ AND m.subject = p.asset;
 
 --===------------------------------------------------------------------===--
--- definition(where): one row per view of the place: view (its path), kind
--- (the property's x-kind), plan_of, covers, the annotation that defines it
--- (body, sql, stopped), its columns with what each is computed from
--- (name, position, derivation, shape), what it reads of each loaded table
--- (table_name, columns) and its joins (left_column, right_column,
--- left_unique, right_unique).
+-- definition(where): one row per view of the place, its definition: view
+-- (its path), kind (the property's x-kind), plan_of, covers, the SQL of
+-- the annotation that defines it (sql, or stopped), its columns with what
+-- each is computed from (name, position, derivation, shape), what it
+-- reads of each loaded table (table_name, columns) and its joins
+-- (left_column, right_column, left_unique, right_unique). The rest of the
+-- annotation, its assumptions, is no part of the definition a body reads.
+-- definitions(dataset) is the same for every view of a dataset at once.
 --===------------------------------------------------------------------===--
-CREATE OR REPLACE MACRO main.definition(where_) AS TABLE
-WITH cols AS (FROM glossql_columns(split_part(main.read_subject(), '.', 1))),
-v AS (
-  SELECT DISTINCT p.asset AS view, split_part(p.asset, '.', 2) AS name
-  FROM main.place(where_) p
-  WHERE main.asset_grain(p.asset) = 'TABLE'
-    AND split_part(p.asset, '.', 2) IN (SELECT name FROM main.aspects WHERE kind = 'VIEW')),
-lin AS (FROM glossql_views_lineage(split_part(main.read_subject(), '.', 1))),
-sc AS (FROM glossql_views_scans(split_part(main.read_subject(), '.', 1))),
-jo AS (FROM glossql_views_joins(split_part(main.read_subject(), '.', 1))),
-bodies AS (
-  SELECT view AS name, body FROM glossql_views_definitions(split_part(main.read_subject(), '.', 1))
-  WHERE view IN (SELECT name FROM v))
-SELECT v.view,
+CREATE OR REPLACE MACRO main.definitions(dataset_name) AS TABLE
+WITH cols AS (FROM glossql_columns(dataset_name)),
+lin AS (FROM glossql_views_lineage(dataset_name)),
+sc AS (FROM glossql_views_scans(dataset_name)),
+jo AS (FROM glossql_views_joins(dataset_name)),
+bodies AS (FROM main.view_bodies(dataset_name))
+SELECT dataset_name || '.' || a.name AS view,
        json_extract_string(a.schema, '$.x-kind') AS kind,
        json_extract_string(a.schema, '$.x-plan-of') AS plan_of,
        json_extract_string(a.schema, '$.x-covers') AS covers,
-       b.body,
        json_extract_string(b.body, '$.sql') AS sql,
        json_extract_string(b.body, '$.stopped') AS stopped,
        (SELECT list({'name': c.column_name, 'position': c.ordinal_position, 'derivation': l.derivation, 'shape': l.shape}
                     ORDER BY c.ordinal_position)
         FROM cols c LEFT JOIN lin l ON l.view = c.table_name AND l."column" = c.column_name
-        WHERE c.table_name = v.name) AS columns,
+        WHERE c.table_name = a.name) AS columns,
        (SELECT list({'table_name': s.table_name, 'columns': s.columns} ORDER BY s.table_name)
-        FROM sc s WHERE s.view = v.name) AS reads,
+        FROM sc s WHERE s.view = a.name) AS reads,
        (SELECT list({'left_column': j.left_column, 'right_column': j.right_column,
                      'left_unique': j.left_unique, 'right_unique': j.right_unique} ORDER BY j.left_column, j.right_column)
-        FROM jo j WHERE j.view = v.name) AS joins
-FROM v JOIN main.aspects a ON a.name = v.name AND a.kind = 'VIEW' LEFT JOIN bodies b ON b.name = v.name
-ORDER BY v.view;
+        FROM jo j WHERE j.view = a.name) AS joins
+FROM main.aspects a LEFT JOIN bodies b ON b.view = a.name
+WHERE a.kind = 'VIEW';
+
+CREATE OR REPLACE MACRO main.definition(where_) AS TABLE
+SELECT d.* FROM (SELECT DISTINCT asset FROM main.place(where_)) p
+JOIN main.definitions(split_part(main.read_subject(), '.', 1)) d ON d.view = p.asset
+ORDER BY d.view;

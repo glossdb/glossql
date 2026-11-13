@@ -19,6 +19,10 @@ USE ws;
 statement ok
 PRAGMA glossql;
 
+# a stored result's reads are walked over the lineage kit's places
+statement ok
+FROM glossql_kit('kits/lineage/kit.sql');
+
 statement ok
 DECLARE DATASET fin SET (purpose: 'tests');
 
@@ -428,20 +432,20 @@ SELECT value, test_state, state FROM GLOSSARY(orders::tie_out);
 ----
 NULL	red	conflict
 
-# --- a measurement that reads other measurements is served while they hold and computes once another function stores a row; its own rows are never its input (SPEC §6)
+# --- a measurement that reads another function's results is served while they hold, and computes once that function stores another value (SPEC §6)
 
 statement ok
 DECLARE ASPECT tie_out_count WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
-DECLARE FUNCTION tie_out_count FOR GLOBAL AS $$ SELECT count(*) AS n, 'stored tie-outs' AS what FROM main.measurements_history WHERE function = 'tie_out_check' $$ RETURNS tie_out_count;
+DECLARE FUNCTION tie_out_count FOR GLOBAL AS $$ SELECT count(value) AS n, max(value->>'breach_rate') AS what FROM results('tie_out_check', 'itself') $$ RETURNS tie_out_count;
 
 query TTTTT
 SELECT tie_out_count() FROM orders;
 ----
-tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"stored tie-outs"}	true
+tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"1.0"}	true
 
-# the reader read the function it filtered to, not the whole relation: another function's result
+# the reader read the function it named, not every result: another function's result
 # on the same subject leaves it current
 statement ok
 DECLARE ASPECT order_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
@@ -455,7 +459,7 @@ SELECT order_rows() FROM orders;
 query TTTTT
 SELECT tie_out_count() FROM orders;
 ----
-tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"stored tie-outs"}	false
+tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"1.0"}	false
 
 statement ok
 DECLARE FUNCTION tie_out_check FOR GLOBAL AS $$ SELECT 0.5 AS breach_rate, 'every line against its order' AS outcome $$ RETURNS tie_out;
@@ -466,9 +470,9 @@ SELECT tie_out_check() FROM orders;
 query TTTTT
 SELECT tie_out_count() FROM orders;
 ----
-tie_out_count	fin.orders	tie_out_count	{"n":2,"what":"stored tie-outs"}	true
+tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"0.5"}	true
 
 query TTTTT
 SELECT tie_out_count() FROM orders;
 ----
-tie_out_count	fin.orders	tie_out_count	{"n":2,"what":"stored tie-outs"}	false
+tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"0.5"}	false

@@ -38,7 +38,7 @@ query TTI
 SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
-lineage	kits/lineage/kit.sql	17
+lineage	kits/lineage/kit.sql	20
 quality	kits/quality/kit.sql	23
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
@@ -209,12 +209,12 @@ FROM main.measurements WHERE function = 'relationship_coherence' ORDER BY subjec
 fin.payments.city -> fin.payments.country	true	10	NULL
 fin.payments.invoice_id -> fin.invoices.invoice_id	true	2	3
 
-# the bind read the catalog's edges beside the plan, and the row names them with the tables the edge reads
+# its inputs: the data of the relationship, its two tables, and its own declarations
 query T
-SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot AND i.input <> 'closure') FROM main.measurements m
+SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements m
 WHERE function = 'relationship_coherence' AND subject = 'fin.payments.invoice_id -> fin.invoices.invoice_id';
 ----
-fin.invoices,fin.payments,main.relationships
+data(data, itself),function,property
 
 # over a dataset it computes nothing: the check is one relationship's
 statement ok
@@ -549,7 +549,7 @@ DECLARE RELATIONSHIP postings.account_id -> accounts.id;
 statement ok
 DECLARE RELATIONSHIP balances.account_id -> accounts.id;
 
-# a result on one relationship, then a third relationship declared: the catalog rows it read moved, and the repeat computes
+# a result on one relationship, then a third relationship declared: it reads its own relationship's tables, so the repeat serves
 statement ok
 SELECT relationship_coherence() FROM postings.account_id -> accounts.id;
 
@@ -564,7 +564,7 @@ SELECT json_extract_string(value, '$.relationship'),
        (SELECT count(*) FROM main.measurements_history WHERE function = 'relationship_coherence' AND dataset = 'beh')
 FROM main.measurements WHERE function = 'relationship_coherence' AND dataset = 'beh';
 ----
-beh.postings.account_id -> beh.accounts.id	2
+beh.postings.account_id -> beh.accounts.id	1
 
 # no role glossed on the event tables: every anchor abstains and names the gloss to make
 query TTT

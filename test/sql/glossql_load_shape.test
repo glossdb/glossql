@@ -1,5 +1,5 @@
 # name: test/sql/glossql_load_shape.test
-# description: a load in place, replace or merge, of a table whose columns did not change leaves the lake's shape where it was, and a result that read the shape stays current
+# description: a load in place, replace or merge, of a table whose columns did not change leaves a result that read the table's columns current; a load that changes them, or a view the dataset did not have, outdates the readers of the place it changed
 # group: [sql]
 
 require glossql
@@ -19,6 +19,10 @@ USE ws;
 statement ok
 PRAGMA glossql;
 
+# a stored result's reads are walked over the lineage kit's places
+statement ok
+FROM glossql_kit('kits/lineage/kit.sql');
+
 statement ok
 DECLARE DATASET fin SET (purpose: 'load shape');
 
@@ -37,80 +41,85 @@ DECLARE RECIPE whole ON fin FROM files AS $$SELECT id::INTEGER AS id, segment FR
 statement ok
 DECLARE RECIPE keyed ON fin FROM files SET (key: id) AS $$SELECT id::INTEGER AS id, segment FROM read_csv('load_shape.csv')$$;
 
-# a result that reads the column listing reads the lake's shape
 statement ok
-DECLARE ASPECT width WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+# a result that reads the notes on the table's columns, and one that reads every asset of the dataset
+statement ok
+DECLARE ASPECT width WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
-DECLARE FUNCTION width FOR fin AS $$ SELECT count(*) AS n FROM glossql_columns('fin.whole') $$ RETURNS width;
+DECLARE FUNCTION width FOR fin AS $$ SELECT count(*) AS n FROM annotations('note', 'its columns') $$ RETURNS width;
+
+statement ok
+DECLARE ASPECT assets WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
+
+statement ok
+DECLARE FUNCTION assets FOR fin AS $$ SELECT count(*) AS n FROM annotations('note', 'the dataset') $$ RETURNS assets;
 
 query TTTTT
-SELECT width() FROM whole.id;
+SELECT width() FROM whole;
 ----
-width	fin.whole.id	width	2	true
-
-query T
-SELECT list_contains(list(i.input), 'lake.shape') FROM measurements m JOIN inputs i USING (begin_snapshot) WHERE m.function = 'width';
-----
-true
+width	fin.whole	width	2	true
 
 statement ok
-SET VARIABLE shape = (SELECT version FROM glossql_parts() WHERE name = 'lake.shape');
+SELECT assets() FROM fin;
+
+query T
+SELECT input FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'width' AND input LIKE 'annotations%';
+----
+annotations(note, its columns)
 
 # --- a replace load of the same columns
 
 statement ok
 IMPORT whole;
 
-query T
-SELECT version = getvariable('shape') FROM glossql_parts() WHERE name = 'lake.shape';
-----
-true
-
 query TTTTT
-SELECT width() FROM whole.id;
+SELECT width() FROM whole;
 ----
-width	fin.whole.id	width	2	false
+width	fin.whole	width	2	false
 
 # --- a merge load of the same columns
 
 statement ok
 IMPORT keyed;
 
+query TTTTT
+SELECT width() FROM whole;
+----
+width	fin.whole	width	2	false
+
 query T
-SELECT version = getvariable('shape') FROM glossql_parts() WHERE name = 'lake.shape';
+SELECT current FROM GLOSSARY(fin, all => true) WHERE aspect = 'assets';
 ----
 true
 
-query TTTTT
-SELECT width() FROM whole.id;
-----
-width	fin.whole.id	width	2	false
-
-# --- a load that changes the columns moves the shape, and the result is computed again
+# --- a load that changes the columns changes the place: the result is computed again
 
 statement ok
 DECLARE RECIPE whole ON fin FROM files AS $$SELECT id::INTEGER AS id, segment, id * 2 AS twice FROM read_csv('load_shape.csv')$$;
 
-query T
-SELECT version = getvariable('shape') FROM glossql_parts() WHERE name = 'lake.shape';
+query TT
+SELECT function, input FROM glossql_outdated() ORDER BY ALL;
 ----
-false
+assets	annotations(note, the dataset)
+width	annotations(note, its columns)
 
 query TTTTT
-SELECT width() FROM whole.id;
+SELECT width() FROM whole;
 ----
-width	fin.whole.id	width	3	true
+width	fin.whole	width	3	true
 
 statement ok
-SET VARIABLE shape = (SELECT version FROM glossql_parts() WHERE name = 'lake.shape');
+SELECT assets() FROM fin;
 
-# --- a view the lake did not have moves the shape
+# --- a view the dataset did not have is an asset of the dataset: a reader of every asset is out of date, a reader of the table's columns is not
 
 statement ok
 CREATE VIEW fin.halves AS SELECT id FROM fin.whole WHERE id % 2 = 0;
 
-query T
-SELECT version = getvariable('shape') FROM glossql_parts() WHERE name = 'lake.shape';
+query TT
+SELECT function, input FROM glossql_outdated() ORDER BY ALL;
 ----
-false
+assets	annotations(note, the dataset)

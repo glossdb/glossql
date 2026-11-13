@@ -19,6 +19,10 @@ USE ws;
 statement ok
 PRAGMA glossql;
 
+# a stored result's reads are walked over the lineage kit's places
+statement ok
+FROM glossql_kit('kits/lineage/kit.sql');
+
 statement ok
 DECLARE DATASET fin SET (purpose: 'kits');
 
@@ -43,9 +47,10 @@ SELECT statement, (outcome) IS NOT NULL FROM main.loaded WHERE statement LIKE 'D
 DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR value_entropy THRESHOLD 0.7;	true
 
 query TTI
-SELECT name, location, statements FROM kits;
+SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
+lineage	kits/lineage/kit.sql	20
 
 query I
 SELECT count(*) FROM aspects;
@@ -59,7 +64,7 @@ FROM glossql_kit('kits/kpi/kit.sql');
 kpi	current
 
 query II
-SELECT count(*), length(max(hash)) FROM kits;
+SELECT count(*), length(max(hash)) FROM kits WHERE name = 'kpi';
 ----
 1	32
 
@@ -247,9 +252,10 @@ SELECT count(*) FROM (FROM glossql_kit('kits/kpi/kit.sql')) WHERE outcome = 'cur
 0
 
 query TI
-SELECT name, count(*) FROM kits GROUP BY name;
+SELECT name, count(*) FROM kits GROUP BY name ORDER BY name;
 ----
 kpi	1
+lineage	1
 
 # --- declared_by: a kit's declarations name the kit, the connection's own name its actor
 

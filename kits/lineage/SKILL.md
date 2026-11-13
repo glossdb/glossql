@@ -41,7 +41,7 @@ says where. Both are constants.
 |---|---|
 | `annotations(property, where)` | `asset`, `property`, `value`, `state`; state `missing` where nobody annotated the asset. A property declared on tables returns no row for a column. `'x-kind <kind>'` as the property reads every property declared with that `x-kind`, a scenario's among them: a person's newest annotation, else an agent's |
 | `results(function, where)` | `asset`, `function`, `value`, `error`; both empty where no result is stored |
-| `definition(where)` | one row per view: `view`, `kind`, `plan_of`, `covers`, `body`, `sql`, `stopped`, `columns`, `reads`, `joins` |
+| `definition(where)` | one row per view: `view`, `kind`, `plan_of`, `covers`, `sql`, `stopped`, `columns`, `reads`, `joins`. The view's SQL and what it reads, not the rest of the annotation that defines it |
 
 The places, walked from the function's subject:
 
@@ -82,4 +82,14 @@ has `constant` false.
 
 ```sql
 SELECT name, reads FROM functions WHERE name = 'additivity_check';
+```
+
+When the engine stores a result, it stores with it what each of
+those reads returned for the subject, as a digest, one row of
+`inputs` per read. The result is current while each read returns the
+same and no result it read is out of date. `glossql_outdated()` names
+the read that differs:
+
+```sql
+SELECT function, subject, input, reason FROM glossql_outdated();
 ```

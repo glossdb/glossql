@@ -19,6 +19,10 @@ USE ws;
 statement ok
 PRAGMA glossql;
 
+# a stored result's reads are walked over the lineage kit's places
+statement ok
+FROM glossql_kit('kits/lineage/kit.sql');
+
 statement ok
 DECLARE DATASET fin SET (purpose: 'views');
 
@@ -83,12 +87,12 @@ SELECT min_max() FROM spend.value;
 ----
 min_max	fin.spend.value	min_max	{"min":1.0,"max":2.0}	true
 
-# its reads name the view beside the table behind it, and its inputs carry the view at the snapshot that defined it
+# it read the data of its subject: the view at the definition it holds, and the table behind it
 
-query TI
-SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot), (SELECT count(*) FROM inputs i, __ducklake_metadata_ws.main.ducklake_view v WHERE i.begin_snapshot = m.begin_snapshot AND i.input = 'fin.spend' AND v.view_name = 'spend' AND v.end_snapshot IS NULL AND i.version = v.begin_snapshot::VARCHAR) FROM measurements m;
+query T
+SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m;
 ----
-fin.spend,fin.t	1
+data(data, itself),function,property
 
 query TTTTT
 SELECT min_max() FROM spend.value;
@@ -147,7 +151,7 @@ SELECT subject, state FROM GLOSSARY(spend.value::role);
 ----
 fin.spend.value	current
 
-# --- a view over the view: the measurement's parts run through both
+# --- a view over the view: its data is both views' and the table's
 
 statement ok
 DECLARE ASPECT spend_total WITH $${"title": "Spend, total"}$$ AS VIEW;
@@ -163,7 +167,7 @@ min_max	fin.spend_total.value	min_max	{"min":16.0,"max":16.0}	true
 query T
 SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m ORDER BY begin_snapshot DESC LIMIT 1;
 ----
-fin.spend,fin.spend_total,fin.t
+data(data, itself),function,property
 
 statement ok
 GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t"}$$;

@@ -45,19 +45,20 @@ The statement returns `(function, subject, aspect, value, computed)`
 and stores one row in
 [measurements](../specification/tables/measurements.md).
 
-- [inputs](../specification/tables/inputs.md) holds one row per input
-  the body's plan read, with the version at the run: a lake table as
-  `dataset.table`, a catalog table as `main.<name>`, and
-  `<dataset>.**` for a scan that has no table name (a file, a table
-  function, another database). Join it to a result on
-  `begin_snapshot`.
-- A table's version is the last snapshot that changed it; a catalog
-  table's, the last snapshot that wrote or ended a row of it.
-- The next run returns the stored row while those versions are
-  unchanged, and computes again once one changed. `computed` is true
-  when the run computed the value. With `<dataset>.**` among the
-  inputs, any change in the dataset or the catalog computes again, so
-  a function should read tables.
+- [inputs](../specification/tables/inputs.md) holds one row per read
+  of the body, with a digest of what the read returned at the run:
+  `annotations(role, its columns)`, `results(column_profile, the
+  columns it joins on)`, `definition(definition, itself)`, the data
+  the body read as `data(data, itself)` (each table at DuckLake's
+  version of it, a view at the definition it holds), and `function`
+  and `property` for the function's and the returned property's
+  declarations. Join it to a result on `begin_snapshot`.
+- The next run returns the stored row while each read returns the
+  same and no result it read is out of date, and computes again once
+  one differs. `computed` is true when the run computed the value.
+  `glossql_outdated()` names the read that differs. A body that reads
+  the catalog past the read functions (the lineage kit) is out of date
+  once stored, so a function reads through them.
 - If the value has a top-level `summary` object, the statement returns
   the summary. The whole value is stored; read it with
   `GLOSSARY(subject::aspect)`.

@@ -1,5 +1,5 @@
 # name: test/sql/glossql_measurements.test
-# description: a measurement is stored with the inputs it read, each at its version; a later extraction serves it while it is current, and a result that read a result that is out of date is out of date
+# description: a measurement is stored with what each of its reads returned; a later extraction serves it while its reads return the same, and a result that read a result that is out of date is out of date
 # group: [sql]
 
 require glossql
@@ -19,6 +19,10 @@ USE ws;
 statement ok
 PRAGMA glossql;
 
+# a stored result's reads are walked over the lineage kit's places
+statement ok
+FROM glossql_kit('kits/lineage/kit.sql');
+
 statement ok
 DECLARE DATASET fin SET (purpose: 'measurements');
 
@@ -37,20 +41,18 @@ DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max"
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 
-# --- extraction stores the row with what it read: one row per input, at its version now
+# --- extraction stores the row with what its reads returned: one row per read, a digest of what it returned
 
 query TTTTT
 SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
 
-# reads names what the body read, by name; inputs holds each at its version, a table's the
-# last snapshot that wrote it
-query TT
-SELECT i.input, i.version = (SELECT max(snapshot_id)::VARCHAR FROM ducklake_snapshots('ws') s WHERE list_contains(map_keys(s.changes), 'tables_created') AND list_contains(s.changes['tables_created'], 'fin.orders'))
-FROM measurements m JOIN inputs i USING (begin_snapshot);
+# the data of its subject, and the declarations of the function and of the property it returns
+query T
+SELECT string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot);
 ----
-fin.orders	true
+data(data, itself),function,property
 
 # --- a repeat is a serve, not a rerun
 
@@ -93,8 +95,8 @@ min_max	fin.orders.amount	min_max	{"min":0.0,"max":9.0}	true
 query TT
 SELECT value, (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs_history i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements_history m ORDER BY begin_snapshot;
 ----
-{"min":0.0,"max":4.5}	fin.orders
-{"min":0.0,"max":9.0}	fin.orders
+{"min":0.0,"max":4.5}	data(data, itself),function,property
+{"min":0.0,"max":9.0}	data(data, itself),function,property
 
 # a re-declared function is never served from a measurement of its older body
 
@@ -106,21 +108,21 @@ SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":10.0}	true
 
-# --- the store relations are parts too: a body that reads the glossary moves with it
+# --- a body that reads annotations depends on the annotations it read
 
 statement ok
 DECLARE ASPECT notes WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
-DECLARE FUNCTION notes FOR fin AS $$ SELECT count(*) AS n FROM main.glossary g WHERE g.subject = $subject AND g.aspect = 'note' $$ RETURNS notes;
+DECLARE FUNCTION notes FOR fin AS $$ SELECT count(value) AS n FROM annotations('note', 'itself') $$ RETURNS notes;
 
 query TTTTT
 SELECT notes() FROM orders.amount;
 ----
 notes	fin.orders.amount	notes	1	true
 
-# what it reads of the glossary is the note within its subject's closure: a note on a table
-# no relationship connects to its own leaves it current
+# it read the note on its subject: a note elsewhere leaves it current, and so does a load, since it
+# read no data
 statement ok
 GLOSS note ON other.x AS $${"text": "elsewhere"}$$;
 
@@ -146,7 +148,7 @@ SELECT notes() FROM orders.amount;
 ----
 notes	fin.orders.amount	notes	1	true
 
-# --- a body that reads nothing is current for ever; one whose reads cannot be named is current while nothing in its dataset or the catalog moves
+# --- a body that reads nothing is current while its declarations hold; one that reads the catalog past the read functions is out of date once it is stored, and a call computes it again
 
 statement ok
 DECLARE ASPECT answer WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
@@ -169,8 +171,8 @@ tables	fin.orders.amount	tables	2	true
 query TT
 SELECT function, (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function IN ('answer', 'tables') ORDER BY function;
 ----
-answer	NULL
-tables	fin.**
+answer	function,property
+tables	function,property,unnamed: duckdb_tables
 
 statement ok
 INSERT INTO fin.other VALUES (3);
@@ -180,8 +182,6 @@ SELECT answer(), tables() FROM orders.amount;
 ----
 answer	fin.orders.amount	answer	42	false
 tables	fin.orders.amount	tables	2	true
-
-# ** moves with the store too
 
 statement ok
 GLOSS note ON orders.amount AS $${"text": "third"}$$;
@@ -195,7 +195,7 @@ tables	fin.orders.amount	tables	2	true
 query TTTTT
 SELECT tables() FROM orders.amount;
 ----
-tables	fin.orders.amount	tables	2	false
+tables	fin.orders.amount	tables	2	true
 
 # --- a body that carries a top-level summary serves the summary; the whole value is stored
 
@@ -329,7 +329,7 @@ SELECT count(*) > 0 FROM GLOSSARY(fin.orders) WHERE subject LIKE 'fin.orders.%';
 ----
 true
 
-# --- * is the dataset's every table: a new view moves no * row, a table's load does
+# --- dataset_cells() over a dataset reads its every table: a new view leaves the result current, a table's load does not
 
 statement ok
 DECLARE ASPECT cell_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
@@ -341,7 +341,7 @@ statement ok
 SELECT cell_count() FROM fin;
 
 query IT
-SELECT count(*), bool_and(EXISTS (SELECT 1 FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot AND i.input = 'fin.*')) FROM measurements m WHERE function = 'cell_count';
+SELECT count(*), bool_and(EXISTS (SELECT 1 FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot AND i.input = 'data(tables, the dataset)')) FROM measurements m WHERE function = 'cell_count';
 ----
 1	true
 
@@ -367,26 +367,24 @@ SELECT count(*) FROM measurements_history WHERE function = 'cell_count';
 ----
 2
 
-# --- which result is out of date, and which input moved: a join of the inputs with the parts now
+# --- which result is out of date, and which read returns other rows now: glossql_outdated()
 
 statement ok
 INSERT INTO fin.orders VALUES (11, 11.0);
 
-query TII
-SELECT i.input, count(*) > 0, bool_and(p.version::BIGINT > i.version::BIGINT)
-FROM measurements m JOIN inputs i USING (begin_snapshot) LEFT JOIN glossql_parts() p ON p.name = i.input
-WHERE p.version IS DISTINCT FROM i.version AND m.subject = 'fin.orders.amount' AND i.input = 'fin.orders'
-GROUP BY i.input;
+query TTT
+SELECT function, input, reason FROM glossql_outdated() WHERE subject = 'fin.orders.amount' AND function IN ('min_max', 'profile') ORDER BY ALL;
 ----
-fin.orders	true	true
+min_max	data(data, itself)	changed
+profile	data(data, itself)	changed
 
-# --- a read of the glossary names the property it read: an annotation on another property leaves the result current, one on its own outdates it
+# --- a read of annotations names the property it read: an annotation on another property leaves the result current, one on its own within its place outdates it
 
 statement ok
 DECLARE ASPECT note_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
-DECLARE FUNCTION note_count FOR fin AS $$ SELECT count(*) AS n FROM glossql_glossary('fin', 'note', true) WHERE subject = $subject $$ RETURNS note_count;
+DECLARE FUNCTION note_count FOR fin AS $$ SELECT count(value) FILTER (WHERE asset = $subject) AS n FROM annotations('note', 'the dataset') $$ RETURNS note_count;
 
 query TTTTT
 SELECT note_count() FROM orders.amount;
@@ -412,7 +410,7 @@ SELECT note_count() FROM orders.amount;
 ----
 note_count	fin.orders.amount	note_count	1	true
 
-# a declaration and a load in another dataset leave a reader of the glossary current
+# a declaration and a load in another dataset leave a reader of annotations current
 
 statement ok
 DECLARE DATASET other SET (purpose: 'elsewhere');
@@ -443,13 +441,13 @@ statement ok
 DECLARE ASPECT top WITH $${"type": "number"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
-DECLARE FUNCTION top FOR fin AS $$ SELECT max((body->>'max')::DOUBLE) AS top FROM glossql_glossary('fin', 'min_max', true) WHERE subject = $subject $$ RETURNS top;
+DECLARE FUNCTION top FOR fin AS $$ SELECT max((value->>'max')::DOUBLE) AS top FROM results('min_max', 'itself') $$ RETURNS top;
 
 statement ok
 DECLARE ASPECT top_twice WITH $${"type": "number"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
-DECLARE FUNCTION top_twice FOR fin AS $$ SELECT max(body::DOUBLE) * 2 AS v FROM glossql_glossary('fin', 'top', true) WHERE subject = $subject $$ RETURNS top_twice;
+DECLARE FUNCTION top_twice FOR fin AS $$ SELECT max(value::DOUBLE) * 2 AS v FROM results('top', 'itself') $$ RETURNS top_twice;
 
 query TTTTT
 SELECT min_max(), top(), top_twice() FROM orders.amount;
@@ -520,7 +518,7 @@ SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN
 min_max	false
 top	false
 
-# a result of the property out of date in another dataset leaves a reader in this one current: the read was of this dataset's values
+# a result of the function out of date in another dataset leaves a reader in this one current: the read was of this dataset's results
 
 statement ok
 SELECT min_max() FROM other.t.a;
@@ -542,13 +540,13 @@ SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN
 min_max	true
 top	true
 
-# --- a function that reads its own property: what it stored is no input of its own, on any subject
+# --- a function that reads its own results: what it stored is no input of its own, on any subject
 
 statement ok
 DECLARE ASPECT seen WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
-DECLARE FUNCTION seen FOR fin AS $$ SELECT count(*) AS n FROM glossql_glossary('fin', 'seen', true) $$ RETURNS seen;
+DECLARE FUNCTION seen FOR fin AS $$ SELECT count(value) AS n FROM results('seen', 'the dataset') $$ RETURNS seen;
 
 statement ok
 SELECT seen() FROM orders.amount;
@@ -562,21 +560,21 @@ SELECT subject, current FROM GLOSSARY(fin, all => true) WHERE aspect = 'seen' OR
 fin.orders.amount	true
 fin.orders.id	true
 
-# two functions that read every property: each reads the other's results within its closure. A
-# result that computes again with the value it had leaves its readers current, so the pair holds
-# once their values hold; a result outside the closure is no input
+# two functions that read each other's results on their subject. A result that computes again
+# with the value it had leaves its readers current, so the pair holds once their values hold; a
+# result on another subject is no input
 
 statement ok
 DECLARE ASPECT values_a WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
-DECLARE FUNCTION values_a FOR fin AS $$ SELECT count(*) AS n FROM glossql_glossary('fin', NULL, true) $$ RETURNS values_a;
+DECLARE FUNCTION values_a FOR fin AS $$ SELECT count(value) AS n FROM results('values_b', 'itself') $$ RETURNS values_a;
 
 statement ok
 DECLARE ASPECT values_b WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
-DECLARE FUNCTION values_b FOR fin AS $$ SELECT count(*) AS n FROM glossql_glossary('fin', NULL, true) $$ RETURNS values_b;
+DECLARE FUNCTION values_b FOR fin AS $$ SELECT count(value) AS n FROM results('values_a', 'itself') $$ RETURNS values_b;
 
 statement ok
 CREATE TABLE fin.pair AS SELECT 1 AS x;

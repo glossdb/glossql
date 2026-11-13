@@ -171,77 +171,40 @@ struct Workspace {
 	string Table(const string &dataset, const string &name) const;
 };
 
-//! The parts a stored result can read whatever its subject, each at its version
-//! now: (name, version, kind). Every live table of the lake as <schema>.<table>
-//! at the last snapshot that wrote, altered or dropped it; every live view but
-//! the store's own as <schema>.<view> at the snapshot that defined it; every
-//! store relation but the results' as main.<relation> at its highest marker;
-//! the lake's shape, and each dataset's as lake.shape/<dataset>. A set of parts is a part too, its version a digest of
-//! its members: <dataset>.* the dataset's tables, <dataset>.** what a body whose reads could not be named may have
-//! read. kind is table, view, store or set. The glossary, the results and the declarations about subjects are read
-//! within a closure instead (ScopedRead) (glossql_store.cpp)
-string PartsSQL(const Workspace &ws);
-//! A bind names an input it read beside the plan, by the part's name: a table
-//! function whose rows come from the catalog or the lake's shape leaves a plan
-//! that cannot show them (glossql_runner.cpp)
-void BindRead(ClientContext &context, const string &name);
-//! A bind names one property it read: its annotations and the results stored under it
-void BindProperty(ClientContext &context, const string &aspect);
-//! The lake's shape as a part: its tables' columns and its views' definitions
-constexpr const char *LAKE_SHAPE = "lake.shape";
-//! The part a read names: `*` and `**` resolve to the dataset's sets; empty for
-//! the function's own results, which are no input of its own
-string InputName(const string &read, const string &dataset, const string &function);
-//! The current stored results, each row with `current`: every part it read has
-//! the version it read, the rows of its closure it read hold what they held, no
-//! result it read is out of date, and its function has not been declared again
-//! since (SPEC §6)
-string CurrentResultsSQL(const Workspace &ws);
+class Inner;
 
-//! What a computation on a subject sees of the catalog (SPEC §6): the subject's
-//! closure. A run holds it on its connection while it plans and runs, and every
-//! read of the glossary, the results and the declarations about subjects
-//! returns the rows within it and no other (glossql_sees, GLOSSARY(), TESTS()).
-//! Members, as an inputs row stores them: d:<dataset> every row of the dataset,
-//! s:<subject> a subject's rows, p:<subject>::<property> one property's rows on
-//! a subject, r:<subject> the results stored on a subject
-struct RunClosure {
-	string dataset;
-	bool whole = false;
-	std::set<string> subjects;
-	std::set<pair<string, string>> properties;
-	std::set<string> results;
-	//! the properties whose declarations and tests the run sees: those of the
-	//! views its closure holds, and those its reads name
-	std::set<string> named;
+//! What a stored result reads, by kind of read, per dataset: which of the kits' relations the
+//! digests of those reads walk (ReadsNowSQL)
+struct ReadNeeds {
+	std::set<string> places;
+	std::set<string> tables;
+	std::set<string> definitions;
+	std::set<string> lineage;
+	std::set<string> annotations;
 
-	//! The members as text, one per row the closure admits by
-	vector<string> Members() const;
-	//! Whether a row of a store relation is within the closure
-	bool Sees(const string &relation, const string &dataset, const string &subject, const string &aspect) const;
+	//! A read of this kind (annotations, results, definition, data, lineage) of a result in the dataset
+	void Add(const string &dataset, const string &read);
 };
-//! The closure the connection's run holds, or none outside a run
-shared_ptr<RunClosure> RunClosureOf(ClientContext &context);
-void SetRunClosure(ClientContext &context, shared_ptr<RunClosure> closure);
-//! Whether an input names rows of a closure: the glossary, the results and
-//! the declarations about subjects, main.<relation>[/<key>|@<property>]
-bool ScopedInput(const string &name);
+//! What a set of reads returns now, each as a digest (SPEC §6): CTE definitions to follow a WITH
+//! over the caller's `wanted` (id, dataset, subject, function, aspect, read, what, where), ending
+//! in now_versions (id, read, what, where, version) and now_results (id, read, what, where,
+//! result), the stored results each read of results returned. A result stores these digests when
+//! it is computed, and is current while its reads return the same (glossql_store.cpp)
+string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs);
+//! An input's name, as the inputs relation stores it: read(what, where) for a read function's call
+//! and for data; function and property for the declarations; unnamed: <read> for a read of the
+//! catalog past the read functions
+string InputName(const string &read, const string &what, const string &where);
+//! The current stored results, each row with `current`: each of its reads returns now what it
+//! returned when it was computed, and no result it read is out of date (SPEC §6)
+string CurrentResultsSQL(Inner &inner);
+//! Why a stored result is out of date: (dataset, function, subject, input, reason), a read that
+//! returns other rows now (reason `changed`), or a read of results that returned one out of date
+//! (reason `outdated`)
+string OutdatedSQL(Inner &inner);
 //! The session variable that names the subject a function computes a result for: the
 //! engine sets it on the connection of the run, and the read functions walk from it
 constexpr const char *RUN_SUBJECT = "glossql_subject";
-//! The input that stores a result's closure; its version is the members as a JSON list
-constexpr const char *CLOSURE_INPUT = "closure";
-//! The closure members (id, kind, subject, property) of a JSON list of members, per id
-string MembersSQL(const string &lists);
-//! The versions of scoped inputs now, (id, input, version), over the CTEs
-//! `members` (id, kind, subject, property) and `reads` (id, dataset, function,
-//! input) the caller defines: a digest of the rows of the closure each input
-//! names, as they hold now. Also defines sc_rv (id, result, function, aspect):
-//! the results each closure holds. Returns CTE definitions to follow a WITH
-string ScopedSQL(const Workspace &ws);
-//! The CTEs of the current results' scoped inputs as stored, and their versions
-//! now (ScopedSQL): what the currency rule and glossql_parts() read
-string HeldSQL(const Workspace &ws);
 
 //! A second connection to the same database, for SQL run while the calling
 //! connection's context lock is held (glossql_runner.cpp)
