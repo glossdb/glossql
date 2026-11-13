@@ -511,8 +511,9 @@ come from the plan of the body; nobody declares them. An input is one of:
 - a catalog relation, `main.<relation>`;
 - one property's annotations, `main.glossary/<aspect>`;
 - one function's results, `main.measurements/<function>`;
-- the other functions' results of one property,
-  `main.measurements@<aspect>~<function>`;
+- the other functions' results of one property in the result's own
+  dataset, `main.measurements@<aspect>~<function>` (a read of another
+  dataset's values names every other function's results);
 - every other function's results, `main.measurements/~<function>`;
 - the dataset's every table, `<dataset>.*`;
 - what the body could have read where its reads could not be named,

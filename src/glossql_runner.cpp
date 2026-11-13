@@ -1196,6 +1196,8 @@ static void ViewsOf(ClientContext &context, const Workspace &ws, const string &s
 //! moves
 struct BindReads : public ClientContextState {
 	std::set<string> names;
+	//! the dataset of the result whose reads these are, while ReadsOf plans its call
+	string dataset;
 
 	static BindReads &Of(ClientContext &context) {
 		return *context.registered_state->GetOrCreate<BindReads>("glossql_bind_reads");
@@ -1208,20 +1210,26 @@ void BindRead(ClientContext &context, const string &name) {
 	BindReads::Of(context).names.insert(name);
 }
 
-void BindProperty(ClientContext &context, const string &aspect) {
+//! A read of one property's values in a dataset: its annotations, and the other
+//! functions' results of it there. A result reads its own dataset's results by
+//! property; a read of another dataset's names every other function's results
+void BindProperty(ClientContext &context, const string &aspect, const string &dataset) {
+	auto &side = BindReads::Of(context);
 	BindRead(context, "main.glossary/" + aspect);
-	BindRead(context, "main.measurements@" + aspect);
+	BindRead(context, side.dataset.empty() || side.dataset == dataset ? "main.measurements@" + aspect
+	                                                                  : string("main.measurements"));
 }
 
 //! The reads of a call on a subject, enumerated from its bound plan: views
 //! expand to their tables, subject_column() to the subject's, before any
 //! optimizer touches it; the views the subject holds on are named beside,
 //! their definitions being parts too, and so is what a bind read beside the plan
-static string ReadsOf(Inner &inner, const string &call, const string &subject) {
+static string ReadsOf(Inner &inner, const string &call, const string &subject, const string &dataset) {
 	Reads reads;
 	auto &context = *inner.con.context;
 	auto &side = BindReads::Of(context);
 	side.names.clear();
+	side.dataset = dataset;
 	unique_ptr<SQLStatement> statement = ParseSelect("SELECT * FROM " + call);
 	context.RunFunctionInTransaction([&]() {
 		Planner planner(context);
@@ -1356,7 +1364,7 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 			                            returns.ToString());
 		}
 		auto invocation = inner.Table(schema, name) + "(" + QuoteText(subject) + ")";
-		auto reads = ReadsOf(inner, invocation, subject);
+		auto reads = ReadsOf(inner, invocation, subject, dataset);
 		auto inputs = InputsOf(inner, dataset, name, reads);
 		// a computation that fails is a result too: stored with its error, which serves while it is current
 		Value value;
@@ -2212,7 +2220,7 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 	// a type; an event table with no measure glossed abstains and names the gloss
 	std::map<string, std::set<string>> measures;
 	std::set<string> roled;
-	BindProperty(context, "role");
+	BindProperty(context, "role", dataset);
 	auto roles = inner.Run("SELECT subject, value->>'value' FROM glossql_glossary(" + QuoteText(dataset) +
 	                       ", 'role', false) WHERE state IN ('current', 'stale')");
 	while (auto chunk = roles->Fetch()) {

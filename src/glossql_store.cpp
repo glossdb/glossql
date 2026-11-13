@@ -521,7 +521,7 @@ string CurrentResultsSQL(const Workspace &ws) {
 	                 " i ON i.end_snapshot IS NULL AND starts_with(i.input, 'main.measurements') JOIN " + results +
 	                 " m ON m.begin_snapshot = i.begin_snapshot AND m.end_snapshot IS NULL AND m.function <> o.function"
 	                 " AND (i.input = 'main.measurements/' || o.function"
-	                 " OR i.input = 'main.measurements@' || o.aspect || '~' || m.function"
+	                 " OR (i.input = 'main.measurements@' || o.aspect || '~' || m.function AND o.dataset = m.dataset)"
 	                 " OR (i.input = 'main.measurements/~' || m.function AND o.function NOT IN (" +
 	                 WideReadersSQL(ws) + ")))";
 	return "WITH RECURSIVE parts AS (" + PartsSQL(ws) + "), outdated(id) AS (" + moved + " UNION " + declared +
@@ -1840,12 +1840,12 @@ static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const
 
 //! What a read of the glossary or of the test results serves, named for the
 //! result that reads it: one property, or every property where the read names none
-static void NameRead(ClientContext &context, const Value &aspect) {
+static void NameRead(ClientContext &context, const string &dataset, const Value &aspect) {
 	if (aspect.IsNull()) {
 		BindRead(context, "main.glossary");
 		BindRead(context, "main.measurements");
 	} else {
-		BindProperty(context, aspect.ToString());
+		BindProperty(context, aspect.ToString(), dataset);
 	}
 }
 
@@ -1873,7 +1873,7 @@ static unique_ptr<FunctionData> CachedBind(ClientContext &context, TableFunction
                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
 	Inner inner(context);
 	auto whole = WholeOf(ScopeOf(context, input.inputs[1]), inner.ws);
-	NameRead(context, input.inputs[2]);
+	NameRead(context, whole.dataset, input.inputs[2]);
 	auto result = make_uniq<CachedBindData>();
 	result->read = Cached(context, inner, input.inputs[0].ToString(), whole);
 	return_types = result->read->types;

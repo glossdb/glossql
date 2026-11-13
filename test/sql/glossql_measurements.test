@@ -515,6 +515,28 @@ SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN
 min_max	false
 top	false
 
+# a result of the property out of date in another dataset leaves a reader in this one current: the read was of this dataset's values
+
+statement ok
+SELECT min_max() FROM other.t.a;
+
+statement ok
+SELECT min_max(), top() FROM orders.amount;
+
+statement ok
+INSERT INTO other.t VALUES (3, 4);
+
+query TT
+SELECT aspect, current FROM GLOSSARY(other.t.a, all => true) WHERE aspect = 'min_max';
+----
+min_max	false
+
+query TT
+SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top') ORDER BY aspect;
+----
+min_max	true
+top	true
+
 # --- a function that reads its own property: what it stored is no input of its own, on any subject
 
 statement ok

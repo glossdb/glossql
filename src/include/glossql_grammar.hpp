@@ -188,7 +188,7 @@ string PartsSQL(const Workspace &ws);
 //! that cannot show them (glossql_runner.cpp)
 void BindRead(ClientContext &context, const string &name);
 //! A bind names one property it read: its annotations and the results stored under it
-void BindProperty(ClientContext &context, const string &aspect);
+void BindProperty(ClientContext &context, const string &aspect, const string &dataset);
 //! The lake's shape as a part: its tables' columns and its views' definitions
 constexpr const char *LAKE_SHAPE = "lake.shape";
 //! The part a read names: `*`, `**` and the results resolve to the set of the
