@@ -332,8 +332,8 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "* EXCLUDE (end_snapshot)"},
     {"measurements",
 	 "dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, "
-	 "value VARCHAR NOT NULL, computed_at TIMESTAMP NOT NULL",
-	 "begin_snapshot, dataset, function, subject, aspect, value::JSON AS value, computed_at"},
+	 "value VARCHAR, computed_at TIMESTAMP NOT NULL, error VARCHAR",
+	 "begin_snapshot, dataset, function, subject, aspect, value::JSON AS value, computed_at, error"},
     // what a stored result read, one row per input at the version read: the rows begin with
     // their result, whose begin_snapshot they share, and end with it
     {"inputs", "input VARCHAR NOT NULL, version VARCHAR", "begin_snapshot, input, version"},
@@ -506,10 +506,13 @@ string CurrentResultsSQL(const Workspace &ws) {
 	string moved = "SELECT i.begin_snapshot AS id FROM " + ws.Store("inputs") + " i JOIN " + results +
 	               " m ON m.begin_snapshot = i.begin_snapshot AND m.end_snapshot IS NULL LEFT JOIN parts n"
 	               " ON n.name = i.input WHERE n.version IS DISTINCT FROM i.version";
-	// or its function was declared again since: a result of an older body
-	string declared = "SELECT m.begin_snapshot FROM " + results + " m JOIN " + ws.Store("functions") +
-	                  " f ON f.name = m.function AND f.scope IN (m.dataset, 'GLOBAL')"
-	                  " AND f.begin_snapshot > m.begin_snapshot WHERE m.end_snapshot IS NULL";
+	// or its function, or the property it fills, was declared again since: a result of an
+	// older body, or checked against an older schema
+	string declared = "SELECT m.begin_snapshot FROM " + results +
+	                  " m WHERE m.end_snapshot IS NULL AND (EXISTS (SELECT 1 FROM " + ws.Store("functions") +
+	                  " f WHERE f.name = m.function AND f.scope IN (m.dataset, 'GLOBAL')"
+	                  " AND f.begin_snapshot > m.begin_snapshot) OR EXISTS (SELECT 1 FROM " +
+	                  ws.Store("aspects") + " a WHERE a.name = m.aspect AND a.begin_snapshot > m.begin_snapshot))";
 	// or an input is results, one of which is out of date. A function's own results are no
 	// input of its own, and those of a reader of every other function's results no member
 	// of another's such read: the same sets the parts digest
@@ -1353,7 +1356,7 @@ static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter
 	       LoadsSQL(scope.ws) + "), " + g + ", " + col_then + ", " + col_now + ", " + tbl_then + ", " + load_then +
 	       ", " + load_now + ", " + view_then +
 	       " SELECT g.subject, g.aspect, g.actor_kind AS actor, g.body::JSON AS body, g.written_at, coalesce(" + stale +
-	       ", false) AS stale, g.id AS ord FROM g"
+	       ", false) AS stale, g.id AS ord, NULL::VARCHAR AS error FROM g"
 	       " LEFT JOIN col_then ct ON ct.id = g.id"
 	       " LEFT JOIN col_now cn ON cn.schema_name = g.sch AND cn.table_name = g.tbl AND cn.column_name = g.col"
 	       " LEFT JOIN tbl_then tt ON tt.id = g.id"
@@ -1364,11 +1367,12 @@ static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter
 
 //! Every value in scope, the current one per actor kind: the glossary's agent
 //! and human rows, and the function values the measurements hold; each with
-//! its staleness, and `ord`, the snapshot it was written at
+//! its staleness, `ord`, the snapshot it was written at, and the error of a
+//! computation that failed, whose row holds no value
 static string ValuesSQL(const ReadScope &scope, const string &aspect_filter) {
 	return "(" + AnnotationsSQL(scope, aspect_filter) +
 	       ") UNION ALL SELECT subject, aspect, 'function' AS actor, value::JSON AS body, computed_at AS written_at,"
-	       " NOT current AS stale, begin_snapshot AS ord FROM (" +
+	       " NOT current AS stale, begin_snapshot AS ord, error FROM (" +
 	       CurrentResultsSQL(scope.ws) + ") WHERE " + scope.filter + aspect_filter;
 }
 
@@ -1466,12 +1470,13 @@ static string TestValuesSQL(const string &relation, const string &aspect) {
 }
 
 //! The values of a scope, read once into a table of the fill's own connection:
-//! the detectors and every part of the read select from it
+//! the detectors and every part of the read select from it. A failed
+//! computation is no value
 static constexpr const char *STORED_VALUES = "glossql_values";
 
 static void StoreValues(Inner &inner, const ReadScope &scope) {
-	auto made =
-	    inner.con.Query("CREATE OR REPLACE TEMP TABLE " + string(STORED_VALUES) + " AS " + ValuesSQL(scope, ""));
+	auto made = inner.con.Query("CREATE OR REPLACE TEMP TABLE " + string(STORED_VALUES) + " AS SELECT * FROM (" +
+	                            ValuesSQL(scope, "") + ") WHERE error IS NULL");
 	if (made->HasError()) {
 		throw InvalidInputException("glossql: the values of %s could not be read: %s", scope.dataset,
 		                            FirstLine(made->GetError()));
@@ -1632,10 +1637,11 @@ static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const Rea
 	       ") ORDER BY subject, aspect";
 }
 
-//! The raw read: one row per value — (subject, aspect, kind, test, actor, body, written_at, current)
+//! The raw read: one row per value — (subject, aspect, kind, test, actor, body, written_at, current,
+//! error); a failed computation is a row with its error and no body
 static string RawSQL(const ReadScope &scope, const Value &aspect) {
 	return "SELECT s.subject, s.aspect, a.kind, w.name AS test, s.actor, s.body, s.written_at,"
-	       " NOT s.stale AS current FROM (" +
+	       " NOT s.stale AS current, s.error FROM (" +
 	       ValuesSQL(scope, AspectFilter(aspect)) + ") s LEFT JOIN " + Newest(scope.ws, "aspects") +
 	       " a ON a.name = s.aspect LEFT JOIN " + Newest(scope.ws, "tests") +
 	       " w ON w.aspect = s.aspect ORDER BY s.subject, s.aspect, s.actor";
@@ -1949,7 +1955,7 @@ static const char *const COLLAPSED_SHAPE =
     "subject VARCHAR, aspect VARCHAR, value JSON, test_state VARCHAR, score DOUBLE, "
     "state VARCHAR";
 static const char *const RAW_SHAPE = "subject VARCHAR, aspect VARCHAR, kind VARCHAR, test VARCHAR, actor VARCHAR, "
-                                     "body JSON, written_at TIMESTAMP, current BOOLEAN";
+                                     "body JSON, written_at TIMESTAMP, current BOOLEAN, error VARCHAR";
 static const char *const TESTS_SHAPE = "subject VARCHAR, aspect VARCHAR, test VARCHAR, state VARCHAR, "
                                        "score DOUBLE, computed_at TIMESTAMP, current BOOLEAN, error VARCHAR";
 

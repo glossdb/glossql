@@ -562,3 +562,81 @@ query T
 SELECT version = getvariable('others') FROM glossql_parts() WHERE name = 'main.measurements/~values_a';
 ----
 true
+
+# --- a computation that fails is a result too: stored with its inputs and its error, the error served while it is current
+
+statement ok
+CREATE TABLE fin.flaky (x INTEGER);
+
+statement ok
+DECLARE ASPECT rows_seen WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION rows_seen FOR fin AS $$ SELECT CASE WHEN count(*) = 0 THEN error('no rows yet') ELSE count(*) END AS n FROM fin.flaky $$ RETURNS rows_seen;
+
+statement error
+SELECT rows_seen() FROM flaky;
+----
+no rows yet
+
+query TTTT
+SELECT body, current, error LIKE '%no rows yet%', actor FROM GLOSSARY(flaky::rows_seen, all => true);
+----
+NULL	true	true	function
+
+# the repeat fails with the stored error and computes nothing
+statement error
+SELECT rows_seen() FROM flaky;
+----
+no rows yet
+
+query I
+SELECT count(*) FROM measurements_history WHERE function = 'rows_seen';
+----
+1
+
+# never a value: the collapsed read and the tests' values hold none
+query I
+SELECT count(*) FROM GLOSSARY(flaky::rows_seen);
+----
+0
+
+# its input moves: computed again
+statement ok
+INSERT INTO fin.flaky VALUES (1);
+
+query TTTTT
+SELECT rows_seen() FROM flaky;
+----
+rows_seen	fin.flaky	rows_seen	1	true
+
+query TT
+SELECT value, error FROM measurements WHERE function = 'rows_seen';
+----
+1	NULL
+
+# an output outside the property's schema is a failure too; the property declared again computes it again
+
+statement ok
+DECLARE ASPECT label WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION label FOR fin AS $$ SELECT 'one' AS v $$ RETURNS label;
+
+statement error
+SELECT label() FROM flaky;
+----
+does not conform to the schema of label
+
+statement error
+SELECT label() FROM flaky;
+----
+does not conform to the schema of label
+
+statement ok
+DECLARE ASPECT label WITH $${"type": "string"}$$ AS MEASUREMENT ON TABLE;
+
+query TTTTT
+SELECT label() FROM flaky;
+----
+label	fin.flaky	label	"one"	true

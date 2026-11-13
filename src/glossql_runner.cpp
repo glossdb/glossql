@@ -1265,11 +1265,11 @@ static vector<pair<string, Value>> InputsOf(Inner &inner, const string &dataset,
 	return inputs;
 }
 
-//! The stored row for the call while it is current, else NULL
-static Value ServedValue(Inner &inner, const string &dataset, const string &name, const string &subject) {
-	return inner.Scalar("SELECT value FROM (" + CurrentResultsSQL(inner.ws) +
-	                    ") WHERE current AND dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
-	                    " AND subject = " + QuoteText(subject));
+//! The stored row for the call while it is current, (value, error), else empty
+static vector<Value> Served(Inner &inner, const string &dataset, const string &name, const string &subject) {
+	return inner.Row("SELECT value, error FROM (" + CurrentResultsSQL(inner.ws) +
+	                 ") WHERE current AND dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
+	                 " AND subject = " + QuoteText(subject));
 }
 
 //! What extraction serves of a value: its top-level summary object when the body
@@ -1338,20 +1338,16 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		output.data[0].Append(Value(name));
 		output.data[1].Append(Value(subject));
 		output.data[2].Append(returns);
-		// served while what it read is unchanged: a repeat is a serve, not a rerun (SPEC §6)
-		auto served = ServedValue(inner, dataset, name, subject);
-		if (!served.IsNull()) {
-			output.data[3].Append(Value(Summary(inner, served.ToString())));
+		// served while it is current: a repeat is a serve, not a rerun, and a failure fails again (SPEC §6)
+		auto served = Served(inner, dataset, name, subject);
+		if (!served.empty() && !served[1].IsNull()) {
+			throw InvalidInputException(served[1].ToString());
+		}
+		if (!served.empty()) {
+			output.data[3].Append(Value(Summary(inner, served[0].ToString())));
 			output.data[4].Append(Value::BOOLEAN(false));
 			row++;
 			continue;
-		}
-		auto invocation = inner.Table(schema, name) + "(" + QuoteText(subject) + ")";
-		auto reads = ReadsOf(inner, invocation, subject);
-		auto inputs = InputsOf(inner, dataset, name, reads);
-		auto value = ValueOf(inner, invocation);
-		if (value.IsNull()) {
-			value = Value("null");
 		}
 		// the aspect's schema is the one contract: the output is validated against it (SPEC §6)
 		auto contract = inner.Scalar("SELECT schema::VARCHAR FROM " + inner.Store("aspects") +
@@ -1360,10 +1356,27 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 			throw InvalidInputException("glossql: %s returns %s, which is not a declared aspect", name,
 			                            returns.ToString());
 		}
-		auto error = JsonSchemaCheck(contract.ToString(), value.ToString());
+		auto invocation = inner.Table(schema, name) + "(" + QuoteText(subject) + ")";
+		auto reads = ReadsOf(inner, invocation, subject);
+		auto inputs = InputsOf(inner, dataset, name, reads);
+		// a computation that fails is a result too: stored with its error, which serves while it is current
+		Value value;
+		string error;
+		try {
+			value = ValueOf(inner, invocation);
+			if (value.IsNull()) {
+				value = Value("null");
+			}
+			auto breach = JsonSchemaCheck(contract.ToString(), value.ToString());
+			if (!breach.empty()) {
+				error = StringUtil::Format("glossql: the output of %s does not conform to the schema of %s: %s", name,
+				                           returns.ToString(), breach);
+			}
+		} catch (InvalidInputException &e) {
+			error = ErrorData(e).RawMessage();
+		}
 		if (!error.empty()) {
-			throw InvalidInputException("glossql: the output of %s does not conform to the schema of %s: %s", name,
-			                            returns.ToString(), error);
+			value = Value();
 		}
 		// stored with what it read, each input at its version: the next extraction serves it
 		// while those are unchanged. The result it replaces ends, and its inputs with it
@@ -1377,12 +1390,16 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 				write.End("measurements", key);
 			}
 			write.Insert("measurements", QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) +
-			                                 ", " + returns.ToSQLString() + ", " + QuoteText(value.ToString()) +
-			                                 ", now()");
+			                                 ", " + returns.ToSQLString() + ", " +
+			                                 (value.IsNull() ? string("NULL") : QuoteText(value.ToString())) +
+			                                 ", now(), " + (error.empty() ? string("NULL") : QuoteText(error)));
 			for (auto &input : inputs) {
 				write.Insert("inputs", QuoteText(input.first) + ", " + input.second.ToSQLString());
 			}
 		});
+		if (!error.empty()) {
+			throw InvalidInputException(error);
+		}
 		output.data[3].Append(Value(Summary(inner, value.ToString())));
 		output.data[4].Append(Value::BOOLEAN(true));
 		row++;
