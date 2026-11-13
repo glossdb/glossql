@@ -1,0 +1,294 @@
+# name: test/sql/glossql_closure.test
+# description: a result on a subject reads the glossary, the results and the declarations about subjects within the subject's closure, and depends on what those rows hold: an annotation outside it leaves the result current, one inside outdates the results whose closure holds it, a change undone makes it current again, a retyped column outdates the readers of its annotation (SPEC §6)
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_closure_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET f1 SET (purpose: 'closure');
+
+statement ok
+USE f1;
+
+statement ok
+CREATE TABLE f1.races AS SELECT i AS race_id, DATE '2024-01-01' + (i * 7)::INTEGER AS date, 'race ' || i AS name FROM range(6) t(i);
+
+statement ok
+CREATE TABLE f1.results AS SELECT i % 6 AS race_id, i % 3 AS driver_id, (i % 10)::INTEGER AS points FROM range(30) t(i);
+
+statement ok
+CREATE TABLE f1.circuits AS SELECT i::INTEGER AS circuit_id, 'circuit ' || i AS name FROM range(4) t(i);
+
+statement ok
+DECLARE ASPECT role WITH $${"type": "object", "required": ["value"], "properties": {"value": {"enum": ["key", "measure", "dimension", "timestamp", "attribute"]}}}$$ AS FACT ON COLUMN;
+
+statement ok
+DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+# two metrics: points scans results and races and joins them on race_id; race_count scans races alone
+
+statement ok
+DECLARE ASPECT points WITH $${"title": "Points"}$$ AS VIEW;
+
+statement ok
+GLOSS points ON f1 AS $${"sql": "SELECT r.date AS period, sum(x.points) AS value FROM f1.results x JOIN f1.races r ON r.race_id = x.race_id GROUP BY 1"}$$;
+
+statement ok
+DECLARE ASPECT race_count WITH $${"title": "Races"}$$ AS VIEW;
+
+statement ok
+GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1"}$$;
+
+# a check over a metric that reads one property, and one that reads every row it can see
+
+statement ok
+DECLARE ASPECT role_check WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION role_check FOR GLOBAL AS $$ SELECT count(*) AS n FROM glossql_glossary(split_part($subject, '.', 1), 'role', false) WHERE value IS NOT NULL $$ RETURNS role_check;
+
+statement ok
+DECLARE ASPECT seen WITH $${"type": "string"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION seen FOR GLOBAL AS $$ SELECT coalesce(string_agg(DISTINCT subject || '::' || aspect, ',' ORDER BY subject || '::' || aspect), '') AS s FROM main.glossary $$ RETURNS seen;
+
+statement ok
+GLOSS role ON results.points AS $${"value": "measure"}$$;
+
+statement ok
+GLOSS meaning ON circuits.name AS $${"text": "the circuit's name"}$$;
+
+query TTTTT
+SELECT role_check() FROM points;
+----
+role_check	f1.points	role_check	1	true
+
+query TTTTT
+SELECT role_check() FROM race_count;
+----
+role_check	f1.race_count	role_check	0	true
+
+# --- a function sees the rows of its subject's closure and no other: the metric's definition, its
+# columns, what it scans and joins on. The other metric's definition and the circuit are outside it
+
+query TTTTT
+SELECT seen() FROM points;
+----
+seen	f1.points	seen	"f1.results.points::role,f1::points"	true
+
+query TTTTT
+SELECT seen() FROM race_count;
+----
+seen	f1.race_count	seen	"f1::race_count"	true
+
+# the dataset's closure is everything in it
+
+query TTTTT
+SELECT seen() FROM f1;
+----
+seen	f1	seen	"f1.circuits.name::meaning,f1.results.points::role,f1::points,f1::race_count"	true
+
+# --- an annotation outside the closure leaves the results current: nothing is computed
+
+statement ok
+GLOSS role ON circuits.name AS $${"value": "attribute"}$$;
+
+statement ok
+GLOSS meaning ON circuits.circuit_id AS $${"text": "the key"}$$;
+
+query TTTTT
+SELECT role_check(), seen() FROM points;
+----
+role_check	f1.points	role_check	1	false
+seen	f1.points	seen	"f1.results.points::role,f1::points"	false
+
+query TTTTT
+SELECT role_check(), seen() FROM race_count;
+----
+role_check	f1.race_count	role_check	0	false
+seen	f1.race_count	seen	"f1::race_count"	false
+
+# a declaration of a property no closure holds leaves them current too
+
+statement ok
+DECLARE ASPECT unrelated WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+query TTTTT
+SELECT role_check() FROM points;
+----
+role_check	f1.points	role_check	1	false
+
+# --- an annotation inside a closure outdates the results whose closure holds it, and no other: races.date
+# is scanned by both metrics, results.race_id by points alone, and another property than role leaves role_check current
+
+statement ok
+GLOSS meaning ON results.race_id AS $${"text": "the race"}$$;
+
+query TTT
+SELECT subject, aspect, current FROM GLOSSARY(f1, all => true) WHERE actor = 'function' AND subject IN ('f1.points', 'f1.race_count') ORDER BY ALL;
+----
+f1.points	role_check	true
+f1.points	seen	false
+f1.race_count	role_check	true
+f1.race_count	seen	true
+
+statement ok
+GLOSS role ON results.race_id AS $${"value": "key"}$$;
+
+query TTTTT
+SELECT role_check() FROM race_count;
+----
+role_check	f1.race_count	role_check	0	false
+
+query TTTTT
+SELECT role_check() FROM points;
+----
+role_check	f1.points	role_check	2	true
+
+statement ok
+GLOSS role ON races.date AS $${"value": "timestamp"}$$;
+
+query TTTTT
+SELECT role_check() FROM points;
+----
+role_check	f1.points	role_check	3	true
+
+query TTTTT
+SELECT role_check() FROM race_count;
+----
+role_check	f1.race_count	role_check	1	true
+
+# --- what the rows hold, not when they were written: a change undone makes the result current again
+
+statement ok
+GLOSS role ON races.date AS $${"value": "attribute"}$$;
+
+query T
+SELECT current FROM GLOSSARY(race_count, all => true) WHERE aspect = 'role_check';
+----
+false
+
+statement ok
+GLOSS role ON races.date AS $${"value": "timestamp"}$$;
+
+query T
+SELECT current FROM GLOSSARY(race_count, all => true) WHERE aspect = 'role_check';
+----
+true
+
+query TTTTT
+SELECT role_check() FROM race_count;
+----
+role_check	f1.race_count	role_check	1	false
+
+# --- a retyped column outdates the readers of its annotation, through the annotation's state: a reader of
+# role over the dataset holds while a column nobody annotated is retyped, and is out of date once the
+# annotated one is
+
+statement ok
+DECLARE ASPECT role_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
+
+statement ok
+DECLARE FUNCTION role_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM glossql_glossary($subject, 'role', true) $$ RETURNS role_rows;
+
+query TTTTT
+SELECT role_rows() FROM f1;
+----
+role_rows	f1	role_rows	4	true
+
+statement ok
+ALTER TABLE f1.circuits ALTER COLUMN circuit_id TYPE BIGINT;
+
+query TTTTT
+SELECT role_rows() FROM f1;
+----
+role_rows	f1	role_rows	4	false
+
+statement ok
+ALTER TABLE f1.results ALTER COLUMN points TYPE BIGINT;
+
+query TT
+SELECT subject, state FROM GLOSSARY(results.points) WHERE aspect = 'role';
+----
+f1.results.points	stale
+
+query TTTTT
+SELECT role_rows() FROM f1;
+----
+role_rows	f1	role_rows	4	true
+
+# --- a result read within the closure: a reader of a column measurement is out of date when the one it read
+# is, and an out-of-date one outside its closure leaves it current
+
+statement ok
+DECLARE ASPECT width WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION width FOR GLOBAL AS $$ SELECT count(DISTINCT v) AS n FROM subject_column($subject) $$ RETURNS width;
+
+statement ok
+DECLARE ASPECT widths WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION widths FOR GLOBAL AS $$ SELECT coalesce(sum(value::INTEGER), 0) AS n FROM main.measurements WHERE function = 'width' $$ RETURNS widths;
+
+statement ok
+SELECT width() FROM results.points;
+
+statement ok
+SELECT width() FROM circuits.name;
+
+query TTTTT
+SELECT widths() FROM points;
+----
+widths	f1.points	widths	10	true
+
+statement ok
+INSERT INTO f1.circuits VALUES (9, 'circuit 9');
+
+query T
+SELECT current FROM GLOSSARY(circuits.name, all => true) WHERE aspect = 'width';
+----
+false
+
+query TTTTT
+SELECT widths() FROM points;
+----
+widths	f1.points	widths	10	false
+
+statement ok
+INSERT INTO f1.results VALUES (0, 0, 11);
+
+query T
+SELECT current FROM GLOSSARY(points, all => true) WHERE aspect = 'widths';
+----
+false
+
+# --- a function reads the rows about subjects through the catalog's views, never past them
+
+statement ok
+DECLARE ASPECT raw_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM __ducklake_metadata_ws.main.glossql_glossary $$ RETURNS raw_rows;
+
+statement error
+SELECT raw_rows() FROM points;
+----
+past the catalog's views

@@ -291,57 +291,67 @@ struct StoreRelation {
 	const char *name;
 	const char *columns;
 	const char *view;
+	//! the rows a run sees of it, for a relation of rows about subjects: its
+	//! views serve those within the run's closure (RunClosure)
+	const char *sees;
 };
 
 static const StoreRelation STORE_RELATIONS[] = {
     {"datasets",
 	 "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
-	 "begin_snapshot, name, settings::JSON AS settings, declared_at, declared_by"},
+	 "begin_snapshot, name, settings::JSON AS settings, declared_at, declared_by",
+	 "glossql_sees('datasets', name, NULL, NULL)"},
     {"kits",
 	 "name VARCHAR NOT NULL, location VARCHAR NOT NULL, statements INTEGER NOT NULL, loaded_at TIMESTAMP NOT NULL, "
 	 "hash VARCHAR",
-	 "* EXCLUDE (end_snapshot)"},
+	 "* EXCLUDE (end_snapshot)", nullptr},
     {"sources", "name VARCHAR NOT NULL, settings VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
-	 "begin_snapshot, name, settings::JSON AS settings, declared_at, declared_by"},
+	 "begin_snapshot, name, settings::JSON AS settings, declared_at, declared_by", nullptr},
     {"recipes",
 	 "dataset VARCHAR NOT NULL, table_name VARCHAR NOT NULL, source VARCHAR NOT NULL, settings VARCHAR NOT NULL, "
 	 "sql VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
-	 "begin_snapshot, dataset, table_name, source, settings::JSON AS settings, sql, declared_at, declared_by"},
+	 "begin_snapshot, dataset, table_name, source, settings::JSON AS settings, sql, declared_at, declared_by",
+	 "glossql_sees('recipes', dataset, dataset || '.' || table_name, NULL)"},
     // snapshot_id is the snapshot the load itself made; begin_snapshot is its row's
     {"imports",
 	 "dataset VARCHAR NOT NULL, table_name VARCHAR NOT NULL, mode VARCHAR NOT NULL, rows BIGINT NOT NULL, "
 	 "dropped_rows_count BIGINT, lineage VARCHAR NOT NULL, snapshot_id BIGINT, imported_at TIMESTAMP NOT NULL",
 	 "begin_snapshot, dataset, table_name, mode, rows, dropped_rows_count, lineage::JSON AS lineage, snapshot_id, "
-	 "imported_at"},
+	 "imported_at",
+	 "glossql_sees('imports', dataset, dataset || '.' || table_name, NULL)"},
     {"aspects",
 	 "name VARCHAR NOT NULL, kind VARCHAR NOT NULL, grains VARCHAR NOT NULL, condition VARCHAR, "
 	 "schema VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "begin_snapshot, name, kind, from_json(grains, '[\"VARCHAR\"]') AS grains, condition::JSON AS condition, "
-	 "schema::JSON AS schema, declared_at, declared_by"},
+	 "schema::JSON AS schema, declared_at, declared_by",
+	 "glossql_sees('aspects', NULL, NULL, name)"},
     {"glossary",
 	 "dataset VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actor_kind VARCHAR NOT NULL, "
 	 "actor_id VARCHAR, body VARCHAR NOT NULL, written_at TIMESTAMP NOT NULL",
-	 "begin_snapshot, dataset, subject, aspect, actor_kind, actor_id, body::JSON AS body, written_at"},
+	 "begin_snapshot, dataset, subject, aspect, actor_kind, actor_id, body::JSON AS body, written_at",
+	 "glossql_sees('glossary', dataset, subject, aspect)"},
     {"relationships",
 	 "dataset VARCHAR NOT NULL, left_side VARCHAR NOT NULL, op VARCHAR NOT NULL, right_side VARCHAR NOT NULL, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
-	 "* EXCLUDE (end_snapshot)"},
+	 "* EXCLUDE (end_snapshot)", "glossql_sees('relationships', dataset, NULL, NULL)"},
     {"functions",
 	 "name VARCHAR NOT NULL, scope VARCHAR NOT NULL, script VARCHAR NOT NULL, returns VARCHAR, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
-	 "* EXCLUDE (end_snapshot)"},
+	 "* EXCLUDE (end_snapshot)", nullptr},
     {"measurements",
 	 "dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, "
 	 "value VARCHAR, computed_at TIMESTAMP NOT NULL, error VARCHAR",
-	 "begin_snapshot, dataset, function, subject, aspect, value::JSON AS value, computed_at, error"},
+	 "begin_snapshot, dataset, function, subject, aspect, value::JSON AS value, computed_at, error",
+	 "glossql_sees('measurements', dataset, subject, aspect)"},
     // what a stored result read, one row per input at the version read: the rows begin with
     // their result, whose begin_snapshot they share, and end with it
-    {"inputs", "input VARCHAR NOT NULL, version VARCHAR", "begin_snapshot, input, version"},
+    {"inputs", "input VARCHAR NOT NULL, version VARCHAR", "begin_snapshot, input, version", nullptr},
     {"tests",
 	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "begin_snapshot, name, aspect, from_json(actors, '[\"VARCHAR\"]') AS actors, detector, threshold, declared_at, "
-	 "declared_by"},
+	 "declared_by",
+	 "glossql_sees('tests', NULL, NULL, aspect)"},
 };
 
 //! A relation's current rows: those no write has ended
@@ -365,7 +375,7 @@ static string StoreViewNames() {
 }
 
 //! The relations that hold the stored results: every function's output and
-//! what each read. They are no part as a whole: a part per function instead
+//! what each read. They are no part as a whole: a result reads them within its closure
 static bool HoldsResults(const StoreRelation &relation) {
 	return string(relation.name) == "measurements" || string(relation.name) == "inputs";
 }
@@ -379,13 +389,6 @@ static string StorePartNames() {
 		}
 	}
 	return StringUtil::Join(names, ", ");
-}
-
-//! The functions whose current results read every other function's results
-static string WideReadersSQL(const Workspace &ws) {
-	return "SELECT DISTINCT r.function FROM " + ws.Store("measurements") + " r JOIN " + ws.Store("inputs") +
-	       " i ON i.begin_snapshot = r.begin_snapshot WHERE r.end_snapshot IS NULL AND i.end_snapshot IS NULL"
-	       " AND starts_with(i.input, 'main.measurements/~')";
 }
 
 string PartsSQL(const Workspace &ws) {
@@ -420,32 +423,26 @@ string PartsSQL(const Workspace &ws) {
 		        "', max(greatest(begin_snapshot, coalesce(end_snapshot, 0)))::VARCHAR, 'store' FROM " +
 		        ws.Store(relation.name) + " HAVING count(*) > 0";
 	}
-	// a function's stored rows are a part of their own: its version moves when one is computed
-	base += " UNION ALL SELECT 'main.measurements/' || function, max(begin_snapshot)::VARCHAR, 'store' FROM " +
-	        ws.Store("measurements") + " GROUP BY function";
-	// a property's annotations are a part of their own: a read of one property holds
-	// while they hold, whatever is written about another
-	base += " UNION ALL SELECT 'main.glossary/' || aspect, max(greatest(begin_snapshot, coalesce(end_snapshot, 0)))"
-	        "::VARCHAR, 'store' FROM " +
-	        ws.Store("glossary") + " GROUP BY aspect";
 	// the lake's shape: its datasets, their tables' columns and their views as they are now,
-	// as one digest. DuckLake's schema version moves at every DDL, a replace load's
-	// CREATE OR REPLACE TABLE among them; a table made again with the same columns keeps
-	// their ids, names and types, and leaves the shape where it was
+	// as one digest, and each dataset's as one of its own. DuckLake's schema version moves at
+	// every DDL, a replace load's CREATE OR REPLACE TABLE among them; a table made again with
+	// the same columns keeps their ids, names and types, and leaves the shape where it was
 	string current_schemas =
 	    "(SELECT schema_id, schema_name FROM " + ws.Meta("schema") + " WHERE end_snapshot IS NULL)";
-	base += " UNION ALL SELECT '" + string(LAKE_SHAPE) +
-	        "', md5(coalesce(string_agg(shape, ',' ORDER BY shape), '')), 'set' FROM ("
-	        "SELECT schema_name AS shape FROM " +
-	        current_schemas +
-	        " UNION ALL SELECT (s.schema_name, t.table_name, c.column_id, c.column_order, c.column_name,"
-	        " c.column_type, c.default_value, c.nulls_allowed, c.parent_column)::VARCHAR FROM " +
-	        ws.Meta("column") + " c JOIN " + ws.Meta("table") +
-	        " t ON t.table_id = c.table_id AND t.end_snapshot IS NULL JOIN " + current_schemas +
-	        " s ON s.schema_id = t.schema_id WHERE c.end_snapshot IS NULL"
-	        " UNION ALL SELECT (s.schema_name, v.view_name, v.dialect, v.sql, v.column_aliases)::VARCHAR FROM " +
-	        ws.Meta("view") + " v JOIN " + current_schemas +
-	        " s ON s.schema_id = v.schema_id WHERE v.end_snapshot IS NULL)";
+	string shapes = "(SELECT schema_name AS sch, schema_name AS shape FROM " + current_schemas +
+	                " UNION ALL SELECT s.schema_name, (s.schema_name, t.table_name, c.column_id, c.column_order,"
+	                " c.column_name, c.column_type, c.default_value, c.nulls_allowed, c.parent_column)::VARCHAR FROM " +
+	                ws.Meta("column") + " c JOIN " + ws.Meta("table") +
+	                " t ON t.table_id = c.table_id AND t.end_snapshot IS NULL JOIN " + current_schemas +
+	                " s ON s.schema_id = t.schema_id WHERE c.end_snapshot IS NULL"
+	                " UNION ALL SELECT s.schema_name, (s.schema_name, v.view_name, v.dialect, v.sql,"
+	                " v.column_aliases)::VARCHAR FROM " +
+	                ws.Meta("view") + " v JOIN " + current_schemas +
+	                " s ON s.schema_id = v.schema_id WHERE v.end_snapshot IS NULL)";
+	string shape_digest = "md5(coalesce(string_agg(shape, ',' ORDER BY shape), ''))";
+	base += " UNION ALL SELECT '" + string(LAKE_SHAPE) + "', " + shape_digest + ", 'set' FROM " + shapes;
+	base += " UNION ALL SELECT '" + string(LAKE_SHAPE) + "/' || sch, " + shape_digest + ", 'set' FROM " + shapes +
+	        " GROUP BY sch";
 	// an input that is many parts is one part too, its version their names and versions
 	// together: a part that joins or leaves the set moves it, as one that changes does
 	string digest = "md5(coalesce(string_agg(b.name || ':' || b.version, ',' ORDER BY b.name), ''))";
@@ -460,24 +457,23 @@ string PartsSQL(const Workspace &ws) {
 	        " LEFT JOIN base b ON (b.kind IN ('table', 'view') AND starts_with(b.name, s.schema_name || '.'))"
 	        " OR b.name IN (" +
 	        StorePartNames() + ") GROUP BY s.schema_name";
-	// a reader's sets of results leave out its own: what it stored is no input of its own
-	string functions = "(SELECT name FROM " + ws.Store("functions") + " UNION SELECT function FROM " +
-	                   ws.Store("measurements") + ") f";
-	// main.measurements/~<function>: every other function's results, but those of a function
-	// that reads every other's too, so two such readers never outdate each other
-	sets +=
-	    " UNION ALL SELECT 'main.measurements/~' || f.name, " + digest + ", 'set' FROM " + functions +
-	    " LEFT JOIN base b ON starts_with(b.name, 'main.measurements/') AND b.name <> 'main.measurements/' || f.name"
-	    " AND b.name NOT IN (SELECT 'main.measurements/' || function FROM (" +
-	    WideReadersSQL(ws) + ")) GROUP BY f.name";
-	// main.measurements@<property>~<function>: every other function's results of one property
-	sets += " UNION ALL SELECT 'main.measurements@' || a.aspect || '~' || f.name, " + digest +
-	        ", 'set' FROM (SELECT name AS aspect FROM " + ws.Store("aspects") + " UNION SELECT aspect FROM " +
-	        ws.Store("measurements") + ") a CROSS JOIN " + functions +
-	        " LEFT JOIN (SELECT DISTINCT function, aspect FROM " + ws.Store("measurements") +
-	        ") r ON r.aspect = a.aspect AND r.function <> f.name"
-	        " LEFT JOIN base b ON b.name = 'main.measurements/' || r.function GROUP BY a.aspect, f.name";
 	return "WITH base AS (" + base + ") SELECT * FROM base UNION ALL " + sets;
+}
+
+//! The scoped relations as a pattern over input names: main.<relation>, then a
+//! function's or a property's key
+static constexpr const char *SCOPED_PATTERN =
+    "^main\\.(glossary|measurements|aspects|tests|relationships|datasets|imports|recipes)([/@].*)?$";
+
+bool ScopedInput(const string &name) {
+	for (auto relation :
+	     {"glossary", "measurements", "aspects", "tests", "relationships", "datasets", "imports", "recipes"}) {
+		auto base = "main." + string(relation);
+		if (name == base || StringUtil::StartsWith(name, base + "/") || StringUtil::StartsWith(name, base + "@")) {
+			return true;
+		}
+	}
+	return false;
 }
 
 string InputName(const string &read, const string &dataset, const string &function) {
@@ -487,12 +483,6 @@ string InputName(const string &read, const string &dataset, const string &functi
 	if (read == "*") {
 		return dataset + ".*";
 	}
-	if (read == "main.measurements") {
-		return "main.measurements/~" + function;
-	}
-	if (StringUtil::StartsWith(read, "main.measurements@")) {
-		return read + "~" + function;
-	}
 	// what a function stored itself is no input of its own
 	if (read == "main.measurements/" + function) {
 		return string();
@@ -500,12 +490,129 @@ string InputName(const string &read, const string &dataset, const string &functi
 	return read;
 }
 
+string MembersSQL(const string &lists) {
+	string parts = "regexp_extract(member, '^p:(.*)::([^:]*)$', ['subject', 'property'])";
+	return "SELECT id, left(member, 1) AS kind, CASE WHEN left(member, 1) = 'p' THEN " + parts +
+	       ".subject ELSE substr(member, 3) END AS subject, CASE WHEN left(member, 1) = 'p' THEN " + parts +
+	       ".property END AS property FROM (SELECT id, unnest(from_json(list, '[\"VARCHAR\"]')) AS member FROM (" +
+	       lists + "))";
+}
+
+static string AnnotationsOverSQL(const Workspace &ws, const string &filter);
+
+string ScopedSQL(const Workspace &ws) {
+	// the results whose reads these are, each in its dataset
+	string sql = "sc_ids AS (SELECT DISTINCT id, dataset, function FROM reads), ";
+	// the annotations of those datasets, each with its stale mark (SPEC §5.2)
+	sql += "sc_ann AS (" + AnnotationsOverSQL(ws, "dataset IN (SELECT dataset FROM sc_ids)") + "), ";
+	// the annotations each closure holds: of a whole dataset, of a subject, of one property on a subject
+	string annotation = "SELECT i.id, a.subject, a.aspect, a.actor, a.body::VARCHAR AS body, a.stale FROM sc_ids i "
+	                    "JOIN members m ON m.id = i.id ";
+	sql += "sc_gv AS (" + annotation + "AND m.kind = 'd' JOIN sc_ann a ON a.dataset = m.subject UNION " + annotation +
+	       "AND m.kind = 's' JOIN sc_ann a ON a.dataset = i.dataset AND a.subject = m.subject UNION " + annotation +
+	       "AND m.kind = 'p' JOIN sc_ann a ON a.dataset = i.dataset AND a.subject = m.subject"
+	       " AND a.aspect = m.property), ";
+	// the results each closure holds: those on its subjects, and on a subject whose results alone it holds
+	sql += "sc_res AS (SELECT begin_snapshot AS result, dataset, subject, function, aspect, value, error FROM " +
+	       ws.Store("measurements") + " WHERE end_snapshot IS NULL), ";
+	string result = "SELECT i.id, o.result, o.subject, o.function, o.aspect, o.value, o.error FROM sc_ids i "
+	                "JOIN members m ON m.id = i.id ";
+	sql += "sc_rv AS (" + result + "AND m.kind = 'd' JOIN sc_res o ON o.dataset = m.subject UNION " + result +
+	       "AND m.kind IN ('s', 'r') JOIN sc_res o ON o.dataset = i.dataset AND o.subject = m.subject UNION " + result +
+	       "AND m.kind = 'p' JOIN sc_res o ON o.dataset = i.dataset AND o.subject = m.subject"
+	       " AND o.aspect = m.property), ";
+	// the properties whose declarations a closure holds: those of the views in it, whose definitions
+	// it holds, and those its reads name. Another annotation or result in it adds none
+	sql += "sc_props AS (SELECT id, property AS aspect FROM members WHERE kind = 'p' UNION SELECT id,"
+	       " regexp_extract(input, '^main\\.(glossary/|measurements@)(.*)$', 2) FROM reads"
+	       " WHERE regexp_matches(input, '^main\\.(glossary/|measurements@)')), ";
+	sql += "sc_whole AS (SELECT DISTINCT id FROM members WHERE kind = 'd'), ";
+	sql += "sc_subjects AS (SELECT DISTINCT id, subject FROM members WHERE kind = 's'), ";
+	// a property's declaration and its tests: what its collapsed read's grains, condition and conflicts follow
+	sql += "sc_aspects AS (SELECT name, (name, kind, grains, condition, schema)::VARCHAR AS row FROM " +
+	       ws.Store("aspects") + " WHERE end_snapshot IS NULL), ";
+	sql += "sc_tests AS (SELECT aspect AS name, (name, aspect, actors, detector, threshold)::VARCHAR AS row FROM " +
+	       ws.Store("tests") + " WHERE end_snapshot IS NULL), ";
+	sql += "sc_decls AS (SELECT name, 'aspect ' || row AS row FROM sc_aspects UNION ALL SELECT name, 'test ' || row"
+	       " FROM sc_tests), ";
+	// a property read under a condition on another property reads that one's values too
+	sql += "sc_conditions AS (SELECT name, condition::JSON->>'aspect' AS other FROM " + ws.Store("aspects") +
+	       " WHERE end_snapshot IS NULL AND condition::JSON->>'aspect' IS NOT NULL), ";
+	string annotations = "(g.subject, g.aspect, g.actor, g.body, g.stale)::VARCHAR";
+	string results = "(o.subject, o.function, o.value, o.error)::VARCHAR";
+	vector<string> rows;
+	// a read of one property: its annotations, the declaration and tests behind its collapse
+	rows.push_back("SELECT r.id, r.input, " + annotations +
+	               " AS row FROM reads r JOIN sc_gv g ON g.id = r.id AND r.input = 'main.glossary/' || g.aspect");
+	rows.push_back("SELECT r.id, r.input, " + annotations +
+	               " FROM reads r JOIN sc_conditions c ON r.input = 'main.glossary/' || c.name JOIN sc_gv g"
+	               " ON g.id = r.id AND g.aspect = c.other");
+	rows.push_back("SELECT r.id, r.input, d.row FROM reads r JOIN sc_decls d ON r.input = 'main.glossary/' || d.name");
+	// a read of every property: every annotation the closure holds, and each one's declaration and tests
+	rows.push_back("SELECT r.id, r.input, " + annotations +
+	               " FROM reads r JOIN sc_gv g ON g.id = r.id AND r.input = 'main.glossary'");
+	rows.push_back("SELECT DISTINCT r.id, r.input, d.row FROM reads r JOIN sc_gv g ON g.id = r.id"
+	               " AND r.input = 'main.glossary' JOIN sc_decls d ON d.name = g.aspect");
+	// the results: one function's, the other functions' of one property, every other function's
+	rows.push_back("SELECT r.id, r.input, " + results +
+	               " FROM reads r JOIN sc_rv o ON o.id = r.id AND r.input = 'main.measurements/' || o.function");
+	rows.push_back("SELECT r.id, r.input, " + results +
+	               " FROM reads r JOIN sc_rv o ON o.id = r.id AND o.function <> r.function"
+	               " AND (r.input = 'main.measurements@' || o.aspect OR r.input = 'main.measurements')");
+	// the declarations of the properties the closure concerns; a dataset's every one
+	for (auto &decl : {std::make_pair("aspects", "sc_aspects"), std::make_pair("tests", "sc_tests")}) {
+		string input = "'main." + string(decl.first) + "'";
+		rows.push_back("SELECT r.id, r.input, x.row FROM reads r JOIN sc_whole w ON w.id = r.id AND r.input = " +
+		               input + " JOIN " + decl.second + " x ON true");
+		rows.push_back(
+		    "SELECT DISTINCT r.id, r.input, x.row FROM reads r JOIN sc_props p ON p.id = r.id AND r.input = " + input +
+		    " JOIN " + decl.second + " x ON x.name = p.aspect WHERE r.id NOT IN (SELECT id FROM sc_whole)");
+	}
+	// the dataset's relationships and its own declaration
+	rows.push_back("SELECT r.id, r.input, (x.left_side, x.op, x.right_side)::VARCHAR FROM reads r JOIN " +
+	               ws.Store("relationships") +
+	               " x ON r.input = 'main.relationships' AND x.dataset = r.dataset AND x.end_snapshot IS NULL");
+	rows.push_back("SELECT r.id, r.input, x.settings FROM reads r JOIN " + ws.Store("datasets") +
+	               " x ON r.input = 'main.datasets' AND x.name = r.dataset AND x.end_snapshot IS NULL");
+	// the loads and recipes of the closure's tables; a dataset's every one
+	for (auto &decl : {std::make_pair("imports", "(x.table_name, x.mode, x.rows, x.dropped_rows_count, x.lineage,"
+	                                             " x.snapshot_id)::VARCHAR"),
+	                   std::make_pair("recipes", "(x.table_name, x.source, x.settings, x.sql)::VARCHAR")}) {
+		string input = "'main." + string(decl.first) + "'";
+		string from = " FROM reads r JOIN " + ws.Store(decl.first) + " x ON r.input = " + input +
+		              " AND x.dataset = r.dataset AND x.end_snapshot IS NULL";
+		rows.push_back("SELECT r.id, r.input, " + string(decl.second) + from +
+		               " WHERE r.id IN (SELECT id FROM sc_whole) OR EXISTS (SELECT 1 FROM sc_subjects t"
+		               " WHERE t.id = r.id AND t.subject = x.dataset || '.' || x.table_name)");
+	}
+	sql += "sc_rows AS (" + StringUtil::Join(rows, " UNION ALL ") + "), ";
+	// what the rows hold, as one digest per input: a row that joins, leaves or changes moves it
+	sql += "sc_versions AS (SELECT r.id, r.input, md5(coalesce(string_agg(s.row, chr(10) ORDER BY s.row), ''))"
+	       " AS version FROM reads r LEFT JOIN sc_rows s ON s.id = r.id AND s.input = r.input GROUP BY r.id, r.input)";
+	return sql;
+}
+
+string HeldSQL(const Workspace &ws) {
+	string held = "cur AS (SELECT begin_snapshot AS id, dataset, function FROM " + ws.Store("measurements") +
+	              " WHERE end_snapshot IS NULL), held AS (SELECT i.begin_snapshot AS id, i.input, i.version FROM " +
+	              ws.Store("inputs") + " i JOIN cur c ON c.id = i.begin_snapshot WHERE i.end_snapshot IS NULL), ";
+	held += "members AS (" +
+	        MembersSQL("SELECT id, version AS list FROM held WHERE input = '" + string(CLOSURE_INPUT) + "'") + "), ";
+	held += "reads AS (SELECT h.id, c.dataset, c.function, h.input, h.version FROM held h JOIN cur c USING (id)"
+	        " WHERE regexp_matches(h.input, '" +
+	        string(SCOPED_PATTERN) + "')), ";
+	return held + ScopedSQL(ws);
+}
+
 string CurrentResultsSQL(const Workspace &ws) {
 	auto results = ws.Store("measurements");
-	// an input has another version now: one that changed, appeared or is gone
-	string moved = "SELECT i.begin_snapshot AS id FROM " + ws.Store("inputs") + " i JOIN " + results +
-	               " m ON m.begin_snapshot = i.begin_snapshot AND m.end_snapshot IS NULL LEFT JOIN parts n"
-	               " ON n.name = i.input WHERE n.version IS DISTINCT FROM i.version";
+	// a part has another version now: one that changed, appeared or is gone
+	string moved = "SELECT h.id FROM held h LEFT JOIN parts n ON n.name = h.input WHERE h.input <> '" +
+	               string(CLOSURE_INPUT) + "' AND NOT regexp_matches(h.input, '" + SCOPED_PATTERN +
+	               "') AND n.version IS DISTINCT FROM h.version";
+	// or the rows of its closure an input names hold other values now
+	string rows = "SELECT r.id FROM reads r JOIN sc_versions v ON v.id = r.id AND v.input = r.input"
+	              " WHERE v.version IS DISTINCT FROM r.version";
 	// or its function, or the property it fills, was declared again since: a result of an
 	// older body, or checked against an older schema
 	string declared = "SELECT m.begin_snapshot FROM " + results +
@@ -513,20 +620,15 @@ string CurrentResultsSQL(const Workspace &ws) {
 	                  " f WHERE f.name = m.function AND f.scope IN (m.dataset, 'GLOBAL')"
 	                  " AND f.begin_snapshot > m.begin_snapshot) OR EXISTS (SELECT 1 FROM " +
 	                  ws.Store("aspects") + " a WHERE a.name = m.aspect AND a.begin_snapshot > m.begin_snapshot))";
-	// or an input is results, one of which is out of date. A function's own results are no
-	// input of its own, and those of a reader of every other function's results no member
-	// of another's such read: the same sets the parts digest
-	string through = "SELECT m.begin_snapshot FROM outdated d JOIN " + results + " o ON o.begin_snapshot = d.id JOIN " +
-	                 ws.Store("inputs") +
-	                 " i ON i.end_snapshot IS NULL AND starts_with(i.input, 'main.measurements') JOIN " + results +
-	                 " m ON m.begin_snapshot = i.begin_snapshot AND m.end_snapshot IS NULL AND m.function <> o.function"
-	                 " AND (i.input = 'main.measurements/' || o.function"
-	                 " OR (i.input = 'main.measurements@' || o.aspect || '~' || m.function AND o.dataset = m.dataset)"
-	                 " OR (i.input = 'main.measurements/~' || m.function AND o.function NOT IN (" +
-	                 WideReadersSQL(ws) + ")))";
-	return "WITH RECURSIVE parts AS (" + PartsSQL(ws) + "), outdated(id) AS (" + moved + " UNION " + declared +
-	       " UNION " + through + ") SELECT m.*, m.begin_snapshot NOT IN (SELECT id FROM outdated) AS current FROM " +
-	       results + " m WHERE m.end_snapshot IS NULL";
+	// or a result it read within its closure is out of date. A function's own results are no
+	// input of its own
+	string through = "SELECT r.id FROM outdated d JOIN sc_rv o ON o.result = d.id JOIN reads r ON r.id = o.id"
+	                 " AND (r.input = 'main.measurements/' || o.function OR ((r.input = 'main.measurements@' ||"
+	                 " o.aspect OR r.input = 'main.measurements') AND o.function <> r.function))";
+	return "WITH RECURSIVE parts AS (" + PartsSQL(ws) + "), " + HeldSQL(ws) + ", outdated(id) AS (" + moved +
+	       " UNION " + rows + " UNION " + declared + " UNION " + through +
+	       ") SELECT m.*, m.begin_snapshot NOT IN (SELECT id FROM outdated) AS current FROM " + results +
+	       " m WHERE m.end_snapshot IS NULL";
 }
 
 struct InitState : public GlobalTableFunctionState {
@@ -561,12 +663,13 @@ static void InitExec(ClientContext &context, TableFunctionInput &data, DataChunk
 	}
 	idx_t views = 0;
 	// a view's text names the metadata catalog, quoted or bare as the lake re-serializes it:
-	// a view made under another alias is made again
-	auto view = [&](const string &name, const string &sql) {
+	// a view made under another alias is made again, and so is one without the run's closure
+	auto view = [&](const string &name, const string &sql, bool sees) {
 		auto current =
 		    inner.Scalar("SELECT count(*) FROM duckdb_views() WHERE database_name = " + QuoteText(ws.lake) +
 			             " AND schema_name = 'main' AND view_name = " + QuoteText(name) + " AND (contains(sql, " +
-			             QuoteText(ws.meta + ".") + ") OR contains(sql, " + QuoteText(QuoteName(ws.meta) + ".") + "))");
+			             QuoteText(ws.meta + ".") + ") OR contains(sql, " + QuoteText(QuoteName(ws.meta) + ".") + "))" +
+			             (sees ? " AND contains(sql, 'glossql_sees')" : ""));
 		if (current.GetValue<int64_t>() > 0) {
 			return;
 		}
@@ -574,12 +677,17 @@ static void InitExec(ClientContext &context, TableFunctionInput &data, DataChunk
 		views++;
 	};
 	for (auto &relation : STORE_RELATIONS) {
+		// a run reads the rows within its closure (RunClosure)
+		auto sees = relation.sees ? " AND " + string(relation.sees) : string();
 		auto columns = "SELECT " + string(relation.view);
-		view(relation.name, columns + " FROM " + ws.Store(relation.name) + " WHERE end_snapshot IS NULL");
+		view(relation.name, columns + " FROM " + ws.Store(relation.name) + " WHERE end_snapshot IS NULL" + sees,
+		     relation.sees);
 		// a view over every column names them all, the end among them
 		auto every =
 		    string(relation.view) == "* EXCLUDE (end_snapshot)" ? string("SELECT *") : columns + ", end_snapshot";
-		view(string(relation.name) + "_history", every + " FROM " + ws.Store(relation.name));
+		view(string(relation.name) + "_history",
+		     every + " FROM " + ws.Store(relation.name) + (relation.sees ? " WHERE " + string(relation.sees) : ""),
+		     relation.sees);
 	}
 	output.data[0].Append(Value("workspace " + ws.lake + ": the store is " + ws.meta + "." + ws.meta_schema +
 	                            ".glossql_*, read as the views of " + ws.lake + ".main (" + to_string(views) +
@@ -1305,14 +1413,14 @@ static string LoadsSQL(const Workspace &ws) {
 //! Each fact is one join over the annotations, keyed by the snapshot a row
 //! began at, which no two rows share: the rule plans as joins, where the same
 //! rule as subqueries per row took the planner a tenth of a second
-static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter) {
+static string AnnotationsOverSQL(const Workspace &ws, const string &filter) {
 	// the column is all that follows the second dot: its name may hold one (SPEC §4)
-	string g = "g AS (SELECT subject, aspect, actor_kind, body, written_at, begin_snapshot AS id,"
+	string g = "g AS (SELECT dataset, subject, aspect, actor_kind, body, written_at, begin_snapshot AS id,"
 	           " split_part(subject, '.', 1) AS sch, split_part(subject, '.', 2) AS tbl,"
 	           " substr(subject, length(split_part(subject, '.', 1)) + length(split_part(subject, '.', 2)) + 3) AS col,"
 	           " CASE WHEN subject LIKE '% -> %' OR subject LIKE '% <-> %' THEN 0"
 	           " ELSE len(string_split(subject, '.')) END AS depth FROM " +
-	           scope.ws.Store("glossary") + " WHERE end_snapshot IS NULL AND " + scope.filter + aspect_filter + ")";
+	           ws.Store("glossary") + " WHERE end_snapshot IS NULL AND " + filter + ")";
 	string live_then = "c.begin_snapshot <= g.id AND (c.end_snapshot IS NULL OR c.end_snapshot > g.id)";
 	// a column's type at the write, and now
 	string col_then = "col_then AS (SELECT g.id, min(c.column_type) AS type FROM g JOIN cols c ON c.schema_name = g.sch"
@@ -1356,17 +1464,21 @@ static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter
 	string stale = "CASE WHEN g.depth >= 3 THEN " + column_stale + " OR " + column_rederived + " OR " + view_stale +
 	               " WHEN g.depth = 2 THEN coalesce(tt.changed, vt.id IS NULL) OR " + table_rederived + " OR " +
 	               view_stale + " ELSE false END";
-	return "WITH cols AS (" + ColumnsSQL(scope.ws) + "), views AS (" + ViewsSQL(scope.ws) + "), loads AS (" +
-	       LoadsSQL(scope.ws) + "), " + g + ", " + col_then + ", " + col_now + ", " + tbl_then + ", " + load_then +
-	       ", " + load_now + ", " + view_then +
+	return "WITH cols AS (" + ColumnsSQL(ws) + "), views AS (" + ViewsSQL(ws) + "), loads AS (" + LoadsSQL(ws) + "), " +
+	       g + ", " + col_then + ", " + col_now + ", " + tbl_then + ", " + load_then + ", " + load_now + ", " +
+	       view_then +
 	       " SELECT g.subject, g.aspect, g.actor_kind AS actor, g.body::JSON AS body, g.written_at, coalesce(" + stale +
-	       ", false) AS stale, g.id AS ord, NULL::VARCHAR AS error FROM g"
+	       ", false) AS stale, g.id AS ord, NULL::VARCHAR AS error, g.dataset FROM g"
 	       " LEFT JOIN col_then ct ON ct.id = g.id"
 	       " LEFT JOIN col_now cn ON cn.schema_name = g.sch AND cn.table_name = g.tbl AND cn.column_name = g.col"
 	       " LEFT JOIN tbl_then tt ON tt.id = g.id"
 	       " LEFT JOIN load_then lt ON lt.id = g.id"
 	       " LEFT JOIN load_now ln ON ln.dataset = g.sch AND ln.table_name = g.tbl"
 	       " LEFT JOIN view_then vt ON vt.id = g.id";
+}
+
+static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter) {
+	return AnnotationsOverSQL(scope.ws, scope.filter + aspect_filter);
 }
 
 //! Every value in scope, the current one per actor kind: the glossary's agent
@@ -1376,7 +1488,7 @@ static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter
 static string ValuesSQL(const ReadScope &scope, const string &aspect_filter) {
 	return "(" + AnnotationsSQL(scope, aspect_filter) +
 	       ") UNION ALL SELECT subject, aspect, 'function' AS actor, value::JSON AS body, computed_at AS written_at,"
-	       " NOT current AS stale, begin_snapshot AS ord, error FROM (" +
+	       " NOT current AS stale, begin_snapshot AS ord, error, dataset FROM (" +
 	       CurrentResultsSQL(scope.ws) + ") WHERE " + scope.filter + aspect_filter;
 }
 
@@ -1840,12 +1952,12 @@ static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const
 
 //! What a read of the glossary or of the test results serves, named for the
 //! result that reads it: one property, or every property where the read names none
-static void NameRead(ClientContext &context, const string &dataset, const Value &aspect) {
+static void NameRead(ClientContext &context, const Value &aspect) {
 	if (aspect.IsNull()) {
 		BindRead(context, "main.glossary");
 		BindRead(context, "main.measurements");
 	} else {
-		BindProperty(context, aspect.ToString(), dataset);
+		BindProperty(context, aspect.ToString());
 	}
 }
 
@@ -1873,7 +1985,7 @@ static unique_ptr<FunctionData> CachedBind(ClientContext &context, TableFunction
                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
 	Inner inner(context);
 	auto whole = WholeOf(ScopeOf(context, input.inputs[1]), inner.ws);
-	NameRead(context, whole.dataset, input.inputs[2]);
+	NameRead(context, input.inputs[2]);
 	auto result = make_uniq<CachedBindData>();
 	result->read = Cached(context, inner, input.inputs[0].ToString(), whole);
 	return_types = result->read->types;
@@ -1972,11 +2084,19 @@ static unique_ptr<TableRef> Shape(const string &columns) {
 	return make_uniq<SubqueryRef>(ParseSelect("SELECT " + StringUtil::Join(parts, ", ") + " WHERE false"));
 }
 
-//! The narrowing a bind applies over the dataset's kept rows
-static string Narrowed(const string &kind, const ReadScope &scope, const Value &aspect, const string &order) {
+//! The narrowing a bind applies over the dataset's kept rows: to its subject and
+//! property, and in a run to the run's closure, a function's value as a result
+static string Narrowed(ClientContext &context, const string &kind, const ReadScope &scope, const Value &aspect,
+                       const string &order) {
+	string closure;
+	if (RunClosureOf(context)) {
+		auto relation = kind == "raw" ? string("CASE WHEN actor = 'function' THEN 'measurements' ELSE 'glossary' END")
+		                              : string("'glossary'");
+		closure = " AND glossql_sees(" + relation + ", " + QuoteText(scope.dataset) + ", subject, aspect)";
+	}
 	return "SELECT * FROM glossql_cached(" + QuoteText(kind) + ", " + QuoteText(scope.dataset) + ", " +
 	       (aspect.IsNull() ? string("NULL") : QuoteText(aspect.ToString())) + ") WHERE true" +
-	       (scope.whole ? string() : " AND " + scope.subjects) + AspectFilter(aspect) + " ORDER BY " + order;
+	       (scope.whole ? string() : " AND " + scope.subjects) + AspectFilter(aspect) + closure + " ORDER BY " + order;
 }
 
 static unique_ptr<TableRef> GlossGlossaryBindReplace(ClientContext &context, TableFunctionBindInput &input) {
@@ -1985,7 +2105,7 @@ static unique_ptr<TableRef> GlossGlossaryBindReplace(ClientContext &context, Tab
 		return Shape(all ? RAW_SHAPE : COLLAPSED_SHAPE);
 	}
 	auto scope = ScopeOf(context, input.inputs[0]);
-	return make_uniq<SubqueryRef>(ParseSelect(Narrowed(all ? "raw" : "collapsed", scope, input.inputs[1],
+	return make_uniq<SubqueryRef>(ParseSelect(Narrowed(context, all ? "raw" : "collapsed", scope, input.inputs[1],
 	                                                   all ? "subject, aspect, actor" : "subject, aspect")));
 }
 
@@ -2001,7 +2121,8 @@ static unique_ptr<TableRef> GlossTestsBindReplace(ClientContext &context, TableF
 		return Shape(TESTS_SHAPE);
 	}
 	auto scope = ScopeOf(context, input.inputs[0]);
-	return make_uniq<SubqueryRef>(ParseSelect(Narrowed("tests", scope, input.inputs[1], "subject, aspect, test")));
+	return make_uniq<SubqueryRef>(
+	    ParseSelect(Narrowed(context, "tests", scope, input.inputs[1], "subject, aspect, test")));
 }
 
 static TableFunction GlossTestsFunction() {
@@ -2011,10 +2132,99 @@ static TableFunction GlossTestsFunction() {
 }
 
 //===--------------------------------------------------------------------===//
+// A run's closure (SPEC §6): while a function computes a result on a subject,
+// its connection holds the subject's closure, and every read of the rows about
+// subjects returns those within it — the store's views through glossql_sees,
+// GLOSSARY() and TESTS() through their narrowing. What the run cannot see is no
+// input of its result, so the rows it saw are all its result depends on
+//===--------------------------------------------------------------------===//
+
+struct RunClosureState : public ClientContextState {
+	shared_ptr<RunClosure> closure;
+};
+
+static RunClosureState &ClosureStateOf(ClientContext &context) {
+	return *context.registered_state->GetOrCreate<RunClosureState>("glossql_run_closure");
+}
+
+shared_ptr<RunClosure> RunClosureOf(ClientContext &context) {
+	return ClosureStateOf(context).closure;
+}
+
+void SetRunClosure(ClientContext &context, shared_ptr<RunClosure> closure) {
+	ClosureStateOf(context).closure = std::move(closure);
+}
+
+vector<string> RunClosure::Members() const {
+	vector<string> members;
+	if (whole) {
+		members.push_back("d:" + dataset);
+	}
+	for (auto &subject : subjects) {
+		members.push_back("s:" + subject);
+	}
+	for (auto &property : properties) {
+		members.push_back("p:" + property.first + "::" + property.second);
+	}
+	for (auto &subject : results) {
+		members.push_back("r:" + subject);
+	}
+	return members;
+}
+
+bool RunClosure::Sees(const string &relation, const string &row_dataset, const string &subject,
+                      const string &aspect) const {
+	if (relation == "aspects" || relation == "tests") {
+		return whole || named.count(aspect) > 0;
+	}
+	if (row_dataset != dataset) {
+		return false;
+	}
+	if (whole || relation == "relationships" || relation == "datasets") {
+		return true;
+	}
+	if (relation == "imports" || relation == "recipes") {
+		return subjects.count(subject) > 0;
+	}
+	return subjects.count(subject) > 0 || properties.count(std::make_pair(subject, aspect)) > 0 ||
+	       (relation == "measurements" && results.count(subject) > 0);
+}
+
+//! glossql_sees(relation, dataset, subject, aspect): whether a row of a store
+//! relation is within the closure of the connection's run; every row outside a run
+static void SeesFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto closure = RunClosureOf(state.GetContext());
+	if (!closure) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		ConstantVector::GetData<bool>(result)[0] = true;
+		FlatVector::SetSize(result, args.size());
+		return;
+	}
+	auto text = [&](idx_t column, idx_t row) {
+		auto value = args.data[column].GetValue(row);
+		return value.IsNull() ? string() : value.ToString();
+	};
+	auto data = FlatVector::Writer<bool>(result, args.size());
+	for (idx_t row = 0; row < args.size(); row++) {
+		data.WriteValue(closure->Sees(text(0, row), text(1, row), text(2, row), text(3, row)));
+	}
+}
+
+static ScalarFunction GlossSeesFunction() {
+	ScalarFunction function("glossql_sees",
+	                        {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                        LogicalType::BOOLEAN, SeesFunction);
+	function.SetStability(FunctionStability::CONSISTENT_WITHIN_QUERY);
+	function.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	return function;
+}
+
+//===--------------------------------------------------------------------===//
 // Registration
 //===--------------------------------------------------------------------===//
 
 void RegisterGlossStore(ExtensionLoader &loader) {
+	loader.RegisterFunction(GlossSeesFunction());
 	loader.RegisterFunction(GlossInitFunction());
 	loader.RegisterFunction(PragmaFunction::PragmaCall("glossql", GlossQuery, {}));
 	loader.RegisterFunction(GlossWriteFunctions());

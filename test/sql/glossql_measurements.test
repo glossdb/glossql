@@ -119,10 +119,15 @@ SELECT notes() FROM orders.amount;
 ----
 notes	fin.orders.amount	notes	1	true
 
-query T
-SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function = 'notes';
+# what it reads of the glossary is the note within its subject's closure: a note on a table
+# no relationship connects to its own leaves it current
+statement ok
+GLOSS note ON other.x AS $${"text": "elsewhere"}$$;
+
+query TTTTT
+SELECT notes() FROM orders.amount;
 ----
-main.glossary/note
+notes	fin.orders.amount	notes	1	false
 
 statement ok
 INSERT INTO fin.orders VALUES (10, 10.0);
@@ -557,7 +562,9 @@ SELECT subject, current FROM GLOSSARY(fin, all => true) WHERE aspect = 'seen' OR
 fin.orders.amount	true
 fin.orders.id	true
 
-# two functions that read every property: each reads the other's results, and neither outdates the other
+# two functions that read every property: each reads the other's results within its closure. A
+# result that computes again with the value it had leaves its readers current, so the pair holds
+# once their values hold; a result outside the closure is no input
 
 statement ok
 DECLARE ASPECT values_a WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
@@ -572,18 +579,31 @@ statement ok
 DECLARE FUNCTION values_b FOR fin AS $$ SELECT count(*) AS n FROM glossql_glossary('fin', NULL, true) $$ RETURNS values_b;
 
 statement ok
-SELECT values_a(), values_b() FROM orders;
+CREATE TABLE fin.pair AS SELECT 1 AS x;
 
 statement ok
-SET VARIABLE others = (SELECT version FROM glossql_parts() WHERE name = 'main.measurements/~values_a');
+SELECT values_a(), values_b() FROM pair;
+
+statement ok
+SELECT values_a(), values_b() FROM pair;
+
+statement ok
+SELECT values_a(), values_b() FROM pair;
+
+query TT
+SELECT aspect, current FROM GLOSSARY(pair, all => true) WHERE aspect IN ('values_a', 'values_b') ORDER BY aspect;
+----
+values_a	true
+values_b	true
 
 statement ok
 SELECT values_b() FROM fin.other;
 
-query T
-SELECT version = getvariable('others') FROM glossql_parts() WHERE name = 'main.measurements/~values_a';
+query TT
+SELECT aspect, current FROM GLOSSARY(pair, all => true) WHERE aspect IN ('values_a', 'values_b') ORDER BY aspect;
 ----
-true
+values_a	true
+values_b	true
 
 # --- a computation that fails is a result too: stored with its inputs and its error, current while they are; a call computes it again
 

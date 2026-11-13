@@ -441,11 +441,16 @@ SELECT tie_out_count() FROM orders;
 ----
 tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"stored tie-outs"}	true
 
-# the reader's reads name the function it filtered to, not the whole relation
-query T
-SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function = 'tie_out_count' ORDER BY begin_snapshot DESC LIMIT 1;
-----
-main.measurements/tie_out_check
+# the reader read the function it filtered to, not the whole relation: another function's result
+# on the same subject leaves it current
+statement ok
+DECLARE ASPECT order_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION order_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM fin.orders $$ RETURNS order_rows;
+
+statement ok
+SELECT order_rows() FROM orders;
 
 query TTTTT
 SELECT tie_out_count() FROM orders;

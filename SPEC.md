@@ -505,32 +505,72 @@ Extraction writes one row in the `measurements` relation:
 `(dataset, function, subject, aspect, value, computed_at, error)`,
 and one row per input the body actually read, at the version read, in
 the `inputs` relation; no row for a body that read nothing. The inputs
-come from the plan of the body; nobody declares them. An input is one of:
+come from the plan of the body; nobody declares them.
 
-- a table or view, `<dataset>.<name>`;
-- a catalog relation, `main.<relation>`;
-- one property's annotations, `main.glossary/<aspect>`;
-- one function's results, `main.measurements/<function>`;
-- the other functions' results of one property in the result's own
-  dataset, `main.measurements@<aspect>~<function>` (a read of another
-  dataset's values names every other function's results);
-- every other function's results, `main.measurements/~<function>`;
+A function runs on a subject, and the subject has a closure: the
+assets whose glossary rows and results the function can read.
+
+- A dataset: everything in it.
+- A view, or a column of a view: the view and its columns, its
+  definition (the dataset's annotation of the view's property), the
+  tables and columns it scans and joins on, the views it reads (each
+  with its own closure), the metric a plan names (`x-plan-of`), and
+  the results stored on the dataset.
+- A loaded table, or a column of one: the tables that declared
+  relationships connect it to, itself among them, and their columns.
+- Any other subject, such as a relationship: the dataset.
+
+While the function runs, every read of the glossary, the results and
+the declarations about assets returns the rows within the closure and
+no other: `GLOSSARY()`, `TESTS()` and the catalog's views alike. A
+body that reads the catalog's tables past those views is refused. A
+property's declaration and tests are visible where the closure holds
+the view of that property or the body names the property.
+
+An input is one of:
+
+- a table or view, `<dataset>.<name>`, at the last snapshot that
+  changed it;
 - the dataset's every table, `<dataset>.*`;
 - what the body could have read where its reads could not be named,
   `<dataset>.**`: the dataset's tables and views and the catalog's
   declarations and annotations;
-- the lake's shape, `lake.shape`: its datasets, columns and views.
+- the lake's shape, `lake.shape`, or one dataset's,
+  `lake.shape/<dataset>`: its columns and views;
+- a catalog relation that holds no rows about assets, such as
+  `main.functions`, at its last change;
+- rows of the closure, as a digest of what they hold now:
+  one property's annotations, `main.glossary/<aspect>` (with the
+  property's declaration and tests), or every annotation,
+  `main.glossary`; one function's results,
+  `main.measurements/<function>`, the other functions' results of one
+  property, `main.measurements@<aspect>`, or every other function's
+  results, `main.measurements`; the declarations it can see,
+  `main.aspects` and `main.tests`; the dataset's relationships and its
+  own declaration, `main.relationships` and `main.datasets`; the loads
+  and load queries of its tables, `main.imports` and `main.recipes`;
+- the closure itself, `closure`, its members as a list. A result on a
+  table or a view also stores what its closure was drawn from: the
+  dataset's shape, and its relationships or its views' declarations.
 
-`glossql_parts()` serves each input's version now: `(name, version, kind)`.
+An annotation's row in a digest is its asset, property, actor, value
+and whether it is stale; a result's is its asset, function, value and
+error. `glossql_parts()` serves each input's version now: `(name,
+version, kind, result)`, a digest once per result that read it.
+
 A stored result is current while each input has the version it read
-and no input that is a stored result is out of date. A function
-declared again, or the property it fills declared again, makes its
-results out of date. A later extraction serves a current row; an
-out-of-date one makes the next extraction compute. A write the body
-never reads leaves it current, and old rows stay in
-`measurements_history`. A function's own results are never its input,
-and the results of a function that reads every other function's
-results are no input of another such function. A computation that
+and no result it read within its closure is out of date. What counts
+is what the rows hold, not when they were written: an annotation
+changed and changed back leaves the result current, and a result
+computed again with the value it had leaves its readers current. An
+annotation outside the closure, or of a property the body did not
+read, leaves the result current. A column retyped makes its
+annotations stale, and so the results that read them out of date. A
+function declared again, or the property it fills declared again,
+makes its results out of date. A later extraction serves a current
+row; an out-of-date one makes the next extraction compute. Old rows
+stay in `measurements_history`. A function's own results are never
+its input. A computation that
 fails, in the body or in the schema check, is stored too, with its
 inputs and its `error` and no value. It is current while its inputs
 are, so nothing computes it again on its own; a call computes it

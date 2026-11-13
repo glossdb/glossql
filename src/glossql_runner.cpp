@@ -50,6 +50,7 @@
 #include "duckdb/planner/planner.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
@@ -194,6 +195,10 @@ Inner::Inner(ClientContext &context) : con(*context.db), ws(FindWorkspace(contex
 	if (context.TryGetCurrentSetting(Identifier("file_search_path"), files) && !files.IsNull() &&
 	    !files.ToString().empty()) {
 		Run("SET file_search_path = " + QuoteText(files.ToString()));
+	}
+	// and sees what the caller's run sees: a primitive's own reads keep to the run's closure
+	if (auto closure = RunClosureOf(context)) {
+		SetRunClosure(*con.context, std::move(closure));
 	}
 }
 
@@ -1118,7 +1123,19 @@ static bool KeyPredicates(ClientContext &context, LogicalOperator &root, const W
 	return false;
 }
 
-static void CollectReads(ClientContext &context, LogicalOperator &op, const Workspace &ws, Reads &reads) {
+//! Whether an expression calls glossql_sees: the store views' narrowing to a run's closure
+static bool CallsSees(Expression &expr) {
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION &&
+	    expr.Cast<BoundFunctionExpression>().Function().GetName().GetIdentifierName() == "glossql_sees") {
+		return true;
+	}
+	bool found = false;
+	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { found = found || CallsSees(child); });
+	return found;
+}
+
+static void CollectReads(ClientContext &context, LogicalOperator &op, const Workspace &ws, Reads &reads,
+                         optional_ptr<LogicalOperator> parent = nullptr) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
 		auto &get = op.Cast<LogicalGet>();
 		auto table = get.GetTable();
@@ -1127,6 +1144,22 @@ static void CollectReads(ClientContext &context, LogicalOperator &op, const Work
 			auto schema = table->ParentSchema().name.GetIdentifierName();
 			auto name = table->name.GetIdentifierName();
 			bool store = catalog == ws.meta && schema == ws.meta_schema;
+			// rows about subjects are read through the store's views, which keep a run to its
+			// closure: a scan of their table outside those views could read past it
+			if (store && StringUtil::StartsWith(name, "glossql_") && ScopedInput("main." + name.substr(8))) {
+				bool narrowed = false;
+				if (parent && parent->type == LogicalOperatorType::LOGICAL_FILTER) {
+					for (auto &expr : parent->expressions) {
+						narrowed = narrowed || CallsSees(*expr);
+					}
+				}
+				if (!narrowed) {
+					throw InvalidInputException("glossql: a function reads %s past the catalog's views: it reads the "
+					                            "glossary, the results and the declarations through main.%s, "
+					                            "GLOSSARY() or TESTS(), which keep it to its subject's closure",
+					                            name, name.substr(8));
+				}
+			}
 			if (catalog == ws.lake) {
 				reads.names.insert(schema + "." + name);
 			} else if (store && name == RESULTS_BY_FUNCTION.table) {
@@ -1149,7 +1182,7 @@ static void CollectReads(ClientContext &context, LogicalOperator &op, const Work
 		}
 	}
 	for (auto &child : op.children) {
-		CollectReads(context, *child, ws, reads);
+		CollectReads(context, *child, ws, reads, &op);
 	}
 }
 
@@ -1196,8 +1229,6 @@ static void ViewsOf(ClientContext &context, const Workspace &ws, const string &s
 //! moves
 struct BindReads : public ClientContextState {
 	std::set<string> names;
-	//! the dataset of the result whose reads these are, while ReadsOf plans its call
-	string dataset;
 
 	static BindReads &Of(ClientContext &context) {
 		return *context.registered_state->GetOrCreate<BindReads>("glossql_bind_reads");
@@ -1210,26 +1241,22 @@ void BindRead(ClientContext &context, const string &name) {
 	BindReads::Of(context).names.insert(name);
 }
 
-//! A read of one property's values in a dataset: its annotations, and the other
-//! functions' results of it there. A result reads its own dataset's results by
-//! property; a read of another dataset's names every other function's results
-void BindProperty(ClientContext &context, const string &aspect, const string &dataset) {
-	auto &side = BindReads::Of(context);
+//! A read of one property's values: its annotations, and the other functions'
+//! results of it, each within the reading result's closure
+void BindProperty(ClientContext &context, const string &aspect) {
 	BindRead(context, "main.glossary/" + aspect);
-	BindRead(context, side.dataset.empty() || side.dataset == dataset ? "main.measurements@" + aspect
-	                                                                  : string("main.measurements"));
+	BindRead(context, "main.measurements@" + aspect);
 }
 
 //! The reads of a call on a subject, enumerated from its bound plan: views
 //! expand to their tables, subject_column() to the subject's, before any
 //! optimizer touches it; the views the subject holds on are named beside,
 //! their definitions being parts too, and so is what a bind read beside the plan
-static string ReadsOf(Inner &inner, const string &call, const string &subject, const string &dataset) {
+static string ReadsOf(Inner &inner, const string &call, const string &subject) {
 	Reads reads;
 	auto &context = *inner.con.context;
 	auto &side = BindReads::Of(context);
 	side.names.clear();
-	side.dataset = dataset;
 	unique_ptr<SQLStatement> statement = ParseSelect("SELECT * FROM " + call);
 	context.RunFunctionInTransaction([&]() {
 		Planner planner(context);
@@ -1247,31 +1274,225 @@ static string ReadsOf(Inner &inner, const string &call, const string &subject, c
 	return reads.Text();
 }
 
+//! The closure of a subject (SPEC §6): the subjects whose glossary rows and
+//! results a result on it can read. The dataset: everything in it. A view, or
+//! a column of one: the view and its columns, its definition (the dataset's row
+//! of the view's property), the tables and columns it scans and joins on and
+//! the views it reads, each with its own closure, the metric a plan names
+//! (x-plan-of), and the results stored on the dataset. A loaded table, or a
+//! column of one: the tables the dataset's declared relationships connect it
+//! to, itself among them, and their columns. Anything else (a relationship's
+//! pair path): the dataset. `determinants` takes what the closure was drawn
+//! from: the dataset's shape, and its relationships or its views' declarations
+static shared_ptr<RunClosure> ClosureOf(Inner &inner, const string &subject, const string &dataset,
+                                        std::set<string> &determinants) {
+	auto closure = make_shared_ptr<RunClosure>();
+	closure->dataset = dataset;
+	auto parts = SubjectParts(subject);
+	bool pair = subject.find(" -> ") != string::npos || subject.find(" <-> ") != string::npos;
+	if (subject == dataset || pair || parts.size() < 2 || parts[0] != dataset) {
+		closure->whole = true;
+		return closure;
+	}
+	determinants.insert(string(LAKE_SHAPE) + "/" + dataset);
+	auto ds = QuoteText(dataset);
+	auto prefix = dataset + ".";
+	// the dataset's relations and their columns, its views among them
+	std::map<string, vector<string>> columns;
+	std::set<string> views;
+	auto rows = inner.Run("SELECT table_name, column_name, table_type = 'VIEW' FROM glossql_columns(" + ds + ")");
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			auto relation = chunk->GetValue(0, r).ToString();
+			columns[relation].push_back(chunk->GetValue(1, r).ToString());
+			if (chunk->GetValue(2, r).GetValue<bool>()) {
+				views.insert(relation);
+			}
+		}
+	}
+	auto add_relation = [&](const string &relation) {
+		closure->subjects.insert(prefix + relation);
+		for (auto &column : columns[relation]) {
+			closure->subjects.insert(prefix + relation + "." + column);
+		}
+	};
+	auto &table = parts[1];
+	if (!views.count(table)) {
+		// a loaded table: the tables its dataset's declared relationships connect it to
+		determinants.insert("main.relationships");
+		std::map<string, std::set<string>> edges;
+		auto sides =
+		    inner.Run("SELECT left_side, right_side FROM " + inner.Current("relationships") + " WHERE dataset = " + ds);
+		while (auto chunk = sides->Fetch()) {
+			for (idx_t r = 0; r < chunk->size(); r++) {
+				auto left = SubjectParts(chunk->GetValue(0, r).ToString());
+				auto right = SubjectParts(chunk->GetValue(1, r).ToString());
+				if (left.size() == 3 && right.size() == 3) {
+					edges[left[1]].insert(right[1]);
+					edges[right[1]].insert(left[1]);
+				}
+			}
+		}
+		std::set<string> reached {table};
+		vector<string> next {table};
+		while (!next.empty()) {
+			auto at = next.back();
+			next.pop_back();
+			for (auto &other : edges[at]) {
+				if (reached.insert(other).second) {
+					next.push_back(other);
+				}
+			}
+		}
+		for (auto &relation : reached) {
+			add_relation(relation);
+		}
+		return closure;
+	}
+	// a view: what it scans and joins on, the views it reads, the metric a plan names
+	determinants.insert("main.aspects");
+	std::map<string, vector<string>> scanned;
+	auto scans = inner.Run("SELECT view, table_name, columns FROM glossql_views_scans(" + ds + ")");
+	while (auto chunk = scans->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			auto relation = chunk->GetValue(1, r).ToString();
+			auto &into = scanned[chunk->GetValue(0, r).ToString()];
+			into.push_back(relation);
+			auto read = chunk->GetValue(2, r);
+			for (auto &column : ListValue::GetChildren(read)) {
+				into.push_back(relation + "." + column.ToString());
+			}
+		}
+	}
+	auto joins = inner.Run("SELECT view, left_column, right_column FROM glossql_views_joins(" + ds + ")");
+	while (auto chunk = joins->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			auto &into = scanned[chunk->GetValue(0, r).ToString()];
+			for (idx_t side = 1; side <= 2; side++) {
+				auto column = SubjectParts(chunk->GetValue(side, r).ToString());
+				if (column.size() == 3) {
+					into.push_back(column[0] + "." + column[1]);
+					into.push_back(column[0] + "." + column[1] + "." + column[2]);
+				}
+			}
+		}
+	}
+	std::map<string, string> plans;
+	auto planned =
+	    inner.Run("SELECT name, json_extract_string(schema, '$.x-plan-of') FROM " + inner.Current("aspects") +
+		          " WHERE kind = 'VIEW' AND schema::JSON->>'x-plan-of' IS NOT NULL");
+	while (auto chunk = planned->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			plans[chunk->GetValue(0, r).ToString()] = chunk->GetValue(1, r).ToString();
+		}
+	}
+	std::map<string, std::set<string>> held;
+	auto &context = *inner.con.context;
+	context.RunFunctionInTransaction([&]() {
+		for (auto &view : views) {
+			ViewsOf(context, inner.ws, dataset, view, held[view]);
+		}
+	});
+	std::set<string> visited;
+	std::function<void(const string &)> add_view = [&](const string &view) {
+		if (!visited.insert(view).second) {
+			return;
+		}
+		add_relation(view);
+		closure->properties.insert(std::make_pair(dataset, view));
+		closure->results.insert(dataset);
+		for (auto &read : scanned[view]) {
+			if (StringUtil::StartsWith(read, prefix)) {
+				closure->subjects.insert(read);
+			}
+		}
+		for (auto &other : held[view]) {
+			if (StringUtil::StartsWith(other, prefix) && views.count(other.substr(prefix.size()))) {
+				add_view(other.substr(prefix.size()));
+			}
+		}
+		if (plans.count(view) && views.count(plans[view])) {
+			add_view(plans[view]);
+		}
+	};
+	add_view(table);
+	return closure;
+}
+
 //! What a computation read, each input at its version now (SPEC §6): the names
-//! its reads resolve to, an input that is not there with no version. Read before
-//! the computation runs, so that a change under it is a change after it
+//! its reads resolve to, an input that is not there with no version. A part
+//! the lake or the store versions as a whole is read from the parts; an input
+//! that names rows of the closure is a digest of those rows, and the closure
+//! itself is an input beside them. Read before the computation runs, so that a
+//! change under it is a change after it. Fills the properties the run sees the
+//! declarations of
 static vector<pair<string, Value>> InputsOf(Inner &inner, const string &dataset, const string &function,
-                                            const string &reads) {
+                                            const string &reads, RunClosure *closure) {
 	vector<pair<string, Value>> inputs;
-	vector<string> names;
+	std::set<string> names;
 	for (auto &read : StringUtil::Split(reads, ',')) {
 		auto name = InputName(read, dataset, function);
 		if (!name.empty()) {
-			names.push_back("(" + QuoteText(name) + ")");
+			names.insert(name);
 		}
 	}
-	if (names.empty()) {
-		return inputs;
+	vector<string> parts;
+	vector<string> scoped;
+	for (auto &name : names) {
+		(closure && ScopedInput(name) ? scoped : parts).push_back("(" + QuoteText(name) + ")");
 	}
-	auto rows = inner.Run("SELECT i.name, p.version FROM (VALUES " + StringUtil::Join(names, ", ") +
-	                      ") i(name) LEFT JOIN (" + PartsSQL(inner.ws) + ") p ON p.name = i.name ORDER BY i.name");
-	while (auto chunk = rows->Fetch()) {
-		for (idx_t r = 0; r < chunk->size(); r++) {
-			inputs.emplace_back(chunk->GetValue(0, r).ToString(), chunk->GetValue(1, r));
+	if (!parts.empty()) {
+		auto rows = inner.Run("SELECT i.name, p.version FROM (VALUES " + StringUtil::Join(parts, ", ") +
+		                      ") i(name) LEFT JOIN (" + PartsSQL(inner.ws) + ") p ON p.name = i.name");
+		while (auto chunk = rows->Fetch()) {
+			for (idx_t r = 0; r < chunk->size(); r++) {
+				inputs.emplace_back(chunk->GetValue(0, r).ToString(), chunk->GetValue(1, r));
+			}
 		}
 	}
+	if (!scoped.empty()) {
+		auto members = JsonList(closure->Members());
+		inputs.emplace_back(CLOSURE_INPUT, Value(members));
+		auto rows = inner.Run("WITH members AS (" + MembersSQL("SELECT 0 AS id, " + QuoteText(members) + " AS list") +
+		                      "), reads AS (SELECT 0 AS id, " + QuoteText(dataset) + " AS dataset, " +
+		                      QuoteText(function) + " AS function, input FROM (VALUES " +
+		                      StringUtil::Join(scoped, ", ") + ") t(input)), " + ScopedSQL(inner.ws) +
+		                      " SELECT input, version FROM sc_versions UNION ALL SELECT DISTINCT aspect, NULL FROM"
+		                      " sc_props WHERE aspect IS NOT NULL");
+		while (auto chunk = rows->Fetch()) {
+			for (idx_t r = 0; r < chunk->size(); r++) {
+				auto version = chunk->GetValue(1, r);
+				if (version.IsNull()) {
+					closure->named.insert(chunk->GetValue(0, r).ToString());
+				} else {
+					inputs.emplace_back(chunk->GetValue(0, r).ToString(), version);
+				}
+			}
+		}
+	}
+	std::sort(inputs.begin(), inputs.end(),
+	          [](const pair<string, Value> &a, const pair<string, Value> &b) { return a.first < b.first; });
 	return inputs;
 }
+
+//! A run's closure held on its connection while it plans and runs, and let go
+//! after it, a failure among the ways out
+struct RunWithin {
+	explicit RunWithin(Inner &inner) : context(*inner.con.context) {
+	}
+	~RunWithin() {
+		Release();
+	}
+	void Hold(shared_ptr<RunClosure> held) {
+		closure = std::move(held);
+		SetRunClosure(context, closure);
+	}
+	void Release() {
+		SetRunClosure(context, nullptr);
+	}
+	ClientContext &context;
+	shared_ptr<RunClosure> closure;
+};
 
 //! The stored row for the call while it is current, (value, error), else empty
 static vector<Value> Served(Inner &inner, const string &dataset, const string &name, const string &subject) {
@@ -1364,8 +1585,21 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 			                            returns.ToString());
 		}
 		auto invocation = inner.Table(schema, name) + "(" + QuoteText(subject) + ")";
-		auto reads = ReadsOf(inner, invocation, subject, dataset);
-		auto inputs = InputsOf(inner, dataset, name, reads);
+		auto reads = ReadsOf(inner, invocation, subject);
+		// a body that reads rows about subjects runs within its subject's closure: planned
+		// again there, its reads and its run see the rows of the closure and no other
+		RunWithin within(inner);
+		std::set<string> determinants;
+		for (auto &read : StringUtil::Split(reads, ',')) {
+			if (!within.closure && ScopedInput(read)) {
+				within.Hold(ClosureOf(inner, subject, dataset, determinants));
+				reads = ReadsOf(inner, invocation, subject);
+			}
+		}
+		for (auto &determinant : determinants) {
+			reads += "," + determinant;
+		}
+		auto inputs = InputsOf(inner, dataset, name, reads, within.closure.get());
 		// a computation that fails is a result too: stored with its error, which serves while it is current
 		Value value;
 		string error;
@@ -1382,6 +1616,7 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		} catch (InvalidInputException &e) {
 			error = ErrorData(e).RawMessage();
 		}
+		within.Release();
 		if (!error.empty()) {
 			value = Value();
 		}
@@ -1496,13 +1731,18 @@ static TableFunction SubjectColumnFunction() {
 
 //===--------------------------------------------------------------------===//
 // glossql_parts(): what a stored result can read, each at its version now —
-// (name, version, kind). Joined to `inputs` on the name, it says which result
-// is out of date and which input moved
+// (name, version, kind, result). A part of the lake or the store is one row
+// for every result; an input that names rows of a closure is one row per
+// current result that read it, `result` its begin_snapshot and kind closure.
+// Joined to `inputs` on the name, and the result where one is named, it says
+// which result is out of date and which input moved
 //===--------------------------------------------------------------------===//
 
 static unique_ptr<TableRef> PartsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	Inner inner(context);
-	return make_uniq<SubqueryRef>(ParseSelect(PartsSQL(inner.ws)));
+	return make_uniq<SubqueryRef>(
+	    ParseSelect("WITH " + HeldSQL(inner.ws) + " SELECT name, version, kind, NULL::BIGINT AS result FROM (" +
+		            PartsSQL(inner.ws) + ") UNION ALL SELECT input, version, 'closure', id FROM sc_versions"));
 }
 
 static TableFunction PartsFunction() {
@@ -2220,7 +2460,7 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 	// a type; an event table with no measure glossed abstains and names the gloss
 	std::map<string, std::set<string>> measures;
 	std::set<string> roled;
-	BindProperty(context, "role", dataset);
+	BindProperty(context, "role");
 	auto roles = inner.Run("SELECT subject, value->>'value' FROM glossql_glossary(" + QuoteText(dataset) +
 	                       ", 'role', false) WHERE state IN ('current', 'stale')");
 	while (auto chunk = roles->Fetch()) {
