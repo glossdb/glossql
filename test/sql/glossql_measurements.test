@@ -563,7 +563,7 @@ SELECT version = getvariable('others') FROM glossql_parts() WHERE name = 'main.m
 ----
 true
 
-# --- a computation that fails is a result too: stored with its inputs and its error, the error served while it is current
+# --- a computation that fails is a result too: stored with its inputs and its error, current while they are; a call computes it again
 
 statement ok
 CREATE TABLE fin.flaky (x INTEGER);
@@ -584,7 +584,16 @@ SELECT body, current, error LIKE '%no rows yet%', actor FROM GLOSSARY(flaky::row
 ----
 NULL	true	true	function
 
-# the repeat fails with the stored error and computes nothing
+# a write that is no input leaves the failure current, with its error: nothing is due
+statement ok
+CREATE TABLE fin.unrelated (y INTEGER);
+
+query TT
+SELECT current, error LIKE '%no rows yet%' FROM GLOSSARY(flaky::rows_seen, all => true);
+----
+true	true
+
+# a call computes it again: a failure may come from what is no input, a service down or a configuration
 statement error
 SELECT rows_seen() FROM flaky;
 ----
@@ -593,7 +602,12 @@ no rows yet
 query I
 SELECT count(*) FROM measurements_history WHERE function = 'rows_seen';
 ----
-1
+2
+
+query TT
+SELECT current, error LIKE '%no rows yet%' FROM GLOSSARY(flaky::rows_seen, all => true);
+----
+true	true
 
 # never a value: the collapsed read and the tests' values hold none
 query I
@@ -628,13 +642,19 @@ SELECT label() FROM flaky;
 ----
 does not conform to the schema of label
 
-statement error
-SELECT label() FROM flaky;
+query T
+SELECT current FROM GLOSSARY(flaky::label, all => true);
 ----
-does not conform to the schema of label
+true
 
 statement ok
 DECLARE ASPECT label WITH $${"type": "string"}$$ AS MEASUREMENT ON TABLE;
+
+# the property declared again outdates the failure: what is due computes it again
+query T
+SELECT current FROM GLOSSARY(flaky::label, all => true);
+----
+false
 
 query TTTTT
 SELECT label() FROM flaky;

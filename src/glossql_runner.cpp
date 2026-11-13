@@ -1338,12 +1338,11 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		output.data[0].Append(Value(name));
 		output.data[1].Append(Value(subject));
 		output.data[2].Append(returns);
-		// served while it is current: a repeat is a serve, not a rerun, and a failure fails again (SPEC §6)
+		// served while it is current: a repeat is a serve, not a rerun (SPEC §6). A stored failure is not
+		// served to a call: it may come from what is no input (a service down, a configuration), so a
+		// call computes again; it stays current for a read of what is due
 		auto served = Served(inner, dataset, name, subject);
-		if (!served.empty() && !served[1].IsNull()) {
-			throw InvalidInputException(served[1].ToString());
-		}
-		if (!served.empty()) {
+		if (!served.empty() && served[1].IsNull()) {
 			output.data[3].Append(Value(Summary(inner, served[0].ToString())));
 			output.data[4].Append(Value::BOOLEAN(false));
 			row++;

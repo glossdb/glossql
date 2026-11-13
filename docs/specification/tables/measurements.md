@@ -3,8 +3,8 @@
 A row is one result of a measurement on an asset. `SELECT f() FROM
 asset` writes it when the function's inputs changed since its last
 result; otherwise the stored row is served. A computation that fails
-is a row too, with its error and no value: the call fails with that
-error until an input changes. Key: `dataset`,
+is a row too, with its error and no value. It is current until an
+input changes; a call computes it again. Key: `dataset`,
 `function`, `subject`: the view serves the latest result, and
 `measurements_history` serves every result. What a result read is in
 [inputs](inputs.md).

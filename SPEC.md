@@ -531,9 +531,10 @@ never reads leaves it current, and old rows stay in
 and the results of a function that reads every other function's
 results are no input of another such function. A computation that
 fails, in the body or in the schema check, is stored too, with its
-inputs and its `error` and no value: the call fails with that error
-while the result is current, and computes again once it is out of
-date. A body that carries a top-level `summary`
+inputs and its `error` and no value. It is current while its inputs
+are, so nothing computes it again on its own; a call computes it
+again, since a failure can come from what is no input (a service down,
+a configuration). A body that carries a top-level `summary`
 object serves the summary at extraction — the full value reads back
 through `GLOSSARY(subject::aspect)` (a large measurement's extraction
 result would otherwise be write-only at the interface; the summary is the
