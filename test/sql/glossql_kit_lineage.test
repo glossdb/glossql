@@ -266,21 +266,24 @@ FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "w
 ----
 read	annotations	its columns	true	my_roles
 
-# a where that is not a constant is stored as such: a macro's parameter, a string built at run
+# a macro's parameter the call passes a constant reads that constant; a parameter passed an expression, and a
+# string built at run, are not constants, and are stored as such
 statement ok
 DECLARE FUNCTION probe_open FOR GLOBAL AS $$
   SELECT (SELECT count(*) FROM roles_of('its columns')) AS a,
+         (SELECT count(*) FROM roles_of(lower('ITSELF'))) AS c,
          (SELECT count(*) FROM annotations('ro' || 'le', 'itself')) AS b
 $$ RETURNS probe;
 
-query TTT
-SELECT r.read, r.what, r.constant
+query TTTT
+SELECT r.read, r.what, r."where", r.constant
 FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR", "constant": "BOOLEAN", "via": "VARCHAR"}]')) AS r
       FROM main.functions WHERE name = 'probe_open')
 ORDER BY ALL;
 ----
-annotations	<FUNCTION>	false
-annotations	role	false
+annotations	<FUNCTION>	itself	false
+annotations	role	<COLUMN_REF>	false
+annotations	role	its columns	true
 
 # the catalog reached directly, the data by name and the subject's own data are each told apart;
 # a CTE is no read

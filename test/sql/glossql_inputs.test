@@ -314,7 +314,7 @@ statement ok
 DECLARE ASPECT metric_cells WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
 
 statement ok
-DECLARE FUNCTION metric_cells FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM dataset_cells('f1', 'metrics')) + (SELECT count(value) FROM annotations('role', 'the dataset''s metrics')) AS n $$ RETURNS metric_cells;
+DECLARE FUNCTION metric_cells FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM dataset_cells('f1', 'the dataset''s metrics')) + (SELECT count(value) FROM annotations('role', 'the dataset''s metrics')) AS n $$ RETURNS metric_cells;
 
 statement ok
 SELECT metric_cells() FROM f1;

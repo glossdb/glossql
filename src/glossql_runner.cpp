@@ -802,19 +802,32 @@ static string BodyReads(Inner &inner, const string &script, bool detector) {
 	        " ('glossql_additivity_cells', 'read', 'annotations', 'role', 'the dataset', true),"
 	        " ('glossql_additivity_cells', 'read', 'lineage', 'relates', 'the dataset', true)),"
 	        " macros AS (SELECT function_name AS fn, any_value(function_type) AS function_type,"
-	        " any_value(macro_definition) AS macro_definition FROM duckdb_functions()"
+	        " any_value(macro_definition) AS macro_definition, any_value(parameters) AS parameters FROM "
+	        "duckdb_functions()"
 	        " WHERE macro_definition IS NOT NULL AND database_name <> 'system'"
 	        " AND function_name NOT IN (SELECT fn FROM boundary) GROUP BY function_name),"
-	        " src(via, depth, sql_text) AS (SELECT '', 0, 'SELECT * FROM (' || " +
+	        // a macro is followed as its call reads it: each parameter the call passes a constant has that
+	        // constant in place of its references, so a where passed down to a read function stays constant
+	        " src(via, depth, j) AS (SELECT '', 0, json_serialize_sql('SELECT * FROM (' || " +
 	        QuoteText(text) +
-	        " || ')' UNION SELECT s.via || CASE WHEN s.via = '' THEN '' ELSE ' > ' END || m.fn, s.depth + 1,"
-	        " CASE WHEN m.function_type = 'table_macro' THEN 'SELECT * FROM (' || m.macro_definition || ')'"
-	        " ELSE 'SELECT ' || m.macro_definition END"
-	        " FROM src s, unnest(json_extract(json_serialize_sql(s.sql_text), '$..*')) t(n) JOIN macros m ON m.fn ="
+	        " || ')')::VARCHAR UNION SELECT s.via || CASE WHEN s.via = '' THEN '' ELSE ' > ' END || m.fn, s.depth + 1,"
+	        " list_reduce(list_prepend(json_serialize_sql(CASE WHEN m.function_type = 'table_macro'"
+	        " THEN 'SELECT * FROM (' || m.macro_definition || ')' ELSE 'SELECT ' || m.macro_definition END)::VARCHAR,"
+	        " list_filter(list_transform(coalesce(json_extract(n, '$.arguments'), json_extract(n, "
+	        "'$.function.arguments'))"
+	        "::JSON[], lambda a, i: CASE WHEN json_extract_string(a, '$.expression.class') = 'CONSTANT'"
+	        " THEN coalesce(nullif(json_extract_string(a, '$.name'), ''), m.parameters[i]) || chr(1) ||"
+	        " replace(json_extract(a, '$.expression')::VARCHAR, '\\', '\\\\') END), lambda x: x IS NOT NULL)),"
+	        " lambda acc, x: regexp_replace(acc, "
+	        "'\\{\"class\":\"COLUMN_REF\",\"type\":\"COLUMN_REF\",\"alias\":\"[^\"]*\","
+	        "\"query_location\":[0-9]+,\"query_location_length\":[0-9]+,\"column_names\":\\[\"' || split_part(x, "
+	        "chr(1), 1)"
+	        " || '\"\\]\\}', split_part(x, chr(1), 2), 'g'))"
+	        " FROM src s, unnest(json_extract(s.j, '$..*')) t(n) JOIN macros m ON m.fn ="
 	        " coalesce(json_extract_string(n, '$.function_name'), json_extract_string(n, '$.function.function_name'))"
 	        " WHERE s.depth < 8 AND (json_extract_string(n, '$.class') = 'FUNCTION'"
 	        " OR json_extract_string(n, '$.type') = 'TABLE_FUNCTION')),"
-	        " tree AS (SELECT via, json_serialize_sql(sql_text) AS j FROM src),"
+	        " tree AS (SELECT via, j FROM src),"
 	        " ctes AS (SELECT DISTINCT via, unnest(json_extract_string(j, '$..cte_map.map[*].key')) AS cte FROM tree),"
 	        " nodes AS (SELECT via, n FROM tree, unnest(json_extract(j, '$..*')) t(n)),"
 	        " calls AS (SELECT via, json_extract_string(n, '$.function.function_name') AS fn,"
@@ -1011,9 +1024,20 @@ struct Read {
 	}
 };
 
+//! Whether a where names a place of the lineage kit (place())
+static bool IsPlace(const string &where) {
+	for (auto place : {"itself", "its columns", "its sources", "the columns it joins on", "its relationships",
+	                   "its metric", "the dataset", "the dataset's metrics", "its dataset"}) {
+		if (where == place) {
+			return true;
+		}
+	}
+	return false;
+}
+
 //! The data a body reads, as a place: subject_column() and the relationship checks the subject's
-//! own; dataset_cells() its dataset's tables, its views ('views'), its metrics ('metrics'), both
-//! tables and views ('all', true), or the one table it names; a table the body names in FROM, that table
+//! own; dataset_cells() its dataset's tables, its views ('views'), both ('all', true), the tables
+//! and views of a place, or the one table it names; a table the body names in FROM, that table
 static Read DataRead(const string &read, const string &args, const string &dataset) {
 	if (read == "subject_column" || read == "glossql_relationship_checks") {
 		return {"data", "data", "itself"};
@@ -1022,8 +1046,8 @@ static Read DataRead(const string &read, const string &args, const string &datas
 		auto list = StringUtil::Split(args, ", ");
 		string what = "tables";
 		for (idx_t i = 1; i < list.size(); i++) {
-			if (list[i] == "metrics") {
-				return {"data", "data", METRICS_PLACE};
+			if (IsPlace(list[i])) {
+				return {"data", "data", list[i]};
 			}
 			if (list[i] == "views") {
 				what = "views";
@@ -1381,21 +1405,36 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	// a second argument true (or 'all') takes the dataset's views too — a metric definition
 	// is one — each bound at bind and skipped when it does not, as a screen skips a
 	// metric definition that fails; 'views' takes the views alone, so that a read over the
-	// metric definitions — a metric's series, a plan's rows — binds no table
+	// metric definitions — a metric's series, a plan's rows — binds no table; a place (the
+	// lineage kit's) takes the tables and views of the place, walked from the running
+	// function's subject, else from the dataset
 	bool views = false;
 	bool only_views = false;
-	bool only_metrics = false;
+	bool placed = false;
+	std::set<string> place;
 	if (input.inputs.size() > 1 && !input.inputs[1].IsNull()) {
 		if (input.inputs[1].type().id() == LogicalTypeId::VARCHAR) {
 			auto mode = input.inputs[1].ToString();
 			if (mode == "views") {
 				views = only_views = true;
-			} else if (mode == "metrics") {
-				views = only_views = only_metrics = true;
 			} else if (mode == "all") {
 				views = true;
+			} else if (IsPlace(mode)) {
+				views = placed = true;
+				Value subject;
+				if (!ClientConfig::GetConfig(context).GetUserVariable(string(RUN_SUBJECT), subject)) {
+					ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(parts[0]));
+				}
+				auto rows = inner.Run(
+				    "SELECT DISTINCT split_part(asset, '.', 2) FROM main.place(" + QuoteText(mode) +
+				    ") WHERE main.asset_grain(asset) = 'TABLE' AND split_part(asset, '.', 1) = " + QuoteText(parts[0]));
+				while (auto chunk = rows->Fetch()) {
+					for (idx_t r = 0; r < chunk->size(); r++) {
+						place.insert(chunk->GetValue(0, r).ToString());
+					}
+				}
 			} else if (mode != "tables") {
-				throw InvalidInputException("glossql: dataset_cells takes tables, views, metrics or all, got '%s'",
+				throw InvalidInputException("glossql: dataset_cells takes tables, views, all or a place, got '%s'",
 				                            mode);
 			}
 		} else {
@@ -1404,23 +1443,12 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	}
 	const string empty = "SELECT NULL::VARCHAR AS \"table\", NULL::VARCHAR AS \"column\", NULL::BIGINT AS ci,"
 	                     " NULL::VARCHAR AS column_type, NULL::BIGINT AS rn, NULL::VARCHAR AS val WHERE false";
-	// 'metrics' takes the views whose property is a metric's, not a plan's
-	std::set<string> metrics;
-	if (only_metrics) {
-		auto rows = inner.Run("SELECT name FROM " + inner.Current("aspects") +
-		                      " WHERE kind = 'VIEW' AND coalesce(schema::JSON->>'x-kind', '') <> 'plan'");
-		while (auto chunk = rows->Fetch()) {
-			for (idx_t r = 0; r < chunk->size(); r++) {
-				metrics.insert(chunk->GetValue(0, r).ToString());
-			}
-		}
-	}
 	// the columns per table, in the order listed
 	vector<string> tables;
 	std::map<string, vector<pair<string, string>>> columns;
 	std::set<string> kept;
 	for (auto &column : DatasetColumns(context, parts[0], parts.size() == 2 ? parts[1] : string(), views)) {
-		if ((only_views && !column.view) || (only_metrics && !metrics.count(column.table))) {
+		if ((only_views && !column.view) || (placed && !place.count(column.table))) {
 			continue;
 		}
 		if (columns.find(column.table) == columns.end()) {

@@ -205,8 +205,6 @@ string OutdatedSQL(Inner &inner);
 //! The session variable that names the subject a function computes a result for: the
 //! engine sets it on the connection of the run, and the read functions walk from it
 constexpr const char *RUN_SUBJECT = "glossql_subject";
-//! The place of a dataset's metrics: its views that are metrics, not plans, and their columns
-constexpr const char *METRICS_PLACE = "the dataset's metrics";
 
 //! A second connection to the same database, for SQL run while the calling
 //! connection's context lock is held (glossql_runner.cpp)

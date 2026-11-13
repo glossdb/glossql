@@ -43,6 +43,14 @@ SELECT aspect AS view, body FROM main.glossary
 WHERE dataset = dataset_name AND subject = dataset_name AND aspect IN (SELECT name FROM main.aspects WHERE kind = 'VIEW')
 QUALIFY row_number() OVER (PARTITION BY aspect ORDER BY begin_snapshot DESC) = 1;
 
+-- plans_edges(dataset): the lineage's plans edges alone, plan -> metric
+CREATE OR REPLACE MACRO main.plans_edges(dataset_name) AS TABLE
+SELECT dataset_name || '.' || a.name AS "from", dataset_name || '.' || json_extract_string(a.schema, '$.x-plan-of') AS "to",
+       'plans' AS kind
+FROM main.aspects a
+WHERE a.kind = 'VIEW' AND json_extract_string(a.schema, '$.x-plan-of') IS NOT NULL
+  AND a.name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW');
+
 CREATE OR REPLACE MACRO main.lineage(dataset_name) AS TABLE
 WITH cols AS (SELECT table_name, column_name, table_type FROM glossql_columns(dataset_name)),
 views AS (SELECT DISTINCT table_name AS name FROM cols WHERE table_type = 'VIEW'),
@@ -71,10 +79,7 @@ UNION ALL SELECT DISTINCT * FROM (
   UNION SELECT dataset_name || '.' || j.view, regexp_extract(j.right_column, '^([^.]+\.[^.]+)\.', 1), 'reads' FROM glossql_views_joins(dataset_name) j
   UNION SELECT dataset_name || '.' || n.name, dataset_name || '.' || n.other, 'reads' FROM named n
         WHERE n.other <> n.name AND n.other IN (SELECT name FROM views))
-UNION ALL SELECT dataset_name || '.' || a.name, dataset_name || '.' || json_extract_string(a.schema, '$.x-plan-of'), 'plans'
-          FROM main.aspects a
-          WHERE a.kind = 'VIEW' AND json_extract_string(a.schema, '$.x-plan-of') IS NOT NULL
-            AND a.name IN (SELECT name FROM views);
+UNION ALL SELECT * FROM main.plans_edges(dataset_name);
 
 -- The class of an asset by its path: what a property's grains name
 CREATE OR REPLACE MACRO main.asset_grain(asset) AS
@@ -93,7 +98,8 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --   'its relationships'        a view's: those between the tables it reads;
 --                              a table's or a column's: those that touch it;
 --                              a dataset's: all; a relationship: itself
---   'its metric'               the metric a plan plans
+--   'its metric'               the metric a plan plans, and its columns
+--   'its dataset'              the subject's dataset itself
 --   'the dataset'              the subject's dataset and every asset in it
 --   'the dataset's metrics'    the views of the subject's dataset that are
 --                              metrics, not plans, and their columns
@@ -127,7 +133,12 @@ UNION SELECT s.subject, r.rel FROM (SELECT DISTINCT subject FROM sources) s, rel
 UNION SELECT u.a, e.rel FROM endpoints e, unnest([e.t, e.endpoint]) u(a) WHERE u.a NOT IN (SELECT subject FROM sources);
 
 CREATE OR REPLACE MACRO main.place_metric(dataset_name) AS TABLE
-SELECT "from" AS subject, "to" AS asset FROM main.lineage(dataset_name) WHERE kind = 'plans';
+WITH planned AS (SELECT "from" AS subject, "to" AS metric FROM main.plans_edges(dataset_name))
+SELECT subject, metric AS asset FROM planned
+UNION SELECT p.subject, c."to" FROM planned p JOIN main.contains_edges(dataset_name) c ON c."from" = p.metric;
+
+CREATE OR REPLACE MACRO main.place_its_dataset(dataset_name) AS TABLE
+SELECT dataset_name AS subject, dataset_name AS asset;
 
 CREATE OR REPLACE MACRO main.place_dataset(dataset_name) AS TABLE
 SELECT dataset_name AS subject, dataset_name AS asset
@@ -149,7 +160,8 @@ UNION ALL SELECT subject, 'the columns it joins on', asset FROM main.place_joine
 UNION ALL SELECT subject, 'its relationships', asset FROM main.place_relationships(dataset_name)
 UNION ALL SELECT subject, 'its metric', asset FROM main.place_metric(dataset_name)
 UNION ALL SELECT subject, 'the dataset', asset FROM main.place_dataset(dataset_name)
-UNION ALL SELECT subject, 'the dataset''s metrics', asset FROM main.place_metrics(dataset_name);
+UNION ALL SELECT subject, 'the dataset''s metrics', asset FROM main.place_metrics(dataset_name)
+UNION ALL SELECT subject, 'its dataset', asset FROM main.place_its_dataset(dataset_name);
 
 CREATE OR REPLACE MACRO main.place(where_) AS TABLE
 FROM query(CASE where_
@@ -160,6 +172,7 @@ FROM query(CASE where_
   WHEN 'its relationships' THEN 'SELECT asset FROM main.place_relationships(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'its metric' THEN 'SELECT asset FROM main.place_metric(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'the dataset' THEN 'SELECT asset FROM main.place_dataset(split_part(main.read_subject(), ''.'', 1))'
+  WHEN 'its dataset' THEN 'SELECT split_part(main.read_subject(), ''.'', 1) AS asset'
   WHEN 'the dataset''s metrics' THEN 'SELECT asset FROM main.place_metrics(split_part(main.read_subject(), ''.'', 1))'
   ELSE 'SELECT NULL::VARCHAR AS asset WHERE false' END);
 

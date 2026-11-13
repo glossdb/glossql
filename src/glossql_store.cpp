@@ -361,7 +361,8 @@ static string AnnotationsOverSQL(const Workspace &ws, const string &filter);
 
 //! The places a where names; data read from a table its body names reads that table
 static constexpr const char *PLACES = "'itself', 'its columns', 'its sources', 'the columns it joins on', "
-                                      "'its relationships', 'its metric', 'the dataset', 'the dataset''s metrics'";
+                                      "'its relationships', 'its metric', 'the dataset', 'the dataset''s metrics', "
+                                      "'its dataset'";
 
 //! The lake's tables and views, each at its version, (name, version): a table's the last snapshot
 //! that wrote, altered or dropped it, from the lake's own change log, where compaction is not a
@@ -419,7 +420,8 @@ string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs) {
 	    "SELECT NULL::BIGINT AS id, NULL::VARCHAR AS \"read\", NULL::VARCHAR AS what, NULL::VARCHAR AS \"where\","
 	    " NULL::VARCHAR AS row WHERE false";
 	// 'the dataset' and its metrics are the same place for every subject of a dataset: anchored at it
-	string sql = "rn_w AS (SELECT *, CASE WHEN \"where\" IN ('the dataset', 'the dataset''s metrics') THEN dataset"
+	string sql = "rn_w AS (SELECT *, CASE WHEN \"where\" IN ('the dataset', 'the dataset''s metrics', 'its dataset') "
+	             "THEN dataset"
 	             " ELSE subject END AS anchor FROM wanted), ";
 	sql += "rn_m AS (SELECT begin_snapshot AS result, dataset, function, subject, aspect, value, error FROM " +
 	       ws.Store("measurements") + " WHERE end_snapshot IS NULL), ";
