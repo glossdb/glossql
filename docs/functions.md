@@ -65,7 +65,7 @@ part reads `<?>`, or `<?class>` with the expression's class.
 adds up: `ratio` (a division by an aggregate), `average`, `distinct` (a
 distinct count), else NULL. A sum over one of them keeps the shape.
 
-Three functions return the same for the views of a dataset. Pass NULL
+Four functions return the same for the views of a dataset. Pass NULL
 for every dataset.
 
 | Function | Columns | A row is |
@@ -73,6 +73,7 @@ for every dataset.
 | `glossql_views_lineage(dataset VARCHAR)` | `dataset`, `view`, `column`, `derivation`, `complete`, `shape` | one output column of a view |
 | `glossql_views_scans(dataset VARCHAR)` | `dataset`, `view`, `table_name`, `columns` | one table a view scans, joins and filters included, with the columns it reads |
 | `glossql_views_joins(dataset VARCHAR)` | `dataset`, `view`, `left_column`, `right_column`, `left_unique`, `right_unique` | one pair of columns a view's join equates, as `schema.table.column` |
+| `glossql_views_mapping(dataset VARCHAR)` | `dataset`, `view`, `column`, `branch`, `derivation`, `table_name`, `table_column`, `alias`, `condition`, `literals`, `complete` | one output column of a view per branch of the union its rows come from (1 where it has none) and per lake column it is computed from: the branch's derivation, where a table read more than once carries each scan's alias as `scan[alias].column`; what the view's joins and filters require of that scan alone; the literals the derivation tests or returns, as written. `complete` is false where the walk could not follow a step or two scans of one table read alike |
 
 `left_unique` and `right_unique` are true where the view joins that
 side with one row per value of the join columns: a subquery grouped by

@@ -132,8 +132,26 @@ struct QueryLineage {
 	//! the pairs of scanned columns the plan's joins and filters equate, as
 	//! schema.table.column, and per side whether the plan joins it one row per value
 	std::map<std::pair<string, string>, std::pair<bool, bool>> joins;
+	//! the mapping of a view: one row per output column, branch of its union and
+	//! scanned column, filled where the view's own SQL is given
+	struct Mapping {
+		string column;
+		idx_t branch;
+		string derivation;
+		//! schema.table and its column, empty where the derivation reads no lake table
+		string table;
+		string table_column;
+		//! the name the view's SQL gives the scan, where it reads the table more than once
+		string alias;
+		//! the conjuncts of the view's joins and filters that read this scan alone
+		string condition;
+		vector<string> literals;
+		bool complete;
+	};
+	vector<Mapping> mapping;
 };
-QueryLineage LineageOf(ClientContext &context, const string &sql);
+//! `view_sql`, the view's CREATE VIEW statement, asks for the mapping too
+QueryLineage LineageOf(ClientContext &context, const string &sql, const string *view_sql = nullptr);
 //! The lineage as one JSON object, column to derivation; a column the walk could
 //! not follow carries a digest of the SQL, so it reads moved whenever the SQL did
 string LineageJson(const QueryLineage &lineage, const string &sql);

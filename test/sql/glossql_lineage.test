@@ -420,3 +420,77 @@ query TTT
 SELECT "column", derivation, complete FROM glossql_lineage($$SELECT status AS code FROM fin.products UNION SELECT global_brand FROM fin.products UNION ALL SELECT coalesce(status, 'none') FROM fin.products$$);
 ----
 code	union(union(fin.products.status:VARCHAR, fin.products.global_brand:VARCHAR), coalesce(fin.products.status:VARCHAR, 'none'))	true
+
+# --- glossql_views_mapping(dataset): per output column, per branch of the union the rows come from and per
+# scanned column, the branch's derivation, the table, the column, the alias of a table read more than once,
+# what the view's joins and filters require of that scan alone, and the literals the derivation tests or returns
+
+statement ok
+CREATE TABLE fin.stock_dk AS SELECT 'M' || i AS matnr, 'PAL' AS uom, i * 1.0 AS qty FROM range(3) r(i);
+
+statement ok
+CREATE TABLE fin.stock_pl AS SELECT 'I' || i AS indeks, 'pal' AS jm, i * 2.0 AS ilosc, 'D' AS status FROM range(3) r(i);
+
+statement ok
+CREATE TABLE fin.hierarchy AS SELECT m AS market, 'M' || i AS local_code, 'G' || i AS global_brand FROM range(3) r(i), (VALUES ('DK'), ('PL')) v(m);
+
+statement ok
+CREATE VIEW fin.onhand AS
+SELECT s.matnr AS part, 'SAP' AS source_system, CASE WHEN s.uom = 'PAL' THEN s.qty * 24 ELSE s.qty END AS quantity FROM fin.stock_dk s
+UNION ALL SELECT p.indeks, 'Monolith', CASE p.jm WHEN 'pal' THEN p.ilosc * 20 ELSE p.ilosc END FROM fin.stock_pl p WHERE p.status = 'D'
+UNION ALL SELECT * FROM (SELECT NULL AS part, 'none' AS source_system, 0.0 AS quantity);
+
+query ITTTTT
+SELECT branch, "column", table_name, table_column, condition, array_to_string(literals, ' ') FROM glossql_views_mapping('fin') WHERE view = 'onhand' ORDER BY ALL;
+----
+1	part	fin.stock_dk	matnr	NULL	(empty)
+1	quantity	fin.stock_dk	qty	NULL	'PAL'
+1	quantity	fin.stock_dk	uom	NULL	'PAL'
+1	source_system	NULL	NULL	NULL	'SAP'
+2	part	fin.stock_pl	indeks	=(fin.stock_pl.status:VARCHAR, 'D')	(empty)
+2	quantity	fin.stock_pl	ilosc	=(fin.stock_pl.status:VARCHAR, 'D')	'pal'
+2	quantity	fin.stock_pl	jm	=(fin.stock_pl.status:VARCHAR, 'D')	'pal'
+2	source_system	NULL	NULL	NULL	'Monolith'
+3	part	NULL	NULL	NULL	(empty)
+3	quantity	NULL	NULL	NULL	0.0
+3	source_system	NULL	NULL	NULL	'none'
+
+# the branch's derivation is the branch's alone; the view's lineage keeps the union
+query IT
+SELECT DISTINCT branch, derivation FROM glossql_views_mapping('fin') WHERE view = 'onhand' AND "column" = 'quantity' ORDER BY ALL;
+----
+1	case(when =(fin.stock_dk.uom:VARCHAR, 'PAL') then *(fin.stock_dk.qty:DECIMAL(21,1), cast(24 as DECIMAL(31,0))), else cast(fin.stock_dk.qty:DECIMAL(21,1) as DECIMAL(31,1)))
+2	case(when =(fin.stock_pl.jm:VARCHAR, 'pal') then *(fin.stock_pl.ilosc:DECIMAL(21,1), cast(20 as DECIMAL(31,0))), else cast(fin.stock_pl.ilosc:DECIMAL(21,1) as DECIMAL(31,1)))
+3	cast(0.0 as DECIMAL(31,1))
+
+# one table read under two aliases: each scan with its alias and the literal its join requires, the
+# coalesce's precedence in the derivation; a CTE resolves through
+statement ok
+CREATE VIEW fin.part AS
+WITH parts AS (SELECT matnr FROM fin.stock_dk)
+SELECT p.matnr, coalesce(pl.global_brand, dk.global_brand) AS brand, dk.global_brand AS brand_dk
+FROM parts p LEFT JOIN fin.hierarchy dk ON dk.market = 'DK' AND dk.local_code = p.matnr
+LEFT JOIN fin.hierarchy pl ON pl.market = 'PL' AND pl.local_code = p.matnr;
+
+query TTTTT
+SELECT "column", derivation, alias, condition, complete FROM glossql_views_mapping('fin') WHERE view = 'part' AND table_name = 'fin.hierarchy' ORDER BY ALL;
+----
+brand	coalesce(fin.hierarchy[pl].global_brand:VARCHAR, fin.hierarchy[dk].global_brand:VARCHAR)	dk	=(fin.hierarchy[dk].market:VARCHAR, 'DK')	true
+brand	coalesce(fin.hierarchy[pl].global_brand:VARCHAR, fin.hierarchy[dk].global_brand:VARCHAR)	pl	=(fin.hierarchy[pl].market:VARCHAR, 'PL')	true
+brand_dk	fin.hierarchy[dk].global_brand:VARCHAR	dk	=(fin.hierarchy[dk].market:VARCHAR, 'DK')	true
+
+# the lineage a load and a gloss read is unchanged by the aliases
+query T
+SELECT derivation FROM glossql_views_lineage('fin') WHERE view = 'part' AND "column" = 'brand';
+----
+coalesce(fin.hierarchy.global_brand:VARCHAR, fin.hierarchy.global_brand:VARCHAR)
+
+# where the text names a table another number of times than the plan scans it (here through a view it
+# reads), no alias is given: the derivation reads two scans alike and is not complete
+statement ok
+CREATE VIEW fin.brands AS SELECT coalesce(a.global_brand, b.global_brand) AS brand, p.brand_dk FROM fin.part p, fin.hierarchy a, fin.hierarchy b WHERE a.market = 'DK' AND b.market = 'PL';
+
+query TTT
+SELECT DISTINCT "column", alias, complete FROM glossql_views_mapping('fin') WHERE view = 'brands' AND "column" = 'brand';
+----
+brand	NULL	false

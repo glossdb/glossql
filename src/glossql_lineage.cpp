@@ -27,8 +27,17 @@
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/peg/compiled_grammar.hpp"
+#include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/query_node/set_operation_node.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
+#include "duckdb/parser/tableref/joinref.hpp"
+#include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/planner/column_binding_map.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_case_expression.hpp"
@@ -64,6 +73,25 @@ static constexpr const char *UNKNOWN = "<?";
 //! A set of columns no two rows of an operator's output share
 typedef vector<ColumnBinding> Key;
 
+//! A column of a lake table as one scan of it reads it: the scan's table index
+//! tells two scans of the same table apart
+struct Scanned {
+	idx_t scan;
+	string column;
+	bool operator==(const Scanned &other) const {
+		return scan == other.scan && column == other.column;
+	}
+};
+
+template <class T>
+static void AddOnce(vector<T> &into, const vector<T> &items) {
+	for (auto &item : items) {
+		if (std::find(into.begin(), into.end(), item) == into.end()) {
+			into.push_back(item);
+		}
+	}
+}
+
 //! The walk's state: a derivation text per binding resolved so far, the CTEs'
 //! outputs by their index, and whether every step was followed
 struct Lineage {
@@ -84,6 +112,21 @@ struct Lineage {
 	//! a row_number() column's partition, and the same per CTE by position
 	column_binding_map_t<Key> row_numbers;
 	unordered_map<TableIndex, vector<vector<idx_t>>> cte_keys;
+	//! per binding, the scanned columns of lake tables it is computed from, each
+	//! with the scan that reads it, and the literals it tests or returns
+	column_binding_map_t<vector<Scanned>> leaves;
+	column_binding_map_t<vector<string>> literals;
+	unordered_map<TableIndex, vector<vector<Scanned>>> cte_leaves;
+	unordered_map<TableIndex, vector<vector<string>>> cte_literals;
+	//! per scan of a lake table: the table, and the conjuncts of the view's joins
+	//! and filters that read that scan's columns alone
+	std::map<idx_t, string> scan_tables;
+	std::map<idx_t, vector<string>> conditions;
+	//! the mapping's walk of one branch: the child each union reads, and the
+	//! alias of each scan of a table the view reads more than once, which its
+	//! leaves carry as scan[alias].column
+	std::map<const LogicalOperator *, idx_t> branch;
+	std::map<idx_t, string> aliases;
 
 	string Unknown(const string &what = string()) {
 		complete = false;
@@ -154,10 +197,100 @@ static string ShapeName(uint8_t shape) {
 	return shape & SHAPE_RATIO ? "ratio" : shape & SHAPE_AVERAGE ? "average" : shape & SHAPE_DISTINCT ? "distinct" : "";
 }
 
-//! Records what computes a binding: its derivation text and its shape
+//! The scanned columns an expression is computed from, in the order it names them
+static void Leaves(const Expression &expr, Lineage &lineage, vector<Scanned> &into) {
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
+		auto entry = lineage.leaves.find(expr.Cast<BoundColumnRefExpression>().Binding());
+		if (entry != lineage.leaves.end()) {
+			AddOnce(into, entry->second);
+		}
+		return;
+	}
+	ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) { Leaves(child, lineage, into); });
+}
+
+//! The literals an expression tests or returns, as written: an operand of a
+//! comparison, IN, a conjunction, a CASE or a COALESCE, or the expression
+//! itself; a cast passes its operand on, and an argument of any other function
+//! or of arithmetic (a factor, a format, a date part) is none
+static void Literals(const Expression &expr, bool counts, Lineage &lineage, vector<string> &into) {
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::BOUND_COLUMN_REF: {
+		auto entry = lineage.literals.find(expr.Cast<BoundColumnRefExpression>().Binding());
+		if (entry != lineage.literals.end()) {
+			AddOnce(into, entry->second);
+		}
+		return;
+	}
+	case ExpressionClass::BOUND_CONSTANT: {
+		auto &value = expr.Cast<BoundConstantExpression>().GetValue();
+		if (counts && !value.IsNull()) {
+			AddOnce(into, {value.ToSQLString()});
+		}
+		return;
+	}
+	case ExpressionClass::BOUND_FUNCTION:
+		// a comparison the binder makes a function keeps its own expression type
+		if (!BoundCastExpression::IsCast(expr)) {
+			counts = expr.GetExpressionType() != ExpressionType::BOUND_FUNCTION;
+		}
+		break;
+	case ExpressionClass::LEGACY_BOUND_CAST:
+		break;
+	case ExpressionClass::LEGACY_BOUND_COMPARISON:
+	case ExpressionClass::LEGACY_BOUND_BETWEEN:
+	case ExpressionClass::BOUND_CONJUNCTION:
+	case ExpressionClass::BOUND_OPERATOR:
+	case ExpressionClass::BOUND_CASE:
+		counts = true;
+		break;
+	default:
+		counts = false;
+	}
+	ExpressionIterator::EnumerateChildren(expr,
+	                                      [&](const Expression &child) { Literals(child, counts, lineage, into); });
+}
+
+//! Records what computes a binding: its derivation text, its shape, the
+//! scanned columns and the literals
 static void Derive(Lineage &lineage, ColumnBinding binding, const Expression &expr) {
 	lineage.text[binding] = Text(expr, lineage);
 	lineage.shape[binding] = Shape(expr, lineage);
+	vector<Scanned> leaves;
+	Leaves(expr, lineage, leaves);
+	lineage.leaves[binding] = std::move(leaves);
+	vector<string> literals;
+	Literals(expr, true, lineage, literals);
+	lineage.literals[binding] = std::move(literals);
+}
+
+//! Records a conjunct of a join or a filter as a condition of the one scan whose
+//! columns it reads, where it reads one scan's alone
+static void Condition(const vector<const Expression *> &operands, const string &text, Lineage &lineage) {
+	vector<Scanned> leaves;
+	for (auto operand : operands) {
+		Leaves(*operand, lineage, leaves);
+	}
+	for (auto &leaf : leaves) {
+		if (leaf.scan != leaves[0].scan) {
+			return;
+		}
+	}
+	if (!leaves.empty()) {
+		AddOnce(lineage.conditions[leaves[0].scan], {text});
+	}
+}
+
+//! The conditions of a predicate: each side of an AND
+static void Conditions(const Expression &expr, Lineage &lineage) {
+	if (expr.GetExpressionType() == ExpressionType::CONJUNCTION_AND) {
+		ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) { Conditions(child, lineage); });
+		return;
+	}
+	bool complete = lineage.complete;
+	auto text = Text(expr, lineage);
+	lineage.complete = complete;
+	Condition({&expr}, text, lineage);
 }
 
 static vector<uint8_t> OutputShapes(LogicalOperator &op, Lineage &lineage) {
@@ -461,6 +594,10 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		lineage.ctes[cte.table_index] = Outputs(*op.children[0], lineage);
 		lineage.cte_shapes[cte.table_index] = OutputShapes(*op.children[0], lineage);
 		auto bindings = op.children[0]->GetColumnBindings();
+		for (auto &binding : bindings) {
+			lineage.cte_leaves[cte.table_index].push_back(lineage.leaves[binding]);
+			lineage.cte_literals[cte.table_index].push_back(lineage.literals[binding]);
+		}
 		for (auto &key : lineage.live[op.children[0].get()]) {
 			vector<idx_t> positions;
 			for (auto &part : key) {
@@ -493,11 +630,19 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 			lineage.text[bindings[0]] = scan;
 			break;
 		}
+		auto alias = lineage.aliases.find(get.table_index.index);
+		if (get.GetTable()) {
+			lineage.scan_tables[get.table_index.index] = scan;
+		}
 		for (idx_t i = 0; i < column_ids.size() && i < bindings.size(); i++) {
 			auto &column = column_ids[i];
-			auto leaf = scan + "." + get.GetColumnName(column).GetIdentifierName();
+			auto name = get.GetColumnName(column).GetIdentifierName();
+			auto leaf = (alias == lineage.aliases.end() ? scan : scan + "[" + alias->second + "]") + "." + name;
 			if (!column.IsVirtualColumn()) {
 				leaf += ":" + get.returned_types[column.GetPrimaryIndex()].ToString();
+				if (get.GetTable()) {
+					lineage.leaves[bindings[i]] = {Scanned {get.table_index.index, name}};
+				}
 			}
 			lineage.text[bindings[i]] = leaf;
 		}
@@ -604,9 +749,21 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		                                                             : "intersect";
 		vector<vector<string>> sides;
 		vector<vector<uint8_t>> side_shapes;
-		for (auto &child : op.children) {
+		// the mapping's walk of one branch reads the one child of the union it chose
+		auto chosen = lineage.branch.find(&op);
+		for (idx_t c = 0; c < op.children.size(); c++) {
+			if (chosen != lineage.branch.end() && chosen->second != c) {
+				continue;
+			}
+			auto &child = op.children[c];
 			sides.push_back(Outputs(*child, lineage));
 			side_shapes.push_back(OutputShapes(*child, lineage));
+			auto bindings = child->GetColumnBindings();
+			for (idx_t i = 0; i < setop.column_count && i < bindings.size(); i++) {
+				ColumnBinding out(setop.table_index, ProjectionIndex(i));
+				AddOnce(lineage.leaves[out], lineage.leaves[bindings[i]]);
+				AddOnce(lineage.literals[out], lineage.literals[bindings[i]]);
+			}
 		}
 		for (idx_t i = 0; i < setop.column_count; i++) {
 			vector<string> parts;
@@ -614,7 +771,9 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 				parts.push_back(i < side.size() ? side[i] : lineage.Unknown());
 			}
 			lineage.text[ColumnBinding(setop.table_index, ProjectionIndex(i))] =
-			    string(word) + "(" + StringUtil::Join(parts, ", ") + ")";
+			    chosen != lineage.branch.end() && parts.size() == 1
+			        ? parts[0]
+			        : string(word) + "(" + StringUtil::Join(parts, ", ") + ")";
 			uint8_t shape = 0;
 			for (auto &side : side_shapes) {
 				if (i < side.size()) {
@@ -634,6 +793,14 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 			auto shapes = lineage.cte_shapes.find(ref.cte_index);
 			lineage.shape[ColumnBinding(ref.table_index, ProjectionIndex(i))] =
 			    shapes != lineage.cte_shapes.end() && i < shapes->second.size() ? shapes->second[i] : 0;
+			auto leaves = lineage.cte_leaves.find(ref.cte_index);
+			if (leaves != lineage.cte_leaves.end() && i < leaves->second.size()) {
+				lineage.leaves[ColumnBinding(ref.table_index, ProjectionIndex(i))] = leaves->second[i];
+			}
+			auto literals = lineage.cte_literals.find(ref.cte_index);
+			if (literals != lineage.cte_literals.end() && i < literals->second.size()) {
+				lineage.literals[ColumnBinding(ref.table_index, ProjectionIndex(i))] = literals->second[i];
+			}
 		}
 		auto keys = lineage.cte_keys.find(ref.cte_index);
 		if (keys != lineage.cte_keys.end()) {
@@ -670,12 +837,21 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 			for (auto &condition : op.Cast<LogicalComparisonJoin>().conditions) {
 				if (!condition.IsComparison()) {
 					Equalities(condition.GetLHS(), equalities);
-				} else if (condition.GetComparisonType() == ExpressionType::COMPARE_EQUAL) {
+					Conditions(condition.GetLHS(), lineage);
+					continue;
+				}
+				if (condition.GetComparisonType() == ExpressionType::COMPARE_EQUAL) {
 					equalities.push_back({&condition.GetLHS(), &condition.GetRHS()});
 				}
+				bool complete = lineage.complete;
+				auto text = ExpressionTypeToOperator(condition.GetComparisonType()) + "(" +
+				            Text(condition.GetLHS(), lineage) + ", " + Text(condition.GetRHS(), lineage) + ")";
+				lineage.complete = complete;
+				Condition({&condition.GetLHS(), &condition.GetRHS()}, text, lineage);
 			}
 		} else if (op.type == LogicalOperatorType::LOGICAL_ANY_JOIN) {
 			Equalities(*op.Cast<LogicalAnyJoin>().condition, equalities);
+			Conditions(*op.Cast<LogicalAnyJoin>().condition, lineage);
 		}
 		Equated(equalities, lineage);
 		if (op.type != LogicalOperatorType::LOGICAL_COMPARISON_JOIN || op.children.size() != 2) {
@@ -712,6 +888,7 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		vector<Equality> equalities;
 		for (auto &expr : op.expressions) {
 			Equalities(*expr, equalities);
+			Conditions(*expr, lineage);
 		}
 		Equated(equalities, lineage);
 		Keep(lineage, op, *op.children[0]);
@@ -806,7 +983,256 @@ static void Scans(LogicalOperator &op, std::set<std::pair<string, vector<string>
 	}
 }
 
-QueryLineage LineageOf(ClientContext &context, const string &sql) {
+//===--------------------------------------------------------------------===//
+// The mapping of a view: per output column and per branch of the union its
+// rows come from, what computes it, with each scanned column, the alias and
+// the conditions of the scan that reads it and the literals it tests or returns
+//===--------------------------------------------------------------------===//
+
+//! The first unions on the way down from an operator through what passes rows
+//! on, either side of a join and a CTE's definition included
+static void FirstUnions(LogicalOperator &op, unordered_map<TableIndex, LogicalOperator *> &ctes,
+                        vector<LogicalOperator *> &found) {
+	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_UNION:
+		found.push_back(&op);
+		return;
+	case LogicalOperatorType::LOGICAL_EXCEPT:
+	case LogicalOperatorType::LOGICAL_INTERSECT:
+		return;
+	case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
+		ctes[op.Cast<LogicalMaterializedCTE>().table_index] = op.children[0].get();
+		FirstUnions(*op.children[1], ctes, found);
+		return;
+	case LogicalOperatorType::LOGICAL_CTE_REF: {
+		auto entry = ctes.find(op.Cast<LogicalCTERef>().cte_index);
+		if (entry != ctes.end()) {
+			FirstUnions(*entry->second, ctes, found);
+		}
+		return;
+	}
+	default:
+		for (auto &child : op.children) {
+			FirstUnions(*child, ctes, found);
+		}
+	}
+}
+
+typedef std::map<const LogicalOperator *, idx_t> Branch;
+
+//! The branches of a union, one per child, a child that is a union itself
+//! giving one per child of its own
+static void Branches(LogicalOperator &setop, Branch branch, vector<Branch> &into) {
+	for (idx_t c = 0; c < setop.children.size(); c++) {
+		branch[&setop] = c;
+		if (setop.children[c]->type == LogicalOperatorType::LOGICAL_UNION) {
+			Branches(*setop.children[c], branch, into);
+		} else {
+			into.push_back(branch);
+		}
+	}
+}
+
+//! The scans of each lake table in a plan, by its name, in the order the binder made them
+static void TableScans(LogicalOperator &op, std::map<string, vector<idx_t>> &scans) {
+	if (op.type == LogicalOperatorType::LOGICAL_GET) {
+		auto &get = op.Cast<LogicalGet>();
+		if (get.GetTable()) {
+			scans[StringUtil::Lower(get.GetTable()->name.GetIdentifierName())].push_back(get.table_index.index);
+		}
+	}
+	for (auto &child : op.children) {
+		TableScans(*child, scans);
+	}
+}
+
+typedef std::map<string, const QueryNode *> CteScope;
+
+static void TableRefs(const QueryNode &node, CteScope scope, vector<pair<string, string>> &into);
+
+static void TableRefs(const ParsedExpression &expr, const CteScope &scope, vector<pair<string, string>> &into) {
+	if (expr.GetExpressionClass() == ExpressionClass::SUBQUERY) {
+		TableRefs(*expr.Cast<SubqueryExpression>().Subquery()->node, scope, into);
+		return;
+	}
+	ParsedExpressionIterator::EnumerateChildren(expr,
+	                                            [&](const ParsedExpression &child) { TableRefs(child, scope, into); });
+}
+
+static void TableRefs(const TableRef &ref, const CteScope &scope, vector<pair<string, string>> &into) {
+	switch (ref.type) {
+	case TableReferenceType::BASE_TABLE: {
+		auto &name = ref.Cast<BaseTableRef>().GetQualifiedName();
+		auto table = StringUtil::Lower(name.Name().GetIdentifierName());
+		auto cte = scope.find(table);
+		if (cte != scope.end() && name.Schema().empty()) {
+			TableRefs(*cte->second, scope, into);
+		} else {
+			into.emplace_back(table, ref.alias.GetIdentifierName());
+		}
+		break;
+	}
+	case TableReferenceType::JOIN: {
+		auto &join = ref.Cast<JoinRef>();
+		TableRefs(*join.left, scope, into);
+		TableRefs(*join.right, scope, into);
+		if (join.condition) {
+			TableRefs(*join.condition, scope, into);
+		}
+		break;
+	}
+	case TableReferenceType::SUBQUERY:
+		TableRefs(*ref.Cast<SubqueryRef>().subquery->node, scope, into);
+		break;
+	default:
+		break;
+	}
+}
+
+//! The lake tables a query's text names, each with the alias it gives it, in
+//! the order the binder binds them: a CTE's at each place it is read
+static void TableRefs(const QueryNode &node, CteScope scope, vector<pair<string, string>> &into) {
+	for (auto &cte : node.cte_map.map) {
+		scope[StringUtil::Lower(cte.first.GetIdentifierName())] = cte.second->query_node.get();
+	}
+	switch (node.type) {
+	case QueryNodeType::SELECT_NODE: {
+		auto &select = node.Cast<SelectNode>();
+		if (select.from_table) {
+			TableRefs(*select.from_table, scope, into);
+		}
+		vector<const ParsedExpression *> exprs;
+		exprs.push_back(select.where_clause.get());
+		for (auto &group : select.groups.group_expressions) {
+			exprs.push_back(group.get());
+		}
+		exprs.push_back(select.having.get());
+		for (auto &item : select.select_list) {
+			exprs.push_back(item.get());
+		}
+		exprs.push_back(select.qualify.get());
+		for (auto expr : exprs) {
+			if (expr) {
+				TableRefs(*expr, scope, into);
+			}
+		}
+		break;
+	}
+	case QueryNodeType::SET_OPERATION_NODE:
+		for (auto &child : node.Cast<SetOperationNode>().children) {
+			TableRefs(*child, scope, into);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+//! The alias of each scan of a table the plan reads more than once, as the
+//! view's SQL names it: the n-th scan the binder made is the n-th the text
+//! names. A table the text names another number of times than the plan scans
+//! it (a CTE kept once, a view read inside) has none
+static std::map<idx_t, string> Aliases(LogicalOperator &plan, const string &view_sql) {
+	std::map<idx_t, string> aliases;
+	std::map<string, vector<idx_t>> scans;
+	TableScans(plan, scans);
+	auto options = ParserOptions::Builtin();
+	options.identifier_case_mode = IdentifierCaseMode::LOWERCASE;
+	options.compiled_grammar = CompiledGrammar::DefaultGrammar();
+	Parser parser(options);
+	parser.ParseQuery(view_sql);
+	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::CREATE_STATEMENT) {
+		return aliases;
+	}
+	auto &info = *parser.statements[0]->Cast<CreateStatement>().info;
+	if (info.type != CatalogType::VIEW_ENTRY || !info.Cast<CreateViewInfo>().query) {
+		return aliases;
+	}
+	vector<pair<string, string>> refs;
+	TableRefs(*info.Cast<CreateViewInfo>().query->node, CteScope(), refs);
+	for (auto &table : scans) {
+		std::sort(table.second.begin(), table.second.end());
+		if (table.second.size() < 2) {
+			continue;
+		}
+		vector<string> named;
+		for (auto &ref : refs) {
+			if (ref.first == table.first) {
+				named.push_back(ref.second.empty() ? ref.first : ref.second);
+			}
+		}
+		if (named.size() != table.second.size()) {
+			continue;
+		}
+		for (idx_t i = 0; i < named.size(); i++) {
+			aliases[table.second[i]] = named[i];
+		}
+	}
+	return aliases;
+}
+
+//! The mapping rows of a planned view, one walk per branch
+static vector<QueryLineage::Mapping> MappingOf(LogicalOperator &plan, const vector<string> &names,
+                                               const string &view_sql) {
+	vector<QueryLineage::Mapping> rows;
+	auto aliases = Aliases(plan, view_sql);
+	unordered_map<TableIndex, LogicalOperator *> ctes;
+	vector<LogicalOperator *> unions;
+	FirstUnions(plan, ctes, unions);
+	vector<Branch> branches;
+	if (unions.size() == 1) {
+		Branches(*unions[0], Branch(), branches);
+	} else {
+		branches.emplace_back();
+	}
+	for (idx_t b = 0; b < branches.size(); b++) {
+		Lineage lineage;
+		lineage.branch = branches[b];
+		lineage.aliases = aliases;
+		Walk(plan, lineage);
+		auto bindings = plan.GetColumnBindings();
+		for (idx_t i = 0; i < names.size() && i < bindings.size(); i++) {
+			auto text = lineage.text.count(bindings[i]) ? lineage.text[bindings[i]] : lineage.Unknown();
+			auto &leaves = lineage.leaves[bindings[i]];
+			// two scans of one table read alike in the text where no alias tells them apart
+			bool told = true;
+			for (auto &one : leaves) {
+				for (auto &other : leaves) {
+					told = told && (one.scan == other.scan || one.column != other.column ||
+					                lineage.scan_tables[one.scan] != lineage.scan_tables[other.scan] ||
+					                (aliases.count(one.scan) && aliases.count(other.scan)));
+				}
+			}
+			QueryLineage::Mapping row {names[i],
+			                           b + 1,
+			                           text,
+			                           "",
+			                           "",
+			                           "",
+			                           "",
+			                           lineage.literals[bindings[i]],
+			                           told && !StringUtil::Contains(text, UNKNOWN)};
+			if (leaves.empty()) {
+				rows.push_back(row);
+				continue;
+			}
+			for (auto &leaf : leaves) {
+				auto scanned = row;
+				scanned.table = lineage.scan_tables[leaf.scan];
+				scanned.table_column = leaf.column;
+				scanned.alias = aliases.count(leaf.scan) ? aliases[leaf.scan] : string();
+				auto &conditions = lineage.conditions[leaf.scan];
+				scanned.condition = conditions.size() == 1 ? conditions[0]
+				                    : conditions.empty()   ? string()
+				                                           : "and(" + StringUtil::Join(conditions, ", ") + ")";
+				rows.push_back(std::move(scanned));
+			}
+		}
+	}
+	return rows;
+}
+
+QueryLineage LineageOf(ClientContext &context, const string &sql, const string *view_sql) {
 	QueryLineage result;
 	auto statement = ParseOneSelect(sql);
 	if (!statement) {
@@ -829,6 +1255,13 @@ QueryLineage LineageOf(ClientContext &context, const string &sql) {
 		result.complete = lineage.complete;
 		result.joins = lineage.joins;
 		Scans(*planner.plan, result.scans);
+		if (view_sql) {
+			vector<string> names;
+			for (auto &name : planner.names) {
+				names.push_back(name.GetIdentifierName());
+			}
+			result.mapping = MappingOf(*planner.plan, names, *view_sql);
+		}
 	});
 	return result;
 }
@@ -1023,6 +1456,8 @@ static unique_ptr<GlobalTableFunctionState> ViewsLineageInit(ClientContext &cont
 struct ViewLineage {
 	string dataset;
 	string view;
+	//! the view's CREATE VIEW statement, whose text names its scans' aliases
+	string sql;
 	//! false where the view does not plan
 	bool planned = true;
 	QueryLineage lineage;
@@ -1051,7 +1486,10 @@ struct KeptLineage : public ObjectCacheEntry {
 					bytes += column.size() + 32;
 				}
 			}
-			bytes += view.lineage.joins.size() * 128;
+			bytes += view.lineage.joins.size() * 128 + view.sql.size();
+			for (auto &row : view.lineage.mapping) {
+				bytes += row.derivation.size() + row.condition.size() + 64 * (row.literals.size() + 3);
+			}
 		}
 		return optional_idx(bytes);
 	}
@@ -1084,9 +1522,9 @@ static shared_ptr<KeptLineage> DatasetLineage(Inner &inner, const string &datase
 		return kept;
 	}
 	auto fill = make_shared_ptr<KeptLineage>();
-	auto listed = inner.con.Query(
-	    "SELECT table_name FROM information_schema.tables WHERE table_catalog = " + QuoteText(inner.ws.lake) +
-	    " AND table_schema = " + QuoteText(dataset) + " AND table_type = 'VIEW' ORDER BY table_name");
+	auto listed =
+	    inner.con.Query("SELECT view_name, sql FROM duckdb_views() WHERE database_name = " + QuoteText(inner.ws.lake) +
+		                " AND schema_name = " + QuoteText(dataset) + " AND NOT internal ORDER BY view_name");
 	if (listed->HasError()) {
 		throw InvalidInputException("glossql_views_lineage: %s", listed->GetError());
 	}
@@ -1095,13 +1533,16 @@ static shared_ptr<KeptLineage> DatasetLineage(Inner &inner, const string &datase
 			ViewLineage view;
 			view.dataset = dataset;
 			view.view = chunk->GetValue(0, i).ToString();
+			view.sql = chunk->GetValue(1, i).IsNull() ? string() : chunk->GetValue(1, i).ToString();
 			fill->views.push_back(std::move(view));
 		}
 	}
 	for (auto &view : fill->views) {
 		try {
-			view.lineage = LineageOf(context, "SELECT * FROM " + QuoteName(inner.ws.lake) + "." +
-			                                      QuoteName(view.dataset) + "." + QuoteName(view.view));
+			view.lineage = LineageOf(context,
+			                         "SELECT * FROM " + QuoteName(inner.ws.lake) + "." + QuoteName(view.dataset) + "." +
+			                             QuoteName(view.view),
+			                         &view.sql);
 		} catch (std::exception &) {
 			view.lineage = QueryLineage();
 			view.planned = false;
@@ -1190,7 +1631,111 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 	output.CheckCardinality(count);
 }
 
+//===--------------------------------------------------------------------===//
+// glossql_views_mapping(dataset): the mapping of every view of a dataset, one
+// row per output column, branch of the union its rows come from (1 where it
+// has none) and scanned column of a lake table: the branch's derivation, where
+// a table the view reads more than once carries the alias of each scan as
+// scan[alias].column; the table and its column; the alias; the conditions the
+// view's joins and filters put on that scan alone; the literals the
+// derivation tests or returns; and complete, false where the walk could not
+// follow a step or two scans of one table read alike. A column computed from
+// no lake column has one row with no table. NULL reads every dataset's views;
+// a view that does not plan serves one row naming it, complete false
+//===--------------------------------------------------------------------===//
+
+struct ViewsMappingState : public GlobalTableFunctionState {
+	bool read = false;
+	vector<vector<Value>> rows;
+	idx_t offset = 0;
+};
+
+static unique_ptr<FunctionData> ViewsMappingBind(ClientContext &context, TableFunctionBindInput &input,
+                                                 vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto result = make_uniq<ViewsLineageBindData>();
+	result->every = input.inputs[0].IsNull();
+	if (!result->every) {
+		result->dataset = input.inputs[0].ToString();
+	}
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::VARCHAR, LogicalType::INTEGER,
+	                LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR),
+	                LogicalType::BOOLEAN};
+	for (auto name : {"dataset", "view", "column", "branch", "derivation", "table_name", "table_column", "alias",
+	                  "condition", "literals", "complete"}) {
+		names.emplace_back(name);
+	}
+	return result;
+}
+
+static unique_ptr<GlobalTableFunctionState> ViewsMappingInit(ClientContext &context, TableFunctionInitInput &input) {
+	return make_uniq<ViewsMappingState>();
+}
+
+static void ViewsMappingExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &state = data.global_state->Cast<ViewsMappingState>();
+	if (!state.read) {
+		state.read = true;
+		auto &bind = data.bind_data->Cast<ViewsLineageBindData>();
+		Inner inner(context);
+		auto catalogs = CatalogState(*inner.con.context);
+		vector<string> datasets;
+		if (bind.every) {
+			auto listed = inner.con.Query("SELECT DISTINCT name FROM " + inner.Store("datasets") + " ORDER BY name");
+			if (listed->HasError()) {
+				throw InvalidInputException("glossql_views_mapping: %s", listed->GetError());
+			}
+			while (auto chunk = listed->Fetch()) {
+				for (idx_t i = 0; i < chunk->size(); i++) {
+					datasets.push_back(chunk->GetValue(0, i).ToString());
+				}
+			}
+		} else {
+			datasets.push_back(bind.dataset);
+		}
+		auto text = [](const string &value) {
+			return value.empty() ? Value(LogicalType::VARCHAR) : Value(value);
+		};
+		for (auto &dataset : datasets) {
+			auto kept = DatasetLineage(inner, dataset, catalogs);
+			for (auto &view : kept->views) {
+				if (!view.planned || view.lineage.mapping.empty()) {
+					state.rows.push_back({Value(view.dataset), Value(view.view), Value(), Value(), Value(), Value(),
+					                      Value(), Value(), Value(), Value(LogicalType::LIST(LogicalType::VARCHAR)),
+					                      Value::BOOLEAN(false)});
+					continue;
+				}
+				for (auto &row : view.lineage.mapping) {
+					vector<Value> literals;
+					for (auto &literal : row.literals) {
+						literals.emplace_back(literal);
+					}
+					state.rows.push_back({Value(view.dataset), Value(view.view), Value(row.column),
+					                      Value::INTEGER(NumericCast<int32_t>(row.branch)), Value(row.derivation),
+					                      text(row.table), text(row.table_column), text(row.alias), text(row.condition),
+					                      Value::LIST(LogicalType::VARCHAR, std::move(literals)),
+					                      Value::BOOLEAN(row.complete)});
+				}
+			}
+		}
+	}
+	idx_t count = 0;
+	while (state.offset < state.rows.size() && count < STANDARD_VECTOR_SIZE) {
+		auto &row = state.rows[state.offset];
+		for (idx_t c = 0; c < row.size(); c++) {
+			output.data[c].Append(row[c]);
+		}
+		state.offset++;
+		count++;
+	}
+	output.CheckCardinality(count);
+}
+
 void RegisterGlossLineage(ExtensionLoader &loader) {
+	loader.RegisterFunction(TableFunction("glossql_views_mapping", {LogicalType::VARCHAR}, ViewsMappingExec,
+	                                      ViewsMappingBind, ViewsMappingInit));
 	loader.RegisterFunction(
 	    TableFunction("glossql_lineage", {LogicalType::VARCHAR}, LineageExec, LineageBind, LineageInit));
 	loader.RegisterFunction(TableFunction("glossql_views_lineage", {LogicalType::VARCHAR}, ViewsLineageExec,
