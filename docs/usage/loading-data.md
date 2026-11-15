@@ -64,7 +64,9 @@ The statement runs the query and creates the table
   through to the table.
 - **Keyed or not.** With `SET (key: id)` (one column, or a list such as
   `'depot, id'`), a later load merges into the table by key: rows whose
-  key the result carries are replaced, the rest stay. A result that
+  key the result carries are replaced where a value differs, the rest
+  stay. A load of the same rows writes nothing, so the table keeps its
+  version and the results that read it stay current. A result that
   carries a key twice is refused. Without a key, every load replaces
   the table.
 - **Declaring it again** with the same SQL does nothing. Changed SQL

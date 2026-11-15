@@ -624,8 +624,23 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 		for (auto &column : key) {
 			on.push_back("t." + QuoteName(column) + " = s." + QuoteName(column));
 		}
+		// a matched row is updated only where a value it would write differs from the one it holds:
+		// a load of the same rows writes nothing, and the table's version stays. The update writes
+		// the recipe's columns by position, cast to the table's types, and is compared so
+		auto ours = inner.Run("SELECT * FROM " + target + " LIMIT 0");
+		auto theirs = inner.Run("SELECT * FROM (" + recipe.sql + ") LIMIT 0");
+		string differs;
+		if (ours->ColumnCount() == theirs->ColumnCount()) {
+			vector<string> columns;
+			for (idx_t i = 0; i < ours->ColumnCount(); i++) {
+				columns.push_back("t." + QuoteName(ours->ColumnName(i).GetIdentifierName()) +
+				                  " IS DISTINCT FROM CAST(s." + QuoteName(theirs->ColumnName(i).GetIdentifierName()) +
+				                  " AS " + ours->GetTypes()[i].ToString() + ")");
+			}
+			differs = " AND (" + StringUtil::Join(columns, " OR ") + ")";
+		}
 		inner.Run("MERGE INTO " + target + " AS t USING (" + recipe.sql + ") AS s ON " + StringUtil::Join(on, " AND ") +
-		          " WHEN MATCHED THEN UPDATE WHEN NOT MATCHED THEN INSERT");
+		          " WHEN MATCHED" + differs + " THEN UPDATE WHEN NOT MATCHED THEN INSERT");
 		loaded.mode = "merge";
 		loaded.how = "merged by " + StringUtil::Join(key, ", ");
 	}

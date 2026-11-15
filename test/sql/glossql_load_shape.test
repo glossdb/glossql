@@ -119,3 +119,101 @@ query TT
 SELECT function, input FROM glossql_outdated() ORDER BY ALL;
 ----
 assets	annotations(note, the dataset)
+
+statement ok
+SELECT assets() FROM fin;
+
+# --- a merge load writes only the rows that differ: the same rows leave the table's version and every
+# result that read its data current; one changed cell or one added row moves it; a row the source no
+# longer sends stays, as a merge keeps it; a key sent twice is refused before anything is written
+
+statement ok
+COPY (SELECT i AS id, 'acct' || i AS account, i * 1.5 AS amount, CASE WHEN i = 2 THEN NULL ELSE 'x' END AS note FROM range(5) t(i)) TO '{TEST_DIR}/merge_rows.csv' (HEADER);
+
+statement ok
+DECLARE RECIPE ledger ON fin FROM files SET (key: id) AS $$SELECT id::BIGINT AS id, account, amount::DECIMAL(10,1) AS amount, note FROM read_csv('merge_rows.csv')$$;
+
+statement ok
+DECLARE ASPECT ledger_total WITH $${"type": "number"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION ledger_total FOR fin AS $$ SELECT sum(amount)::DOUBLE AS n FROM ledger $$ RETURNS ledger_total;
+
+statement ok
+SELECT ledger_total() FROM ledger;
+
+# the same rows, a NULL among them
+
+statement ok
+IMPORT ledger;
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'ledger_total';
+----
+0
+
+# a row the source no longer sends stays: the table does not change
+
+statement ok
+COPY (SELECT i AS id, 'acct' || i AS account, i * 1.5 AS amount, CASE WHEN i = 2 THEN NULL ELSE 'x' END AS note FROM range(4) t(i)) TO '{TEST_DIR}/merge_rows.csv' (HEADER);
+
+statement ok
+IMPORT ledger;
+
+query II
+SELECT count(*), (SELECT count(*) FROM glossql_outdated() WHERE function = 'ledger_total') FROM fin.ledger;
+----
+5	0
+
+# a key sent twice is refused, and nothing is written
+
+statement ok
+COPY (SELECT i % 4 AS id, 'acct' || i AS account, i * 1.5 AS amount, 'x' AS note FROM range(5) t(i)) TO '{TEST_DIR}/merge_rows.csv' (HEADER);
+
+statement error
+IMPORT ledger;
+----
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'ledger_total';
+----
+0
+
+# one changed cell: a NULL that became a value
+
+statement ok
+COPY (SELECT i AS id, 'acct' || i AS account, i * 1.5 AS amount, CASE WHEN i < 5 THEN 'x' END AS note FROM range(5) t(i)) TO '{TEST_DIR}/merge_rows.csv' (HEADER);
+
+statement ok
+IMPORT ledger;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'ledger_total';
+----
+data(data, fin.ledger)
+
+query I
+SELECT count(*) FROM fin.ledger WHERE note IS NULL;
+----
+0
+
+statement ok
+SELECT ledger_total() FROM ledger;
+
+# one added row
+
+statement ok
+COPY (SELECT i AS id, 'acct' || i AS account, i * 1.5 AS amount, 'x' AS note FROM range(6) t(i)) TO '{TEST_DIR}/merge_rows.csv' (HEADER);
+
+statement ok
+IMPORT ledger;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'ledger_total';
+----
+data(data, fin.ledger)
+
+query I
+SELECT count(*) FROM fin.ledger;
+----
+6
