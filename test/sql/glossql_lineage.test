@@ -355,3 +355,68 @@ daily_rate	value	ratio
 revenue	customer	NULL
 revenue	total	NULL
 summed_rate	value	ratio
+
+# --- each expression reads as what it is: a CASE, a COALESCE, a comparison, a conjunction, IN and IS NULL by their own
+# names over their operands, the columns they read listed inside, a literal as written; a real UNNEST reads unnest
+
+statement ok
+CREATE TABLE fin.products AS SELECT i AS id, CASE WHEN i % 2 = 0 THEN 'D' ELSE 'A' END AS status, 'brand' || i AS global_brand, i AS parent FROM range(4) t(i);
+
+statement ok
+CREATE VIEW fin.product_forms AS
+SELECT CASE WHEN p.status = 'D' THEN 'available' WHEN p.status = 'A' THEN 'active' ELSE 'other' END AS availability,
+       coalesce(p.global_brand, up.global_brand, top.global_brand) AS brand,
+       p.id = up.id AS is_root,
+       p.id > 1 AND (up.id < 3 OR top.id IS NULL) AS in_range,
+       p.status IN ('D', 'A') AS known,
+       p.global_brand IS NULL AS unbranded,
+       p.id BETWEEN 1 AND 3 AS middle
+FROM fin.products p JOIN fin.products up ON p.parent = up.id JOIN fin.products top ON up.parent = top.id;
+
+query TTT
+SELECT "column", derivation, complete FROM glossql_views_lineage('fin') WHERE view = 'product_forms' ORDER BY "column";
+----
+availability	case(when =(fin.products.status:VARCHAR, 'D') then 'available', when =(fin.products.status:VARCHAR, 'A') then 'active', else 'other')	true
+brand	coalesce(fin.products.global_brand:VARCHAR, fin.products.global_brand:VARCHAR, fin.products.global_brand:VARCHAR)	true
+in_range	and(>(fin.products.id:BIGINT, cast(1 as BIGINT)), or(<(fin.products.id:BIGINT, cast(3 as BIGINT)), is_null(fin.products.id:BIGINT)))	true
+is_root	=(fin.products.id:BIGINT, fin.products.id:BIGINT)	true
+known	in(fin.products.status:VARCHAR, 'D', 'A')	true
+middle	and(>=(fin.products.id:BIGINT, cast(1 as BIGINT)), <=(fin.products.id:BIGINT, cast(3 as BIGINT)))	true
+unbranded	is_null(fin.products.global_brand:VARCHAR)	true
+
+# the columns each derivation reads are found inside it, as the kits read them
+query TT
+SELECT "column", list_sort(list_distinct(regexp_extract_all(derivation, '([A-Za-z_]+\.[A-Za-z_]+\.[A-Za-z_]+):', 1)))
+FROM glossql_views_lineage('fin') WHERE view = 'product_forms' ORDER BY "column";
+----
+availability	[fin.products.status]
+brand	[fin.products.global_brand]
+in_range	[fin.products.id]
+is_root	[fin.products.id]
+known	[fin.products.status]
+middle	[fin.products.id]
+unbranded	[fin.products.global_brand]
+
+query TT
+SELECT "column", derivation FROM glossql_lineage($$SELECT NOT p.id > 1 AS low, p.status NOT IN ('X') AS not_x, p.global_brand IS NOT NULL AS branded, (p.id + 1) BETWEEN 1 AND 3 AS shifted, p.id IS DISTINCT FROM p.parent AS moved, CASE p.status WHEN 'D' THEN 1 ELSE 0 END AS flag, row_number() OVER (PARTITION BY p.status ORDER BY p.id DESC) AS rn, sum(p.id) OVER () AS all_ids FROM fin.products p$$);
+----
+low	not(>(fin.products.id:BIGINT, cast(1 as BIGINT)))
+not_x	not(in(fin.products.status:VARCHAR, 'X'))
+branded	is_not_null(fin.products.global_brand:VARCHAR)
+shifted	and(>=(+(fin.products.id:BIGINT, cast(1 as BIGINT)), cast(1 as BIGINT)), <=(+(fin.products.id:BIGINT, cast(1 as BIGINT)), cast(3 as BIGINT)))
+moved	is_distinct_from(fin.products.id:BIGINT, fin.products.parent:BIGINT)
+flag	case(when =(fin.products.status:VARCHAR, 'D') then 1, else 0)
+rn	row_number() over(partition by fin.products.status:VARCHAR order by fin.products.id:BIGINT desc)
+all_ids	sum(fin.products.id:BIGINT) over()
+
+# a real UNNEST reads unnest; a union of three branches reads each branch
+query TT
+SELECT "column", derivation FROM glossql_lineage($$SELECT unnest([id, parent]) AS member, unnest(string_split(global_brand, 'd')) AS part FROM fin.products$$);
+----
+member	unnest(list_value(fin.products.id:BIGINT, fin.products.parent:BIGINT))
+part	unnest(string_split(fin.products.global_brand:VARCHAR, 'd'))
+
+query TTT
+SELECT "column", derivation, complete FROM glossql_lineage($$SELECT status AS code FROM fin.products UNION SELECT global_brand FROM fin.products UNION ALL SELECT coalesce(status, 'none') FROM fin.products$$);
+----
+code	union(union(fin.products.status:VARCHAR, fin.products.global_brand:VARCHAR), coalesce(fin.products.status:VARCHAR, 'none'))	true

@@ -31,6 +31,8 @@
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/planner/column_binding_map.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+#include "duckdb/planner/expression/bound_case_expression.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -55,8 +57,9 @@
 
 namespace duckdb {
 
-//! What the walk could not follow: an operator or expression it does not know
-static constexpr const char *UNKNOWN = "<?>";
+//! What the walk could not follow: an operator or expression it does not know,
+//! `<?>`, or `<?class>` naming the expression's class
+static constexpr const char *UNKNOWN = "<?";
 
 //! A set of columns no two rows of an operator's output share
 typedef vector<ColumnBinding> Key;
@@ -82,9 +85,9 @@ struct Lineage {
 	column_binding_map_t<Key> row_numbers;
 	unordered_map<TableIndex, vector<vector<idx_t>>> cte_keys;
 
-	string Unknown() {
+	string Unknown(const string &what = string()) {
 		complete = false;
-		return UNKNOWN;
+		return UNKNOWN + what + ">";
 	}
 };
 
@@ -173,9 +176,35 @@ static string Children(const Expression &expr, Lineage &lineage) {
 	return StringUtil::Join(parts, ", ");
 }
 
+static string Texts(const vector<unique_ptr<Expression>> &exprs, Lineage &lineage) {
+	vector<string> parts;
+	for (auto &expr : exprs) {
+		parts.push_back(Text(*expr, lineage));
+	}
+	return StringUtil::Join(parts, ", ");
+}
+
+//! An expression's type as a name in the text: is_null, coalesce, in
+static string TypeName(const Expression &expr) {
+	return StringUtil::Lower(ExpressionTypeToString(expr.GetExpressionType()));
+}
+
+//! A cast of a literal to the type it already has, as the binder leaves on a
+//! string compared with text: it changes nothing, and the literal reads as written
+static bool LiteralCast(const Expression &expr) {
+	if (!BoundCastExpression::IsCast(expr)) {
+		return false;
+	}
+	auto &child = BoundCastExpression::Child(expr.Cast<BoundFunctionExpression>());
+	return child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT &&
+	       child.Cast<BoundConstantExpression>().GetValue().type() == expr.GetReturnType();
+}
+
 //! The derivation text of a bound expression: a column reference is what it
-//! resolves to, a constant its literal, a function its name over its
-//! children, anything else its expression type over its children
+//! resolves to, a constant its literal as written, a function its name over
+//! its arguments, an operator, a comparison, a conjunction or a CASE its own
+//! name over its operands; an expression the walk cannot render is unknown
+//! under its class's name
 static string Text(const Expression &expr, Lineage &lineage) {
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::BOUND_COLUMN_REF: {
@@ -187,11 +216,19 @@ static string Text(const Expression &expr, Lineage &lineage) {
 		return expr.Cast<BoundConstantExpression>().GetValue().ToSQLString();
 	case ExpressionClass::BOUND_FUNCTION: {
 		auto &function = expr.Cast<BoundFunctionExpression>();
-		auto type = expr.GetExpressionType();
-		if (type == ExpressionType::OPERATOR_CAST) {
-			return "cast(" + Children(expr, lineage) + " as " + expr.GetReturnType().ToString() + ")";
+		if (LiteralCast(expr)) {
+			return Text(BoundCastExpression::Child(function), lineage);
 		}
-		return function.Function().GetName().GetIdentifierName() + "(" + Children(expr, lineage) + ")";
+		if (BoundCastExpression::IsCast(expr)) {
+			return (BoundCastExpression::IsTryCast(function) ? "try_cast(" : "cast(") + Children(expr, lineage) +
+			       " as " + expr.GetReturnType().ToString() + ")";
+		}
+		// IS DISTINCT FROM reads is_distinct_from, as is_null does
+		auto name = function.Function().GetName().GetIdentifierName();
+		if (name.find(' ') != string::npos) {
+			name = StringUtil::Lower(StringUtil::Replace(name, " ", "_"));
+		}
+		return name + "(" + Children(expr, lineage) + ")";
 	}
 	case ExpressionClass::BOUND_AGGREGATE: {
 		auto &aggregate = expr.Cast<BoundAggregateExpression>();
@@ -202,26 +239,62 @@ static string Text(const Expression &expr, Lineage &lineage) {
 		return "cast(" + Children(expr, lineage) + " as " + expr.GetReturnType().ToString() + ")";
 	case ExpressionClass::BOUND_WINDOW: {
 		auto &window = expr.Cast<BoundWindowExpression>();
-		auto name = window.AggregateFunction() ? window.AggregateFunction()->GetName().GetIdentifierName()
-		                                       : StringUtil::Lower(ExpressionTypeToString(expr.GetExpressionType()));
-		return name + "(" + Children(expr, lineage) + ") over";
+		auto name =
+		    window.AggregateFunction() ? window.AggregateFunction()->GetName().GetIdentifierName() : TypeName(expr);
+		auto text = name + "(" + Texts(window.GetChildren(), lineage) + ")";
+		if (window.Filter()) {
+			text += " filter(" + Text(*window.Filter(), lineage) + ")";
+		}
+		vector<string> over;
+		if (!window.Partitions().empty()) {
+			over.push_back("partition by " + Texts(window.Partitions(), lineage));
+		}
+		if (!window.OrderBy().empty()) {
+			vector<string> orders;
+			for (auto &order : window.OrderBy()) {
+				orders.push_back(Text(*order.expression, lineage) +
+				                 (order.type == OrderType::DESCENDING ? " desc" : ""));
+			}
+			over.push_back("order by " + StringUtil::Join(orders, ", "));
+		}
+		for (auto bound : {window.StartExpr().get(), window.EndExpr().get()}) {
+			if (bound) {
+				over.push_back("frame " + Text(*bound, lineage));
+			}
+		}
+		return text + " over(" + StringUtil::Join(over, " ") + ")";
 	}
 	case ExpressionClass::BOUND_PARAMETER:
 		return "$" + expr.Cast<BoundParameterExpression>().Identifier().GetIdentifierName();
 	case ExpressionClass::LEGACY_BOUND_COMPARISON:
+		return ExpressionTypeToOperator(expr.GetExpressionType()) + "(" + Children(expr, lineage) + ")";
 	case ExpressionClass::LEGACY_BOUND_BETWEEN:
+		return "between(" + Children(expr, lineage) + ")";
 	case ExpressionClass::BOUND_CONJUNCTION:
-	case ExpressionClass::BOUND_OPERATOR:
-	case ExpressionClass::BOUND_CASE:
+		return string(expr.GetExpressionType() == ExpressionType::CONJUNCTION_AND ? "and" : "or") + "(" +
+		       Children(expr, lineage) + ")";
+	case ExpressionClass::BOUND_OPERATOR: {
+		auto type = expr.GetExpressionType();
+		auto name = type == ExpressionType::COMPARE_NOT_IN ? string("not_in") : TypeName(expr);
+		return name + "(" + Children(expr, lineage) + ")";
+	}
+	case ExpressionClass::BOUND_CASE: {
+		auto &bound = expr.Cast<BoundCaseExpression>();
+		vector<string> parts;
+		for (auto &check : bound.CaseChecks()) {
+			parts.push_back("when " + Text(*check.when_expr, lineage) + " then " + Text(*check.then_expr, lineage));
+		}
+		parts.push_back("else " + Text(bound.Else(), lineage));
+		return "case(" + StringUtil::Join(parts, ", ") + ")";
+	}
 	case ExpressionClass::BOUND_UNNEST:
 		return "unnest(" + Children(expr, lineage) + ")";
 	case ExpressionClass::BOUND_LAMBDA:
 	case ExpressionClass::BOUND_LAMBDA_REF:
 	case ExpressionClass::BOUND_DEFAULT:
-		return StringUtil::Lower(ExpressionTypeToString(expr.GetExpressionType())) + "(" + Children(expr, lineage) +
-		       ")";
+		return TypeName(expr) + "(" + Children(expr, lineage) + ")";
 	default:
-		return lineage.Unknown();
+		return lineage.Unknown(StringUtil::Lower(ExpressionClassToString(expr.GetExpressionClass())));
 	}
 }
 

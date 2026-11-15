@@ -55,7 +55,12 @@ FROM glossql_lineage($$SELECT id, amount * 2 AS twice FROM shop.orders$$);
 `glossql_lineage(sql VARCHAR)` → `(column VARCHAR, derivation VARCHAR,
 complete BOOLEAN, shape VARCHAR)`. What computes each output column of
 a `SELECT`, read from its plan. A leaf is `dataset.table.column:TYPE`.
-`complete` is false where a part of the plan could not be resolved.
+A function, an operator and a `CASE` read as their name over their
+operands, a literal as written: `coalesce(a, b)`, `=(a, 'D')`,
+`and(a, b)`, `in(a, 'D', 'A')`, `is_null(a)`,
+`case(when a then b, else c)`, `row_number() over(partition by a order by b)`.
+`complete` is false where a part of the plan could not be resolved; that
+part reads `<?>`, or `<?class>` with the expression's class.
 `shape` says how the column was computed where that decides how it
 adds up: `ratio` (a division by an aggregate), `average`, `distinct` (a
 distinct count), else NULL. A sum over one of them keeps the shape.
