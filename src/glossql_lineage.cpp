@@ -1131,7 +1131,8 @@ static void TableRefs(const QueryNode &node, CteScope scope, vector<pair<string,
 //! The alias of each scan of a table the plan reads more than once, as the
 //! view's SQL names it: the n-th scan the binder made is the n-th the text
 //! names. A table the text names another number of times than the plan scans
-//! it (a CTE kept once, a view read inside) has none
+//! it (a CTE kept once, a view read inside), or under one name each time, has
+//! none
 static std::map<idx_t, string> Aliases(LogicalOperator &plan, const string &view_sql) {
 	std::map<idx_t, string> aliases;
 	std::map<string, vector<idx_t>> scans;
@@ -1161,7 +1162,9 @@ static std::map<idx_t, string> Aliases(LogicalOperator &plan, const string &view
 				named.push_back(ref.second.empty() ? ref.first : ref.second);
 			}
 		}
-		if (named.size() != table.second.size()) {
+		// one name for every scan, as each branch of a union may give, tells none apart
+		if (named.size() != table.second.size() ||
+		    std::all_of(named.begin(), named.end(), [&](const string &name) { return name == named[0]; })) {
 			continue;
 		}
 		for (idx_t i = 0; i < named.size(); i++) {

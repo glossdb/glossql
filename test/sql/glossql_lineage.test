@@ -494,3 +494,13 @@ query TTT
 SELECT DISTINCT "column", alias, complete FROM glossql_views_mapping('fin') WHERE view = 'brands' AND "column" = 'brand';
 ----
 brand	NULL	false
+
+# a table each branch of a union reads once under one name: the name tells no read apart and none is given
+statement ok
+CREATE VIEW fin.brand_by_market AS SELECT h.global_brand FROM fin.hierarchy h WHERE h.market = 'DK' UNION ALL SELECT h.global_brand FROM fin.hierarchy h WHERE h.market = 'PL';
+
+query ITTT
+SELECT branch, derivation, alias, condition FROM glossql_views_mapping('fin') WHERE view = 'brand_by_market' ORDER BY ALL;
+----
+1	fin.hierarchy.global_brand:VARCHAR	NULL	=(fin.hierarchy.market:VARCHAR, 'DK')
+2	fin.hierarchy.global_brand:VARCHAR	NULL	=(fin.hierarchy.market:VARCHAR, 'PL')
