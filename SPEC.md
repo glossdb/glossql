@@ -523,7 +523,8 @@ SELECT * FROM definition('itself');
 - `annotations(property, where)`: the annotations of one property;
 - `results(function, where)`: the stored results of one function;
 - `definition(where)`: a view's SQL and what it reads, each loaded
-  table with the source it is loaded from.
+  table with the source it is loaded from, and what the view's joins
+  and filters require of each read of a table.
 
 The where is a place, walked from the function's subject over the
 lineage (`lineage(dataset)`: what a dataset contains, what a view

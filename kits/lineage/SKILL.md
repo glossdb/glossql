@@ -40,7 +40,7 @@ says where. Both are constants.
 |---|---|
 | `annotations(property, where)` | `asset`, `property`, `value`, `state`, `threshold`; state `missing` where nobody annotated the asset; `threshold` the THRESHOLD of the test on the property, NULL where it has none. A property declared on tables returns no row for a column. `'x-kind <kind>'` as the property reads every property declared with that `x-kind`, a scenario's among them: a person's newest annotation, else an agent's |
 | `results(function, where)` | `asset`, `function`, `value`, `error`; both empty where no result is stored |
-| `definition(where)` | one row per view: `view`, `kind`, `plan_of`, `covers`, `sql`, `stopped`, `columns`, `reads`, `joins`. The view's SQL and what it reads, each loaded table with the `source` it is loaded from; not the rest of the annotation that defines it |
+| `definition(where)` | one row per view: `view`, `kind`, `plan_of`, `covers`, `sql`, `stopped`, `columns`, `reads`, `joins`, `conditions`. The view's SQL and what it reads, each loaded table with the `source` it is loaded from, and per read of a table (`branch`, `alias`) the `condition` the view's joins and filters require of it alone; not the rest of the annotation that defines it |
 
 The places, walked from the function's subject:
 

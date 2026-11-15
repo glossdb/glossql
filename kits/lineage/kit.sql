@@ -301,8 +301,12 @@ LEFT JOIN main.measurements m
 -- reads of each loaded table (table_name, columns) and its joins
 -- (left_column, right_column, left_unique, right_unique), each loaded table
 -- with the source its recipe loads it from (source; NULL for a view it
--- reads or a table loaded without a recipe). The rest of the annotation,
--- its assumptions, is no part of the definition a body reads.
+-- reads or a table loaded without a recipe), and per read of a table, by
+-- the branch of the union it is read in and its alias, what the view's
+-- joins and filters require of that read alone (conditions: table_name,
+-- branch, alias, condition, NULL where nothing is required; rendered as
+-- the lineage renders a derivation). The rest of the annotation, its
+-- assumptions, is no part of the definition a body reads.
 -- definitions(dataset) is the same for every view of a dataset at once:
 -- the views the dataset defines, never a table of the same name.
 --===------------------------------------------------------------------===--
@@ -312,6 +316,7 @@ lin AS (FROM glossql_views_lineage(dataset_name)),
 sc AS (SELECT s.*, l."to" AS source FROM glossql_views_scans(dataset_name) s
        LEFT JOIN main.loaded_from_edges(dataset_name) l ON l."from" = s.table_name),
 jo AS (FROM glossql_views_joins(dataset_name)),
+ma AS (SELECT DISTINCT view, table_name, branch, alias, condition FROM glossql_views_mapping(dataset_name) WHERE table_name IS NOT NULL),
 bodies AS (FROM main.view_bodies(dataset_name))
 SELECT dataset_name || '.' || a.name AS view,
        json_extract_string(a.schema, '$.x-kind') AS kind,
@@ -327,7 +332,10 @@ SELECT dataset_name || '.' || a.name AS view,
         FROM sc s WHERE s.view = a.name) AS reads,
        (SELECT list({'left_column': j.left_column, 'right_column': j.right_column,
                      'left_unique': j.left_unique, 'right_unique': j.right_unique} ORDER BY j.left_column, j.right_column)
-        FROM jo j WHERE j.view = a.name) AS joins
+        FROM jo j WHERE j.view = a.name) AS joins,
+       (SELECT list({'table_name': m.table_name, 'branch': m.branch, 'alias': m.alias, 'condition': m.condition}
+                    ORDER BY m.table_name, m.branch, m.alias)
+        FROM ma m WHERE m.view = a.name) AS conditions
 FROM main.aspects a LEFT JOIN bodies b ON b.view = a.name
 WHERE a.kind = 'VIEW'
   AND (b.view IS NOT NULL OR a.name IN (SELECT table_name FROM cols WHERE table_type = 'VIEW'));
