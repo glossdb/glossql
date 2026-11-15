@@ -24,6 +24,7 @@ An asset is named by its path: `fin`, `fin.orders`,
 | `reads` | a view | the tables and columns it scans and joins on, and each view it reads |
 | `relates` | a relationship | each of its columns |
 | `plans` | a plan | the metric it plans |
+| `loaded from` | a loaded table | the source its recipe loads it from |
 
 ```sql
 SELECT "to" FROM lineage('fin') WHERE "from" = 'fin.revenue' AND kind = 'reads';
@@ -51,6 +52,7 @@ The places, walked from the function's subject:
 | `the columns it joins on` | both columns of each join in a view |
 | `its relationships` | a view's: those between the tables it reads; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
 | `its metric` | the metric a plan plans, and its columns |
+| `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads. `annotations()` of a property declared `ON SOURCE`, such as `conventions`, returns each source's annotation |
 | `its dataset` | the subject's dataset itself |
 | `the dataset` | the dataset and every asset in it |
 | `the dataset's metrics` | the views of the dataset that are metrics, not plans, and their columns |

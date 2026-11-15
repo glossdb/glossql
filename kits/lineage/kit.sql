@@ -28,6 +28,8 @@ CREATE OR REPLACE MACRO main.read_subject() AS coalesce(getvariable('glossql_sub
 --             its SQL names
 --   relates   relationship -> each of its columns
 --   plans     plan -> the metric it plans (x-plan-of)
+--   loaded from  table -> the source its recipe loads it from, a source
+--             named as it is declared
 --===------------------------------------------------------------------===--
 -- contains_edges(dataset): the lineage's contains edges alone
 CREATE OR REPLACE MACRO main.contains_edges(dataset_name) AS TABLE
@@ -42,6 +44,14 @@ CREATE OR REPLACE MACRO main.view_bodies(dataset_name) AS TABLE
 SELECT aspect AS view, body FROM main.glossary
 WHERE dataset = dataset_name AND subject = dataset_name AND aspect IN (SELECT name FROM main.aspects WHERE kind = 'VIEW')
 QUALIFY row_number() OVER (PARTITION BY aspect ORDER BY begin_snapshot DESC) = 1;
+
+-- loaded_from_edges(dataset): the lineage's loaded from edges alone,
+-- table -> source, for each loaded table of the dataset a recipe loads
+CREATE OR REPLACE MACRO main.loaded_from_edges(dataset_name) AS TABLE
+SELECT dataset_name || '.' || r.table_name AS "from", r.source AS "to", 'loaded from' AS kind
+FROM main.recipes r
+WHERE r.dataset = dataset_name
+  AND r.table_name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'BASE TABLE');
 
 -- plans_edges(dataset): the lineage's plans edges alone, plan -> metric
 CREATE OR REPLACE MACRO main.plans_edges(dataset_name) AS TABLE
@@ -81,11 +91,15 @@ UNION ALL SELECT DISTINCT * FROM (
         JOIN cols c ON dataset_name || '.' || c.table_name || '.' || c.column_name IN (j.left_column, j.right_column)
   UNION SELECT dataset_name || '.' || n.name, dataset_name || '.' || n.other, 'reads' FROM named n
         WHERE n.other <> n.name AND n.other IN (SELECT name FROM views))
-UNION ALL SELECT * FROM main.plans_edges(dataset_name);
+UNION ALL SELECT * FROM main.plans_edges(dataset_name)
+UNION ALL SELECT * FROM main.loaded_from_edges(dataset_name);
 
--- The class of an asset by its path: what a property's grains name
+-- The class of an asset by its path: what a property's grains name. A bare
+-- name is a dataset, or a source where no dataset carries it
 CREATE OR REPLACE MACRO main.asset_grain(asset) AS
   CASE WHEN contains(asset, ' -> ') OR contains(asset, ' <-> ') THEN 'RELATIONSHIP'
+       WHEN NOT contains(asset, '.') AND asset IN (SELECT name FROM main.sources)
+            AND asset NOT IN (SELECT name FROM main.datasets) THEN 'SOURCE'
        WHEN NOT contains(asset, '.') THEN 'DATASET'
        WHEN len(string_split(asset, '.')) = 2 THEN 'TABLE'
        ELSE 'COLUMN' END;
@@ -101,6 +115,8 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --                              a table's or a column's: those that touch it;
 --                              a dataset's: all; a relationship: itself
 --   'its metric'               the metric a plan plans, and its columns
+--   'its source systems'       a table's: the source it is loaded from; a
+--                              view's: those of the tables it reads
 --   'its dataset'              the subject's dataset itself
 --   'the dataset'              the subject's dataset and every asset in it
 --   'the dataset's metrics'    the views of the subject's dataset that are
@@ -118,6 +134,7 @@ CREATE OR REPLACE MACRO main.place_list() AS [
   {'where': 'the columns it joins on', 'anchored': false},
   {'where': 'its relationships', 'anchored': false},
   {'where': 'its metric', 'anchored': false},
+  {'where': 'its source systems', 'anchored': false},
   {'where': 'its dataset', 'anchored': true},
   {'where': 'the dataset''s metrics', 'anchored': true},
   {'where': 'the dataset', 'anchored': true}];
@@ -155,6 +172,12 @@ WITH planned AS (SELECT "from" AS subject, "to" AS metric FROM main.plans_edges(
 SELECT subject, metric AS asset FROM planned
 UNION SELECT p.subject, c."to" FROM planned p JOIN main.contains_edges(dataset_name) c ON c."from" = p.metric;
 
+CREATE OR REPLACE MACRO main.place_systems(dataset_name) AS TABLE
+WITH loaded AS (SELECT "from" AS t, "to" AS source FROM main.loaded_from_edges(dataset_name))
+SELECT t AS subject, source AS asset FROM loaded
+UNION SELECT dataset_name || '.' || s.view, l.source
+      FROM glossql_views_scans(dataset_name) s JOIN loaded l ON l.t = s.table_name;
+
 CREATE OR REPLACE MACRO main.place_its_dataset(dataset_name) AS TABLE
 SELECT dataset_name AS subject, dataset_name AS asset;
 
@@ -178,6 +201,7 @@ UNION ALL SELECT subject, 'its sources', asset FROM main.place_sources(dataset_n
 UNION ALL SELECT subject, 'the columns it joins on', asset FROM main.place_joined(dataset_name)
 UNION ALL SELECT subject, 'its relationships', asset FROM main.place_relationships(dataset_name)
 UNION ALL SELECT subject, 'its metric', asset FROM main.place_metric(dataset_name)
+UNION ALL SELECT subject, 'its source systems', asset FROM main.place_systems(dataset_name)
 UNION ALL SELECT subject, 'the dataset', asset FROM main.place_dataset(dataset_name)
 UNION ALL SELECT subject, 'the dataset''s metrics', asset FROM main.place_metrics(dataset_name)
 UNION ALL SELECT subject, 'its dataset', asset FROM main.place_its_dataset(dataset_name);
@@ -190,6 +214,7 @@ FROM query(CASE where_
   WHEN 'the columns it joins on' THEN 'SELECT asset FROM main.place_joined(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'its relationships' THEN 'SELECT asset FROM main.place_relationships(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'its metric' THEN 'SELECT asset FROM main.place_metric(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
+  WHEN 'its source systems' THEN 'SELECT asset FROM main.place_systems(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'the dataset' THEN 'SELECT asset FROM main.place_dataset(split_part(main.read_subject(), ''.'', 1))'
   WHEN 'its dataset' THEN 'SELECT split_part(main.read_subject(), ''.'', 1) AS asset'
   WHEN 'the dataset''s metrics' THEN 'SELECT asset FROM main.place_metrics(split_part(main.read_subject(), ''.'', 1))'

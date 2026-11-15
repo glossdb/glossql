@@ -389,7 +389,7 @@ data	fin.sources
 query T
 SELECT string_agg(p."where", '|' ORDER BY p."where") FROM unnest(main.place_list()) u(p);
 ----
-its columns|its dataset|its metric|its relationships|its sources|itself|the columns it joins on|the dataset|the dataset's metrics
+its columns|its dataset|its metric|its relationships|its source systems|its sources|itself|the columns it joins on|the dataset|the dataset's metrics
 
 statement ok
 SET VARIABLE glossql_subject = 'fin';
@@ -414,6 +414,9 @@ SELECT count(*) FROM place('its metric');
 
 statement ok
 SELECT count(*) FROM place('its dataset');
+
+statement ok
+SELECT count(*) FROM place('its source systems');
 
 statement ok
 SELECT count(*) FROM place('the dataset''s metrics');
@@ -448,3 +451,100 @@ SELECT "to" FROM lineage('fin') WHERE "from" = 'fin.dotted' AND kind = 'reads' A
 ----
 fin.cust.eu
 fin.ord
+
+# --- the source a table is loaded from: an edge of the lineage, and a place a body names. A table's source
+# system is its recipe's source; a view's are those of the tables it reads
+
+statement ok
+COPY (SELECT 'M' || i AS matnr, i * 1.0 AS qty FROM range(3) r(i)) TO '{TEST_DIR}/stock_dk.csv' (HEADER);
+
+statement ok
+COPY (SELECT 'I' || i AS item, i * 2.0 AS amount FROM range(2) r(i)) TO '{TEST_DIR}/stock_ch.csv' (HEADER);
+
+statement ok
+DECLARE SOURCE erp_dk SET (type: csv, location: '{TEST_DIR}');
+
+statement ok
+DECLARE SOURCE erp_ch SET (type: csv, location: '{TEST_DIR}');
+
+statement ok
+DECLARE RECIPE stock_dk ON fin FROM erp_dk AS $$SELECT matnr, CAST(qty AS DOUBLE) AS qty FROM read_csv('stock_dk.csv')$$;
+
+statement ok
+DECLARE RECIPE stock_ch ON fin FROM erp_ch AS $$SELECT item, CAST(amount AS DOUBLE) AS amount FROM read_csv('stock_ch.csv')$$;
+
+statement ok
+DECLARE ASPECT stock WITH $${"title": "Stock", "x-kind": "relation"}$$ AS VIEW;
+
+statement ok
+GLOSS stock ON fin AS $${"sql": "SELECT matnr AS part, qty AS quantity FROM fin.stock_dk UNION ALL SELECT item, amount FROM fin.stock_ch"}$$;
+
+query TTT
+SELECT "from", "to", kind FROM lineage('fin') WHERE kind = 'loaded from' ORDER BY ALL;
+----
+fin.stock_ch	erp_ch	loaded from
+fin.stock_dk	erp_dk	loaded from
+
+statement ok
+GLOSS conventions ON erp_dk AS $${"units": "quantities in cases"}$$;
+
+statement ok
+SET VARIABLE glossql_subject = 'fin.stock_dk';
+
+query TTT
+SELECT asset, value->>'units', state FROM annotations('conventions', 'its source systems');
+----
+erp_dk	quantities in cases	current
+
+statement ok
+SET VARIABLE glossql_subject = 'fin.stock';
+
+query TT
+SELECT asset, state FROM annotations('conventions', 'its source systems') ORDER BY asset;
+----
+erp_ch	missing
+erp_dk	current
+
+statement ok
+RESET VARIABLE glossql_subject;
+
+# a table loaded without a recipe has no source system
+query I
+SELECT count(*) FROM places('fin') WHERE "where" = 'its source systems' AND subject = 'fin.orders';
+----
+0
+
+statement ok
+DECLARE ASPECT systems WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION systems FOR GLOBAL AS $$
+  SELECT list({'system': asset, 'state': state} ORDER BY asset) AS systems, count(*) FILTER (WHERE state = 'missing') AS missing FROM annotations('conventions', 'its source systems')
+$$ RETURNS systems;
+
+statement ok
+SELECT systems() FROM stock;
+
+statement ok
+SELECT systems() FROM stock_dk;
+
+query TT
+SELECT subject, value::VARCHAR FROM main.measurements WHERE function = 'systems' ORDER BY subject;
+----
+fin.stock	{"systems":[{"system":"erp_ch","state":"missing"},{"system":"erp_dk","state":"current"}],"missing":1}
+fin.stock_dk	{"systems":[{"system":"erp_dk","state":"current"}],"missing":0}
+
+# a source's conventions annotated: the results that read them through the place are out of date, a
+# table of another source's are not
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'systems';
+----
+0
+
+statement ok
+GLOSS conventions ON erp_ch AS $${"units": "quantities in pieces"}$$;
+
+query TT
+SELECT subject, reason FROM glossql_outdated() WHERE function = 'systems' ORDER BY ALL;
+----
+fin.stock	changed

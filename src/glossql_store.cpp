@@ -362,6 +362,7 @@ static string Newest(const Workspace &ws, const string &relation) {
 //===--------------------------------------------------------------------===//
 
 static string AnnotationsOverSQL(const Workspace &ws, const string &filter);
+static string SourceGrainSQL(const Workspace &ws);
 
 //! The lake's tables and views, each at its version, (name, version): a table's the last snapshot
 //! that wrote, altered or dropped it, from the lake's own change log, where compaction is not a
@@ -453,7 +454,11 @@ string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs) {
 		for (auto &dataset : needs.annotations) {
 			datasets.push_back(QuoteText(dataset));
 		}
-		sql += "rn_ann AS (" + AnnotationsOverSQL(ws, "dataset IN (" + StringUtil::Join(datasets, ", ") + ")") + "), ";
+		// a source's annotations are the workspace's, whichever dataset they were written in
+		sql += "rn_ann AS (" +
+		       AnnotationsOverSQL(ws, "(dataset IN (" + StringUtil::Join(datasets, ", ") + ") OR " +
+		                                  SourceGrainSQL(ws) + ")") +
+		       "), ";
 		sql += "rn_decl AS (SELECT a.name, from_json(a.grains, '[\"VARCHAR\"]') AS grains,"
 		       " json_extract_string(a.schema, '$.x-kind') AS xkind, (a.name, a.kind, a.grains, a.condition,"
 		       " a.schema)::VARCHAR || coalesce((SELECT string_agg((t.name, t.actors, t.detector, t.threshold,"
@@ -471,7 +476,8 @@ string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs) {
 		                       " p.property AND m.function <> a.function";
 		rows.push_back("SELECT id, \"read\", what, \"where\", 'declared ' || row FROM rn_props");
 		rows.push_back("SELECT " + key + ", (a.asset, p.property, g.actor, g.body::VARCHAR, g.stale)::VARCHAR" + over +
-		               " LEFT JOIN rn_ann g ON g.dataset = p.dataset AND g.subject = a.asset AND g.aspect = p.property"
+		               " LEFT JOIN rn_ann g ON (g.dataset = p.dataset OR main.asset_grain(a.asset) = 'SOURCE')"
+		               " AND g.subject = a.asset AND g.aspect = p.property"
 		               " WHERE len(p.grains) = 0 OR list_contains(p.grains, main.asset_grain(a.asset))");
 		rows.push_back("SELECT " + key + ", (a.asset, p.property, 'function', m.value, m.error)::VARCHAR" + valued);
 		held.push_back("SELECT " + key + ", m.result" + valued);

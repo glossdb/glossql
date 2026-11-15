@@ -524,7 +524,7 @@ SELECT * FROM definition('itself');
 The where is a place, walked from the function's subject over the
 lineage (`lineage(dataset)`: what a dataset contains, what a view
 reads and joins on, the two columns of a relationship, the metric a
-plan plans):
+plan plans, the source each table is loaded from):
 
 | Where | The assets |
 |---|---|
@@ -534,6 +534,7 @@ plan plans):
 | `the columns it joins on` | the two columns of each join in a view |
 | `its relationships` | a view's: those between the tables it reads; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
 | `its metric` | the metric a plan plans, and its columns |
+| `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads |
 | `its dataset` | the subject's dataset itself |
 | `the dataset's metrics` | the metrics of the subject's dataset and their columns |
 | `the dataset` | the subject's dataset and every asset in it |
