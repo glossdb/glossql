@@ -242,8 +242,8 @@ SELECT mode FROM imports WHERE table_name = 'keyed';
 ----
 merge
 
-# what each load carried and changed: the first load changes nothing it can compare with; the merge's file
-# carries 6 keys, 2 of them changed and 4 new, and 4 rows of the table it does not carry
+# what each load carried and wrote: the merge's file carries 6 keys, 2 of them changed and 4 new, and 4 rows of
+# the table it does not carry
 query TIIII
 SELECT mode, rows, source_rows, changed_rows IS NULL, coalesce(changed_rows, -1) FROM imports_history WHERE table_name = 'keyed' ORDER BY begin_snapshot;
 ----
@@ -259,13 +259,34 @@ SELECT source_rows, changed_rows FROM imports WHERE table_name = 'keyed';
 ----
 6	0
 
-# a whole replace compares with the table before it: two rows more are two rows changed, the same rows again
-# change nothing
-query II
-SELECT source_rows, changed_rows FROM imports_history WHERE table_name = 'segments' AND changed_rows IS NOT NULL ORDER BY begin_snapshot;
+# a whole replace of a small table is not fingerprinted; one of 100,000 rows or more is, and loaded again
+# from the same file it is identical, from a changed file it is not
+query I
+SELECT count(*) FROM imports_history WHERE table_name = 'segments' AND (fingerprint IS NOT NULL OR identical IS NOT NULL);
 ----
-6	2
-6	0
+0
+
+statement ok
+COPY (SELECT i AS id, i % 7 AS segment FROM range(100000) t(i)) TO '{TEST_DIR}/large.parquet';
+
+statement ok
+DECLARE RECIPE large ON fin FROM crm_export AS $$SELECT * FROM read_parquet('large.parquet')$$;
+
+statement ok
+IMPORT large;
+
+statement ok
+COPY (SELECT i AS id, CASE WHEN i = 5 THEN 99 ELSE i % 7 END AS segment FROM range(100000) t(i)) TO '{TEST_DIR}/large.parquet';
+
+statement ok
+IMPORT large;
+
+query ITT
+SELECT source_rows, fingerprint IS NOT NULL, identical FROM imports_history WHERE table_name = 'large' ORDER BY begin_snapshot;
+----
+100000	true	NULL
+100000	true	true
+100000	true	false
 
 # a composite key is one setting, 'a, b', as the glossql engine spells it
 statement ok
@@ -328,7 +349,7 @@ Parser Error
 query I
 SELECT count(*) FROM imports_history WHERE dropped_rows_count = 0;
 ----
-8
+11
 
 statement ok
 COPY (SELECT * FROM (VALUES ('1', 'a'), ('x', 'b'), ('3', 'c')) t(id, segment)) TO '{TEST_DIR}/faulty.csv' (HEADER);

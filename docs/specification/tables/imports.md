@@ -18,4 +18,6 @@ right after the lake's own commit of the table. Key: `dataset`,
 | `snapshot_id` | BIGINT | The lake snapshot the load created. |
 | `imported_at` | TIMESTAMP | When the row was written. |
 | `source_rows` | BIGINT | The rows the load query's result carried. A keyed load's result carries each key once, so these are the keys the load carried. |
-| `changed_rows` | BIGINT | The rows the load changed against the table before it: a merge's inserted and updated rows (a row the result carries unchanged is not written); a replace's rows the new table holds and the old did not, and those the old held and the new does not. NULL on a table's first load and where the table's columns changed. |
+| `changed_rows` | BIGINT | A merge's inserted and updated rows; a row the result carries unchanged is not written. NULL for a replace. |
+| `fingerprint` | VARCHAR | Of a replace of 100,000 rows or more: the sum of the hashes of the table's rows. NULL otherwise. |
+| `identical` | BOOLEAN | Of a replace with a fingerprint: whether the table holds as many rows as after the load before and the same fingerprint. NULL where either load has none. Two tables that differ and sum alike read as identical. |

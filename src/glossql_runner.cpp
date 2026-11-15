@@ -544,13 +544,15 @@ static RecipeRow NewestRecipe(Inner &inner, const string &dataset, const string 
 //! What a load wrote: the table's rows, how they joined it (`mode`: replace
 //! or merge, the key being the recipe's), the rows dropped on the way
 //! (SPEC §3), NULL where the host cannot count them, the rows the recipe's
-//! result carried, and the rows the load changed against the table before:
-//! inserted, updated or removed, NULL on a table's first load and where the
-//! table's columns changed
+//! result carried, the rows a merge inserted or updated, and of a whole
+//! replace of a large table its fingerprint and whether it holds the same
+//! rows as the table before
 struct Loaded {
 	int64_t rows;
 	int64_t source_rows = 0;
 	Value changed;
+	Value fingerprint;
+	Value identical;
 	string mode;
 	//! the outcome's wording of the mode
 	string how;
@@ -613,6 +615,10 @@ static int64_t KeyOnce(Inner &inner, const vector<string> &key, const string &sq
 	return twice[2].GetValue<int64_t>();
 }
 
+//! The rows from which a whole replace is fingerprinted: the goals kit's
+//! load_modes() names a replace that changed nothing from this size on
+static constexpr int64_t FINGERPRINT_ROWS = 100000;
+
 //! Runs the recipe at its source and writes the result
 static Loaded LoadTable(ClientContext &context, Inner &inner, const string &dataset, const string &table,
                         const RecipeRow &recipe, bool replace) {
@@ -624,23 +630,22 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 	if (!key.empty()) {
 		keys = KeyOnce(inner, key, recipe.sql);
 	}
-	// the snapshot of the table's load before this one, which a whole replace is compared with
-	auto before =
-	    inner.Row("SELECT snapshot_id FROM " + inner.Store("imports") + " WHERE dataset = " + QuoteText(dataset) +
-		          " AND table_name = " + QuoteText(table) + " AND end_snapshot IS NULL");
 	if (replace || key.empty()) {
 		inner.Run("CREATE OR REPLACE TABLE " + target + " AS " + recipe.sql);
 		loaded.mode = "replace";
 		loaded.how = "replaced";
 		loaded.source_rows = inner.Scalar("SELECT count(*) FROM " + target).GetValue<int64_t>();
-		// the rows the new table holds that the old did not, and the old held that the new does not
-		if (!before.empty() && !before[0].IsNull()) {
-			auto old = target + " AT (VERSION => " + before[0].ToString() + ")";
-			try {
-				loaded.changed = inner.Scalar("SELECT count(*) FROM ((FROM " + target + " EXCEPT ALL FROM " + old +
-				                              ") UNION ALL (FROM " + old + " EXCEPT ALL FROM " + target + "))");
-			} catch (std::exception &) {
-				// the columns changed: no row compares with the table before
+		// a large table's fingerprint: the sum of its rows' hashes, one scan of the table written, compared
+		// with the load before's. Equal rows give equal sums; two different tables that sum alike pass as
+		// identical, which hides a suggestion and changes no data
+		if (loaded.source_rows >= FINGERPRINT_ROWS) {
+			loaded.fingerprint = inner.Scalar("SELECT sum(hash(*COLUMNS(*))::HUGEINT)::VARCHAR FROM " + target);
+			auto before = inner.Row("SELECT rows, fingerprint FROM " + inner.Store("imports") +
+			                        " WHERE dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(table) +
+			                        " AND end_snapshot IS NULL");
+			if (!before.empty() && !before[1].IsNull()) {
+				loaded.identical = Value::BOOLEAN(before[0].GetValue<int64_t>() == loaded.source_rows &&
+				                                  before[1].ToString() == loaded.fingerprint.ToString());
 			}
 		}
 	} else {
@@ -690,7 +695,8 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 		write.Insert("imports", QuoteText(dataset) + ", " + QuoteText(table) + ", " + QuoteText(loaded.mode) + ", " +
 		                            to_string(loaded.rows) + ", " + loaded.dropped.ToSQLString() + ", " +
 		                            QuoteText(lineage) + ", " + loaded.snapshot.ToSQLString() + ", now(), " +
-		                            to_string(loaded.source_rows) + ", " + loaded.changed.ToSQLString());
+		                            to_string(loaded.source_rows) + ", " + loaded.changed.ToSQLString() + ", " +
+		                            loaded.fingerprint.ToSQLString() + ", " + loaded.identical.ToSQLString());
 	});
 	return loaded;
 }

@@ -97,8 +97,9 @@ keeps one number per import — `dropped_rows_count`,
 source rows minus loaded rows — in the declaration's outcome at the
 decision moment and in the `imports` relation for history; which rows
 were dropped is the author's question, answered at the source. Beside
-it, `imports` keeps the rows the result carried and the rows the load
-changed against the table before it.
+it, `imports` keeps the rows the result carried, the rows a merge
+wrote, and whether a whole replace of a large table holds the same
+rows as the load before.
 
 Statement identity is content: the recipe SQL and the schema it produces.
 An unchanged re-declaration is a no-op; a changed one supersedes and
