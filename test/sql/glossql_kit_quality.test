@@ -852,17 +852,14 @@ FROM glossql_kit('kits/quality/kit.sql');
 ----
 quality	current
 
-# --- every shipped measurement reads the catalog through the read functions alone, with constant
-# arguments and a place as the where; it names no table, nothing the engine cannot name, and no dataset
-# but its subject's
+# --- every shipped measurement reads the data of its subject's dataset alone: it names no table and no
+# dataset but its subject's (a read past the read functions is refused at the declaration)
 
 query I
 SELECT count(*)
 FROM main.functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR", "constant": "BOOLEAN"}]')) u(r)
 WHERE f.returns IS NOT NULL AND f.declared_by IN ('kit:kpi', 'kit:quality')
-  AND (r.kind IN ('catalog', 'unnamed') OR NOT coalesce(r.constant, true)
-       OR (r.kind = 'read' AND NOT list_contains(list_transform(main.place_list(), lambda p: p."where"), r."where"))
-       OR (r.kind = 'data' AND r."where" IS NULL AND r.read NOT IN ('dataset_cells', 'subject_column', 'glossql_relationship_checks'))
+  AND ((r.kind = 'data' AND r."where" IS NULL AND r.read NOT IN ('dataset_cells', 'subject_column', 'glossql_relationship_checks'))
        OR (r.kind = 'data' AND r.read IN ('dataset_cells', 'subject_column') AND NOT regexp_matches(r.what, '^[<$]')));
 ----
 0

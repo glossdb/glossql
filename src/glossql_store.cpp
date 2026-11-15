@@ -505,9 +505,10 @@ string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs) {
 		    " ON t.dataset = a.dataset AND t.asset = a.asset LEFT JOIN rn_tv v ON v.name = t.table_name"
 		    " WHERE a.\"read\" = 'data' AND (a.what = 'data' OR (a.what = 'tables' AND t.asset_kind = 'table')"
 		    " OR (a.what = 'views' AND t.asset_kind = 'view'))");
-		rows.push_back("SELECT " + key +
-		               ", a.asset || ' ' || coalesce(v.version, 'gone') FROM rn_a a LEFT JOIN rn_tv v ON v.name ="
-		               " a.asset WHERE a.\"read\" = 'data' AND a.\"where\" NOT IN (SELECT \"where\" FROM rn_place)");
+		rows.push_back(
+		    "SELECT " + key +
+		    ", a.asset || ' ' || coalesce(v.version, 'gone') FROM rn_a a LEFT JOIN rn_tv v ON lower(v.name) ="
+		    " lower(a.asset) WHERE a.\"read\" = 'data' AND a.\"where\" NOT IN (SELECT \"where\" FROM rn_place)");
 	}
 	// the lineage's edges of one kind from each asset of the place
 	if (!needs.lineage.empty()) {
@@ -559,16 +560,12 @@ string InputName(const string &read, const string &what, const string &where) {
 	if (read == "function" || read == "property") {
 		return read;
 	}
-	if (read == "unnamed") {
-		return "unnamed: " + what;
-	}
 	return read + "(" + what + ", " + where + ")";
 }
 
 //! The reads of the current results, each with what it returned when the result was computed and
-//! what it returns now, ending in rc_moved (id, read, what, where): a read whose digest differs,
-//! or a read that names no read function; and rc_outdated (id): those results, and every result that
-//! read one of them, directly or through another
+//! what it returns now, ending in rc_moved (id, read, what, where): a read whose digest differs; and rc_outdated (id):
+//! those results, and every result that read one of them, directly or through another
 static string CheckSQL(Inner &inner) {
 	auto &ws = inner.ws;
 	ReadNeeds needs;
@@ -593,7 +590,7 @@ static string CheckSQL(Inner &inner) {
 	       ReadsNowSQL(ws, needs) +
 	       ", rc_moved AS (SELECT h.id, h.input FROM rc_held h LEFT JOIN now_versions n"
 	       " ON n.id = h.id AND n.\"read\" = h.\"read\" AND n.what = h.what AND n.\"where\" = h.\"where\""
-	       " WHERE h.\"read\" = 'unnamed' OR n.version IS DISTINCT FROM h.version),"
+	       " WHERE n.version IS DISTINCT FROM h.version),"
 	       " rc_outdated(id) AS (SELECT id FROM rc_moved UNION SELECT r.id FROM now_results r JOIN rc_outdated o"
 	       " ON o.id = r.result)";
 }

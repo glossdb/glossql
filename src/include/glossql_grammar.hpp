@@ -204,8 +204,7 @@ string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs);
 //! where none does (glossql_runner.cpp)
 std::map<string, string> MacroDigests(Inner &inner, const string &function);
 //! An input's name, as the inputs relation stores it: read(what, where) for a read function's call
-//! and for data; function and property for the declarations; unnamed: <read> for a read of the
-//! catalog past the read functions
+//! and for data; function and property for the declarations
 string InputName(const string &read, const string &what, const string &where);
 //! The current stored results, each row with `current`: each of its reads returns now what it
 //! returned when it was computed, and no result it read is out of date (SPEC §6)

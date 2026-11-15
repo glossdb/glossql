@@ -265,12 +265,10 @@ macro	ws.main.my_roles	NULL	NULL	(empty)
 read	annotations	its columns	true	my_roles
 
 # a macro's parameter the call passes a constant reads that constant; a parameter passed an expression, and a
-# string built at run, are not constants, and are stored as such
+# string built at run, are not constants: the declaration is refused, naming the read
 statement ok
 DECLARE FUNCTION probe_open FOR GLOBAL AS $$
-  SELECT (SELECT count(*) FROM roles_of('its columns')) AS a,
-         (SELECT count(*) FROM roles_of(lower('ITSELF'))) AS c,
-         (SELECT count(*) FROM annotations('ro' || 'le', 'itself')) AS b
+  SELECT (SELECT count(*) FROM roles_of('its columns')) AS a
 $$ RETURNS probe;
 
 query TTTT
@@ -280,16 +278,24 @@ FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "w
 WHERE r.kind = 'read'
 ORDER BY ALL;
 ----
-annotations	<FUNCTION>	itself	false
-annotations	role	<FUNCTION>	false
 annotations	role	its columns	true
 
-# the catalog reached directly, the data by name and the subject's own data are each told apart;
-# a CTE is no read
+statement error
+DECLARE FUNCTION probe_built FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM roles_of(lower('ITSELF'))) AS c $$ RETURNS probe;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION probe_built FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM annotations('ro' || 'le', 'itself')) AS b $$ RETURNS probe;
+----
+untracked_read
+
+# the data by name and the subject's own data are each told apart; a CTE is no read; the catalog reached
+# directly is refused
 statement ok
 DECLARE FUNCTION probe_direct FOR GLOBAL AS $$
   WITH x AS (SELECT 1 AS one)
-  SELECT (SELECT count(*) FROM main.glossary) AS a, (SELECT count(*) FROM fin.orders) AS b,
+  SELECT (SELECT count(*) FROM fin.orders) AS b,
          (SELECT count(*) FROM subject_column($subject)) AS c, (SELECT count(*) FROM x) AS d
 $$ RETURNS probe;
 
@@ -299,9 +305,13 @@ FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "w
       FROM main.functions WHERE name = 'probe_direct')
 ORDER BY ALL;
 ----
-catalog	main.glossary
 data	fin.orders
 data	subject_column
+
+statement error
+DECLARE FUNCTION probe_catalog FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM main.glossary) AS a $$ RETURNS probe;
+----
+untracked_read
 
 # a detector reads the annotations its test hands it: no read of its own
 query T
@@ -310,7 +320,7 @@ SELECT reads FROM main.functions WHERE name = 'value_entropy';
 []
 
 # --- a CTE's name hides a table only inside the query that defines it; a trailing semicolon parses; macros
-# past the depth followed are unnamed
+# past the depth followed are refused
 
 statement ok
 CREATE TABLE fin.races AS SELECT 1 AS id;
@@ -353,16 +363,13 @@ CREATE OR REPLACE MACRO main.deep7() AS deep6();
 statement ok
 CREATE OR REPLACE MACRO main.deep8() AS deep7();
 
-statement ok
+statement error
 DECLARE FUNCTION probe_deep FOR GLOBAL AS $$ SELECT deep8() AS n $$ RETURNS probe;
-
-query TI
-SELECT name, count(*) FILTER (WHERE r.kind = 'unnamed')
-FROM (SELECT name, unnest(from_json(reads, '[{"kind": "VARCHAR"}]')) AS r FROM main.functions
-      WHERE name IN ('probe_deep'))
-GROUP BY name ORDER BY name;
 ----
-probe_deep	1
+untracked_read
+
+statement ok
+DECLARE FUNCTION probe_deep FOR GLOBAL AS $$ SELECT deep7() AS n $$ RETURNS probe;
 
 # a table of the lake named like a relation of the catalog is data
 statement ok

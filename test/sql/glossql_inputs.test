@@ -1,5 +1,5 @@
 # name: test/sql/glossql_inputs.test
-# description: a result's inputs are what its reads returned: an annotation outside the place a read names leaves the result current, one inside outdates it, a change undone makes it current again, a retyped column outdates the readers of its annotation, a result read out of date outdates its reader, and a read of the catalog past the read functions is out of date once stored (SPEC §6)
+# description: a result's inputs are what its reads returned: an annotation outside the place a read names leaves the result current, one inside outdates it, a change undone makes it current again, a retyped column outdates the readers of its annotation, a result read out of date outdates its reader, and a read of the catalog past the read functions is refused at the declaration (SPEC §6)
 # group: [sql]
 
 require glossql
@@ -279,30 +279,41 @@ SELECT function, input, reason FROM glossql_outdated() WHERE subject = 'f1.point
 ----
 widths	results(width, its sources)	outdated
 
-# --- a body that reads the catalog past the read functions: what it read cannot be told again, so the
-# result is out of date once it is stored, and a call computes it again
+# --- a body that reads the catalog past the read functions is refused at its declaration: no input could
+# follow what it read
 
 statement ok
 DECLARE ASPECT raw_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
-statement ok
+statement error
 DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM __ducklake_metadata_ws.main.glossql_glossary $$ RETURNS raw_rows;
-
-statement ok
-SELECT raw_rows() FROM points;
-
-query TT
-SELECT input, reason FROM glossql_outdated() WHERE function = 'raw_rows';
 ----
-unnamed: __ducklake_metadata_ws.main.glossql_glossary	changed
+untracked_read
 
-statement ok
-SELECT raw_rows() FROM points;
+statement error
+DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM main.glossary $$ RETURNS raw_rows;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM annotations('role', 'its friends') $$ RETURNS raw_rows;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM annotations(lower('ROLE'), 'itself') $$ RETURNS raw_rows;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM dataset_cells('f1') $$ RETURNS raw_rows;
+----
+untracked_read
 
 query I
-SELECT count(*) FROM measurements_history WHERE function = 'raw_rows';
+SELECT count(*) FROM functions_history WHERE name = 'raw_rows';
 ----
-2
+0
 
 # --- the dataset's metrics: the views that are metrics, not plans. A plan declared and annotated leaves a
 # reader of the metrics, their annotations and their data, current
@@ -502,7 +513,7 @@ SELECT function FROM glossql_outdated() WHERE function LIKE 'spelled%' ORDER BY 
 spelled_bare
 spelled_upper
 
-# --- the lake's catalog of tables and a table of another database are unnamed
+# --- the lake's catalog of tables and a table of another database are refused
 
 statement ok
 CREATE TABLE memory.main.elsewhere_rows AS SELECT 1 AS x;
@@ -510,13 +521,20 @@ CREATE TABLE memory.main.elsewhere_rows AS SELECT 1 AS x;
 statement ok
 DECLARE ASPECT elsewhere WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
-statement ok
-DECLARE FUNCTION elsewhere FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM information_schema.tables) + (SELECT count(*) FROM memory.main.elsewhere_rows) AS n $$ RETURNS elsewhere;
-
-query T
-SELECT DISTINCT r.kind FROM functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR"}]')) u(r) WHERE f.name = 'elsewhere';
+statement error
+DECLARE FUNCTION elsewhere FOR GLOBAL AS $$ SELECT count(*) AS n FROM information_schema.tables $$ RETURNS elsewhere;
 ----
-unnamed
+untracked_read
+
+statement error
+DECLARE FUNCTION elsewhere FOR GLOBAL AS $$ SELECT count(*) AS n FROM memory.main.elsewhere_rows $$ RETURNS elsewhere;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION elsewhere FOR GLOBAL AS $$ SELECT count(*) AS n FROM duckdb_tables() $$ RETURNS elsewhere;
+----
+untracked_read
 
 # --- a body runs in its subject's dataset: the dataset the caller works in reads nothing of it
 
@@ -539,3 +557,88 @@ here	f1.circuits	here	"f1"	true
 
 statement ok
 USE f1;
+
+# --- a GLOBAL function's table named without its dataset is taken in the subject's: where that dataset
+# holds none yet, the computation fails and is stored with the table read by its name, and the table
+# loaded makes it out of date
+
+statement ok
+CREATE TABLE other.laps AS SELECT 1 AS lap;
+
+statement ok
+DECLARE ASPECT circuit_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION circuit_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM circuits $$ RETURNS circuit_rows;
+
+statement error
+SELECT circuit_rows() FROM other.laps;
+----
+
+query TT
+SELECT i.input, i.version IS NOT NULL FROM measurements m JOIN inputs i USING (begin_snapshot)
+WHERE m.function = 'circuit_rows' AND i.input LIKE 'data%';
+----
+data(data, other.circuits)	true
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'circuit_rows';
+----
+0
+
+statement ok
+CREATE TABLE other.Circuits AS SELECT 1 AS circuit_id;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'circuit_rows';
+----
+data(data, other.circuits)
+
+query TTTTT
+SELECT circuit_rows() FROM other.laps;
+----
+circuit_rows	other.laps	circuit_rows	1	true
+
+# --- a macro the body follows that comes to read past the read functions fails the computation, stored
+# with the function's declaration as its input: the macro restored makes it out of date, and it computes
+
+statement ok
+CREATE OR REPLACE MACRO main.lap_count() AS TABLE SELECT count(*) AS n FROM other.laps;
+
+statement ok
+DECLARE ASPECT lapped WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION lapped FOR GLOBAL AS $$ SELECT n FROM lap_count() $$ RETURNS lapped;
+
+statement ok
+CREATE OR REPLACE MACRO main.lap_count() AS TABLE SELECT count(*) AS n FROM main.glossary;
+
+statement error
+SELECT lapped() FROM other.laps;
+----
+untracked_read
+
+query TT
+SELECT m.error IS NOT NULL, string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot)
+WHERE m.function = 'lapped' GROUP BY ALL;
+----
+true	function,property
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'lapped';
+----
+0
+
+statement ok
+CREATE OR REPLACE MACRO main.lap_count() AS TABLE SELECT count(*) AS n FROM other.laps;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'lapped';
+----
+function
+
+query TTTTT
+SELECT lapped() FROM other.laps;
+----
+lapped	other.laps	lapped	1	true

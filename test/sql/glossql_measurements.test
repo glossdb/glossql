@@ -144,7 +144,7 @@ SELECT notes() FROM orders.amount;
 ----
 notes	fin.orders.amount	notes	1	true
 
-# --- a body that reads nothing is current while its declarations hold; one that reads the catalog past the read functions is out of date once it is stored, and a call computes it again
+# --- a body that reads nothing is current while its declarations hold; one that reads the catalog past the read functions is refused at its declaration
 
 statement ok
 DECLARE ASPECT answer WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
@@ -155,43 +155,31 @@ DECLARE FUNCTION answer FOR fin AS $$ SELECT 42 AS n FROM range(1) $$ RETURNS an
 statement ok
 DECLARE ASPECT tables WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 
-statement ok
+statement error
 DECLARE FUNCTION tables FOR fin AS $$ SELECT count(*) AS n FROM duckdb_tables() WHERE schema_name = split_part($subject, '.', 1) $$ RETURNS tables;
+----
+untracked_read
 
 query TTTTT
-SELECT answer(), tables() FROM orders.amount;
+SELECT answer() FROM orders.amount;
 ----
 answer	fin.orders.amount	answer	42	true
-tables	fin.orders.amount	tables	2	true
 
 query TT
-SELECT function, (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function IN ('answer', 'tables') ORDER BY function;
+SELECT function, (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function = 'answer';
 ----
 answer	function,property
-tables	function,property,unnamed: duckdb_tables()
 
 statement ok
 INSERT INTO fin.other VALUES (3);
-
-query TTTTT
-SELECT answer(), tables() FROM orders.amount;
-----
-answer	fin.orders.amount	answer	42	false
-tables	fin.orders.amount	tables	2	true
 
 statement ok
 GLOSS note ON orders.amount AS $${"text": "third"}$$;
 
 query TTTTT
-SELECT answer(), tables() FROM orders.amount;
+SELECT answer() FROM orders.amount;
 ----
 answer	fin.orders.amount	answer	42	false
-tables	fin.orders.amount	tables	2	true
-
-query TTTTT
-SELECT tables() FROM orders.amount;
-----
-tables	fin.orders.amount	tables	2	true
 
 # --- a body that carries a top-level summary serves the summary; the whole value is stored
 
@@ -289,7 +277,6 @@ min_max	function	true
 note	agent	true
 notes	function	false
 profile	function	false
-tables	function	false
 
 statement ok
 INSERT INTO fin.orders VALUES (11, 1.0);

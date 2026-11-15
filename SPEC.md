@@ -550,9 +550,16 @@ An input is one of:
 - data, such as `data(data, itself)`: DuckLake's version of each
   table the assets read, and of each view among them;
 - `function` and `property`: the function's own declaration and that
-  of the property it fills;
-- `unnamed: <read>`, where the body reaches the catalog past the read
-  functions. A result with such an input is out of date once stored.
+  of the property it fills.
+
+A body that reaches the catalog past the read functions, passes a
+read function a what or a where that is not a constant, or names a
+where that is no place, is refused at its declaration
+(`untracked_read`), naming the read. A table a body names that the
+lake does not hold yet is read by its name, its version `gone` until
+it is loaded. A macro the body calls that comes to read past the read
+functions makes the computation fail, stored with the function's
+declaration as its input.
 
 The assets of the place are part of each digest, so a view that reads
 another table, or a relationship declared between a view's tables,

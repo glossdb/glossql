@@ -827,14 +827,15 @@ static bool SameValue(const Value &before, const Value &after) {
 // function (annotations, results, definition), its what and its where as
 // written, `constant` false where one of them is not a constant; `data` a table
 // or view of the lake named in FROM, by its canonical dataset.table, a name
-// without a dataset kept as written and taken in the subject's dataset, or a
-// primitive over the data of the subject; `macro` a macro followed, by its
-// canonical name, whose definition is part of the function's digest; `catalog`
-// the catalog reached otherwise; `other` a table function that reads nothing
-// (range, unnest); `unnamed` what the engine cannot name: a body that does not
-// parse, a name the lake does not resolve, a table function that reads outside
-// the lake, a function the catalog does not hold, a macro past the depth the
-// walk follows. A primitive that reads the catalog at its bind, out of the
+// without a dataset kept as written and taken in the subject's dataset, a table
+// the lake does not hold yet by its name, or a primitive over the data of the
+// subject; `macro` a macro followed, by its canonical name, whose definition is
+// part of the function's digest; `catalog` the catalog reached otherwise;
+// `other` a table function that reads nothing (range, unnest); `untracked` what
+// the engine cannot follow: a body that does not parse, a table outside the
+// lake, a table function that reads outside it, a function the catalog does not
+// hold, a macro past the depth the walk follows. A declaration whose body makes
+// a read no input can follow is refused (UntrackedRead). A primitive that reads the catalog at its bind, out of the
 // body's text, is stated here by what it reads: glossql_additivity_cells reads
 // the dataset's data, its roles and its relationships (the lineage's
 // `relates`). A detector's body reads the annotations its test hands it, a
@@ -883,7 +884,7 @@ static bool ReadsNothing(const string &function) {
 	return false;
 }
 
-//! How many macros deep a walk follows a body: a macro past it is unnamed
+//! How many macros deep a walk follows a body: a macro past it is untracked
 static constexpr idx_t MACRO_DEPTH = 8;
 
 class BodyWalker {
@@ -907,11 +908,11 @@ public:
 		try {
 			parser.ParseQuery(text);
 		} catch (std::exception &ex) {
-			Add("unnamed", "the body does not parse: " + FirstLine(ErrorData(ex).RawMessage()));
+			Add("untracked", "the body does not parse: " + FirstLine(ErrorData(ex).RawMessage()));
 			return;
 		}
 		if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::SELECT_STATEMENT) {
-			Add("unnamed", "the body is not one SELECT");
+			Add("untracked", "the body is not one SELECT");
 			return;
 		}
 		std::set<string> ctes;
@@ -1028,7 +1029,7 @@ private:
 			break;
 		}
 		default:
-			Add("unnamed", "a statement that is not a query", "", "", -1, via);
+			Add("untracked", "a statement that is not a query", "", "", -1, via);
 			return;
 		}
 		// ORDER BY, LIMIT and DISTINCT ON hold expressions too
@@ -1107,7 +1108,7 @@ private:
 			if (show.query) {
 				Node(*show.query, ctes, env, via, depth);
 			} else {
-				Add("unnamed", "SHOW", "", "", -1, via);
+				Add("untracked", "SHOW", "", "", -1, via);
 			}
 			break;
 		}
@@ -1140,7 +1141,7 @@ private:
 	//! A table named in FROM: a CTE in scope reads no table; a name of the catalog's relations,
 	//! unqualified or in main, reads the catalog; a table or view of a dataset is data, by its
 	//! canonical name; an unqualified name is taken in the function's dataset, or kept as written
-	//! for the subject's; anything else is unnamed
+	//! for the subject's; a table of another database is untracked
 	void Table(const QualifiedName &name, const std::set<string> &ctes, const string &via) {
 		auto table = name.Name().GetIdentifierName();
 		bool bare = name.Schema().empty() && name.Catalog().empty();
@@ -1157,8 +1158,20 @@ private:
 		}
 		auto entry = Lookup(CatalogType::TABLE_ENTRY,
 		                    bare ? QualifiedName(Identifier(lake), Identifier(dataset), Identifier(table)) : name);
-		if (!entry || !StringUtil::CIEquals(entry->ParentCatalog().GetName().GetIdentifierName(), lake)) {
-			Add("unnamed", name.ToString(), "", "", -1, via);
+		if (!entry) {
+			// a table the lake does not hold yet is read by its name: its version is `gone` until it is
+			// loaded. One named in another database is outside the lake
+			if (bare) {
+				Add("data", dataset + "." + table, "", "", -1, via);
+			} else if (name.Catalog().empty() || StringUtil::CIEquals(name.Catalog().GetIdentifierName(), lake)) {
+				Add("data", name.Schema().GetIdentifierName() + "." + table, "", "", -1, via);
+			} else {
+				Add("untracked", name.ToString(), "", "", -1, via);
+			}
+			return;
+		}
+		if (!StringUtil::CIEquals(entry->ParentCatalog().GetName().GetIdentifierName(), lake)) {
+			Add("untracked", name.ToString(), "", "", -1, via);
 			return;
 		}
 		auto schema = entry->ParentSchema().name.GetIdentifierName();
@@ -1219,13 +1232,13 @@ private:
 			} else if (ReadsNothing(fn)) {
 				Add("other", fn, texts(), "", -1, via);
 			} else {
-				Add("unnamed", fn + "(" + texts() + ")", "", "", -1, via);
+				Add("untracked", fn + "(" + texts() + ")", "", "", -1, via);
 			}
 			return;
 		}
 		if (!macro && !Lookup(CatalogType::SCALAR_FUNCTION_ENTRY, name) &&
 		    !Lookup(CatalogType::AGGREGATE_FUNCTION_ENTRY, name) && !Lookup(CatalogType::TABLE_FUNCTION_ENTRY, name)) {
-			Add("unnamed", "no function " + name.ToString(), "", "", -1, via);
+			Add("untracked", "no function " + name.ToString(), "", "", -1, via);
 		}
 	}
 
@@ -1237,7 +1250,7 @@ private:
 		                 entry.ParentSchema().name.GetIdentifierName() + "." + entry.name.GetIdentifierName();
 		auto path = via.empty() ? entry.name.GetIdentifierName() : via + " > " + entry.name.GetIdentifierName();
 		if (depth >= MACRO_DEPTH) {
-			Add("unnamed", "macros deeper than " + to_string(MACRO_DEPTH) + ": " + path, "", "", -1, via);
+			Add("untracked", "macros deeper than " + to_string(MACRO_DEPTH) + ": " + path, "", "", -1, via);
 			return;
 		}
 		Add("macro", qualified, "", "", -1, via);
@@ -1290,17 +1303,70 @@ private:
 	}
 };
 
-//! What a body reads, as functions.reads stores it: a JSON list of the reads in their order.
-//! `dataset` is the function's own, empty for a GLOBAL one, whose unqualified names are taken in
-//! the subject's dataset when it computes
-static string BodyReads(Inner &inner, const string &script, bool detector, const string &dataset) {
+//! The places a where names, as the lineage kit lists them (place_list())
+static std::set<string> PlaceNames(Inner &inner) {
+	std::set<string> places;
+	auto rows = inner.Run("SELECT p.\"where\" FROM unnest(main.place_list()) u(p)");
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			places.insert(chunk->GetValue(0, r).ToString());
+		}
+	}
+	return places;
+}
+
+//! What a body reads (BodyWalker). `dataset` is the function's own, empty for a GLOBAL one, whose
+//! unqualified names are taken in the subject's dataset when it computes
+static std::set<BodyRead> BodyReadSet(Inner &inner, const string &script, bool detector, const string &dataset) {
 	BodyWalker walker(*inner.con.context, inner.ws.lake, dataset);
 	inner.con.context->RunFunctionInTransaction([&]() { walker.Script(script, detector); });
+	return walker.reads;
+}
+
+//! The first read of a body no input can follow, as the refusal names it, or empty: the catalog
+//! reached past the read functions, a read function's what or where that is not a constant, a where
+//! that is no place, dataset_cells() over a dataset that is not the subject's, and what the walk
+//! cannot follow (SPEC §6). `dataset` is the function's own, empty for a GLOBAL one
+static string UntrackedRead(const std::set<BodyRead> &reads, const std::set<string> &places, const string &dataset) {
+	for (auto &read : reads) {
+		string named;
+		if (read.kind == "catalog" || read.kind == "untracked") {
+			named = read.what.empty() ? read.read : read.read + "(" + read.what + ")";
+		} else if (read.kind == "read" && (read.constant != 1 || !places.count(read.where))) {
+			named = read.read + "(" + read.what + ", " + read.where + ")";
+		} else if (read.kind == "data" && read.read == "dataset_cells" && read.where.empty()) {
+			auto args = StringUtil::Split(read.what, ", ");
+			bool place = false;
+			for (idx_t i = 1; i < args.size(); i++) {
+				place = place || places.count(args[i]);
+			}
+			auto first = args.empty() ? string() : args[0];
+			bool constant = !first.empty() && first[0] != '<' && first[0] != '$';
+			if (!place && constant && first.find('.') == string::npos && first != dataset) {
+				named = "dataset_cells(" + read.what + ")";
+			}
+		}
+		if (!named.empty()) {
+			return read.via.empty() ? named : named + " through " + read.via;
+		}
+	}
+	return string();
+}
+
+//! The refusal of a body's read no input can follow
+static string UntrackedRefusal(const string &function, const string &read) {
+	return StringUtil::Format("glossql: untracked_read: %s reads %s, past annotations(), results(), definition() "
+	                          "and the data: read the catalog through them, with a constant what and a place",
+	                          function, read);
+}
+
+//! What a body reads, as functions.reads stores it: a JSON list of the reads in their order
+static string ReadsJson(const std::set<BodyRead> &reads) {
 	auto text = [](const string &value) {
 		return value.empty() ? string("null") : JsonString(value);
 	};
 	vector<string> items;
-	for (auto &read : walker.reads) {
+	for (auto &read : reads) {
 		items.push_back("{\"kind\":" + JsonString(read.kind) + ",\"read\":" + JsonString(read.read) +
 		                ",\"what\":" + text(read.what) + ",\"where\":" + text(read.where) + ",\"constant\":" +
 		                (read.constant < 0 ? "null"
@@ -1394,8 +1460,14 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 	auto &returns = inputs[3];
 
 	Inner inner(context);
+	auto body = BodyReadSet(inner, script, returns.IsNull(), scope == "GLOBAL" ? string() : scope);
+	// a read no input can follow would leave its result out of date once stored (SPEC §6)
+	auto untracked = UntrackedRead(body, PlaceNames(inner), scope == "GLOBAL" ? string() : scope);
+	if (!untracked.empty()) {
+		throw InvalidInputException(UntrackedRefusal(name, untracked));
+	}
 	// identity is content (SPEC §3): an unchanged re-declaration is a no-op, so a kit replays silently
-	auto reads = BodyReads(inner, script, returns.IsNull(), scope == "GLOBAL" ? string() : scope);
+	auto reads = ReadsJson(body);
 	auto current = inner.Row("SELECT scope, script, returns, reads FROM " + inner.Current("functions") +
 	                         " WHERE name = " + QuoteText(name) + " ORDER BY begin_snapshot DESC LIMIT 1");
 	if (!current.empty() && current[0].ToString() == scope && current[1].ToString() == script &&
@@ -1536,8 +1608,7 @@ static unique_ptr<FunctionData> ExtractBind(ClientContext &context, TableFunctio
 
 //! A read of a stored result (SPEC §6): a read function's call with its what and its where; data,
 //! what the assets of its where read of the lake; the function's own declaration and the property
-//! it returns. A read of the catalog past the read functions is `unnamed`: what it returned cannot
-//! be told again, so a result that made one is out of date once it is stored
+//! it returns. A body that reads past them is refused at its declaration (UntrackedRead)
 struct Read {
 	string read;
 	string what;
@@ -1548,24 +1619,12 @@ struct Read {
 	}
 };
 
-//! The places a where names, as the lineage kit lists them (place_list())
-static std::set<string> PlaceNames(Inner &inner) {
-	std::set<string> places;
-	auto rows = inner.Run("SELECT p.\"where\" FROM unnest(main.place_list()) u(p)");
-	while (auto chunk = rows->Fetch()) {
-		for (idx_t r = 0; r < chunk->size(); r++) {
-			places.insert(chunk->GetValue(0, r).ToString());
-		}
-	}
-	return places;
-}
-
 //! The data a body reads, as a place: subject_column() and the relationship checks the subject's
 //! own; dataset_cells() its dataset's tables, its views ('views'), both ('all', true), the tables
-//! and views of a place, or the one table it names; a dataset it names that is not the subject's
-//! is unnamed. A table the body names in FROM is that table: one named without its dataset is
-//! taken in the subject's, by the name the lake spells it with, and is unnamed where the lake holds
-//! none
+//! and views of a place, or the one table it names; a dataset it names is the subject's, since one
+//! that is not is refused at the declaration. A table the body names in FROM is that table: one
+//! named without its dataset is taken in the subject's, by the name the lake spells it with, or as
+//! written where the lake holds none yet, whose version is `gone` until it is loaded
 static Read DataRead(ClientContext &context, const std::set<string> &places, const string &read, const string &args,
                      const string &dataset) {
 	if (read == "subject_column" || read == "glossql_relationship_checks") {
@@ -1590,7 +1649,7 @@ static Read DataRead(ClientContext &context, const std::set<string> &places, con
 			return {"data", what, first};
 		}
 		if (constant && first != dataset) {
-			return {"unnamed", "dataset_cells(" + args + ")", ""};
+			throw InternalException("glossql: dataset_cells(%s) passed the declaration", args);
 		}
 		return {"data", what, "the dataset"};
 	}
@@ -1599,20 +1658,20 @@ static Read DataRead(ClientContext &context, const std::set<string> &places, con
 	}
 	auto entry = RelationEntry(context, dataset, read);
 	if (!entry) {
-		return {"unnamed", read, ""};
+		return {"data", "data", dataset + "." + read};
 	}
 	return {"data", "data", dataset + "." + entry->name.GetIdentifierName()};
 }
 
-//! The reads of a result of a function, from the reads its declaration stored (functions.reads). A
-//! function's own results are no input of its own; a read whose where names no place is unnamed
+//! The reads of a result of a function, from the reads its declaration stored (functions.reads), each
+//! one an input can follow (UntrackedRead). A function's own results are no input of its own
 static vector<Read> ReadsOfFunction(ClientContext &context, Inner &inner, const string &name, const string &scope,
                                     const string &dataset) {
 	std::set<Read> reads {{"function", "", ""}, {"property", "", ""}};
 	auto places = PlaceNames(inner);
-	auto rows = inner.Run("SELECT r.kind, r.read, r.what, r.\"where\", r.constant FROM " + inner.Current("functions") +
+	auto rows = inner.Run("SELECT r.kind, r.read, r.what, r.\"where\" FROM " + inner.Current("functions") +
 	                      " f, unnest(from_json(f.reads, '[{\"kind\": \"VARCHAR\", \"read\": \"VARCHAR\", \"what\":"
-	                      " \"VARCHAR\", \"where\": \"VARCHAR\", \"constant\": \"BOOLEAN\"}]')) u(r) WHERE f.name = " +
+	                      " \"VARCHAR\", \"where\": \"VARCHAR\"}]')) u(r) WHERE f.name = " +
 	                      QuoteText(name) + " AND f.scope = " + QuoteText(scope));
 	auto text = [](const Value &value) {
 		return value.IsNull() ? string() : value.ToString();
@@ -1623,18 +1682,15 @@ static vector<Read> ReadsOfFunction(ClientContext &context, Inner &inner, const 
 			auto read = text(chunk->GetValue(1, r));
 			auto what = text(chunk->GetValue(2, r));
 			auto where = text(chunk->GetValue(3, r));
-			auto constant = chunk->GetValue(4, r);
 			if (kind == "read") {
-				if (constant.IsNull() || !constant.GetValue<bool>() || !places.count(where)) {
-					reads.insert({"unnamed", read + "(" + what + ", " + where + ")", ""});
-				} else if (read != "results" || what != name) {
+				if (read != "results" || what != name) {
 					reads.insert({read, what, where});
 				}
 			} else if (kind == "data") {
 				reads.insert(where.empty() ? DataRead(context, places, read, what, dataset)
 				                           : Read {"data", what, where});
-			} else if (kind == "catalog" || kind == "unnamed") {
-				reads.insert({"unnamed", read, ""});
+			} else if (kind == "catalog" || kind == "untracked") {
+				throw InternalException("glossql: %s's read %s passed the declaration", name, read);
 			}
 		}
 	}
@@ -1728,18 +1784,23 @@ static bool RaisedByBody(const ErrorData &error) {
 	}
 }
 
-//! Takes a function's reads again from its body, and stores them where they moved (BodyReads)
-static void RetakeReads(ClientContext &context, Inner &inner, const string &name, const string &scope,
-                        const Value &returns) {
+//! Takes a function's reads again from its body, and stores them where they moved (BodyReadSet).
+//! Returns the read no input can follow, where a macro the body calls now makes one, or empty: the
+//! reads are stored all the same, so the macros they follow keep the function's digest
+static string RetakeReads(ClientContext &context, Inner &inner, const string &name, const string &scope,
+                          const Value &returns) {
 	auto current = inner.Row("SELECT script, reads, declared_at, declared_by FROM " + inner.Current("functions") +
 	                         " WHERE name = " + QuoteText(name) + " AND scope = " + QuoteText(scope));
 	if (current.empty()) {
-		return;
+		return string();
 	}
 	auto script = current[0].ToString();
-	auto reads = BodyReads(inner, script, returns.IsNull(), scope == "GLOBAL" ? string() : scope);
+	auto dataset = scope == "GLOBAL" ? string() : scope;
+	auto body = BodyReadSet(inner, script, returns.IsNull(), dataset);
+	auto untracked = UntrackedRead(body, PlaceNames(inner), dataset);
+	auto reads = ReadsJson(body);
 	if (SameValue(current[1], Value(reads))) {
-		return;
+		return untracked;
 	}
 	inner.Write(context, [&](CatalogWrite &write) {
 		write.End("functions", "name = " + QuoteText(name) + " AND scope = " + QuoteText(scope));
@@ -1747,6 +1808,7 @@ static void RetakeReads(ClientContext &context, Inner &inner, const string &name
 		                              returns.ToSQLString() + ", " + QuoteText(reads) + ", " +
 		                              current[2].ToSQLString() + ", " + current[3].ToSQLString());
 	});
+	return untracked;
 }
 
 static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -1800,16 +1862,22 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		}
 		auto invocation = inner.Table(schema, name) + "(" + QuoteText(subject) + ")";
 		// what the body reads is taken again: a macro it follows may have changed, a table it names
-		// may exist now. The function's row follows where it moved
-		RetakeReads(context, inner, name, scope, returns);
+		// may exist now. The function's row follows where it moved. A macro that now reads past the
+		// read functions makes the computation fail, stored with the function's declaration as its
+		// input: a change to the macros it follows makes it out of date
+		auto untracked = RetakeReads(context, inner, name, scope, returns);
 		// what its reads return, read before it runs: a change under it is a change after it
 		auto reads = InputsNow(inner, dataset, subject, name, returns.ToString(),
-		                       ReadsOfFunction(context, inner, name, scope, dataset));
+		                       untracked.empty() ? ReadsOfFunction(context, inner, name, scope, dataset)
+		                                         : vector<Read> {{"function", "", ""}, {"property", "", ""}});
 		// a computation that fails is a result too: stored with its error, which serves while it is current.
 		// An error the body did not raise (an interrupt, the engine's own) stores nothing
 		Value value;
 		string error;
 		try {
+			if (!untracked.empty()) {
+				throw InvalidInputException(UntrackedRefusal(name, untracked));
+			}
 			value = ValueOf(inner, invocation);
 			if (value.IsNull()) {
 				value = Value("null");
