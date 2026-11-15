@@ -421,3 +421,23 @@ not_a_place
 
 statement ok
 RESET VARIABLE glossql_subject;
+
+# --- a join's table is the table the lineage says holds the column, a name with a dot in it too
+
+statement ok
+CREATE TABLE fin."cust.eu" AS SELECT i AS id FROM range(3) r(i);
+
+statement ok
+CREATE TABLE fin.ord AS SELECT i AS cust_id, 1.0 AS amount FROM range(5) r(i);
+
+statement ok
+DECLARE ASPECT dotted WITH $${"title": "Dotted"}$$ AS VIEW;
+
+statement ok
+GLOSS dotted ON fin AS $${"sql": "SELECT sum(o.amount) AS value FROM fin.ord o JOIN fin.\"cust.eu\" c ON c.id = o.cust_id"}$$;
+
+query T
+SELECT "to" FROM lineage('fin') WHERE "from" = 'fin.dotted' AND kind = 'reads' AND "to" IN ('fin.cust', 'fin.cust.eu', 'fin.ord') ORDER BY ALL;
+----
+fin.cust.eu
+fin.ord
