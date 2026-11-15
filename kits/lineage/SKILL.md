@@ -37,7 +37,7 @@ says where. Both are constants.
 
 | Read | Returns, one row per asset of the place |
 |---|---|
-| `annotations(property, where)` | `asset`, `property`, `value`, `state`; state `missing` where nobody annotated the asset. A property declared on tables returns no row for a column. `'x-kind <kind>'` as the property reads every property declared with that `x-kind`, a scenario's among them: a person's newest annotation, else an agent's |
+| `annotations(property, where)` | `asset`, `property`, `value`, `state`, `threshold`; state `missing` where nobody annotated the asset; `threshold` the THRESHOLD of the test on the property, NULL where it has none. A property declared on tables returns no row for a column. `'x-kind <kind>'` as the property reads every property declared with that `x-kind`, a scenario's among them: a person's newest annotation, else an agent's |
 | `results(function, where)` | `asset`, `function`, `value`, `error`; both empty where no result is stored |
 | `definition(where)` | one row per view: `view`, `kind`, `plan_of`, `covers`, `sql`, `stopped`, `columns`, `reads`, `joins`. The view's SQL and what it reads, not the rest of the annotation that defines it |
 

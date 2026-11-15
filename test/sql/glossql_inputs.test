@@ -417,6 +417,39 @@ SELECT input FROM glossql_outdated() WHERE function = 'remark_seen';
 ----
 annotations(remark, itself)
 
+# --- the read serves the threshold of the property's test, and a test declared again with another one
+# outdates its readers
+
+statement ok
+DECLARE ASPECT remark_bar WITH $${"type": "number"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION remark_bar FOR GLOBAL AS $$ SELECT max(threshold) AS bar FROM annotations('remark', 'itself') $$ RETURNS remark_bar;
+
+statement ok
+SELECT remark_bar() FROM circuits;
+
+query R
+SELECT value::DOUBLE FROM measurements WHERE function = 'remark_bar';
+----
+0.5
+
+statement ok
+DECLARE TEST remark_test ON remark BY (AGENT, HUMAN) DETECTOR remark_judge THRESHOLD 0.7;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'remark_bar';
+----
+annotations(remark, itself)
+
+statement ok
+SELECT remark_bar() FROM circuits;
+
+query R
+SELECT value::DOUBLE FROM measurements WHERE function = 'remark_bar';
+----
+0.7
+
 # --- a macro the body follows is part of the function: replaced, it outdates the results, and the reads are
 # taken again when the function computes
 

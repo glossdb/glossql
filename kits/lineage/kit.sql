@@ -224,15 +224,17 @@ UNION ALL SELECT dataset_name, 'dataset', t FROM tables;
 -- property is declared on, with the annotation the catalog holds,
 -- collapsed: asset, property, value (JSON), state (current, stale,
 -- conflict, as GLOSSARY() says; missing, and no value, where nobody
--- annotated the asset). A property declared on tables returns no row
--- for a column. A what of the form 'x-kind <kind>' names every property
+-- annotated the asset), threshold (the THRESHOLD of the test declared
+-- on the property, NULL where it has none). A property declared on
+-- tables returns no row for a column. A what of the form 'x-kind <kind>' names every property
 -- declared with that x-kind, a scenario's among them: one row per
 -- property and asset, the value a person's newest annotation, else an
 -- agent's, state current, or missing.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.annotations_of(property, where_) AS TABLE
 WITH grains AS (SELECT grains FROM main.aspects WHERE name = property)
-SELECT p.asset, property AS property, g.value, coalesce(g.state, 'missing') AS state
+SELECT p.asset, property AS property, g.value, coalesce(g.state, 'missing') AS state,
+       (SELECT max(t.threshold) FROM main.tests t WHERE t.aspect = property) AS threshold
 FROM main.place(where_) p
 LEFT JOIN glossql_glossary(split_part(main.read_subject(), '.', 1), property, false) g ON g.subject = p.asset
 WHERE EXISTS (SELECT 1 FROM grains WHERE len(grains) = 0 OR list_contains(grains, main.asset_grain(p.asset)));
@@ -243,7 +245,8 @@ held AS (
   SELECT subject, aspect, body FROM main.glossary
   WHERE dataset = split_part(main.read_subject(), '.', 1) AND aspect IN (SELECT name FROM props) AND actor_kind IN ('human', 'agent')
   QUALIFY row_number() OVER (PARTITION BY subject, aspect ORDER BY CASE actor_kind WHEN 'human' THEN 0 ELSE 1 END, begin_snapshot DESC) = 1)
-SELECT p.asset, pr.name AS property, h.body AS value, CASE WHEN h.body IS NULL THEN 'missing' ELSE 'current' END AS state
+SELECT p.asset, pr.name AS property, h.body AS value, CASE WHEN h.body IS NULL THEN 'missing' ELSE 'current' END AS state,
+       (SELECT max(t.threshold) FROM main.tests t WHERE t.aspect = pr.name) AS threshold
 FROM main.place(where_) p
 JOIN props pr ON len(pr.grains) = 0 OR list_contains(pr.grains, main.asset_grain(p.asset))
 LEFT JOIN held h ON h.subject = p.asset AND h.aspect = pr.name;
