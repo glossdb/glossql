@@ -311,9 +311,10 @@ static const StoreRelation STORE_RELATIONS[] = {
     // snapshot_id is the snapshot the load itself made; begin_snapshot is its row's
     {"imports",
 	 "dataset VARCHAR NOT NULL, table_name VARCHAR NOT NULL, mode VARCHAR NOT NULL, rows BIGINT NOT NULL, "
-	 "dropped_rows_count BIGINT, lineage VARCHAR NOT NULL, snapshot_id BIGINT, imported_at TIMESTAMP NOT NULL",
+	 "dropped_rows_count BIGINT, lineage VARCHAR NOT NULL, snapshot_id BIGINT, imported_at TIMESTAMP NOT NULL, "
+	 "source_rows BIGINT, changed_rows BIGINT",
 	 "begin_snapshot, dataset, table_name, mode, rows, dropped_rows_count, lineage::JSON AS lineage, snapshot_id, "
-	 "imported_at"},
+	 "imported_at, source_rows, changed_rows"},
     {"aspects",
 	 "name VARCHAR NOT NULL, kind VARCHAR NOT NULL, grains VARCHAR NOT NULL, condition VARCHAR, "
 	 "schema VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",

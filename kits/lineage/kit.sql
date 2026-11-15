@@ -111,8 +111,9 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --   'its columns'              what the subject contains
 --   'its sources'              the tables, columns and views a view reads
 --   'the columns it joins on'  the two columns of each join in a view
---   'its relationships'        a view's: those between the tables it reads;
---                              a table's or a column's: those that touch it;
+--   'its relationships'        a view's: those between the tables it reads
+--                              and those that touch the view; a table's or
+--                              a column's: those that touch it;
 --                              a dataset's: all; a relationship: itself
 --   'its metric'               the metric a plan plans, and its columns
 --   'its source systems'       a table's: the source it is loaded from; a
@@ -165,7 +166,7 @@ UNION SELECT rel, rel FROM rels
 UNION SELECT s.subject, r.rel FROM (SELECT DISTINCT subject FROM sources) s, rels r
       WHERE NOT EXISTS (SELECT 1 FROM endpoints x WHERE x.rel = r.rel
                         AND NOT EXISTS (SELECT 1 FROM sources y WHERE y.subject = s.subject AND y.t = x.t))
-UNION SELECT u.a, e.rel FROM endpoints e, unnest([e.t, e.endpoint]) u(a) WHERE u.a NOT IN (SELECT subject FROM sources);
+UNION SELECT u.a, e.rel FROM endpoints e, unnest([e.t, e.endpoint]) u(a);
 
 CREATE OR REPLACE MACRO main.place_metric(dataset_name) AS TABLE
 WITH planned AS (SELECT "from" AS subject, "to" AS metric FROM main.plans_edges(dataset_name))
@@ -298,15 +299,18 @@ LEFT JOIN main.measurements m
 -- the annotation that defines it (sql, or stopped), its columns with what
 -- each is computed from (name, position, derivation, shape), what it
 -- reads of each loaded table (table_name, columns) and its joins
--- (left_column, right_column, left_unique, right_unique). The rest of the
--- annotation, its assumptions, is no part of the definition a body reads.
+-- (left_column, right_column, left_unique, right_unique), each loaded table
+-- with the source its recipe loads it from (source; NULL for a view it
+-- reads or a table loaded without a recipe). The rest of the annotation,
+-- its assumptions, is no part of the definition a body reads.
 -- definitions(dataset) is the same for every view of a dataset at once:
 -- the views the dataset defines, never a table of the same name.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.definitions(dataset_name) AS TABLE
 WITH cols AS (FROM glossql_columns(dataset_name)),
 lin AS (FROM glossql_views_lineage(dataset_name)),
-sc AS (FROM glossql_views_scans(dataset_name)),
+sc AS (SELECT s.*, l."to" AS source FROM glossql_views_scans(dataset_name) s
+       LEFT JOIN main.loaded_from_edges(dataset_name) l ON l."from" = s.table_name),
 jo AS (FROM glossql_views_joins(dataset_name)),
 bodies AS (FROM main.view_bodies(dataset_name))
 SELECT dataset_name || '.' || a.name AS view,
@@ -319,7 +323,7 @@ SELECT dataset_name || '.' || a.name AS view,
                     ORDER BY c.ordinal_position)
         FROM cols c LEFT JOIN lin l ON l.view = c.table_name AND l."column" = c.column_name
         WHERE c.table_name = a.name) AS columns,
-       (SELECT list({'table_name': s.table_name, 'columns': s.columns} ORDER BY s.table_name)
+       (SELECT list({'table_name': s.table_name, 'columns': s.columns, 'source': s.source} ORDER BY s.table_name)
         FROM sc s WHERE s.view = a.name) AS reads,
        (SELECT list({'left_column': j.left_column, 'right_column': j.right_column,
                      'left_unique': j.left_unique, 'right_unique': j.right_unique} ORDER BY j.left_column, j.right_column)

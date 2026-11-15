@@ -542,10 +542,15 @@ static RecipeRow NewestRecipe(Inner &inner, const string &dataset, const string 
 }
 
 //! What a load wrote: the table's rows, how they joined it (`mode`: replace
-//! or merge, the key being the recipe's), and the rows dropped on the way
-//! (SPEC §3), NULL where the host cannot count them
+//! or merge, the key being the recipe's), the rows dropped on the way
+//! (SPEC §3), NULL where the host cannot count them, the rows the recipe's
+//! result carried, and the rows the load changed against the table before:
+//! inserted, updated or removed, NULL on a table's first load and where the
+//! table's columns changed
 struct Loaded {
 	int64_t rows;
+	int64_t source_rows = 0;
+	Value changed;
 	string mode;
 	//! the outcome's wording of the mode
 	string how;
@@ -585,8 +590,9 @@ static Value DroppedRows(Inner &inner, const string &sql) {
 //! A keyed recipe's result carries each key once (SPEC §3): the keys the
 //! result carries more than once, counted at the source before anything is stored;
 //! the refusal names the key, how many, and one of them. Which row holds is
-//! the recipe's to say, so the result is never deduplicated here
-static void KeyOnce(Inner &inner, const vector<string> &key, const string &sql) {
+//! the recipe's to say, so the result is never deduplicated here. Returns
+//! the keys the result carries, which are its rows
+static int64_t KeyOnce(Inner &inner, const vector<string> &key, const string &sql) {
 	vector<string> columns;
 	vector<string> texts;
 	for (auto &column : key) {
@@ -595,14 +601,16 @@ static void KeyOnce(Inner &inner, const vector<string> &key, const string &sql) 
 	}
 	auto spelled = StringUtil::Join(columns, ", ");
 	auto example = key.size() == 1 ? texts[0] : "'(' || concat_ws(', ', " + StringUtil::Join(texts, ", ") + ") || ')'";
-	auto twice = inner.Row("SELECT count(*), min(" + example + ") FROM (SELECT " + spelled + " FROM (" + sql +
-	                       ") GROUP BY ALL HAVING count(*) > 1)");
+	auto twice = inner.Row("SELECT count(*) FILTER (WHERE n > 1), min(" + example +
+	                       ") FILTER (WHERE n > 1), count(*) FROM (SELECT " + spelled + ", count(*) AS n FROM (" + sql +
+	                       ") GROUP BY ALL)");
 	auto keys = twice[0].GetValue<int64_t>();
 	if (keys > 0) {
 		throw InvalidInputException("glossql: the recipe's result carries key %s more than once: %d keys, %s among "
 		                            "them; a keyed recipe's result carries each key once (SPEC §3)",
 		                            StringUtil::Join(key, ", "), keys, twice[1].ToString());
 	}
+	return twice[2].GetValue<int64_t>();
 }
 
 //! Runs the recipe at its source and writes the result
@@ -612,13 +620,29 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 	AtSource(inner, LookupSource(inner, recipe.source));
 	Loaded loaded;
 	auto key = recipe.Key();
+	int64_t keys = 0;
 	if (!key.empty()) {
-		KeyOnce(inner, key, recipe.sql);
+		keys = KeyOnce(inner, key, recipe.sql);
 	}
+	// the snapshot of the table's load before this one, which a whole replace is compared with
+	auto before =
+	    inner.Row("SELECT snapshot_id FROM " + inner.Store("imports") + " WHERE dataset = " + QuoteText(dataset) +
+		          " AND table_name = " + QuoteText(table) + " AND end_snapshot IS NULL");
 	if (replace || key.empty()) {
 		inner.Run("CREATE OR REPLACE TABLE " + target + " AS " + recipe.sql);
 		loaded.mode = "replace";
 		loaded.how = "replaced";
+		loaded.source_rows = inner.Scalar("SELECT count(*) FROM " + target).GetValue<int64_t>();
+		// the rows the new table holds that the old did not, and the old held that the new does not
+		if (!before.empty() && !before[0].IsNull()) {
+			auto old = target + " AT (VERSION => " + before[0].ToString() + ")";
+			try {
+				loaded.changed = inner.Scalar("SELECT count(*) FROM ((FROM " + target + " EXCEPT ALL FROM " + old +
+				                              ") UNION ALL (FROM " + old + " EXCEPT ALL FROM " + target + "))");
+			} catch (std::exception &) {
+				// the columns changed: no row compares with the table before
+			}
+		}
 	} else {
 		vector<string> on;
 		for (auto &column : key) {
@@ -639,8 +663,10 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 			}
 			differs = " AND (" + StringUtil::Join(columns, " OR ") + ")";
 		}
-		inner.Run("MERGE INTO " + target + " AS t USING (" + recipe.sql + ") AS s ON " + StringUtil::Join(on, " AND ") +
-		          " WHEN MATCHED" + differs + " THEN UPDATE WHEN NOT MATCHED THEN INSERT");
+		loaded.changed = inner.Scalar("MERGE INTO " + target + " AS t USING (" + recipe.sql + ") AS s ON " +
+		                              StringUtil::Join(on, " AND ") + " WHEN MATCHED" + differs +
+		                              " THEN UPDATE WHEN NOT MATCHED THEN INSERT");
+		loaded.source_rows = keys;
 		loaded.mode = "merge";
 		loaded.how = "merged by " + StringUtil::Join(key, ", ");
 	}
@@ -663,7 +689,8 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 		write.End("imports", "dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(table));
 		write.Insert("imports", QuoteText(dataset) + ", " + QuoteText(table) + ", " + QuoteText(loaded.mode) + ", " +
 		                            to_string(loaded.rows) + ", " + loaded.dropped.ToSQLString() + ", " +
-		                            QuoteText(lineage) + ", " + loaded.snapshot.ToSQLString() + ", now()");
+		                            QuoteText(lineage) + ", " + loaded.snapshot.ToSQLString() + ", now(), " +
+		                            to_string(loaded.source_rows) + ", " + loaded.changed.ToSQLString());
 	});
 	return loaded;
 }

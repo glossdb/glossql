@@ -242,6 +242,31 @@ SELECT mode FROM imports WHERE table_name = 'keyed';
 ----
 merge
 
+# what each load carried and changed: the first load changes nothing it can compare with; the merge's file
+# carries 6 keys, 2 of them changed and 4 new, and 4 rows of the table it does not carry
+query TIIII
+SELECT mode, rows, source_rows, changed_rows IS NULL, coalesce(changed_rows, -1) FROM imports_history WHERE table_name = 'keyed' ORDER BY begin_snapshot;
+----
+replace	6	6	true	-1
+merge	10	6	false	6
+
+# the same file merged again writes nothing
+statement ok
+IMPORT keyed;
+
+query II
+SELECT source_rows, changed_rows FROM imports WHERE table_name = 'keyed';
+----
+6	0
+
+# a whole replace compares with the table before it: two rows more are two rows changed, the same rows again
+# change nothing
+query II
+SELECT source_rows, changed_rows FROM imports_history WHERE table_name = 'segments' AND changed_rows IS NOT NULL ORDER BY begin_snapshot;
+----
+6	2
+6	0
+
 # a composite key is one setting, 'a, b', as the glossql engine spells it
 statement ok
 DECLARE RECIPE keyed2 ON fin FROM crm_export SET (key: 'id, segment') AS $$SELECT id::INTEGER AS id, segment FROM read_csv('segments.csv')$$;
@@ -303,7 +328,7 @@ Parser Error
 query I
 SELECT count(*) FROM imports_history WHERE dropped_rows_count = 0;
 ----
-7
+8
 
 statement ok
 COPY (SELECT * FROM (VALUES ('1', 'a'), ('x', 'b'), ('3', 'c')) t(id, segment)) TO '{TEST_DIR}/faulty.csv' (HEADER);

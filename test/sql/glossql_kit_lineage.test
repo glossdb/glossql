@@ -485,6 +485,28 @@ SELECT "from", "to", kind FROM lineage('fin') WHERE kind = 'loaded from' ORDER B
 fin.stock_ch	erp_ch	loaded from
 fin.stock_dk	erp_dk	loaded from
 
+# a view's definition names the source each table it reads is loaded from
+statement ok
+SET VARIABLE glossql_subject = 'fin.stock';
+
+query TT
+SELECT r.table_name, r.source FROM definition('itself'), unnest(reads) t(r) ORDER BY ALL;
+----
+fin.stock_ch	erp_ch
+fin.stock_dk	erp_dk
+
+# a relationship from the view's own column is one of the view's relationships
+statement ok
+DECLARE RELATIONSHIP fin.stock.part -> fin.stock_dk.matnr;
+
+query T
+SELECT asset FROM place('its relationships');
+----
+fin.stock.part -> fin.stock_dk.matnr
+
+statement ok
+RESET VARIABLE glossql_subject;
+
 statement ok
 GLOSS conventions ON erp_dk AS $${"units": "quantities in cases"}$$;
 

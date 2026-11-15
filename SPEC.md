@@ -96,7 +96,9 @@ is the recipe's to say. The engine
 keeps one number per import — `dropped_rows_count`,
 source rows minus loaded rows — in the declaration's outcome at the
 decision moment and in the `imports` relation for history; which rows
-were dropped is the author's question, answered at the source.
+were dropped is the author's question, answered at the source. Beside
+it, `imports` keeps the rows the result carried and the rows the load
+changed against the table before it.
 
 Statement identity is content: the recipe SQL and the schema it produces.
 An unchanged re-declaration is a no-op; a changed one supersedes and
@@ -519,7 +521,8 @@ SELECT * FROM definition('itself');
 
 - `annotations(property, where)`: the annotations of one property;
 - `results(function, where)`: the stored results of one function;
-- `definition(where)`: a view's SQL and what it reads.
+- `definition(where)`: a view's SQL and what it reads, each loaded
+  table with the source it is loaded from.
 
 The where is a place, walked from the function's subject over the
 lineage (`lineage(dataset)`: what a dataset contains, what a view
@@ -532,7 +535,7 @@ plan plans, the source each table is loaded from):
 | `its columns` | what the subject contains |
 | `its sources` | the tables, columns and views a view reads |
 | `the columns it joins on` | the two columns of each join in a view |
-| `its relationships` | a view's: those between the tables it reads; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
+| `its relationships` | a view's: those between the tables it reads and those that touch the view; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
 | `its metric` | the metric a plan plans, and its columns |
 | `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads |
 | `its dataset` | the subject's dataset itself |

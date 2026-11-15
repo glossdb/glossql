@@ -40,7 +40,7 @@ says where. Both are constants.
 |---|---|
 | `annotations(property, where)` | `asset`, `property`, `value`, `state`, `threshold`; state `missing` where nobody annotated the asset; `threshold` the THRESHOLD of the test on the property, NULL where it has none. A property declared on tables returns no row for a column. `'x-kind <kind>'` as the property reads every property declared with that `x-kind`, a scenario's among them: a person's newest annotation, else an agent's |
 | `results(function, where)` | `asset`, `function`, `value`, `error`; both empty where no result is stored |
-| `definition(where)` | one row per view: `view`, `kind`, `plan_of`, `covers`, `sql`, `stopped`, `columns`, `reads`, `joins`. The view's SQL and what it reads, not the rest of the annotation that defines it |
+| `definition(where)` | one row per view: `view`, `kind`, `plan_of`, `covers`, `sql`, `stopped`, `columns`, `reads`, `joins`. The view's SQL and what it reads, each loaded table with the `source` it is loaded from; not the rest of the annotation that defines it |
 
 The places, walked from the function's subject:
 
@@ -50,7 +50,7 @@ The places, walked from the function's subject:
 | `its columns` | what the subject contains |
 | `its sources` | the tables, columns and views a view reads |
 | `the columns it joins on` | both columns of each join in a view |
-| `its relationships` | a view's: those between the tables it reads; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
+| `its relationships` | a view's: those between the tables it reads and those that touch the view; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
 | `its metric` | the metric a plan plans, and its columns |
 | `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads. `annotations()` of a property declared `ON SOURCE`, such as `conventions`, returns each source's annotation |
 | `its dataset` | the subject's dataset itself |
