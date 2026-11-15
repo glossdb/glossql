@@ -19,10 +19,6 @@ USE ws;
 statement ok
 PRAGMA glossql;
 
-# a stored result's reads are walked over the lineage kit's places
-statement ok
-FROM glossql_kit('kits/lineage/kit.sql');
-
 statement ok
 DECLARE DATASET fin SET (purpose: 'measurements');
 
@@ -172,7 +168,7 @@ query TT
 SELECT function, (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function IN ('answer', 'tables') ORDER BY function;
 ----
 answer	function,property
-tables	function,property,unnamed: duckdb_tables
+tables	function,property,unnamed: duckdb_tables()
 
 statement ok
 INSERT INTO fin.other VALUES (3);
@@ -560,9 +556,8 @@ SELECT subject, current FROM GLOSSARY(fin, all => true) WHERE aspect = 'seen' OR
 fin.orders.amount	true
 fin.orders.id	true
 
-# two functions that read each other's results on their subject. A result that computes again
-# with the value it had leaves its readers current, so the pair holds once their values hold; a
-# result on another subject is no input
+# a function whose results it reads read its own, directly or through the property another returns, is
+# refused at its declaration: no value of the two settles. A result read on another subject is no input
 
 statement ok
 DECLARE ASPECT values_a WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
@@ -573,8 +568,23 @@ DECLARE FUNCTION values_a FOR fin AS $$ SELECT count(value) AS n FROM results('v
 statement ok
 DECLARE ASPECT values_b WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
-statement ok
+statement error
 DECLARE FUNCTION values_b FOR fin AS $$ SELECT count(value) AS n FROM results('values_a', 'itself') $$ RETURNS values_b;
+----
+reads_cycle
+
+statement error
+DECLARE FUNCTION values_b FOR fin AS $$ SELECT count(value) AS n FROM annotations('values_a', 'itself') $$ RETURNS values_b;
+----
+reads_cycle
+
+query I
+SELECT count(*) FROM functions WHERE name = 'values_b';
+----
+0
+
+statement ok
+DECLARE FUNCTION values_b FOR fin AS $$ SELECT 1 AS n $$ RETURNS values_b;
 
 statement ok
 CREATE TABLE fin.pair AS SELECT 1 AS x;

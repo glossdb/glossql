@@ -19,10 +19,6 @@ USE ws;
 statement ok
 PRAGMA glossql;
 
-# a stored result's reads are walked over the lineage kit's places
-statement ok
-FROM glossql_kit('kits/lineage/kit.sql');
-
 statement ok
 DECLARE DATASET fin SET (purpose: 'tests');
 

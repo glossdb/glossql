@@ -75,8 +75,8 @@ UNION ALL SELECT DISTINCT * FROM (
   UNION SELECT dataset_name || '.' || s.view, s.table_name || '.' || c, 'reads' FROM glossql_views_scans(dataset_name) s, unnest(s.columns) u(c)
   UNION SELECT dataset_name || '.' || j.view, j.left_column, 'reads' FROM glossql_views_joins(dataset_name) j
   UNION SELECT dataset_name || '.' || j.view, j.right_column, 'reads' FROM glossql_views_joins(dataset_name) j
-  UNION SELECT dataset_name || '.' || j.view, regexp_extract(j.left_column, '^([^.]+\.[^.]+)\.', 1), 'reads' FROM glossql_views_joins(dataset_name) j
-  UNION SELECT dataset_name || '.' || j.view, regexp_extract(j.right_column, '^([^.]+\.[^.]+)\.', 1), 'reads' FROM glossql_views_joins(dataset_name) j
+  UNION SELECT dataset_name || '.' || j.view, dataset_name || '.' || c.table_name, 'reads' FROM glossql_views_joins(dataset_name) j
+        JOIN cols c ON dataset_name || '.' || c.table_name || '.' || c.column_name IN (j.left_column, j.right_column)
   UNION SELECT dataset_name || '.' || n.name, dataset_name || '.' || n.other, 'reads' FROM named n
         WHERE n.other <> n.name AND n.other IN (SELECT name FROM views))
 UNION ALL SELECT * FROM main.plans_edges(dataset_name);
@@ -102,9 +102,24 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --   'its dataset'              the subject's dataset itself
 --   'the dataset'              the subject's dataset and every asset in it
 --   'the dataset's metrics'    the views of the subject's dataset that are
---                              metrics, not plans, and their columns
--- Any other where names no asset.
+--                              metrics (no plan, relation, single value or
+--                              sample), and their columns
+-- Any other where is refused, not_a_place.
 --===------------------------------------------------------------------===--
+-- place_list(): the places, one entry each: the where, and whether it is
+-- anchored, the same for every subject of the dataset. The engine reads the
+-- places from here.
+CREATE OR REPLACE MACRO main.place_list() AS [
+  {'where': 'itself', 'anchored': false},
+  {'where': 'its columns', 'anchored': false},
+  {'where': 'its sources', 'anchored': false},
+  {'where': 'the columns it joins on', 'anchored': false},
+  {'where': 'its relationships', 'anchored': false},
+  {'where': 'its metric', 'anchored': false},
+  {'where': 'its dataset', 'anchored': true},
+  {'where': 'the dataset''s metrics', 'anchored': true},
+  {'where': 'the dataset', 'anchored': true}];
+
 -- Each where is a macro of its own over the whole dataset, place_<where>
 -- (dataset): (subject, asset) for every subject at once, so that the
 -- engine evaluates the reads of every stored result in one pass
@@ -121,8 +136,9 @@ SELECT DISTINCT dataset_name || '.' || j.view AS subject, side AS asset
 FROM glossql_views_joins(dataset_name) j, unnest([j.left_column, j.right_column]) u(side);
 
 CREATE OR REPLACE MACRO main.place_relationships(dataset_name) AS TABLE
-WITH walked AS MATERIALIZED (SELECT * FROM main.lineage(dataset_name) WHERE kind IN ('reads', 'relates')),
-endpoints AS (SELECT "from" AS rel, "to" AS endpoint, regexp_extract("to", '^([^.]+\.[^.]+)\.', 1) AS t FROM walked WHERE kind = 'relates'),
+WITH walked AS MATERIALIZED (SELECT * FROM main.lineage(dataset_name) WHERE kind IN ('reads', 'relates', 'contains')),
+endpoints AS (SELECT w."from" AS rel, w."to" AS endpoint, c."from" AS t FROM walked w
+              JOIN walked c ON c.kind = 'contains' AND c."to" = w."to" WHERE w.kind = 'relates'),
 sources AS (SELECT "from" AS subject, "to" AS t FROM walked WHERE kind = 'reads' AND main.asset_grain("to") = 'TABLE'),
 rels AS (SELECT DISTINCT rel FROM endpoints)
 SELECT dataset_name AS subject, rel AS asset FROM rels
@@ -147,7 +163,8 @@ UNION SELECT dataset_name, "to" FROM main.contains_edges(dataset_name);
 CREATE OR REPLACE MACRO main.place_metrics(dataset_name) AS TABLE
 WITH metrics AS (
   SELECT dataset_name || '.' || name AS m FROM main.aspects
-  WHERE kind = 'VIEW' AND coalesce(json_extract_string(schema, '$.x-kind'), '') <> 'plan')
+  WHERE kind = 'VIEW' AND coalesce(json_extract_string(schema, '$.x-kind'), 'metric') = 'metric'
+    AND name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW'))
 SELECT DISTINCT dataset_name AS subject, "to" AS asset FROM main.contains_edges(dataset_name)
 WHERE "to" IN (SELECT m FROM metrics) OR "from" IN (SELECT m FROM metrics);
 
@@ -174,7 +191,7 @@ FROM query(CASE where_
   WHEN 'the dataset' THEN 'SELECT asset FROM main.place_dataset(split_part(main.read_subject(), ''.'', 1))'
   WHEN 'its dataset' THEN 'SELECT split_part(main.read_subject(), ''.'', 1) AS asset'
   WHEN 'the dataset''s metrics' THEN 'SELECT asset FROM main.place_metrics(split_part(main.read_subject(), ''.'', 1))'
-  ELSE 'SELECT NULL::VARCHAR AS asset WHERE false' END);
+  ELSE 'SELECT error(''not_a_place: ' || replace(where_, '''', '''''') || ' names no place; place_list() lists them'')::VARCHAR AS asset' END);
 
 -- tables_read(dataset): the relations of the lake whose rows each
 -- asset's data is, (asset, asset_kind, table_name): a table its own; a
@@ -196,7 +213,7 @@ SELECT asset, asset_kind, table_name FROM relations
 UNION ALL SELECT dataset_name || '.' || c.table_name || '.' || c.column_name, 'column', r.table_name
           FROM cols c JOIN relations r ON r.asset = dataset_name || '.' || c.table_name
 UNION ALL SELECT DISTINCT l."from", 'relationship', r.table_name
-          FROM lin l JOIN relations r ON r.asset = regexp_extract(l."to", '^([^.]+\.[^.]+)\.', 1)
+          FROM lin l JOIN lin c ON c.kind = 'contains' AND c."to" = l."to" JOIN relations r ON r.asset = c."from"
           WHERE l.kind = 'relates'
 UNION ALL SELECT dataset_name, 'dataset', t FROM tables;
 
@@ -253,7 +270,8 @@ LEFT JOIN main.measurements m
 -- reads of each loaded table (table_name, columns) and its joins
 -- (left_column, right_column, left_unique, right_unique). The rest of the
 -- annotation, its assumptions, is no part of the definition a body reads.
--- definitions(dataset) is the same for every view of a dataset at once.
+-- definitions(dataset) is the same for every view of a dataset at once:
+-- the views the dataset defines, never a table of the same name.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.definitions(dataset_name) AS TABLE
 WITH cols AS (FROM glossql_columns(dataset_name)),
@@ -277,7 +295,8 @@ SELECT dataset_name || '.' || a.name AS view,
                      'left_unique': j.left_unique, 'right_unique': j.right_unique} ORDER BY j.left_column, j.right_column)
         FROM jo j WHERE j.view = a.name) AS joins
 FROM main.aspects a LEFT JOIN bodies b ON b.view = a.name
-WHERE a.kind = 'VIEW';
+WHERE a.kind = 'VIEW'
+  AND (b.view IS NOT NULL OR a.name IN (SELECT table_name FROM cols WHERE table_type = 'VIEW'));
 
 CREATE OR REPLACE MACRO main.definition(where_) AS TABLE
 SELECT d.* FROM (SELECT DISTINCT asset FROM main.place(where_)) p

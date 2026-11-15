@@ -26,9 +26,6 @@ statement ok
 USE fin;
 
 statement ok
-FROM glossql_kit('kits/lineage/kit.sql');
-
-statement ok
 FROM glossql_kit('kits/kpi/kit.sql');
 
 statement ok
@@ -264,6 +261,7 @@ SELECT r.kind, r.read, r."where", r.constant, r.via
 FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR", "constant": "BOOLEAN", "via": "VARCHAR"}]')) AS r
       FROM main.functions WHERE name = 'probe_macro');
 ----
+macro	ws.main.my_roles	NULL	NULL	(empty)
 read	annotations	its columns	true	my_roles
 
 # a macro's parameter the call passes a constant reads that constant; a parameter passed an expression, and a
@@ -279,10 +277,11 @@ query TTTT
 SELECT r.read, r.what, r."where", r.constant
 FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR", "constant": "BOOLEAN", "via": "VARCHAR"}]')) AS r
       FROM main.functions WHERE name = 'probe_open')
+WHERE r.kind = 'read'
 ORDER BY ALL;
 ----
 annotations	<FUNCTION>	itself	false
-annotations	role	<COLUMN_REF>	false
+annotations	role	<FUNCTION>	false
 annotations	role	its columns	true
 
 # the catalog reached directly, the data by name and the subject's own data are each told apart;
@@ -309,3 +308,116 @@ query T
 SELECT reads FROM main.functions WHERE name = 'value_entropy';
 ----
 []
+
+# --- a CTE's name hides a table only inside the query that defines it; a trailing semicolon parses; macros
+# past the depth followed are unnamed
+
+statement ok
+CREATE TABLE fin.races AS SELECT 1 AS id;
+
+statement ok
+DECLARE FUNCTION probe_cte FOR GLOBAL AS $$
+  SELECT (SELECT count(*) FROM fin.races) + (WITH races AS (SELECT 1) SELECT count(*) FROM races) AS n;
+$$ RETURNS probe;
+
+query TT
+SELECT r.kind, r.read FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) AS r
+      FROM main.functions WHERE name = 'probe_cte');
+----
+data	fin.races
+
+statement ok
+CREATE OR REPLACE MACRO main.deep0() AS (SELECT count(*) FROM fin.races);
+
+statement ok
+CREATE OR REPLACE MACRO main.deep1() AS deep0();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep2() AS deep1();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep3() AS deep2();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep4() AS deep3();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep5() AS deep4();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep6() AS deep5();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep7() AS deep6();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep8() AS deep7();
+
+statement ok
+DECLARE FUNCTION probe_deep FOR GLOBAL AS $$ SELECT deep8() AS n $$ RETURNS probe;
+
+query TI
+SELECT name, count(*) FILTER (WHERE r.kind = 'unnamed')
+FROM (SELECT name, unnest(from_json(reads, '[{"kind": "VARCHAR"}]')) AS r FROM main.functions
+      WHERE name IN ('probe_deep'))
+GROUP BY name ORDER BY name;
+----
+probe_deep	1
+
+# a table of the lake named like a relation of the catalog is data
+statement ok
+CREATE TABLE fin.sources AS SELECT 1 AS id;
+
+statement ok
+DECLARE FUNCTION probe_sources FOR GLOBAL AS $$ SELECT count(*) AS n FROM fin.sources $$ RETURNS probe;
+
+query TT
+SELECT r.kind, r.read FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) AS r
+      FROM main.functions WHERE name = 'probe_sources');
+----
+data	fin.sources
+
+# --- the places: the engine reads them from place_list(), place() answers each, and an unknown where is refused
+
+query T
+SELECT string_agg(p."where", '|' ORDER BY p."where") FROM unnest(main.place_list()) u(p);
+----
+its columns|its dataset|its metric|its relationships|its sources|itself|the columns it joins on|the dataset|the dataset's metrics
+
+statement ok
+SET VARIABLE glossql_subject = 'fin';
+
+statement ok
+SELECT count(*) FROM place('itself');
+
+statement ok
+SELECT count(*) FROM place('its columns');
+
+statement ok
+SELECT count(*) FROM place('its sources');
+
+statement ok
+SELECT count(*) FROM place('the columns it joins on');
+
+statement ok
+SELECT count(*) FROM place('its relationships');
+
+statement ok
+SELECT count(*) FROM place('its metric');
+
+statement ok
+SELECT count(*) FROM place('its dataset');
+
+statement ok
+SELECT count(*) FROM place('the dataset''s metrics');
+
+statement ok
+SELECT count(*) FROM place('the dataset');
+
+statement error
+SELECT asset FROM place('its friends');
+----
+not_a_place
+
+statement ok
+RESET VARIABLE glossql_subject;

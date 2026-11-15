@@ -26,9 +26,6 @@ statement ok
 USE fin;
 
 statement ok
-CREATE TABLE main.lineage AS FROM glossql_kit('kits/lineage/kit.sql');
-
-statement ok
 CREATE TABLE main.kpi AS FROM glossql_kit('kits/kpi/kit.sql');
 
 statement ok
@@ -38,7 +35,7 @@ query TTI
 SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
-lineage	kits/lineage/kit.sql	23
+lineage	glossql	24
 quality	kits/quality/kit.sql	23
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
@@ -856,13 +853,17 @@ FROM glossql_kit('kits/quality/kit.sql');
 quality	current
 
 # --- every shipped measurement reads the catalog through the read functions alone, with constant
-# arguments
+# arguments and a place as the where; it names no table, nothing the engine cannot name, and no dataset
+# but its subject's
 
 query I
 SELECT count(*)
-FROM main.functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "constant": "BOOLEAN"}]')) u(r)
+FROM main.functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR", "constant": "BOOLEAN"}]')) u(r)
 WHERE f.returns IS NOT NULL AND f.declared_by IN ('kit:kpi', 'kit:quality')
-  AND (r.kind = 'catalog' OR NOT coalesce(r.constant, true));
+  AND (r.kind IN ('catalog', 'unnamed') OR NOT coalesce(r.constant, true)
+       OR (r.kind = 'read' AND NOT list_contains(list_transform(main.place_list(), lambda p: p."where"), r."where"))
+       OR (r.kind = 'data' AND r."where" IS NULL AND r.read NOT IN ('dataset_cells', 'subject_column', 'glossql_relationship_checks'))
+       OR (r.kind = 'data' AND r.read IN ('dataset_cells', 'subject_column') AND NOT regexp_matches(r.what, '^[<$]')));
 ----
 0
 
@@ -871,7 +872,7 @@ WHERE f.returns IS NOT NULL AND f.declared_by IN ('kit:kpi', 'kit:quality')
 query TTTT
 SELECT r.kind, r.read, r.what, r."where"
 FROM main.functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR"}]')) u(r)
-WHERE f.name = 'additivity_evidence' AND r.kind <> 'other'
+WHERE f.name = 'additivity_evidence' AND r.kind NOT IN ('other', 'macro')
 ORDER BY ALL;
 ----
 data	glossql_additivity_cells	data	the dataset

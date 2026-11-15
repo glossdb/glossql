@@ -14,6 +14,7 @@
 // (SPEC §5.2), a join against the lake's column history.
 
 #include "glossql_grammar.hpp"
+#include "glossql_lineage_kit.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -326,7 +327,8 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "dataset VARCHAR NOT NULL, left_side VARCHAR NOT NULL, op VARCHAR NOT NULL, right_side VARCHAR NOT NULL, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "* EXCLUDE (end_snapshot)"},
-    // reads: what the body reads, taken from its text at the declaration (FunctionReadsSQL)
+    // reads: what the body reads, taken from its text at the declaration and again where it moved
+    // (BodyReads)
     {"functions",
 	 "name VARCHAR NOT NULL, scope VARCHAR NOT NULL, script VARCHAR NOT NULL, returns VARCHAR, reads VARCHAR, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
@@ -336,8 +338,10 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "value VARCHAR, computed_at TIMESTAMP NOT NULL, error VARCHAR",
 	 "begin_snapshot, dataset, function, subject, aspect, value::JSON AS value, computed_at, error"},
     // what a stored result read, one row per read with a digest of what it returned (SPEC §6):
-    // the rows begin with their result, whose begin_snapshot they share, and end with it
-    {"inputs", "input VARCHAR NOT NULL, version VARCHAR", "begin_snapshot, input, version"},
+    // the rows begin with their result, whose begin_snapshot they share, and end with it. The
+    // read, its what and its where are the input's name taken apart
+    {"inputs", "input VARCHAR NOT NULL, version VARCHAR, \"read\" VARCHAR, what VARCHAR, \"where\" VARCHAR",
+	 "begin_snapshot, input, version"},
     {"tests",
 	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
@@ -358,11 +362,6 @@ static string Newest(const Workspace &ws, const string &relation) {
 //===--------------------------------------------------------------------===//
 
 static string AnnotationsOverSQL(const Workspace &ws, const string &filter);
-
-//! The places a where names; data read from a table its body names reads that table
-static constexpr const char *PLACES = "'itself', 'its columns', 'its sources', 'the columns it joins on', "
-                                      "'its relationships', 'its metric', 'the dataset', 'the dataset''s metrics', "
-                                      "'its dataset'";
 
 //! The lake's tables and views, each at its version, (name, version): a table's the last snapshot
 //! that wrote, altered or dropped it, from the lake's own change log, where compaction is not a
@@ -419,52 +418,63 @@ string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs) {
 	const string none =
 	    "SELECT NULL::BIGINT AS id, NULL::VARCHAR AS \"read\", NULL::VARCHAR AS what, NULL::VARCHAR AS \"where\","
 	    " NULL::VARCHAR AS row WHERE false";
-	// 'the dataset' and its metrics are the same place for every subject of a dataset: anchored at it
-	string sql = "rn_w AS (SELECT *, CASE WHEN \"where\" IN ('the dataset', 'the dataset''s metrics', 'its dataset') "
-	             "THEN dataset"
-	             " ELSE subject END AS anchor FROM wanted), ";
+	// the places a where names, as the lineage kit lists them (place_list()); an anchored place is the
+	// same for every subject of a dataset, and is walked from the dataset
+	string sql = "rn_place AS (SELECT p.\"where\", p.anchored FROM unnest(main.place_list()) u(p)), ";
+	sql += "rn_w AS (SELECT *, CASE WHEN \"where\" IN (SELECT \"where\" FROM rn_place WHERE anchored) THEN dataset"
+	       " ELSE subject END AS anchor FROM wanted), ";
 	sql += "rn_m AS (SELECT begin_snapshot AS result, dataset, function, subject, aspect, value, error FROM " +
 	       ws.Store("measurements") + " WHERE end_snapshot IS NULL), ";
 	sql += "rn_pl AS (" +
 	       EachDataset(needs.places, "subject, \"where\", asset", "places",
 	                   "NULL::VARCHAR AS subject, NULL::VARCHAR AS \"where\", NULL::VARCHAR AS asset") +
 	       "), ";
-	// the assets each read reads: those of its place, walked from its subject
-	sql += "rn_a AS (SELECT w.id, w.dataset, w.\"read\", w.what, w.\"where\", w.subject AS asset FROM rn_w w"
-	       " WHERE w.\"where\" = 'itself' UNION ALL SELECT w.id, w.dataset, w.\"read\", w.what, w.\"where\", p.asset"
-	       " FROM rn_w w JOIN rn_pl p ON p.dataset = w.dataset AND p.\"where\" = w.\"where\" AND p.subject = w.anchor"
-	       " UNION ALL SELECT w.id, w.dataset, w.\"read\", w.what, w.\"where\", w.\"where\" FROM rn_w w"
-	       " WHERE w.\"read\" = 'data' AND w.\"where\" NOT IN (" +
-	       string(PLACES) + ")), ";
+	// the assets each read reads: those of its place, walked from its subject; a data read of a table
+	// the body names, that table
+	sql +=
+	    "rn_a AS (SELECT w.id, w.dataset, w.function, w.\"read\", w.what, w.\"where\", w.subject AS asset FROM rn_w w"
+	    " WHERE w.\"where\" = 'itself' UNION ALL SELECT w.id, w.dataset, w.function, w.\"read\", w.what, w.\"where\","
+	    " p.asset FROM rn_w w JOIN rn_pl p ON p.dataset = w.dataset AND p.\"where\" = w.\"where\" AND p.subject ="
+	    " w.anchor UNION ALL SELECT w.id, w.dataset, w.function, w.\"read\", w.what, w.\"where\", w.\"where\""
+	    " FROM rn_w w WHERE w.\"read\" = 'data' AND w.\"where\" NOT IN (SELECT \"where\" FROM rn_place)), ";
 	// the first branch names the columns
 	vector<string> rows {none};
+	// the stored results a read returned: a read of results, each asset's result of the function; a read
+	// of annotations, the values functions stored under the property on each asset, the reader's own
+	// results apart, which are never its input
+	vector<string> held {"SELECT " + key + ", m.result FROM rn_a a JOIN rn_m m ON m.dataset = a.dataset" +
+	                     " AND m.function = a.what AND m.subject = a.asset WHERE a.\"read\" = 'results'"};
 	// annotations: each asset of the place the property is declared on, with every annotation of it by a
 	// person or an agent, its stale mark, and the values functions stored under it; and the property's
-	// declaration and tests, which its collapse follows. 'x-kind <kind>' reads every property of that kind
+	// declaration and tests, with the script of each test's detector, which its collapse follows.
+	// 'x-kind <kind>' reads every property of that kind
 	if (!needs.annotations.empty()) {
 		vector<string> datasets;
 		for (auto &dataset : needs.annotations) {
 			datasets.push_back(QuoteText(dataset));
 		}
 		sql += "rn_ann AS (" + AnnotationsOverSQL(ws, "dataset IN (" + StringUtil::Join(datasets, ", ") + ")") + "), ";
-		sql +=
-		    "rn_decl AS (SELECT a.name, from_json(a.grains, '[\"VARCHAR\"]') AS grains,"
-		    " json_extract_string(a.schema, '$.x-kind') AS xkind, (a.name, a.kind, a.grains, a.condition,"
-		    " a.schema)::VARCHAR || coalesce((SELECT string_agg((t.name, t.actors, t.detector, t.threshold)::VARCHAR,"
-		    " ',' ORDER BY t.name) FROM " +
-		    ws.Store("tests") + " t WHERE t.aspect = a.name AND t.end_snapshot IS NULL), '') AS row FROM " +
-		    ws.Store("aspects") + " a WHERE a.end_snapshot IS NULL), ";
+		sql += "rn_decl AS (SELECT a.name, from_json(a.grains, '[\"VARCHAR\"]') AS grains,"
+		       " json_extract_string(a.schema, '$.x-kind') AS xkind, (a.name, a.kind, a.grains, a.condition,"
+		       " a.schema)::VARCHAR || coalesce((SELECT string_agg((t.name, t.actors, t.detector, t.threshold,"
+		       " (SELECT string_agg((f.scope, f.script)::VARCHAR, ',' ORDER BY f.scope) FROM " +
+		       ws.Store("functions") +
+		       " f WHERE f.name = t.detector AND f.end_snapshot IS NULL))::VARCHAR, ',' ORDER BY t.name) FROM " +
+		       ws.Store("tests") + " t WHERE t.aspect = a.name AND t.end_snapshot IS NULL), '') AS row FROM " +
+		       ws.Store("aspects") + " a WHERE a.end_snapshot IS NULL), ";
 		sql += "rn_props AS (SELECT w.id, w.dataset, w.\"read\", w.what, w.\"where\", d.name AS property, d.grains,"
 		       " d.row FROM rn_w w JOIN rn_decl d ON d.name = w.what OR (starts_with(w.what, 'x-kind ')"
 		       " AND d.xkind = substr(w.what, 8)) WHERE w.\"read\" = 'annotations'), ";
-		string held = " FROM rn_props p JOIN rn_a a ON a.id = p.id AND a.\"read\" = p.\"read\" AND a.what = p.what"
+		string over = " FROM rn_props p JOIN rn_a a ON a.id = p.id AND a.\"read\" = p.\"read\" AND a.what = p.what"
 		              " AND a.\"where\" = p.\"where\"";
+		string valued = over + " JOIN rn_m m ON m.dataset = p.dataset AND m.subject = a.asset AND m.aspect ="
+		                       " p.property AND m.function <> a.function";
 		rows.push_back("SELECT id, \"read\", what, \"where\", 'declared ' || row FROM rn_props");
-		rows.push_back("SELECT " + key + ", (a.asset, p.property, g.actor, g.body::VARCHAR, g.stale)::VARCHAR" + held +
+		rows.push_back("SELECT " + key + ", (a.asset, p.property, g.actor, g.body::VARCHAR, g.stale)::VARCHAR" + over +
 		               " LEFT JOIN rn_ann g ON g.dataset = p.dataset AND g.subject = a.asset AND g.aspect = p.property"
 		               " WHERE len(p.grains) = 0 OR list_contains(p.grains, main.asset_grain(a.asset))");
-		rows.push_back("SELECT " + key + ", (a.asset, p.property, 'function', m.value, m.error)::VARCHAR" + held +
-		               " JOIN rn_m m ON m.dataset = p.dataset AND m.subject = a.asset AND m.aspect = p.property");
+		rows.push_back("SELECT " + key + ", (a.asset, p.property, 'function', m.value, m.error)::VARCHAR" + valued);
+		held.push_back("SELECT " + key + ", m.result" + valued);
 	}
 	// results: each asset of the place, with the function's result stored on it, or none
 	string results = " FROM rn_a a LEFT JOIN rn_m m ON m.dataset = a.dataset AND m.function = a.what"
@@ -495,11 +505,9 @@ string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs) {
 		    " ON t.dataset = a.dataset AND t.asset = a.asset LEFT JOIN rn_tv v ON v.name = t.table_name"
 		    " WHERE a.\"read\" = 'data' AND (a.what = 'data' OR (a.what = 'tables' AND t.asset_kind = 'table')"
 		    " OR (a.what = 'views' AND t.asset_kind = 'view'))");
-		rows.push_back(
-		    "SELECT " + key +
-		    ", a.asset || ' ' || coalesce(v.version, 'gone') FROM rn_a a LEFT JOIN rn_tv v ON v.name = a.asset"
-		    " WHERE a.\"read\" = 'data' AND a.\"where\" NOT IN (" +
-		    string(PLACES) + ")");
+		rows.push_back("SELECT " + key +
+		               ", a.asset || ' ' || coalesce(v.version, 'gone') FROM rn_a a LEFT JOIN rn_tv v ON v.name ="
+		               " a.asset WHERE a.\"read\" = 'data' AND a.\"where\" NOT IN (SELECT \"where\" FROM rn_place)");
 	}
 	// the lineage's edges of one kind from each asset of the place
 	if (!needs.lineage.empty()) {
@@ -512,12 +520,27 @@ string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs) {
 		               " ON l.dataset = a.dataset AND l.\"from\" = a.asset AND l.kind = a.what"
 		               " WHERE a.\"read\" = 'lineage'");
 	}
-	// the function's own declaration, and the property it returns
-	rows.push_back("SELECT w.id, w.\"read\", w.what, w.\"where\", (f.scope, f.script, f.returns)::VARCHAR FROM rn_w w"
-	               " JOIN " +
+	// the function's own declaration, with the definition of each macro its body follows as the
+	// catalog holds it now (functions.reads names them), and the property it returns
+	vector<string> macros;
+	for (auto &macro : needs.macros) {
+		macros.push_back("(" + QuoteText(macro.first) + ", " + QuoteText(macro.second) + ")");
+	}
+	sql += "rn_mac(name, digest) AS (" +
+	       (macros.empty() ? string("SELECT NULL::VARCHAR, NULL::VARCHAR WHERE false")
+	                       : "VALUES " + StringUtil::Join(macros, ", ")) +
+	       "), ";
+	sql += "rn_fmac AS (SELECT f.name, f.scope, string_agg(u.r.read || ' ' || coalesce(m.digest, 'gone'), ','"
+	       " ORDER BY u.r.read) AS macros FROM " +
+	       ws.Store("functions") +
+	       " f, unnest(from_json(f.reads, '[{\"kind\": \"VARCHAR\", \"read\": \"VARCHAR\"}]')) u(r)"
+	       " LEFT JOIN rn_mac m ON m.name = u.r.read WHERE f.end_snapshot IS NULL AND u.r.kind = 'macro'"
+	       " GROUP BY f.name, f.scope), ";
+	rows.push_back("SELECT w.id, w.\"read\", w.what, w.\"where\", (f.scope, f.script, f.returns)::VARCHAR ||"
+	               " coalesce(' ' || fm.macros, '') FROM rn_w w JOIN " +
 	               ws.Store("functions") +
 	               " f ON f.name = w.function AND f.scope IN (w.dataset, 'GLOBAL') AND f.end_snapshot IS NULL"
-	               " WHERE w.\"read\" = 'function'");
+	               " LEFT JOIN rn_fmac fm ON fm.name = f.name AND fm.scope = f.scope WHERE w.\"read\" = 'function'");
 	rows.push_back("SELECT w.id, w.\"read\", w.what, w.\"where\", (a.kind, a.grains, a.condition, a.schema)::VARCHAR"
 	               " FROM rn_w w JOIN " +
 	               ws.Store("aspects") +
@@ -527,9 +550,8 @@ string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs) {
 	       StringUtil::Join(rows, " UNION ALL ") +
 	       ") r ON r.id = w.id AND r.\"read\" = w.\"read\" AND r.what = w.what AND r.\"where\" = w.\"where\""
 	       " GROUP BY w.id, w.\"read\", w.what, w.\"where\"), ";
-	// the stored results each read of results returned: one out of date outdates its reader
-	sql += "now_results AS (SELECT " + key + ", m.result FROM rn_a a JOIN rn_m m ON m.dataset = a.dataset" +
-	       " AND m.function = a.what AND m.subject = a.asset WHERE a.\"read\" = 'results')";
+	// the stored results each read returned: one out of date outdates its reader
+	sql += "now_results AS (" + StringUtil::Join(held, " UNION ALL ") + ")";
 	return sql;
 }
 
@@ -543,14 +565,6 @@ string InputName(const string &read, const string &what, const string &where) {
 	return read + "(" + what + ", " + where + ")";
 }
 
-//! The read, what and where of an input by its name (InputName), as SQL over the name
-static string ReadOfInputSQL(const string &input) {
-	return "CASE WHEN starts_with(" + input + ", 'unnamed: ') THEN 'unnamed' ELSE regexp_extract(" + input +
-	       ", '^([a-z_]+)', 1) END AS \"read\", regexp_extract(" + input +
-	       ", '^[a-z_]+\\((.*), [^,]*\\)$', 1) AS what, regexp_extract(" + input +
-	       ", '^[a-z_]+\\(.*, ([^,]*)\\)$', 1) AS \"where\"";
-}
-
 //! The reads of the current results, each with what it returned when the result was computed and
 //! what it returns now, ending in rc_moved (id, read, what, where): a read whose digest differs,
 //! or a read that names no read function; and rc_outdated (id): those results, and every result that
@@ -558,8 +572,8 @@ static string ReadOfInputSQL(const string &input) {
 static string CheckSQL(Inner &inner) {
 	auto &ws = inner.ws;
 	ReadNeeds needs;
-	auto held = inner.Run("SELECT DISTINCT m.dataset, regexp_extract(i.input, '^([a-z_]+)', 1) FROM " +
-	                      ws.Store("inputs") + " i JOIN " + ws.Store("measurements") +
+	auto held = inner.Run("SELECT DISTINCT m.dataset, i.\"read\" FROM " + ws.Store("inputs") + " i JOIN " +
+	                      ws.Store("measurements") +
 	                      " m ON m.begin_snapshot = i.begin_snapshot AND m.end_snapshot IS NULL"
 	                      " WHERE i.end_snapshot IS NULL");
 	while (auto chunk = held->Fetch()) {
@@ -567,10 +581,12 @@ static string CheckSQL(Inner &inner) {
 			needs.Add(chunk->GetValue(0, r).ToString(), chunk->GetValue(1, r).ToString());
 		}
 	}
+	needs.macros = MacroDigests(inner, "");
 	return "WITH RECURSIVE rc_cur AS (SELECT begin_snapshot AS id, dataset, function, subject, aspect FROM " +
 	       ws.Store("measurements") +
-	       " WHERE end_snapshot IS NULL), rc_held AS (SELECT i.begin_snapshot AS id, i.input, i.version, " +
-	       ReadOfInputSQL("i.input") + " FROM " + ws.Store("inputs") +
+	       " WHERE end_snapshot IS NULL), rc_held AS (SELECT i.begin_snapshot AS id, i.input, i.version, i.\"read\","
+	       " i.what, i.\"where\" FROM " +
+	       ws.Store("inputs") +
 	       " i JOIN rc_cur c ON c.id = i.begin_snapshot WHERE i.end_snapshot IS NULL), wanted AS (SELECT h.id,"
 	       " c.dataset, c.subject, c.function, c.aspect, h.\"read\", h.what, h.\"where\" FROM rc_held h JOIN rc_cur c"
 	       " USING (id)), " +
@@ -610,9 +626,10 @@ static unique_ptr<GlobalTableFunctionState> InitInit(ClientContext &context, Tab
 	return make_uniq<InitState>();
 }
 
-//! glossql_init(): the store tables where missing, and the lake's views over
-//! them. A view names the metadata catalog, so a view made under another
-//! alias is made again
+//! glossql_init(): the store tables where missing, the lake's views over
+//! them, and the lineage kit, whose read functions are the language's (SPEC
+//! §6), where the workspace does not hold its text. A view names the metadata
+//! catalog, so a view made under another alias is made again
 static void InitExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<InitState>();
 	if (state.done) {
@@ -647,6 +664,7 @@ static void InitExec(ClientContext &context, TableFunctionInput &data, DataChunk
 		    string(relation.view) == "* EXCLUDE (end_snapshot)" ? string("SELECT *") : columns + ", end_snapshot";
 		view(string(relation.name) + "_history", every + " FROM " + ws.Store(relation.name));
 	}
+	RunKit(context, "lineage", "glossql", LINEAGE_KIT, true);
 	output.data[0].Append(Value("workspace " + ws.lake + ": the store is " + ws.meta + "." + ws.meta_schema +
 	                            ".glossql_*, read as the views of " + ws.lake + ".main (" + to_string(views) +
 	                            " views made)"));

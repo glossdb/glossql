@@ -20,9 +20,6 @@ statement ok
 PRAGMA glossql;
 
 statement ok
-FROM glossql_kit('kits/lineage/kit.sql');
-
-statement ok
 DECLARE DATASET f1 SET (purpose: 'inputs');
 
 statement ok
@@ -297,7 +294,7 @@ SELECT raw_rows() FROM points;
 query TT
 SELECT input, reason FROM glossql_outdated() WHERE function = 'raw_rows';
 ----
-unnamed: main.glossql_glossary	changed
+unnamed: __ducklake_metadata_ws.main.glossql_glossary	changed
 
 statement ok
 SELECT raw_rows() FROM points;
@@ -346,3 +343,199 @@ query T
 SELECT input FROM glossql_outdated() WHERE function = 'metric_cells';
 ----
 annotations(role, the dataset's metrics)
+
+# --- a function's value read through annotations() is a result read: once it is out of date, so is its reader
+
+statement ok
+DECLARE ASPECT size WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION size FOR GLOBAL AS $$ SELECT count(*) AS n FROM f1.circuits $$ RETURNS size;
+
+statement ok
+DECLARE ASPECT size_seen WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION size_seen FOR GLOBAL AS $$ SELECT asset, state FROM annotations('size', 'itself') $$ RETURNS size_seen;
+
+statement ok
+SELECT size(), size_seen() FROM circuits;
+
+statement ok
+INSERT INTO f1.circuits VALUES (9, 'circuit 9');
+
+query TTT
+SELECT function, input, reason FROM glossql_outdated() WHERE function IN ('size', 'size_seen') ORDER BY ALL;
+----
+size	data(data, f1.circuits)	changed
+size_seen	annotations(size, itself)	outdated
+
+# --- a detector declared again moves the annotations its test judges: their readers are out of date
+
+statement ok
+DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON TABLE;
+
+statement ok
+DECLARE FUNCTION remark_judge FOR f1 AS $$ SELECT subject, 'green' AS state, 0.0 AS score FROM annotations GROUP BY subject $$;
+
+statement ok
+DECLARE TEST remark_test ON remark BY (AGENT, HUMAN) DETECTOR remark_judge THRESHOLD 0.5;
+
+statement ok
+GLOSS remark ON circuits AS $${"value": "a"}$$;
+
+statement ok
+DECLARE ASPECT remark_seen WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION remark_seen FOR GLOBAL AS $$ SELECT asset, state FROM annotations('remark', 'itself') $$ RETURNS remark_seen;
+
+statement ok
+SELECT remark_seen() FROM circuits;
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'remark_seen';
+----
+0
+
+statement ok
+DECLARE FUNCTION remark_judge FOR f1 AS $$ SELECT subject, 'red' AS state, 1.0 AS score FROM annotations GROUP BY subject $$;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'remark_seen';
+----
+annotations(remark, itself)
+
+# --- a macro the body follows is part of the function: replaced, it outdates the results, and the reads are
+# taken again when the function computes
+
+statement ok
+CREATE OR REPLACE MACRO main.circuit_count() AS TABLE SELECT count(*) AS n FROM f1.circuits;
+
+statement ok
+DECLARE ASPECT counted WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION counted FOR GLOBAL AS $$ SELECT n FROM circuit_count() $$ RETURNS counted;
+
+statement ok
+SELECT counted() FROM circuits;
+
+statement ok
+CREATE OR REPLACE MACRO main.circuit_count() AS TABLE SELECT count(*) AS n FROM f1.races;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'counted';
+----
+function
+
+query TTTTT
+SELECT counted() FROM circuits;
+----
+counted	f1.circuits	counted	6	true
+
+query T
+SELECT r.read FROM functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) u(r)
+WHERE f.name = 'counted' AND r.kind = 'data';
+----
+f1.races
+
+statement ok
+INSERT INTO f1.races SELECT 99, DATE '2025-01-01', 'race 99';
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'counted';
+----
+data(data, f1.races)
+
+# --- a table the body names before the lake holds it refuses the declaration; once it exists, the body reads it
+
+statement ok
+DECLARE ASPECT later WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement error
+DECLARE FUNCTION later FOR GLOBAL AS $$ SELECT count(*) AS n FROM f1.pit_stops $$ RETURNS later;
+----
+Catalog Error
+
+statement ok
+CREATE TABLE f1.pit_stops AS SELECT 1 AS stop;
+
+statement ok
+DECLARE FUNCTION later FOR GLOBAL AS $$ SELECT count(*) AS n FROM f1.pit_stops $$ RETURNS later;
+
+query TT
+SELECT r.kind, r.read FROM functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) u(r) WHERE f.name = 'later';
+----
+data	f1.pit_stops
+
+# --- a name the lake spells otherwise reads that table: written with another case, or without its dataset
+
+statement ok
+DECLARE ASPECT spelled_upper WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION spelled_upper FOR GLOBAL AS $$ SELECT count(*) AS n FROM F1.Circuits $$ RETURNS spelled_upper;
+
+statement ok
+DECLARE ASPECT spelled_bare WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION spelled_bare FOR GLOBAL AS $$ SELECT count(*) AS n FROM Circuits $$ RETURNS spelled_bare;
+
+statement ok
+SELECT spelled_upper(), spelled_bare() FROM circuits;
+
+query TT
+SELECT m.function, i.input FROM measurements m JOIN inputs i USING (begin_snapshot)
+WHERE m.function IN ('spelled_upper', 'spelled_bare') AND i.input LIKE 'data%' ORDER BY ALL;
+----
+spelled_bare	data(data, f1.circuits)
+spelled_upper	data(data, f1.circuits)
+
+statement ok
+INSERT INTO f1.circuits VALUES (10, 'circuit 10');
+
+query T
+SELECT function FROM glossql_outdated() WHERE function LIKE 'spelled%' ORDER BY ALL;
+----
+spelled_bare
+spelled_upper
+
+# --- the lake's catalog of tables and a table of another database are unnamed
+
+statement ok
+CREATE TABLE memory.main.elsewhere_rows AS SELECT 1 AS x;
+
+statement ok
+DECLARE ASPECT elsewhere WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION elsewhere FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM information_schema.tables) + (SELECT count(*) FROM memory.main.elsewhere_rows) AS n $$ RETURNS elsewhere;
+
+query T
+SELECT DISTINCT r.kind FROM functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR"}]')) u(r) WHERE f.name = 'elsewhere';
+----
+unnamed
+
+# --- a body runs in its subject's dataset: the dataset the caller works in reads nothing of it
+
+statement ok
+DECLARE DATASET other SET (purpose: 'elsewhere');
+
+statement ok
+DECLARE ASPECT here WITH $${"type": "string"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION here FOR GLOBAL AS $$ SELECT current_schema() AS s $$ RETURNS here;
+
+statement ok
+USE other;
+
+query TTTTT
+SELECT here() FROM f1.circuits;
+----
+here	f1.circuits	here	"f1"	true
+
+statement ok
+USE f1;

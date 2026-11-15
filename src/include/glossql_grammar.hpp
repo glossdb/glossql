@@ -7,6 +7,7 @@
 #include "duckdb/parser/statement/select_statement.hpp"
 
 #include <functional>
+#include <map>
 #include <set>
 
 namespace duckdb {
@@ -151,6 +152,11 @@ unique_ptr<SelectStatement> ParseSelect(const string &sql);
 string ReplacePlaceholder(const string &sql, const string &name, const string &replacement);
 //! The first line of a text, trimmed
 string FirstLine(const string &text);
+//! Runs a kit's script under its name (glossql_kit): (statement, outcome) per statement it ran, or one
+//! row (name, current) where the kits relation holds the same text and it has no LOAD to run; in_lake
+//! runs it with the workspace's lake as the default catalog
+vector<pair<string, string>> RunKit(ClientContext &context, const string &name, const string &location,
+                                    const string &script, bool in_lake);
 
 //! The workspace: one attached DuckLake. Its schemas are the datasets, its
 //! metadata catalog holds the store relations as glossql_<relation> beside the
@@ -181,6 +187,8 @@ struct ReadNeeds {
 	std::set<string> definitions;
 	std::set<string> lineage;
 	std::set<string> annotations;
+	//! the macros the functions' bodies follow, each with a digest of its definition now (MacroDigests)
+	std::map<string, string> macros;
 
 	//! A read of this kind (annotations, results, definition, data, lineage) of a result in the dataset
 	void Add(const string &dataset, const string &read);
@@ -191,6 +199,10 @@ struct ReadNeeds {
 //! result), the stored results each read of results returned. A result stores these digests when
 //! it is computed, and is current while its reads return the same (glossql_store.cpp)
 string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs);
+//! The macros the bodies of the current functions follow, or of one function's, as their reads name
+//! them (functions.reads), each with a digest of its definition as the catalog holds it now; `gone`
+//! where none does (glossql_runner.cpp)
+std::map<string, string> MacroDigests(Inner &inner, const string &function);
 //! An input's name, as the inputs relation stores it: read(what, where) for a read function's call
 //! and for data; function and property for the declarations; unnamed: <read> for a read of the
 //! catalog past the read functions
@@ -212,7 +224,8 @@ class Inner {
 public:
 	explicit Inner(ClientContext &context);
 
-	//! Runs one statement; throws its error as InvalidInputException
+	//! Runs one statement; throws its error as InvalidInputException, a transaction conflict, an
+	//! interrupt and the engine's own failures (fatal, internal, memory) as themselves
 	unique_ptr<QueryResult> Run(const string &sql);
 	//! The first column of the first row, or NULL for no rows
 	Value Scalar(const string &sql);
@@ -241,6 +254,8 @@ public:
 
 	Connection con;
 	Workspace ws;
+	//! whether a statement of the catalog write in progress failed (CatalogWrite::Run)
+	bool catalog_failed = false;
 };
 
 //! A catalog write in progress (Inner::Write): the snapshot id its rows carry,
