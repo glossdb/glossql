@@ -67,15 +67,17 @@ definitions AS (
   FROM main.view_bodies(dataset_name) WHERE view IN (SELECT name FROM views)),
 named AS (
   SELECT d.name, unnest(json_extract_string(json_serialize_sql(d.sql), '$..table_name')) AS other
-  FROM definitions d WHERE d.sql IS NOT NULL)
+  FROM definitions d WHERE d.sql IS NOT NULL),
+sc AS MATERIALIZED (FROM glossql_views_scans(dataset_name)),
+jo AS MATERIALIZED (FROM glossql_views_joins(dataset_name))
 SELECT * FROM main.contains_edges(dataset_name)
 UNION ALL SELECT DISTINCT rel, tbl || '.' || col, 'relates' FROM sides
 UNION ALL SELECT DISTINCT * FROM (
-  SELECT dataset_name || '.' || s.view, s.table_name, 'reads' FROM glossql_views_scans(dataset_name) s
-  UNION SELECT dataset_name || '.' || s.view, s.table_name || '.' || c, 'reads' FROM glossql_views_scans(dataset_name) s, unnest(s.columns) u(c)
-  UNION SELECT dataset_name || '.' || j.view, j.left_column, 'reads' FROM glossql_views_joins(dataset_name) j
-  UNION SELECT dataset_name || '.' || j.view, j.right_column, 'reads' FROM glossql_views_joins(dataset_name) j
-  UNION SELECT dataset_name || '.' || j.view, dataset_name || '.' || c.table_name, 'reads' FROM glossql_views_joins(dataset_name) j
+  SELECT dataset_name || '.' || s.view, s.table_name, 'reads' FROM sc s
+  UNION SELECT dataset_name || '.' || s.view, s.table_name || '.' || c, 'reads' FROM sc s, unnest(s.columns) u(c)
+  UNION SELECT dataset_name || '.' || j.view, j.left_column, 'reads' FROM jo j
+  UNION SELECT dataset_name || '.' || j.view, j.right_column, 'reads' FROM jo j
+  UNION SELECT dataset_name || '.' || j.view, dataset_name || '.' || c.table_name, 'reads' FROM jo j
         JOIN cols c ON dataset_name || '.' || c.table_name || '.' || c.column_name IN (j.left_column, j.right_column)
   UNION SELECT dataset_name || '.' || n.name, dataset_name || '.' || n.other, 'reads' FROM named n
         WHERE n.other <> n.name AND n.other IN (SELECT name FROM views))

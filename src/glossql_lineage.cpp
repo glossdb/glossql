@@ -17,11 +17,15 @@
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/common/crypto/md5.hpp"
 #include "duckdb/common/enums/expression_type.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/table_function.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/client_data.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/peg/compiled_grammar.hpp"
@@ -34,19 +38,20 @@
 #include "duckdb/planner/expression/bound_window_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
+#include "duckdb/planner/operator/logical_any_join.hpp"
+#include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_cteref.hpp"
 #include "duckdb/planner/operator/logical_distinct.hpp"
 #include "duckdb/planner/operator/logical_expression_get.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_join.hpp"
-#include "duckdb/planner/operator/logical_comparison_join.hpp"
-#include "duckdb/planner/operator/logical_any_join.hpp"
 #include "duckdb/planner/operator/logical_materialized_cte.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/operator/logical_set_operation.hpp"
 #include "duckdb/planner/operator/logical_unnest.hpp"
 #include "duckdb/planner/operator/logical_window.hpp"
 #include "duckdb/planner/planner.hpp"
+#include "duckdb/storage/object_cache.hpp"
 
 namespace duckdb {
 
@@ -929,64 +934,168 @@ static unique_ptr<GlobalTableFunctionState> ViewsLineageInit(ClientContext &cont
 	return make_uniq<ViewsLineageState>();
 }
 
+//===--------------------------------------------------------------------===//
+// A dataset's lineage kept: each view's lineage planned once per state of the
+// catalogs a view binds against and kept in the object cache, so that every
+// connection of the process reads the same, and a read that walks the lineage
+// ten times plans each view once. The state is the catalog version of each
+// attached database and the search path a view's names fall back to after its
+// own schema. DuckLake's version is its schema version: a view defined or
+// redefined, a table's columns changed, a table, a view or a macro created or
+// dropped move it; a write to the store and a load of rows do not, and the
+// lineage does not depend on them. A catalog that keeps no version (a remote
+// one) is no part of the state
+//===--------------------------------------------------------------------===//
+
+struct ViewLineage {
+	string dataset;
+	string view;
+	//! false where the view does not plan
+	bool planned = true;
+	QueryLineage lineage;
+};
+
+struct KeptLineage : public ObjectCacheEntry {
+	string state;
+	vector<ViewLineage> views;
+
+	static string ObjectType() {
+		return "glossql_lineage";
+	}
+	string GetObjectType() override {
+		return ObjectType();
+	}
+	optional_idx GetEstimatedCacheMemory() const override {
+		idx_t bytes = 0;
+		for (auto &view : views) {
+			bytes += view.view.size() + 64;
+			for (auto &column : view.lineage.columns) {
+				bytes += column.first.size() + column.second.size() + 32;
+			}
+			for (auto &scan : view.lineage.scans) {
+				bytes += scan.first.size() + 32;
+				for (auto &column : scan.second) {
+					bytes += column.size() + 32;
+				}
+			}
+			bytes += view.lineage.joins.size() * 128;
+		}
+		return optional_idx(bytes);
+	}
+};
+
+//! The state of the catalogs a view binds against, as the connection's transaction sees them
+static string CatalogState(ClientContext &context) {
+	string state;
+	context.RunFunctionInTransaction([&]() {
+		for (auto &db : DatabaseManager::Get(context).GetDatabases(context)) {
+			if (db->IsSystem() || db->IsTemporary()) {
+				continue;
+			}
+			auto version = db->GetCatalog().GetCatalogVersion(context);
+			state += db->GetName().GetIdentifierName() + "=" +
+			         (version.IsValid() ? to_string(version.GetIndex()) : string("-")) + ";";
+		}
+	});
+	return state + "|" + CatalogSearchEntry::ListToString(ClientData::Get(context).catalog_search_path->GetSetPaths());
+}
+
+//! Every view of a dataset with its lineage: as kept while the state holds, else
+//! planned on the inner connection and kept when the state held over the planning
+static shared_ptr<KeptLineage> DatasetLineage(Inner &inner, const string &dataset, const string &state) {
+	auto &context = *inner.con.context;
+	auto &cache = ObjectCache::GetObjectCache(context);
+	auto key = "glossql_lineage|" + inner.ws.lake + "|" + dataset;
+	auto kept = cache.Get<KeptLineage>(key);
+	if (kept && kept->state == state) {
+		return kept;
+	}
+	auto fill = make_shared_ptr<KeptLineage>();
+	auto listed = inner.con.Query(
+	    "SELECT table_name FROM information_schema.tables WHERE table_catalog = " + QuoteText(inner.ws.lake) +
+	    " AND table_schema = " + QuoteText(dataset) + " AND table_type = 'VIEW' ORDER BY table_name");
+	if (listed->HasError()) {
+		throw InvalidInputException("glossql_views_lineage: %s", listed->GetError());
+	}
+	while (auto chunk = listed->Fetch()) {
+		for (idx_t i = 0; i < chunk->size(); i++) {
+			ViewLineage view;
+			view.dataset = dataset;
+			view.view = chunk->GetValue(0, i).ToString();
+			fill->views.push_back(std::move(view));
+		}
+	}
+	for (auto &view : fill->views) {
+		try {
+			view.lineage = LineageOf(context, "SELECT * FROM " + QuoteName(inner.ws.lake) + "." +
+			                                      QuoteName(view.dataset) + "." + QuoteName(view.view));
+		} catch (std::exception &) {
+			view.lineage = QueryLineage();
+			view.planned = false;
+		}
+	}
+	if (CatalogState(context) == state) {
+		fill->state = state;
+		cache.Put(key, fill);
+	}
+	return fill;
+}
+
 static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<ViewsLineageState>();
 	if (!state.read) {
 		state.read = true;
 		auto &bind = data.bind_data->Cast<ViewsLineageBindData>();
 		Inner inner(context);
-		string schemas =
-		    bind.every ? "(SELECT name FROM " + inner.Store("datasets") + ")" : "(" + QuoteText(bind.dataset) + ")";
-		vector<pair<string, string>> views;
-		auto listed =
-		    inner.con.Query("SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = " +
-			                QuoteText(inner.ws.lake) + " AND table_schema IN " + schemas +
-			                " AND table_type = 'VIEW' ORDER BY table_schema, table_name");
-		if (listed->HasError()) {
-			throw InvalidInputException("glossql_views_lineage: %s", listed->GetError());
-		}
-		while (auto chunk = listed->Fetch()) {
-			for (idx_t i = 0; i < chunk->size(); i++) {
-				views.emplace_back(chunk->GetValue(0, i).ToString(), chunk->GetValue(1, i).ToString());
+		auto catalogs = CatalogState(*inner.con.context);
+		vector<string> datasets;
+		if (bind.every) {
+			auto listed = inner.con.Query("SELECT DISTINCT name FROM " + inner.Store("datasets") + " ORDER BY name");
+			if (listed->HasError()) {
+				throw InvalidInputException("glossql_views_lineage: %s", listed->GetError());
 			}
-		}
-		for (auto &view : views) {
-			QueryLineage lineage;
-			bool planned = true;
-			try {
-				lineage = LineageOf(*inner.con.context, "SELECT * FROM " + QuoteName(inner.ws.lake) + "." +
-				                                            QuoteName(view.first) + "." + QuoteName(view.second));
-			} catch (std::exception &) {
-				planned = false;
-			}
-			if (bind.joins) {
-				for (auto &join : lineage.joins) {
-					state.rows.push_back({view.first, view.second, Value(join.first.first), Value(join.first.second),
-					                      join.second.first, Value::BOOLEAN(join.second.second)});
+			while (auto chunk = listed->Fetch()) {
+				for (idx_t i = 0; i < chunk->size(); i++) {
+					datasets.push_back(chunk->GetValue(0, i).ToString());
 				}
-				continue;
 			}
-			if (bind.scans) {
-				for (auto &scan : lineage.scans) {
-					vector<Value> columns;
-					for (auto &column : scan.second) {
-						columns.emplace_back(column);
+		} else {
+			datasets.push_back(bind.dataset);
+		}
+		for (auto &dataset : datasets) {
+			auto kept = DatasetLineage(inner, dataset, catalogs);
+			for (auto &view : kept->views) {
+				auto &lineage = view.lineage;
+				if (bind.joins) {
+					for (auto &join : lineage.joins) {
+						state.rows.push_back({view.dataset, view.view, Value(join.first.first),
+						                      Value(join.first.second), join.second.first,
+						                      Value::BOOLEAN(join.second.second)});
 					}
-					state.rows.push_back({view.first, view.second, Value(scan.first),
-					                      Value::LIST(LogicalType::VARCHAR, std::move(columns)), true});
+					continue;
 				}
-				continue;
-			}
-			if (!planned || lineage.columns.empty()) {
-				state.rows.push_back({view.first, view.second, Value(), Value(), false});
-				continue;
-			}
-			for (idx_t i = 0; i < lineage.columns.size(); i++) {
-				auto &column = lineage.columns[i];
-				auto shape = i < lineage.shapes.size() && !lineage.shapes[i].empty() ? Value(lineage.shapes[i])
-				                                                                     : Value(LogicalType::VARCHAR);
-				state.rows.push_back(
-				    {view.first, view.second, Value(column.first), Value(column.second), lineage.complete, shape});
+				if (bind.scans) {
+					for (auto &scan : lineage.scans) {
+						vector<Value> columns;
+						for (auto &column : scan.second) {
+							columns.emplace_back(column);
+						}
+						state.rows.push_back({view.dataset, view.view, Value(scan.first),
+						                      Value::LIST(LogicalType::VARCHAR, std::move(columns)), true});
+					}
+					continue;
+				}
+				if (!view.planned || lineage.columns.empty()) {
+					state.rows.push_back({view.dataset, view.view, Value(), Value(), false});
+					continue;
+				}
+				for (idx_t i = 0; i < lineage.columns.size(); i++) {
+					auto &column = lineage.columns[i];
+					auto shape = i < lineage.shapes.size() && !lineage.shapes[i].empty() ? Value(lineage.shapes[i])
+					                                                                     : Value(LogicalType::VARCHAR);
+					state.rows.push_back(
+					    {view.dataset, view.view, Value(column.first), Value(column.second), lineage.complete, shape});
+				}
 			}
 		}
 	}

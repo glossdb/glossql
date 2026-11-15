@@ -1566,11 +1566,18 @@ static string TestValuesSQL(const string &relation, const string &aspect) {
 //! computation is no value
 static constexpr const char *STORED_VALUES = "glossql_values";
 
-static void StoreValues(Inner &inner, const ReadScope &scope) {
+//! The values of a whole dataset as kept (glossql_cached 'values'): every row ValuesSQL serves, a
+//! failed computation's too, computed once per store version for the raw read, the collapsed read
+//! and the tests, which each fill on a connection of their own
+static string KeptValuesSQL(const ReadScope &whole) {
+	return "SELECT * FROM glossql_cached('values', " + QuoteText(whole.dataset) + ", NULL)";
+}
+
+static void StoreValues(Inner &inner, const ReadScope &whole) {
 	auto made = inner.con.Query("CREATE OR REPLACE TEMP TABLE " + string(STORED_VALUES) + " AS SELECT * FROM (" +
-	                            ValuesSQL(inner, scope, "") + ") WHERE error IS NULL");
+	                            KeptValuesSQL(whole) + ") WHERE error IS NULL");
 	if (made->HasError()) {
-		throw InvalidInputException("glossql: the values of %s could not be read: %s", scope.dataset,
+		throw InvalidInputException("glossql: the values of %s could not be read: %s", whole.dataset,
 		                            FirstLine(made->GetError()));
 	}
 }
@@ -1731,11 +1738,11 @@ static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const Rea
 
 //! The raw read: one row per value — (subject, aspect, kind, test, actor, body, written_at, current,
 //! error); a failed computation is a row with its error and no body
-static string RawSQL(Inner &inner, const ReadScope &scope, const Value &aspect) {
+static string RawSQL(const ReadScope &whole) {
 	return "SELECT s.subject, s.aspect, a.kind, w.name AS test, s.actor, s.body, s.written_at,"
 	       " NOT s.stale AS current, s.error FROM (" +
-	       ValuesSQL(inner, scope, AspectFilter(aspect)) + ") s LEFT JOIN " + Newest(scope.ws, "aspects") +
-	       " a ON a.name = s.aspect LEFT JOIN " + Newest(scope.ws, "tests") +
+	       KeptValuesSQL(whole) + ") s LEFT JOIN " + Newest(whole.ws, "aspects") +
+	       " a ON a.name = s.aspect LEFT JOIN " + Newest(whole.ws, "tests") +
 	       " w ON w.aspect = s.aspect ORDER BY s.subject, s.aspect, s.actor";
 }
 
@@ -1886,8 +1893,11 @@ static ReadScope WholeOf(const ReadScope &scope, const Workspace &ws) {
 
 //! The SQL of one kind of read over a whole dataset
 static string ReadSQL(Inner &inner, const string &kind, const ReadScope &whole) {
+	if (kind == "values") {
+		return "SELECT * FROM (" + ValuesSQL(inner, whole, "") + ")";
+	}
 	if (kind == "raw") {
-		return RawSQL(inner, whole, Value());
+		return RawSQL(whole);
 	}
 	if (kind == "collapsed") {
 		StoreValues(inner, whole);
@@ -1898,7 +1908,7 @@ static string ReadSQL(Inner &inner, const string &kind, const ReadScope &whole) 
 		return "WITH " + string(HOISTED) + " AS (SELECT * FROM " + string(STORED_VALUES) + ") SELECT " +
 		       string(TESTS_COLUMNS) + " FROM (" + ResultsSQL(inner, Tests(inner, Value()), whole) + ")";
 	}
-	throw InvalidInputException("glossql_cached serves a read: collapsed, raw or tests, not '%s'", kind);
+	throw InvalidInputException("glossql_cached serves a read: collapsed, raw, tests or values, not '%s'", kind);
 }
 
 //! One kind of read over a whole dataset: as kept while the store's version

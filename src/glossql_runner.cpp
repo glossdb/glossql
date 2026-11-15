@@ -205,6 +205,8 @@ Inner::Inner(ClientContext &context) : con(*context.db), ws(FindWorkspace(contex
 	    !files.ToString().empty()) {
 		Run("SET file_search_path = " + QuoteText(files.ToString()));
 	}
+	// a read the second connection runs reads the same lake, where several are attached
+	ClientConfig::GetConfig(*con.context).SetUserVariable("glossql_workspace", Value(ws.lake));
 	// and the read functions walk from the caller's run's subject
 	Value subject;
 	if (ClientConfig::GetConfig(context).GetUserVariable(string(RUN_SUBJECT), subject)) {
