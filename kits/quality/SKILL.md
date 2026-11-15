@@ -14,9 +14,8 @@ itself.
 ## Load and check
 
 ```sql
-FROM glossql_kit('kits/lineage/kit.sql');
 FROM glossql_kit('kits/kpi/kit.sql');
-FROM glossql_kit('kits/quality/kit.sql');    -- after the lineage and kpi kits; all three lines in the opener
+FROM glossql_kit('kits/quality/kit.sql');    -- after the kpi kit; both lines in the opener
 SELECT name, scope, returns FROM functions WHERE returns IS NOT NULL;
 ```
 
@@ -31,7 +30,7 @@ that stores the result.
 | `relationship_coherence()` | relationship | `relationship_checks(dataset or relationship)` | `relationship`, `filled`, `orphans`, `orphan_rate`, and `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
 | `detect_hierarchies()` | table | `hierarchy_candidates(table)` | `candidates`: `from`, `to`, `g3`, `lambda`, `kind` (`edge` or `alias`); `rows`: the rows read |
 | `detect_derivations()` | table | `derivation_candidates(table)` | `candidates`: `target`, `form` (`product` or `sum`), `operands`, `support`, `violations`, `match_rate`; `truncated`; `rows`: the rows read |
-| `detect_definition_collisions()` | dataset | `definition_collisions(dataset)`, after `SET VARIABLE glossql_subject = '<dataset>'` | `definitions`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |
+| `detect_definition_collisions()` | dataset | `definition_collisions(dataset)`, after `SET VARIABLE glossql_subject = '<dataset>'`; it compares the definition that defines each view now | `definitions`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |
 | `additivity_evidence()` | column | `additivity_anchors(column)` | `summary`: `result` (`semi-additive`, `additive`, `abstain`), `convention`, `support`, `voted`, `event`, `align`, `grain`, `scope`, `r_flow`, `r_stock`, `sign`, `tiebreak`, `reason`; `anchors`: one row per anchor; `anchors_n`, `decided` |
 | `temporal()` | timestamp columns | | `temporal_profile`: `granularity`, `confidence`, `completeness`, `gaps` |
 

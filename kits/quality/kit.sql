@@ -271,6 +271,8 @@ ORDER BY seq;
 
 --===------------------------------------------------------------------===--
 -- definition_collisions(dataset): metrics that are the same thing twice.
+-- It compares the definition that defines each view of the dataset now,
+-- the newest annotation of the view's property on the dataset.
 -- Two kinds: definitions whose SQL is the same statement once parsed, case
 -- and spacing aside, under different aspects; and definitions whose monthly
 -- series agree over every month though their SQL differs. The series pass

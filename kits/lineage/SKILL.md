@@ -6,12 +6,10 @@ description: The lineage kit for a glossql workspace — a dataset's lineage as 
 # The lineage kit
 
 The kit declares no property. It serves the lineage of a dataset and
-the read functions a function's body uses to read the catalog. Load
-it before the other kits: their functions read through it.
-
-```sql
-FROM glossql_kit('kits/lineage/kit.sql');
-```
+the read functions a function's body uses to read the catalog. The
+extension carries it: `PRAGMA glossql` loads it where the workspace
+does not hold its text, so the other kits' functions can read through
+it.
 
 ## The lineage
 
@@ -51,7 +49,7 @@ The places, walked from the function's subject:
 | `its columns` | what the subject contains |
 | `its sources` | the tables, columns and views a view reads |
 | `the columns it joins on` | both columns of each join in a view |
-| `its relationships` | a view's: those between the tables it reads; a table's or a column's: those that touch it; a dataset's: all |
+| `its relationships` | a view's: those between the tables it reads; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
 | `its metric` | the metric a plan plans, and its columns |
 | `its dataset` | the subject's dataset itself |
 | `the dataset` | the dataset and every asset in it |

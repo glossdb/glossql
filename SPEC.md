@@ -532,7 +532,7 @@ plan plans):
 | `its columns` | what the subject contains |
 | `its sources` | the tables, columns and views a view reads |
 | `the columns it joins on` | the two columns of each join in a view |
-| `its relationships` | a view's: those between the tables it reads; a table's or a column's: those that touch it; a dataset's: all |
+| `its relationships` | a view's: those between the tables it reads; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
 | `its metric` | the metric a plan plans, and its columns |
 | `its dataset` | the subject's dataset itself |
 | `the dataset's metrics` | the metrics of the subject's dataset and their columns |
