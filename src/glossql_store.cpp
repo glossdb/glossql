@@ -1213,7 +1213,7 @@ static string NodeChangesSQL(const Workspace &ws) {
 	    " NULL, NULL, e.at FROM (SELECT name, begin_snapshot AS at FROM (" +
 	        views + ") v WHERE NOT EXISTS (SELECT 1 FROM (" + views +
 	        ") w WHERE w.name = v.name AND w.end_snapshot = v.begin_snapshot) UNION ALL SELECT name, end_snapshot FROM "
-			"(" +
+	        "(" +
 	        views + ") v WHERE end_snapshot IS NOT NULL AND NOT EXISTS (SELECT 1 FROM (" + views +
 	        ") w WHERE w.name = v.name AND w.begin_snapshot = v.end_snapshot)) e JOIN " + store("aspects") +
 	        " a ON a.kind = 'VIEW' AND a.name = substr(e.name, strpos(e.name, '.') + 1) AND a.begin_snapshot <= e.at"
