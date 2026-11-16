@@ -115,8 +115,10 @@ struct Lineage {
 	unordered_map<TableIndex, vector<uint8_t>> cte_shapes;
 	bool complete = true;
 	//! the pairs of scanned columns a join or a filter equates, each as
-	//! scan.column, and per side whether its rows are one per value there
-	std::map<std::pair<string, string>, std::pair<bool, bool>> joins;
+	//! scan.column, per side whether its rows are one per value there, and the
+	//! number of the join or filter, counted in `equated`
+	vector<QueryLineage::JoinPair> joins;
+	idx_t equated = 0;
 	//! the unique keys of what a table index yields: the groups of a GROUP BY,
 	//! the targets of a DISTINCT, the partition of a row_number() filtered to 1
 	unordered_map<TableIndex, vector<Key>> keys;
@@ -135,6 +137,9 @@ struct Lineage {
 	//! and filters that read that scan's columns alone
 	std::map<idx_t, string> scan_tables;
 	std::map<idx_t, vector<string>> conditions;
+	//! per scan joined to the rows before it (a join's right input, a right
+	//! join's left), the equalities of that join, which look its rows up
+	std::map<idx_t, vector<string>> lookups;
 	//! the mapping's walk of one branch: the child each union reads, and the
 	//! alias of each scan of a table the view reads more than once, which its
 	//! leaves carry as scan[alias].column
@@ -291,6 +296,23 @@ static void Condition(const vector<const Expression *> &operands, const string &
 	}
 	if (!leaves.empty()) {
 		AddOnce(lineage.conditions[leaves[0].scan], {text});
+	}
+}
+
+//! Records an equality of a join between its two inputs as a lookup of the scans
+//! the joined input reads (the right one, the left of a right join), where each
+//! side reads a scan
+static void Lookup(const Expression &left, const Expression &right, bool right_join, const string &text,
+                   Lineage &lineage) {
+	vector<Scanned> lefts;
+	vector<Scanned> rights;
+	Leaves(left, lineage, lefts);
+	Leaves(right, lineage, rights);
+	if (lefts.empty() || rights.empty()) {
+		return;
+	}
+	for (auto &leaf : right_join ? lefts : rights) {
+		AddOnce(lineage.lookups[leaf.scan], {text});
 	}
 }
 
@@ -576,6 +598,7 @@ static void Equated(const vector<Equality> &equalities, Lineage &lineage) {
 		}
 		return false;
 	};
+	auto join = lineage.equated + 1;
 	for (auto &equality : equalities) {
 		bool complete = lineage.complete;
 		auto a = Leaf(Text(*equality.left, lineage));
@@ -584,17 +607,14 @@ static void Equated(const vector<Equality> &equalities, Lineage &lineage) {
 		if (a.empty() || b.empty() || a == b) {
 			continue;
 		}
-		auto left = unique(*equality.left);
-		auto right = unique(*equality.right);
-		auto pair = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
-		auto flags = a < b ? std::make_pair(left, right) : std::make_pair(right, left);
-		auto entry = lineage.joins.find(pair);
-		if (entry == lineage.joins.end()) {
-			lineage.joins[pair] = flags;
-		} else {
-			// the same pair joined twice is unique on a side where both joins are
-			entry->second.first = entry->second.first && flags.first;
-			entry->second.second = entry->second.second && flags.second;
+		bool known = false;
+		for (auto &pair : lineage.joins) {
+			known = known ||
+			        (pair.join == join && ((pair.left == a && pair.right == b) || (pair.left == b && pair.right == a)));
+		}
+		if (!known) {
+			lineage.joins.push_back({a, b, unique(*equality.left), unique(*equality.right), join});
+			lineage.equated = join;
 		}
 	}
 }
@@ -861,6 +881,9 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 				            Text(condition.GetLHS(), lineage) + ", " + Text(condition.GetRHS(), lineage) + ")";
 				lineage.complete = complete;
 				Condition({&condition.GetLHS(), &condition.GetRHS()}, text, lineage);
+				if (condition.GetComparisonType() == ExpressionType::COMPARE_EQUAL) {
+					Lookup(condition.GetLHS(), condition.GetRHS(), join.join_type == JoinType::RIGHT, text, lineage);
+				}
 			}
 		} else if (op.type == LogicalOperatorType::LOGICAL_ANY_JOIN) {
 			Equalities(*op.Cast<LogicalAnyJoin>().condition, equalities);
@@ -1226,6 +1249,7 @@ static vector<QueryLineage::Mapping> MappingOf(LogicalOperator &plan, const vect
 			                           "",
 			                           "",
 			                           "",
+			                           "",
 			                           lineage.literals[bindings[i]],
 			                           told && !StringUtil::Contains(text, UNKNOWN)};
 			if (leaves.empty()) {
@@ -1241,6 +1265,10 @@ static vector<QueryLineage::Mapping> MappingOf(LogicalOperator &plan, const vect
 				scanned.condition = conditions.size() == 1 ? conditions[0]
 				                    : conditions.empty()   ? string()
 				                                           : "and(" + StringUtil::Join(conditions, ", ") + ")";
+				auto &lookups = lineage.lookups[leaf.scan];
+				scanned.lookup = lookups.size() == 1 ? lookups[0]
+				                 : lookups.empty()   ? string()
+				                                     : "and(" + StringUtil::Join(lookups, ", ") + ")";
 				rows.push_back(std::move(scanned));
 			}
 		}
@@ -1392,6 +1420,8 @@ struct ViewsLineageRow {
 	Value derivation;
 	bool complete;
 	Value shape = Value(LogicalType::VARCHAR);
+	//! glossql_views_joins: the number of the join or filter that equates the pair
+	Value join = Value(LogicalType::INTEGER);
 };
 
 struct ViewsLineageState : public GlobalTableFunctionState {
@@ -1436,7 +1466,10 @@ static unique_ptr<FunctionData> ViewsScansBind(ClientContext &context, TableFunc
 //! view and pair as schema.table.column; NULL reads every dataset's views.
 //! left_unique and right_unique say the view joins that side reduced to one
 //! row per value: grouped by the join columns, DISTINCT on them, or filtered to
-//! row_number() = 1 over them
+//! row_number() = 1 over them. The left side is the one the predicate writes
+//! first, a join's left input. join_number numbers the join or filter that
+//! equates the pair, in the plan's order: the pairs of one join, its key, share
+//! it
 static unique_ptr<FunctionData> ViewsJoinsBind(ClientContext &context, TableFunctionBindInput &input,
                                                vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<ViewsLineageBindData>();
@@ -1445,10 +1478,11 @@ static unique_ptr<FunctionData> ViewsJoinsBind(ClientContext &context, TableFunc
 		result->dataset = input.inputs[0].ToString();
 	}
 	result->joins = true;
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::BOOLEAN};
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::INTEGER};
 	names = {Identifier("dataset"),      Identifier("view"),        Identifier("left_column"),
-	         Identifier("right_column"), Identifier("left_unique"), Identifier("right_unique")};
+	         Identifier("right_column"), Identifier("left_unique"), Identifier("right_unique"),
+	         Identifier("join_number")};
 	return result;
 }
 
@@ -1504,7 +1538,8 @@ struct KeptLineage : public ObjectCacheEntry {
 			}
 			bytes += view.lineage.joins.size() * 128 + view.sql.size();
 			for (auto &row : view.lineage.mapping) {
-				bytes += row.derivation.size() + row.condition.size() + 64 * (row.literals.size() + 3);
+				bytes +=
+				    row.derivation.size() + row.condition.size() + row.lookup.size() + 64 * (row.literals.size() + 3);
 			}
 		}
 		return optional_idx(bytes);
@@ -1598,9 +1633,9 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 				auto &lineage = view.lineage;
 				if (bind.joins) {
 					for (auto &join : lineage.joins) {
-						state.rows.push_back({view.dataset, view.view, Value(join.first.first),
-						                      Value(join.first.second), join.second.first,
-						                      Value::BOOLEAN(join.second.second)});
+						state.rows.push_back({view.dataset, view.view, Value(join.left), Value(join.right),
+						                      join.left_unique, Value::BOOLEAN(join.right_unique),
+						                      Value::INTEGER(NumericCast<int32_t>(join.join))});
 					}
 					continue;
 				}
@@ -1630,6 +1665,7 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 		}
 	}
 	bool scans = data.bind_data->Cast<ViewsLineageBindData>().scans;
+	bool joins = data.bind_data->Cast<ViewsLineageBindData>().joins;
 	idx_t count = 0;
 	while (state.offset < state.rows.size() && count < STANDARD_VECTOR_SIZE) {
 		auto &row = state.rows[state.offset];
@@ -1640,6 +1676,9 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 		if (!scans) {
 			output.data[4].Append(Value::BOOLEAN(row.complete));
 			output.data[5].Append(row.shape);
+		}
+		if (joins) {
+			output.data[6].Append(row.join);
 		}
 		state.offset++;
 		count++;
@@ -1653,7 +1692,9 @@ static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, D
 // has none) and scanned column of a lake table: the branch's derivation, where
 // a table the view reads more than once carries the alias of each scan as
 // scan[alias].column; the table and its column; the alias; the conditions the
-// view's joins and filters put on that scan alone; the literals the
+// view's joins and filters put on that scan alone; the lookup, the equalities
+// of the join that joins that scan to the rows before it (a join's right input,
+// a right join's left), its columns against the other input's; the literals the
 // derivation tests or returns; and complete, false where the walk could not
 // follow a step or two scans of one table read alike. A column computed from
 // no lake column has one row with no table. NULL reads every dataset's views;
@@ -1673,14 +1714,20 @@ static unique_ptr<FunctionData> ViewsMappingBind(ClientContext &context, TableFu
 	if (!result->every) {
 		result->dataset = input.inputs[0].ToString();
 	}
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::VARCHAR, LogicalType::INTEGER,
-	                LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR),
+	return_types = {LogicalType::VARCHAR,
+	                LogicalType::VARCHAR,
+	                LogicalType::VARCHAR,
+	                LogicalType::INTEGER,
+	                LogicalType::VARCHAR,
+	                LogicalType::VARCHAR,
+	                LogicalType::VARCHAR,
+	                LogicalType::VARCHAR,
+	                LogicalType::VARCHAR,
+	                LogicalType::VARCHAR,
+	                LogicalType::LIST(LogicalType::VARCHAR),
 	                LogicalType::BOOLEAN};
 	for (auto name : {"dataset", "view", "column", "branch", "derivation", "table_name", "table_column", "alias",
-	                  "condition", "literals", "complete"}) {
+	                  "condition", "lookup", "literals", "complete"}) {
 		names.emplace_back(name);
 	}
 	return result;
@@ -1719,8 +1766,8 @@ static void ViewsMappingExec(ClientContext &context, TableFunctionInput &data, D
 			for (auto &view : kept->views) {
 				if (!view.planned || view.lineage.mapping.empty()) {
 					state.rows.push_back({Value(view.dataset), Value(view.view), Value(), Value(), Value(), Value(),
-					                      Value(), Value(), Value(), Value(LogicalType::LIST(LogicalType::VARCHAR)),
-					                      Value::BOOLEAN(false)});
+					                      Value(), Value(), Value(), Value(),
+					                      Value(LogicalType::LIST(LogicalType::VARCHAR)), Value::BOOLEAN(false)});
 					continue;
 				}
 				for (auto &row : view.lineage.mapping) {
@@ -1731,7 +1778,7 @@ static void ViewsMappingExec(ClientContext &context, TableFunctionInput &data, D
 					state.rows.push_back({Value(view.dataset), Value(view.view), Value(row.column),
 					                      Value::INTEGER(NumericCast<int32_t>(row.branch)), Value(row.derivation),
 					                      text(row.table), text(row.table_column), text(row.alias), text(row.condition),
-					                      Value::LIST(LogicalType::VARCHAR, std::move(literals)),
+					                      text(row.lookup), Value::LIST(LogicalType::VARCHAR, std::move(literals)),
 					                      Value::BOOLEAN(row.complete)});
 				}
 			}

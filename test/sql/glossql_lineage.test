@@ -266,12 +266,12 @@ SELECT dataset, view, table_name FROM glossql_views_scans(NULL) WHERE view = 'vi
 ----
 ops	visit_count	ops.visits
 
-# --- glossql_views_joins(dataset): the column pairs a view's joins equate, a join's ON, USING and a WHERE alike; a shared column the view only reads is no pair
+# --- glossql_views_joins(dataset): the column pairs a view's joins equate, a join's ON, USING and a WHERE alike, the left side as the predicate's left input; a shared column the view only reads is no pair
 
 query TTT
 SELECT view, left_column, right_column FROM glossql_views_joins('fin') WHERE view = 'big_customers';
 ----
-big_customers	fin.customers.customer	fin.orders.customer
+big_customers	fin.orders.customer	fin.customers.customer
 
 statement ok
 CREATE VIEW fin.where_join AS SELECT o.id, c.segment FROM fin.orders o, fin.customers c WHERE o.customer = c.customer AND c.segment = 'seg1';
@@ -279,7 +279,7 @@ CREATE VIEW fin.where_join AS SELECT o.id, c.segment FROM fin.orders o, fin.cust
 query TT
 SELECT left_column, right_column FROM glossql_views_joins('fin') WHERE view = 'where_join';
 ----
-fin.customers.customer	fin.orders.customer
+fin.orders.customer	fin.customers.customer
 
 statement ok
 CREATE VIEW fin.no_join AS SELECT customer FROM fin.orders UNION ALL SELECT customer FROM fin.customers;
@@ -294,7 +294,7 @@ SELECT count(*) FROM glossql_views_joins('fin') WHERE view = 'no_join';
 query TTTT
 SELECT left_column, right_column, left_unique, right_unique FROM glossql_views_joins('fin') WHERE view = 'big_customers';
 ----
-fin.customers.customer	fin.orders.customer	false	false
+fin.orders.customer	fin.customers.customer	false	false
 
 statement ok
 CREATE VIEW fin.join_grouped AS SELECT o.id, c.segment FROM fin.orders o JOIN (SELECT customer, max(segment) AS segment FROM fin.customers GROUP BY customer) c ON o.customer = c.customer;
@@ -320,13 +320,30 @@ CREATE VIEW fin.join_after_fan AS SELECT o.id FROM fin.orders o JOIN (SELECT g.c
 query TTTTT
 SELECT view, left_column, right_column, left_unique, right_unique FROM glossql_views_joins('fin') WHERE view LIKE 'join_%' ORDER BY ALL;
 ----
-join_after_fan	fin.customers.customer	fin.orders.customer	false	false
-join_cte	fin.customers.customer	fin.orders.customer	true	false
-join_distinct	fin.customers.customer	fin.orders.customer	true	false
-join_grouped	fin.customers.customer	fin.orders.customer	true	false
-join_latest	fin.customers.customer	fin.orders.customer	true	false
-join_latest_where	fin.customers.customer	fin.orders.customer	true	false
-join_wider_key	fin.customers.customer	fin.orders.customer	false	false
+join_after_fan	fin.customers.customer	fin.orders.customer	true	false
+join_after_fan	fin.orders.customer	fin.customers.customer	false	false
+join_cte	fin.orders.customer	fin.customers.customer	false	true
+join_distinct	fin.orders.customer	fin.customers.customer	false	true
+join_grouped	fin.orders.customer	fin.customers.customer	false	true
+join_latest	fin.orders.customer	fin.customers.customer	false	true
+join_latest_where	fin.orders.customer	fin.customers.customer	false	true
+join_wider_key	fin.orders.customer	fin.customers.customer	false	false
+
+# --- join_number: the pairs of one join, its key, share a number; two joins of the same two tables are two keys
+
+statement ok
+CREATE VIEW fin.join_pair AS SELECT o.id FROM fin.orders o JOIN fin.customers c ON c.customer = o.customer AND c.segment = o.customer;
+
+statement ok
+CREATE VIEW fin.join_twice AS SELECT o.id FROM fin.orders o JOIN fin.customers c ON c.customer = o.customer JOIN fin.customers d ON d.segment = o.customer;
+
+query TTTI
+SELECT view, left_column, right_column, join_number FROM glossql_views_joins('fin') WHERE view IN ('join_pair', 'join_twice') ORDER BY ALL;
+----
+join_pair	fin.orders.customer	fin.customers.customer	1
+join_pair	fin.orders.customer	fin.customers.segment	1
+join_twice	fin.orders.customer	fin.customers.customer	1
+join_twice	fin.orders.customer	fin.customers.segment	2
 
 # --- shape: how a column was computed, where that decides how it adds up. A division by an aggregate is a ratio, an average an average, a distinct count distinct; a sum over one keeps it, a division by a constant has none
 
@@ -478,6 +495,25 @@ SELECT "column", derivation, alias, condition, complete FROM glossql_views_mappi
 brand	coalesce(fin.hierarchy[pl].global_brand:VARCHAR, fin.hierarchy[dk].global_brand:VARCHAR)	dk	=(fin.hierarchy[dk].market:VARCHAR, 'DK')	true
 brand	coalesce(fin.hierarchy[pl].global_brand:VARCHAR, fin.hierarchy[dk].global_brand:VARCHAR)	pl	=(fin.hierarchy[pl].market:VARCHAR, 'PL')	true
 brand_dk	fin.hierarchy[dk].global_brand:VARCHAR	dk	=(fin.hierarchy[dk].market:VARCHAR, 'DK')	true
+
+# the lookup of each read: the equality of the join that joins it to the rows before it, the code of the
+# driving table it is looked up by on the left; the driving table is looked up by nothing
+query TTT
+SELECT DISTINCT table_name, alias, lookup FROM glossql_views_mapping('fin') WHERE view = 'part' ORDER BY ALL;
+----
+fin.hierarchy	dk	=(fin.stock_dk.matnr:VARCHAR, fin.hierarchy[dk].local_code:VARCHAR)
+fin.hierarchy	pl	=(fin.stock_dk.matnr:VARCHAR, fin.hierarchy[pl].local_code:VARCHAR)
+fin.stock_dk	NULL	NULL
+
+# a right join looks its left input up, the table that drives it on the left
+statement ok
+CREATE VIEW fin.part_right AS SELECT h.global_brand, s.qty FROM fin.hierarchy h RIGHT JOIN fin.stock_dk s ON h.local_code = s.matnr;
+
+query TT
+SELECT DISTINCT table_name, lookup FROM glossql_views_mapping('fin') WHERE view = 'part_right' ORDER BY ALL;
+----
+fin.hierarchy	=(fin.stock_dk.matnr:VARCHAR, fin.hierarchy.local_code:VARCHAR)
+fin.stock_dk	NULL
 
 # the lineage a load and a gloss read is unchanged by the aliases
 query T

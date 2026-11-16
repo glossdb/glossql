@@ -299,7 +299,8 @@ LEFT JOIN main.measurements m
 -- the annotation that defines it (sql, or stopped), its columns with what
 -- each is computed from (name, position, derivation, shape), what it
 -- reads of each loaded table (table_name, columns) and its joins
--- (left_column, right_column, left_unique, right_unique), each loaded table
+-- (left_column, right_column, left_unique, right_unique, join_number: the
+-- pairs of one join share its number), each loaded table
 -- with the source its recipe loads it from (source; NULL for a view it
 -- reads or a table loaded without a recipe), and per read of a table, by
 -- the branch of the union it is read in and its alias, what the view's
@@ -331,7 +332,8 @@ SELECT dataset_name || '.' || a.name AS view,
        (SELECT list({'table_name': s.table_name, 'columns': s.columns, 'source': s.source} ORDER BY s.table_name)
         FROM sc s WHERE s.view = a.name) AS reads,
        (SELECT list({'left_column': j.left_column, 'right_column': j.right_column,
-                     'left_unique': j.left_unique, 'right_unique': j.right_unique} ORDER BY j.left_column, j.right_column)
+                     'left_unique': j.left_unique, 'right_unique': j.right_unique, 'join_number': j.join_number}
+                    ORDER BY j.join_number, j.left_column, j.right_column)
         FROM jo j WHERE j.view = a.name) AS joins,
        (SELECT list({'table_name': m.table_name, 'branch': m.branch, 'alias': m.alias, 'condition': m.condition}
                     ORDER BY m.table_name, m.branch, m.alias)

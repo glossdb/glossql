@@ -130,8 +130,18 @@ struct QueryLineage {
 	//! every lake table the plan scans, as schema.table, joins and filters included
 	std::set<std::pair<string, vector<string>>> scans;
 	//! the pairs of scanned columns the plan's joins and filters equate, as
-	//! schema.table.column, and per side whether the plan joins it one row per value
-	std::map<std::pair<string, string>, std::pair<bool, bool>> joins;
+	//! schema.table.column, the left side as the predicate writes it (a join's
+	//! left input), per side whether the plan joins it one row per value, and
+	//! the join or filter that equates them, numbered in the plan: the pairs of
+	//! one number are that join's key
+	struct JoinPair {
+		string left;
+		string right;
+		bool left_unique;
+		bool right_unique;
+		idx_t join;
+	};
+	vector<JoinPair> joins;
 	//! the mapping of a view: one row per output column, branch of its union and
 	//! scanned column, filled where the view's own SQL is given
 	struct Mapping {
@@ -145,6 +155,9 @@ struct QueryLineage {
 		string alias;
 		//! the conjuncts of the view's joins and filters that read this scan alone
 		string condition;
+		//! the equalities of the join that looks this scan up: its columns against
+		//! the columns of the side it is joined to
+		string lookup;
 		vector<string> literals;
 		bool complete;
 	};
