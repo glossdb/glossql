@@ -27,7 +27,7 @@ that stores the result.
 | Measurement | On | Table macro | Stores |
 |---|---|---|---|
 | `detect_relationships()` | dataset | `relationship_candidates(dataset)` | `candidates`: `from`, `to`, `cardinality`, `overlap`, `matched`, `orphans`, `to_unique`, `to_temporal`, `key_columns`; `summary`: the count, the top 16, a note |
-| `relationship_coherence()` | relationship | `relationship_checks(dataset or relationship)` | `relationship`, `filled`, `orphans`, `orphan_rate`, and `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
+| `relationship_coherence()` | relationship | `relationship_checks(dataset or relationship)` | `relationship`, `filled`, `orphans`, `orphan_rate`, `orphan_keys` (the three orphan keys with the most rows, each with its `rows`), `orphan_distinct` (how many orphan keys), and `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
 | `detect_hierarchies()` | table | `hierarchy_candidates(table)` | `candidates`: `from`, `to`, `g3`, `lambda`, `kind` (`edge` or `alias`); `rows`: the rows read |
 | `detect_derivations()` | table | `derivation_candidates(table)` | `candidates`: `target`, `form` (`product` or `sum`), `operands`, `support`, `violations`, `match_rate`; `truncated`; `rows`: the rows read |
 | `detect_definition_collisions()` | dataset | `definition_collisions(dataset)`, after `SET VARIABLE glossql_subject = '<dataset>'`; it compares the definition that defines each view now | `definitions`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |

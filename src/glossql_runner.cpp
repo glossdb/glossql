@@ -1262,7 +1262,9 @@ private:
 			Add("read", "lineage", "relates", "the dataset", 1, via);
 			return;
 		}
-		if (table && main && (fn == "subject_column" || fn == "dataset_cells" || fn == "glossql_relationship_checks")) {
+		if (table && main &&
+		    (fn == "subject_column" || fn == "dataset_cells" || fn == "glossql_relationship_checks" ||
+		     fn == "branch_rows")) {
 			Add("data", fn, texts(), "", -1, via);
 			return;
 		}
@@ -1667,15 +1669,15 @@ struct Read {
 	}
 };
 
-//! The data a body reads, as a place: subject_column() and the relationship checks the subject's
-//! own; dataset_cells() its dataset's tables, its views ('views'), both ('all', true), the tables
+//! The data a body reads, as a place: subject_column(), the relationship checks and branch_rows()
+//! the subject's own; dataset_cells() its dataset's tables, its views ('views'), both ('all', true), the tables
 //! and views of a place, or the one table it names; a dataset it names is the subject's, since one
 //! that is not is refused at the declaration. A table the body names in FROM is that table: one
 //! named without its dataset is taken in the subject's, by the name the lake spells it with, or as
 //! written where the lake holds none yet, whose version is `gone` until it is loaded
 static Read DataRead(ClientContext &context, const std::set<string> &places, const string &read, const string &args,
                      const string &dataset) {
-	if (read == "subject_column" || read == "glossql_relationship_checks") {
+	if (read == "subject_column" || read == "glossql_relationship_checks" || read == "branch_rows") {
 		return {"data", "data", "itself"};
 	}
 	if (read == "dataset_cells") {
@@ -2253,7 +2255,9 @@ static TableFunctionSet DatasetCellsFunctions() {
 // of a table back into rows per edge. Per edge: the filled child rows (every
 // key column present), the orphans (child keys no parent row carries; inside one
 // table, child keys that reach more than one parent key on the same rows),
-// and for an edge across two tables the temporal pairs: the first three date
+// for an edge across two tables the orphan keys (the three with the most rows,
+// each with its rows; a pair of key columns as '(a, b)') and how many there
+// are, and the temporal pairs: the first three date
 // columns of each side, joined on the edge, how often the child's date
 // precedes the parent's. Keys compare as text, as the cells did
 //===--------------------------------------------------------------------===//
@@ -2313,8 +2317,14 @@ static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const stri
 	             inner.Table(dataset, child.table) + " WHERE " + present(child) + "), p AS (SELECT " +
 	             keys(parent, "k1", "k2") + dates(parent, "d") + " FROM " + inner.Table(dataset, parent.table) +
 	             " WHERE " + present(parent) + ")";
-	string join_orphans = "(SELECT count(*) FROM c WHERE NOT EXISTS (SELECT 1 FROM p WHERE p.k1 = c.k1 AND p.k2 IS NOT "
-	                      "DISTINCT FROM c.k2))";
+	// the child keys no parent row carries, each with its rows: the orphans of an edge across tables,
+	// served as the three with the most rows and the count of keys
+	sql +=
+	    ", o AS (SELECT CASE WHEN k2 IS NULL THEN k1 ELSE '(' || k1 || ', ' || k2 || ')' END AS k, count(*) AS n "
+	    "FROM c WHERE NOT EXISTS (SELECT 1 FROM p WHERE p.k1 = c.k1 AND p.k2 IS NOT DISTINCT FROM c.k2) GROUP BY ALL)";
+	string join_orphans = "(SELECT coalesce(sum(n), 0)::BIGINT FROM o)";
+	string orphan_keys = "(SELECT list({'key': k, 'rows': n} ORDER BY n DESC, k)[1:3] FROM o)";
+	string orphan_distinct = "(SELECT count(*) FROM o)";
 	string orphans = join_orphans;
 	if (child.table == parent.table) {
 		// a nest: the parent key columns do not key the table, and a child key is orphaned by
@@ -2326,8 +2336,11 @@ static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const stri
 		          "same_rows "
 		          "GROUP BY k1, k2)) ELSE " +
 		          join_orphans + " END";
+		orphan_keys = "NULL::STRUCT(key VARCHAR, \"rows\" BIGINT)[]";
+		orphan_distinct = "NULL::BIGINT";
 	}
-	sql += ", e AS (SELECT (SELECT count(*) FROM c) AS filled, " + orphans + " AS orphans)";
+	sql += ", e AS (SELECT (SELECT count(*) FROM c) AS filled, " + orphans + " AS orphans, " + orphan_keys +
+	       " AS orphan_keys, " + orphan_distinct + " AS orphan_distinct)";
 	const string no_pairs = "SELECT NULL::BIGINT AS pair_seq, NULL::VARCHAR AS child_column, NULL::VARCHAR AS "
 	                        "parent_column, NULL::BIGINT AS joined, NULL::BIGINT AS precedes WHERE false";
 	if (child.table == parent.table || child.dates.empty() || parent.dates.empty()) {
@@ -2354,8 +2367,8 @@ static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const stri
 		       " FROM c JOIN p ON p.k1 = c.k1 AND p.k2 IS NOT DISTINCT FROM c.k2), t AS (" + rows + ")";
 	}
 	sql += " SELECT " + to_string(seq) + "::BIGINT AS seq, " + QuoteText(relationship) +
-	       " AS relationship, e.filled, e.orphans, t.pair_seq, t.child_column, t.parent_column, t.joined, t.precedes "
-	       "FROM e LEFT JOIN (SELECT * FROM t WHERE joined > 0) t ON true)";
+	       " AS relationship, e.filled, e.orphans, e.orphan_keys, e.orphan_distinct, t.pair_seq, t.child_column, "
+	       "t.parent_column, t.joined, t.precedes FROM e LEFT JOIN (SELECT * FROM t WHERE joined > 0) t ON true)";
 	return sql;
 }
 
@@ -2418,13 +2431,15 @@ static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context
 		return make_uniq<SubqueryRef>(
 		    ParseSelect("SELECT false AS applicable, 'no declared relationships' AS reason, NULL::BIGINT AS seq,"
 			            " NULL::VARCHAR AS relationship, NULL::BIGINT AS filled, NULL::BIGINT AS orphans,"
-			            " NULL::DOUBLE AS orphan_rate, NULL::BIGINT AS pair_seq, NULL::VARCHAR AS child_column,"
+			            " NULL::DOUBLE AS orphan_rate, NULL::STRUCT(key VARCHAR, \"rows\" BIGINT)[] AS orphan_keys,"
+			            " NULL::BIGINT AS orphan_distinct, NULL::BIGINT AS pair_seq, NULL::VARCHAR AS child_column,"
 			            " NULL::VARCHAR AS parent_column, NULL::BIGINT AS joined, NULL::BIGINT AS precedes,"
 			            " NULL::DOUBLE AS precedes_rate"));
 	}
 	string sql =
 	    "SELECT true AS applicable, NULL::VARCHAR AS reason, seq, relationship, filled, orphans, CASE WHEN filled "
-	    "= 0 THEN 0.0 ELSE orphans / filled::DOUBLE END AS orphan_rate, pair_seq, child_column, parent_column, "
+	    "= 0 THEN 0.0 ELSE orphans / filled::DOUBLE END AS orphan_rate, orphan_keys, orphan_distinct, pair_seq, "
+	    "child_column, parent_column, "
 	    "joined, precedes, CASE WHEN joined IS NULL THEN NULL ELSE precedes / joined::DOUBLE END AS "
 	    "precedes_rate FROM (" +
 	    StringUtil::Join(edges, " UNION ALL ") + ") ORDER BY seq, pair_seq";

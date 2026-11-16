@@ -203,7 +203,8 @@ ORDER BY seq;
 -- pivoted every cell of a table back into rows per edge. Per edge: filled
 -- rows, the orphans (child values no parent row carries; inside one table,
 -- child values that reach more than one parent), and for an edge across two
--- tables the temporal pairs: the first three date columns of each side,
+-- tables the orphan keys (the three with the most rows, each with its rows),
+-- how many orphan keys there are, and the temporal pairs: the first three date columns of each side,
 -- joined on the edge, how often the child's date precedes the parent's. Key columns
 -- are one column or a pair. No declared relationships is one row that says
 -- so.
@@ -692,6 +693,9 @@ DECLARE ASPECT relationship_coherence WITH $${
   "properties": {"applicable": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
                  "relationship": {"type": ["string", "null"]}, "filled": {"type": ["integer", "null"]},
                  "orphans": {"type": ["integer", "null"]}, "orphan_rate": {"type": ["number", "null"]},
+                 "orphan_keys": {"type": ["array", "null"], "items": {"type": "object",
+                   "properties": {"key": {"type": "string"}, "rows": {"type": "integer"}}}},
+                 "orphan_distinct": {"type": ["integer", "null"]},
                  "temporal": {"type": ["array", "null"], "items": {"type": "object",
                    "properties": {"child_column": {"type": "string"}, "parent_column": {"type": "string"},
                                   "joined": {"type": "integer"}, "precedes": {"type": "integer"},
@@ -702,12 +706,12 @@ DECLARE ASPECT relationship_coherence WITH $${
 -- SELECT relationship_coherence() FROM orders.customer_id -> customers.customer_id
 DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$
   WITH r AS (
-    SELECT applicable, reason, relationship, filled, orphans, orphan_rate,
+    SELECT applicable, reason, relationship, filled, orphans, orphan_rate, orphan_keys, orphan_distinct,
            coalesce(list({'child_column': child_column, 'parent_column': parent_column, 'joined': joined,
                           'precedes': precedes, 'precedes_rate': precedes_rate} ORDER BY pair_seq)
                     FILTER (WHERE child_column IS NOT NULL), []) AS temporal
     FROM relationship_checks($subject)
-    GROUP BY applicable, reason, relationship, filled, orphans, orphan_rate),
+    GROUP BY applicable, reason, relationship, filled, orphans, orphan_rate, orphan_keys, orphan_distinct),
   -- a dataset's subject would read every relationship as one: the check is one relationship's
   one AS (SELECT contains($subject, ' -> ') OR contains($subject, ' <-> ') AS pair),
   c AS (SELECT bool_and(r.applicable) AND any_value(one.pair) AS applicable,
@@ -715,11 +719,13 @@ DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$
                     THEN 'the check is one relationship''s: SELECT relationship_coherence() FROM <child.key> -> <parent.key>'
                     ELSE min(r.reason) END AS reason,
                any_value(r.relationship) AS relationship, any_value(r.filled) AS filled, any_value(r.orphans) AS orphans,
-               any_value(r.orphan_rate) AS orphan_rate, any_value(r.temporal) AS temporal
+               any_value(r.orphan_rate) AS orphan_rate, any_value(r.orphan_keys) AS orphan_keys,
+               any_value(r.orphan_distinct) AS orphan_distinct, any_value(r.temporal) AS temporal
         FROM r, one)
   SELECT applicable, reason,
          CASE WHEN applicable THEN relationship END AS relationship, CASE WHEN applicable THEN filled END AS filled,
          CASE WHEN applicable THEN orphans END AS orphans, CASE WHEN applicable THEN orphan_rate END AS orphan_rate,
+         CASE WHEN applicable THEN orphan_keys END AS orphan_keys, CASE WHEN applicable THEN orphan_distinct END AS orphan_distinct,
          CASE WHEN applicable THEN temporal END AS temporal
   FROM c
 $$ RETURNS relationship_coherence;

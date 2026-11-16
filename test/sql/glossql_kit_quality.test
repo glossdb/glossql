@@ -206,6 +206,13 @@ FROM main.measurements WHERE function = 'relationship_coherence' ORDER BY subjec
 fin.payments.city -> fin.payments.country	true	10	NULL
 fin.payments.invoice_id -> fin.invoices.invoice_id	true	2	3
 
+# the orphan keys of an edge across two tables, each with its rows, and how many there are
+query TT
+SELECT json_extract_string(value, '$.orphan_keys[*].key'), json_extract_string(value, '$.orphan_distinct')
+FROM main.measurements WHERE function = 'relationship_coherence' AND subject = 'fin.payments.invoice_id -> fin.invoices.invoice_id';
+----
+[100, 99]	2
+
 # its inputs: the data of the relationship, its two tables, and its own declarations
 query T
 SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements m

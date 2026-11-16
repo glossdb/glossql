@@ -127,6 +127,37 @@ SELECT min(v), max(v) FROM subject_column('shop.orders.amount');
 with the column `v`. Takes `dataset.table.column`. A measurement's body
 reads its asset with `subject_column($subject)`.
 
+## branch_rows (preview)
+
+```sql
+FROM branch_rows('shop.onhand');
+```
+
+`branch_rows(view VARCHAR)` → `(branch, kind, rid, step, what, text,
+columns, "values")`. Each branch of a view's `UNION ALL` (1 where it
+has none), read again as its own steps leave the rows. A measurement's
+body reads its view with `branch_rows($subject)`.
+
+The driving table of a branch is the table whose rows it keeps: the
+first table of its `FROM`, down the left side of each join (the right
+side of a `RIGHT JOIN`), into a subquery or a CTE read there.
+
+| `kind` | One row per | Columns |
+|---|---|---|
+| `branch` | branch | `what` the driving table (`dataset.table`); `text` why its steps are not told, NULL where they are; `columns` the view's columns the branch computes from the driving table alone |
+| `step` | step that can leave a row out | `step` its number, in the order the SQL applies them; `what` `join` or `condition`; `text` the join or condition as written; `columns` the `dataset.table.column` pairs a join equates |
+| `read` | row of the driving table and partner each join finds | `rid` the driving row (1 to n); `step` the first step that leaves it out, NULL where it reaches the output; `values` the view's columns as text |
+| `served` | row the branch serves | `values` |
+
+An inner join is read as a left join that marks what it matched; a
+`WHERE` condition, and a `QUALIFY` with no step before it, as a test.
+A left or right join leaves no row out. A row left out by a step finds
+no partner in a later join, so it is counted once. A branch with a
+`GROUP BY`, another kind of join, a window after a step, or a `FROM`
+the read cannot follow has its driving table's rows as `read`, with no
+steps, and `text` says why. A `DISTINCT` or a `LIMIT` on the branch is
+left out of the read and named in `text`.
+
 ## json_schema_check
 
 ```sql
