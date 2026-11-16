@@ -257,10 +257,10 @@ FROM query(CASE where_
   WHEN 'the dataset' THEN 'SELECT asset FROM main.place_dataset(split_part(main.read_subject(), ''.'', 1))'
   WHEN 'its dataset' THEN 'SELECT split_part(main.read_subject(), ''.'', 1) AS asset'
   WHEN 'the dataset''s metrics' THEN 'SELECT asset FROM main.place_metrics(split_part(main.read_subject(), ''.'', 1))'
-  ELSE 'SELECT asset FROM glossql_kind_places(split_part(main.read_subject(), ''.'', 1)) WHERE "where" = '''
-       || replace(where_, '''', '''''') || ''' AND subject = main.read_subject() UNION ALL SELECT error(''not_a_place: '
-       || replace(replace(where_, '''', ''''''), '''', '''''') || ' names no place; place_list() lists them'')::VARCHAR WHERE '''
-       || replace(where_, '''', '''''') || ''' NOT IN (SELECT "where" FROM glossql_kind_places(NULL) WHERE subject IS NULL)' END);
+  ELSE 'SELECT asset FROM (SELECT *, bool_or(subject IS NULL AND "where" = ''' || replace(where_, '''', '''''')
+       || ''') OVER () AS known FROM glossql_kind_places(split_part(main.read_subject(), ''.'', 1))) WHERE CASE WHEN known THEN "where" = '''
+       || replace(where_, '''', '''''') || ''' AND subject = main.read_subject() ELSE error(''not_a_place: '
+       || replace(replace(where_, '''', ''''''), '''', '''''') || ' names no place; place_list() lists them'') END' END);
 
 -- tables_read(dataset): the relation whose rows each asset's data is,
 -- (asset, asset_kind, table_name): a table or a view itself; a column its
