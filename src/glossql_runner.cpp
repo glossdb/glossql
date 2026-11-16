@@ -3230,11 +3230,29 @@ static bool HeldAlready(ClientContext &context, SQLStatement &statement) {
 		if (!entry) {
 			return;
 		}
-		auto held = entry->GetInfo();
+		auto held = entry->GetInfo()->ToString();
 		auto stated = info.Copy();
-		stated->GetQualifiedNameMutable() = held->GetQualifiedName();
-		stated->on_conflict = held->on_conflict;
-		same = stated->ToString() == held->ToString();
+		stated->GetQualifiedNameMutable() = entry->GetInfo()->GetQualifiedName();
+		stated->on_conflict = entry->GetInfo()->on_conflict;
+		auto text = stated->ToString();
+		if (text == held) {
+			same = true;
+			return;
+		}
+		// the lake stores the entry as text and parses it again when it loads it, and DuckDB's text of a
+		// VALUES list under an alias does not parse back to the same text: compare once more after that
+		// round trip
+		auto options = ParserOptions::Builtin();
+		options.compiled_grammar = CompiledGrammar::DefaultGrammar();
+		Parser parser(options);
+		parser.ParseQuery(text);
+		if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::CREATE_STATEMENT) {
+			return;
+		}
+		auto loaded = std::move(parser.statements[0]->Cast<CreateStatement>().info);
+		loaded->GetQualifiedNameMutable() = stated->GetQualifiedName();
+		loaded->on_conflict = stated->on_conflict;
+		same = loaded->ToString() == held;
 	});
 	return same;
 }

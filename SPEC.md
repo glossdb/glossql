@@ -505,8 +505,9 @@ SELECT outliers() FROM orders.amount;
 ```
 
 Extraction writes one row in the `measurements` relation:
-`(dataset, function, subject, aspect, value, computed_at, error)`,
-and one row per read of the body in the `inputs` relation. Nobody
+`(dataset, function, subject, aspect, value, computed_at, error,
+read_at, changed_at)`, and one row per node the result read in the
+`inputs` relation, `(asset, what)`. Nobody
 declares the inputs: the body is SQL, and what it reads is taken from
 its text when the function is declared, macros followed, and stored
 with the function (`functions.reads`).
@@ -544,43 +545,41 @@ plan plans, the source each table is loaded from):
 | `the dataset's metrics` | the metrics of the subject's dataset and their columns |
 | `the dataset` | the subject's dataset and every asset in it |
 
-An input is one of:
-
-- a read, named as the body wrote it, such as
-  `annotations(role, its columns)`. Its version is a digest of what
-  the read returns for the subject: for annotations, each asset of the
-  place with every actor's annotation of the property and whether it
-  is stale, and the property's declaration and tests; for results,
-  each asset with the function's value and error; for a definition,
-  the view's SQL, columns, reads and joins;
-- data, such as `data(data, itself)`: DuckLake's version of each
-  table the assets read, and of each view among them;
-- `function` and `property`: the function's own declaration and that
-  of the property it fills.
+The lake's snapshot id is the only version. An input is a node: an
+asset and what was read of it, such as `fin.orders.amount`
+`annotation role`, `fin.orders` `data` or `min_max` `declaration`.
+A read records the nodes of each asset of its place and those its
+place's walk passed (a view's definition and those of what it reads,
+a table's relationships, a dataset's assets), so a member added to
+the place later changes a node it read. A node changed at the latest
+snapshot one of its catalog rows begins or ends at; rows are ended,
+never deleted. The nodes, and what each read records, are listed in
+`docs/specification/tables/inputs.md`.
 
 A body that reaches the catalog past the read functions, passes a
 read function a what or a where that is not a constant, or names a
 where that is no place, is refused at its declaration
 (`untracked_read`), naming the read. A table a body names that the
-lake does not hold yet is read by its name, its version `gone` until
-it is loaded. A macro the body calls that comes to read past the read
+lake does not hold yet is read by its name, and changes when it is
+created. A macro the body calls that comes to read past the read
 functions makes the computation fail, stored with the function's
 declaration as its input.
 
-The assets of the place are part of each digest, so a view that reads
-another table, or a relationship declared between a view's tables,
-changes the inputs that name that place. `glossql_outdated()` serves
-each stored result that is out of date with the input that differs:
-`(dataset, function, subject, input, reason)`, the reason `changed`
-or `outdated` (a result it read is out of date).
-
-A stored result is current while each read returns what it returned
-and no result it read is out of date. What counts
-is what the rows hold, not when they were written: an annotation
-changed and changed back leaves the result current, and a result
-computed again with the value it had leaves its readers current. An
-annotation on an asset outside the place, or of a property the body
-did not read, leaves the result current. A column retyped makes its
+A result stores the snapshot it read at (`read_at`, the lake's newest
+snapshot before its body ran) and the snapshot its value and error
+last changed at (`changed_at`). A stored result is current while no
+node it read changed after `read_at` and no result it read is out of
+date. `glossql_outdated()` serves each stored result that is out of
+date with the node: `(dataset, function, subject, asset, what,
+reason)`, the reason `changed` (the node changed after the result
+read it) or `outdated` (a result it read is out of date). An
+annotation changed and changed back is two snapshots: the results
+that read it compute once more. A result computed again with the
+value and error it had keeps its `changed_at`, so what read it stays
+current. A write that would store what the catalog holds writes
+nothing and takes no snapshot. An annotation on an asset outside the
+place, or of a property the body did not read, leaves the result
+current. A column retyped makes its
 annotations stale, and so the results that read them out of date. A
 function declared again, or the property it fills declared again,
 makes its results out of date. A later extraction serves a current
