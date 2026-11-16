@@ -134,29 +134,41 @@ FROM branch_rows('shop.onhand');
 ```
 
 `branch_rows(view VARCHAR)` → `(branch, kind, rid, step, what, text,
-columns, "values")`. Each branch of a view's `UNION ALL` (1 where it
-has none), read again as its own steps leave the rows. A measurement's
-body reads its view with `branch_rows($subject)`.
+columns, "values", dataset, table_name)`. Each branch of a view's
+`UNION ALL` (1 where it has none), read again as its own steps leave the
+rows. The view is the one the caller's transaction holds. A
+measurement's body reads its view with `branch_rows($subject)`.
 
 The driving table of a branch is the table whose rows it keeps: the
 first table of its `FROM`, down the left side of each join (the right
-side of a `RIGHT JOIN`), into a subquery or a CTE read there.
+side of a `RIGHT JOIN`), into a subquery or a CTE read there. A CTE's
+name is taken where it is in scope.
 
 | `kind` | One row per | Columns |
 |---|---|---|
-| `branch` | branch | `what` the driving table (`dataset.table`); `text` why its steps are not told, NULL where they are; `columns` the view's columns the branch computes from the driving table alone |
+| `branch` | branch | `dataset` and `table_name` the driving table; `text` why its steps are not told, NULL where they are; `columns` the view's columns the branch computes from the driving table alone |
 | `step` | step that can leave a row out | `step` its number, in the order the SQL applies them; `what` `join` or `condition`; `text` the join or condition as written; `columns` the `dataset.table.column` pairs a join equates |
 | `read` | row of the driving table and partner each join finds | `rid` the driving row (1 to n); `step` the first step that leaves it out, NULL where it reaches the output; `values` the view's columns as text |
 | `served` | row the branch serves | `values` |
 
 An inner join is read as a left join that marks what it matched; a
 `WHERE` condition, and a `QUALIFY` with no step before it, as a test.
-A left or right join leaves no row out. A row left out by a step finds
-no partner in a later join, so it is counted once. A branch with a
-`GROUP BY`, another kind of join, a window after a step, or a `FROM`
-the read cannot follow has its driving table's rows as `read`, with no
-steps, and `text` says why. A `DISTINCT` or a `LIMIT` on the branch is
-left out of the read and named in `text`.
+A left or right join leaves no row out. Nothing is evaluated on a row a
+step has left out, as the view evaluates nothing there: a later
+condition, a later join's key, an item of the select list. So a cast a
+condition guards fails on no row. On a row left out, a column the
+driving table alone computes is evaluated with `try()`: it reads NULL
+where the value would fail. A row left out finds no partner in a later
+join, so it is counted once. On a branch whose steps are told, the
+rows read less those a step leaves out are the rows it serves.
+
+A branch that reads no table (a constant row) reads nothing and serves
+its rows. A branch with a `GROUP BY` or an aggregate, another kind of
+join, a window after a step, a `FROM` the read cannot follow, a table
+the lake does not hold, or a column whose name begins with `__gloss_`
+has its driving table's rows as `read`, with no steps, and `text` says
+why. A `DISTINCT` or a `LIMIT` on the branch is left out of the read and
+named in `text`; one on the whole union leaves every branch not told.
 
 ## json_schema_check
 

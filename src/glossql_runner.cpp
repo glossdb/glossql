@@ -2256,8 +2256,8 @@ static TableFunctionSet DatasetCellsFunctions() {
 // key column present), the orphans (child keys no parent row carries; inside one
 // table, child keys that reach more than one parent key on the same rows),
 // for an edge across two tables the orphan keys (the three with the most rows,
-// each with its rows; a pair of key columns as '(a, b)') and how many there
-// are, and the temporal pairs: the first three date
+// each with its rows; a pair of key columns as a JSON list; each value cut to
+// its first 100 characters) and how many there are, and the temporal pairs: the first three date
 // columns of each side, joined on the edge, how often the child's date
 // precedes the parent's. Keys compare as text, as the cells did
 //===--------------------------------------------------------------------===//
@@ -2294,6 +2294,9 @@ static EdgeSide ParseSide(ClientContext &context, const string &dataset, const s
 	return result;
 }
 
+//! How many characters of an orphan key's value the examples keep; the counts are of the whole values
+constexpr idx_t ORPHAN_KEY_LENGTH = 100;
+
 //! One edge's rows: (seq, relationship, filled, orphans, pair_seq, child_column, parent_column, joined, precedes)
 static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const string &relationship, const EdgeSide &child,
                       const EdgeSide &parent) {
@@ -2318,12 +2321,16 @@ static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const stri
 	             keys(parent, "k1", "k2") + dates(parent, "d") + " FROM " + inner.Table(dataset, parent.table) +
 	             " WHERE " + present(parent) + ")";
 	// the child keys no parent row carries, each with its rows: the orphans of an edge across tables,
-	// served as the three with the most rows and the count of keys
-	sql +=
-	    ", o AS (SELECT CASE WHEN k2 IS NULL THEN k1 ELSE '(' || k1 || ', ' || k2 || ')' END AS k, count(*) AS n "
-	    "FROM c WHERE NOT EXISTS (SELECT 1 FROM p WHERE p.k1 = c.k1 AND p.k2 IS NOT DISTINCT FROM c.k2) GROUP BY ALL)";
+	// grouped by the key columns and served as the three with the most rows, a pair as a JSON list and
+	// each value cut to its first ORPHAN_KEY_LENGTH characters, and the count of keys
+	sql += ", o AS (SELECT k1, k2, count(*) AS n FROM c WHERE NOT EXISTS (SELECT 1 FROM p WHERE p.k1 = c.k1 AND "
+	       "p.k2 IS NOT DISTINCT FROM c.k2) GROUP BY k1, k2)";
+	auto cut = [](const string &column) {
+		return "left(" + column + ", " + to_string(ORPHAN_KEY_LENGTH) + ")";
+	};
+	string shown = two ? "to_json([" + cut("k1") + ", " + cut("k2") + "])::VARCHAR" : cut("k1");
 	string join_orphans = "(SELECT coalesce(sum(n), 0)::BIGINT FROM o)";
-	string orphan_keys = "(SELECT list({'key': k, 'rows': n} ORDER BY n DESC, k)[1:3] FROM o)";
+	string orphan_keys = "(SELECT list({'key': " + shown + ", 'rows': n} ORDER BY n DESC, k1, k2)[1:3] FROM o)";
 	string orphan_distinct = "(SELECT count(*) FROM o)";
 	string orphans = join_orphans;
 	if (child.table == parent.table) {

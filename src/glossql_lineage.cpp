@@ -32,6 +32,11 @@
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/tableref/table_function_ref.hpp"
+#include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/result_modifier.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/main/connection.hpp"
@@ -1748,9 +1753,9 @@ static void ViewsMappingExec(ClientContext &context, TableFunctionInput &data, D
 // branch_rows(view): each branch of a view's union (1 where it has none), the
 // rows of the lake table that drives it as the branch's own steps leave them,
 // and the rows the branch serves, one relation: branch, kind, rid, step, what,
-// text, columns, values.
-//   branch  one row: what is the driving table (dataset.table), text why the
-//           steps are not told (empty where they are), columns the view's
+// text, columns, values, dataset, table_name.
+//   branch  one row: dataset and table_name the driving table, text why the
+//           steps are not told (NULL where they are), columns the view's
 //           columns the branch computes from the driving table alone
 //   step    one row per step that can leave a row out, numbered in the order
 //           the SQL applies them (an inner query's first, then the joins from
@@ -1764,13 +1769,20 @@ static void ViewsMappingExec(ClientContext &context, TableFunctionInput &data, D
 //   served  one row per row the branch serves, its values
 // The driving table is the one whose rows the branch keeps: the first table of
 // its FROM, down a join's left side (a RIGHT JOIN's right side), into a
-// subquery or a CTE read there. The branch is read again with each inner join
-// made a LEFT JOIN that marks what it matched, and each condition (WHERE, and
-// QUALIFY where nothing comes before it) as a test; a LEFT or RIGHT join leaves
-// no row out. A branch that groups, reads a join of another kind, a window
-// after a step, or a FROM it cannot follow is read as its driving table's rows
-// alone, its steps not told; so is one whose DISTINCT or LIMIT the read leaves
-// out. Never cached: it reads the data
+// subquery or a CTE read there; a CTE's name is taken where it is in scope. The
+// branch is read again with each inner join made a LEFT JOIN that marks what it
+// matched, and each condition (WHERE, and QUALIFY where nothing comes before
+// it) as a test; a LEFT or RIGHT join leaves no row out. Nothing is evaluated
+// on a row a step before has left out, as the view evaluates nothing there: a
+// later condition, the side of a later join's comparison that reads the rows
+// joined so far, and an item of the select list. A branch that reads no table
+// (a constant row) reads nothing and serves its rows. A branch that groups,
+// reads a join of another kind, a window after a step, a FROM the read cannot
+// follow, a table the lake does not hold, or a column named as the read's
+// helpers is read as its driving table's rows alone, its steps not told; so is
+// one whose DISTINCT or LIMIT the read leaves out, and every branch of a union
+// with a DISTINCT or a LIMIT. The view is the one the caller's transaction
+// holds. Never cached: it reads the data
 //===--------------------------------------------------------------------===//
 
 namespace {
@@ -1785,7 +1797,8 @@ struct BranchStep {
 //! One query of a branch read again: the SQL, and what it serves from the driving table alone
 struct BranchLevel {
 	string sql;
-	//! dataset.table, where the query serves one lake table's rows and columns as they are
+	//! dataset and table, where the query serves one lake table's rows and columns as they are
+	string dataset;
 	string table;
 	//! the output names computed from the driving table alone, lowercase; all where every one is
 	std::set<string> driving;
@@ -1797,12 +1810,13 @@ struct BranchLevel {
 };
 
 struct Branching {
+	ClientContext *context = nullptr;
 	string lake;
 	string dataset;
-	//! every CTE the view's SQL names, by lowercase name
-	std::map<string, const QueryNode *> ctes;
 	vector<BranchStep> steps;
-	string driving;
+	//! the driving table, its dataset and its name apart
+	string driving_dataset;
+	string driving_table;
 	string untold;
 	bool failed = false;
 
@@ -1823,7 +1837,19 @@ struct Branching {
 		auto plain = StringUtil::Replace(text, SQLIdentifier(Identifier(lake)) + string("."), "");
 		return StringUtil::Replace(plain, QuoteName(lake) + ".", "");
 	}
+	//! A catalog entry of the type, or nothing
+	optional_ptr<CatalogEntry> Lookup(CatalogType type, const QualifiedName &name) const {
+		try {
+			return Catalog::GetEntry(*context, EntryLookupInfo(type, name), OnEntryNotFound::RETURN_NULL);
+		} catch (std::exception &) {
+			return nullptr;
+		}
+	}
 };
+
+//! A helper column the read adds, by a name a column of the view's tables can also carry: the read
+//! refuses a table or a view that carries one
+constexpr const char *HELPER_PREFIX = "__gloss_";
 
 } // namespace
 
@@ -1831,80 +1857,96 @@ static string Lowered(const Identifier &id) {
 	return StringUtil::Lower(id.GetIdentifierName());
 }
 
-//! Every CTE a query defines, at any depth
-static void CollectCtes(const QueryNode &node, std::map<string, const QueryNode *> &into);
-
-static void CollectCtes(const TableRef &ref, std::map<string, const QueryNode *> &into) {
-	if (ref.type == TableReferenceType::JOIN) {
-		CollectCtes(*ref.Cast<JoinRef>().left, into);
-		CollectCtes(*ref.Cast<JoinRef>().right, into);
-	} else if (ref.type == TableReferenceType::SUBQUERY) {
-		CollectCtes(*ref.Cast<SubqueryRef>().subquery->node, into);
-	}
-}
-
-static void CollectCtes(const QueryNode &node, std::map<string, const QueryNode *> &into) {
+//! The scope a query node's CTEs open: the scope around it and each CTE it defines
+static CteScope Within(const QueryNode &node, CteScope scope) {
 	for (auto &cte : node.cte_map.map) {
-		into[Lowered(cte.first)] = cte.second->query_node.get();
-		CollectCtes(*cte.second->query_node, into);
+		scope[Lowered(cte.first)] = cte.second->query_node.get();
 	}
-	if (node.type == QueryNodeType::SELECT_NODE && node.Cast<SelectNode>().from_table) {
-		CollectCtes(*node.Cast<SelectNode>().from_table, into);
-	} else if (node.type == QueryNodeType::SET_OPERATION_NODE) {
-		for (auto &child : node.Cast<SetOperationNode>().children) {
-			CollectCtes(*child, into);
-		}
-	}
+	return scope;
 }
 
-//! Names every lake table a query reads with the lake and the dataset, a CTE's name left as it is
-static void Qualify(QueryNode &node, const Branching &b);
+//! Names every lake table a query reads with the lake and the dataset, a CTE's name, where one is
+//! in scope at that place, left as it is
+static void Qualify(QueryNode &node, const CteScope &outer, const Branching &b);
 
-static void Qualify(unique_ptr<ParsedExpression> &expr, const Branching &b) {
+static void Qualify(unique_ptr<ParsedExpression> &expr, const CteScope &scope, const Branching &b) {
 	if (expr->GetExpressionClass() == ExpressionClass::SUBQUERY) {
-		Qualify(*expr->Cast<SubqueryExpression>().SubqueryMutable()->node, b);
+		Qualify(*expr->Cast<SubqueryExpression>().SubqueryMutable()->node, scope, b);
 	}
-	ParsedExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<ParsedExpression> &child) { Qualify(child, b); });
+	ParsedExpressionIterator::EnumerateChildren(*expr,
+	                                            [&](unique_ptr<ParsedExpression> &child) { Qualify(child, scope, b); });
 }
 
-static void Qualify(QueryNode &node, const Branching &b) {
+static void Qualify(TableRef &ref, const CteScope &scope, const Branching &b) {
+	switch (ref.type) {
+	case TableReferenceType::BASE_TABLE: {
+		auto &base = ref.Cast<BaseTableRef>();
+		auto &name = base.GetQualifiedName();
+		if (name.Catalog().empty() && (!name.Schema().empty() || !scope.count(Lowered(name.Name())))) {
+			auto schema = name.Schema().empty() ? Identifier(b.dataset) : name.Schema();
+			base.SetQualifiedName(Identifier(b.lake), schema, name.Name());
+		}
+		break;
+	}
+	case TableReferenceType::JOIN: {
+		auto &join = ref.Cast<JoinRef>();
+		Qualify(*join.left, scope, b);
+		Qualify(*join.right, scope, b);
+		if (join.condition) {
+			Qualify(join.condition, scope, b);
+		}
+		break;
+	}
+	case TableReferenceType::SUBQUERY:
+		Qualify(*ref.Cast<SubqueryRef>().subquery->node, scope, b);
+		break;
+	case TableReferenceType::TABLE_FUNCTION:
+		Qualify(ref.Cast<TableFunctionRef>().function, scope, b);
+		break;
+	default:
+		break;
+	}
+}
+
+static void Qualify(QueryNode &node, const CteScope &outer, const Branching &b) {
+	auto scope = Within(node, outer);
 	for (auto &cte : node.cte_map.map) {
-		Qualify(*cte.second->query_node, b);
+		Qualify(*cte.second->query_node, scope, b);
 	}
 	if (node.type == QueryNodeType::SET_OPERATION_NODE) {
 		for (auto &child : node.Cast<SetOperationNode>().children) {
-			Qualify(*child, b);
+			Qualify(*child, scope, b);
 		}
 		return;
 	}
-	ParsedExpressionIterator::EnumerateQueryNodeChildren(
-	    node, [&](unique_ptr<ParsedExpression> &child) { Qualify(child, b); },
-	    [&](TableRef &ref) {
-		    if (ref.type == TableReferenceType::SUBQUERY) {
-			    for (auto &cte : ref.Cast<SubqueryRef>().subquery->node->cte_map.map) {
-				    Qualify(*cte.second->query_node, b);
-			    }
-		    }
-		    if (ref.type != TableReferenceType::BASE_TABLE) {
-			    return;
-		    }
-		    auto &base = ref.Cast<BaseTableRef>();
-		    auto &name = base.GetQualifiedName();
-		    if (name.Catalog().empty() && (!name.Schema().empty() || !b.ctes.count(Lowered(name.Name())))) {
-			    auto schema = name.Schema().empty() ? Identifier(b.dataset) : name.Schema();
-			    base.SetQualifiedName(Identifier(b.lake), schema, name.Name());
-		    }
-	    });
+	if (node.type != QueryNodeType::SELECT_NODE) {
+		return;
+	}
+	auto &select = node.Cast<SelectNode>();
+	for (auto &item : select.select_list) {
+		Qualify(item, scope, b);
+	}
+	for (auto &group : select.groups.group_expressions) {
+		Qualify(group, scope, b);
+	}
+	for (auto expr : {&select.where_clause, &select.having, &select.qualify}) {
+		if (*expr) {
+			Qualify(*expr, scope, b);
+		}
+	}
+	if (select.from_table) {
+		Qualify(*select.from_table, scope, b);
+	}
 }
 
-//! A CTE the reference names, or nothing
-static const QueryNode *CteOf(const TableRef &ref, const Branching &b) {
+//! A CTE the reference names, in the scope where it is read, or nothing
+static const QueryNode *CteOf(const TableRef &ref, const CteScope &scope) {
 	if (ref.type != TableReferenceType::BASE_TABLE) {
 		return nullptr;
 	}
 	auto &name = ref.Cast<BaseTableRef>().GetQualifiedName();
-	auto entry = b.ctes.find(Lowered(name.Name()));
-	return name.Schema().empty() && entry != b.ctes.end() ? entry->second : nullptr;
+	auto entry = scope.find(Lowered(name.Name()));
+	return name.Schema().empty() && entry != scope.end() ? entry->second : nullptr;
 }
 
 //! The name a FROM item is read by: its alias, else the table's or the CTE's
@@ -1934,8 +1976,14 @@ static const TableRef *PassThrough(const SelectNode &select) {
 	if (select.select_list.size() != 1 || select.select_list[0]->GetExpressionClass() != ExpressionClass::STAR ||
 	    !select.from_table || select.where_clause || !select.groups.group_expressions.empty() ||
 	    !select.groups.grouping_sets.empty() || select.having || select.qualify || select.sample ||
-	    !select.modifiers.empty() || !select.from_table->column_name_alias.empty()) {
+	    select.aggregate_handling != AggregateHandling::STANDARD_HANDLING ||
+	    !select.from_table->column_name_alias.empty()) {
 		return nullptr;
+	}
+	for (auto &modifier : select.modifiers) {
+		if (modifier->type != ResultModifierType::ORDER_MODIFIER) {
+			return nullptr;
+		}
 	}
 	auto &star = select.select_list[0]->Cast<StarExpression>();
 	if (!star.RelationName().empty() || star.IsColumns() || !star.ExcludeList().empty() ||
@@ -1947,25 +1995,24 @@ static const TableRef *PassThrough(const SelectNode &select) {
 	                                                                                      : nullptr;
 }
 
-//! The lake table a FROM item serves as it is, as dataset.table, or empty
-static string TableOf(const TableRef &ref, const Branching &b, int depth = 0) {
+//! The lake table a FROM item serves as it is, its dataset and name, or empty ones
+static pair<string, string> TableOf(const TableRef &ref, const CteScope &scope, const Branching &b, int depth = 0) {
 	if (depth > 16) {
-		return string();
+		return {};
 	}
-	const QueryNode *node = CteOf(ref, b);
+	const QueryNode *node = CteOf(ref, scope);
 	if (!node && ref.type == TableReferenceType::BASE_TABLE) {
 		auto &name = ref.Cast<BaseTableRef>().GetQualifiedName();
-		return (name.Schema().empty() ? b.dataset : name.Schema().GetIdentifierName()) + "." +
-		       name.Name().GetIdentifierName();
+		return {name.Schema().empty() ? b.dataset : name.Schema().GetIdentifierName(), name.Name().GetIdentifierName()};
 	}
 	if (!node && ref.type == TableReferenceType::SUBQUERY) {
 		node = ref.Cast<SubqueryRef>().subquery->node.get();
 	}
 	if (!node || node->type != QueryNodeType::SELECT_NODE) {
-		return string();
+		return {};
 	}
 	auto from = PassThrough(node->Cast<SelectNode>());
-	return from ? TableOf(*from, b, depth + 1) : string();
+	return from ? TableOf(*from, Within(*node, scope), b, depth + 1) : pair<string, string>();
 }
 
 //! The conjuncts of a predicate
@@ -1990,19 +2037,75 @@ static bool Holds(const ParsedExpression &expr, ExpressionClass expression_class
 	return found;
 }
 
-static bool ReadLevel(Branching &b, const SelectNode &node, bool top, BranchLevel &out, int depth);
+//! Whether an expression calls an aggregate outside a window
+static bool Aggregates(const ParsedExpression &expr, const Branching &b) {
+	if (expr.GetExpressionClass() == ExpressionClass::WINDOW ||
+	    expr.GetExpressionClass() == ExpressionClass::SUBQUERY) {
+		return false;
+	}
+	if (expr.GetExpressionClass() == ExpressionClass::FUNCTION) {
+		auto &function = expr.Cast<FunctionExpression>();
+		auto &name = function.GetQualifiedName();
+		if (name.Schema().empty() && name.Catalog().empty() && !function.IsOperator()) {
+			auto entry = b.Lookup(CatalogType::AGGREGATE_FUNCTION_ENTRY,
+			                      QualifiedName(Identifier(SYSTEM_CATALOG), Identifier(DEFAULT_SCHEMA), name.Name()));
+			if (entry && entry->type == CatalogType::AGGREGATE_FUNCTION_ENTRY) {
+				return true;
+			}
+		}
+	}
+	bool found = false;
+	ParsedExpressionIterator::EnumerateChildren(
+	    expr, [&](const ParsedExpression &child) { found = found || Aggregates(child, b); });
+	return found;
+}
+
+//! The names an expression's columns are read by, lowercase: the alias each qualified column names,
+//! "" for a column named alone
+static void Relations(const ParsedExpression &expr, std::set<string> &into) {
+	ParsedExpressionIterator::VisitExpression<ColumnRefExpression>(expr, [&](const ColumnRefExpression &column) {
+		auto &names = column.ColumnNames();
+		into.insert(names.size() >= 2 ? Lowered(names[names.size() - 2]) : string());
+	});
+	if (Holds(expr, ExpressionClass::SUBQUERY)) {
+		into.insert(string());
+	}
+}
+
+//! Whether a lake table or view the read numbers or joins carries a column by a helper's name
+static bool CarriesHelper(const Branching &b, const string &dataset, const string &table) {
+	if (dataset.empty() || table.empty()) {
+		return false;
+	}
+	for (auto &column : DatasetColumns(*b.context, dataset, table, true)) {
+		if (StringUtil::StartsWith(StringUtil::Lower(column.column), HELPER_PREFIX)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool ReadLevel(Branching &b, const SelectNode &node, const CteScope &outer, bool top, BranchLevel &out,
+                      int depth);
 
 //! The FROM item the branch's rows come from, read again: a lake table numbered row by row, or a
 //! query read again
-static bool ReadDriving(Branching &b, const TableRef &ref, string &sql, BranchLevel &inner, int depth) {
+static bool ReadDriving(Branching &b, const TableRef &ref, const CteScope &scope, string &sql, BranchLevel &inner,
+                        int depth) {
 	if (!ref.column_name_alias.empty()) {
 		return b.Fail("a FROM item that names its columns");
 	}
 	auto alias = RefAlias(ref);
-	const QueryNode *node = CteOf(ref, b);
+	const QueryNode *node = CteOf(ref, scope);
 	if (!node && ref.type == TableReferenceType::BASE_TABLE) {
-		b.driving = TableOf(ref, b);
-		inner.table = b.driving;
+		auto table = TableOf(ref, scope, b);
+		if (CarriesHelper(b, table.first, table.second)) {
+			return b.Fail("a column whose name begins with " + string(HELPER_PREFIX));
+		}
+		b.driving_dataset = table.first;
+		b.driving_table = table.second;
+		inner.dataset = table.first;
+		inner.table = table.second;
 		inner.all = true;
 		sql = "(SELECT *, row_number() OVER () AS __gloss_rid, NULL::INTEGER AS __gloss_step FROM " + Unaliased(ref) +
 		      ") AS " + QuoteName(alias);
@@ -2014,7 +2117,7 @@ static bool ReadDriving(Branching &b, const TableRef &ref, string &sql, BranchLe
 	if (!node || node->type != QueryNodeType::SELECT_NODE || alias.empty()) {
 		return b.Fail("a FROM item that is no table, no CTE and no subquery");
 	}
-	if (!ReadLevel(b, node->Cast<SelectNode>(), false, inner, depth + 1)) {
+	if (!ReadLevel(b, node->Cast<SelectNode>(), scope, false, inner, depth + 1)) {
 		return false;
 	}
 	sql = "(" + inner.sql + ") AS " + QuoteName(alias);
@@ -2028,18 +2131,27 @@ struct BranchFrom {
 	string sql;
 	string driving_alias;
 	BranchLevel inner;
-	std::map<string, string> tables;
+	std::map<string, pair<string, string>> tables;
 	vector<pair<string, idx_t>> markers;
 };
 } // namespace
 
-static bool ReadFrom(Branching &b, const TableRef &ref, BranchFrom &from, int depth) {
+//! The condition that holds where no step before has left the row out
+static string Kept(const BranchFrom &from) {
+	string kept = QuoteName(from.driving_alias) + ".__gloss_step IS NULL";
+	for (auto &marker : from.markers) {
+		kept += " AND " + QuoteName(marker.first) + ".__gloss_m" + to_string(marker.second) + " IS NOT NULL";
+	}
+	return kept;
+}
+
+static bool ReadFrom(Branching &b, const TableRef &ref, const CteScope &scope, BranchFrom &from, int depth) {
 	if (ref.type != TableReferenceType::JOIN) {
 		from.driving_alias = RefAlias(ref);
-		if (!ReadDriving(b, ref, from.sql, from.inner, depth)) {
+		if (!ReadDriving(b, ref, scope, from.sql, from.inner, depth)) {
 			return false;
 		}
-		from.tables[StringUtil::Lower(from.driving_alias)] = from.inner.table;
+		from.tables[StringUtil::Lower(from.driving_alias)] = {from.inner.dataset, from.inner.table};
 		return true;
 	}
 	auto &join = ref.Cast<JoinRef>();
@@ -2050,25 +2162,56 @@ static bool ReadFrom(Branching &b, const TableRef &ref, BranchFrom &from, int de
 	bool left = join.type != JoinType::RIGHT;
 	auto &kept = left ? *join.left : *join.right;
 	auto &other = left ? *join.right : *join.left;
-	if (!ReadFrom(b, kept, from, depth)) {
+	if (!ReadFrom(b, kept, scope, from, depth)) {
 		return false;
 	}
 	auto alias = RefAlias(other);
 	if (other.type == TableReferenceType::JOIN || alias.empty() || !other.column_name_alias.empty()) {
 		return b.Fail("a join whose other side is a join, or has no name");
 	}
-	from.tables[StringUtil::Lower(alias)] = TableOf(other, b);
-	// a row a step before left out finds no partner here: it is counted once, where it was left out
-	auto condition =
-	    "(" + join.condition->ToString() + ") AND " + QuoteName(from.driving_alias) + ".__gloss_step IS NULL";
-	for (auto &marker : from.markers) {
-		condition += " AND " + QuoteName(marker.first) + ".__gloss_m" + to_string(marker.second) + " IS NOT NULL";
+	auto table = TableOf(other, scope, b);
+	if (CarriesHelper(b, table.first, table.second)) {
+		return b.Fail("a column whose name begins with " + string(HELPER_PREFIX));
 	}
+	from.tables[StringUtil::Lower(alias)] = table;
+	// a row a step before left out finds no partner here, and the join evaluates nothing of it: each
+	// side of a comparison that reads the rows joined so far is evaluated on the kept rows alone, so an
+	// expression the view guards by an earlier step (a cast after a filter) is guarded the same way
+	auto guard = Kept(from);
+	auto other_name = StringUtil::Lower(alias);
+	auto reads_other_alone = [&](const ParsedExpression &side) {
+		std::set<string> relations;
+		Relations(side, relations);
+		return relations.size() == 1 && *relations.begin() == other_name;
+	};
+	vector<const ParsedExpression *> conjuncts;
+	Conjuncts(*join.condition, conjuncts);
+	vector<string> guarded;
+	for (auto conjunct : conjuncts) {
+		std::set<string> relations;
+		Relations(*conjunct, relations);
+		if (relations.empty() || (relations.size() == 1 && *relations.begin() == other_name)) {
+			guarded.push_back("(" + conjunct->ToString() + ")");
+			continue;
+		}
+		if (conjunct->GetExpressionClass() == ExpressionClass::COMPARISON) {
+			auto &comparison = conjunct->Cast<ComparisonExpression>();
+			auto op = ExpressionTypeToOperator(conjunct->GetExpressionType());
+			auto side = [&](const ParsedExpression &expr) {
+				return reads_other_alone(expr) ? "(" + expr.ToString() + ")"
+				                               : "(CASE WHEN " + guard + " THEN " + expr.ToString() + " END)";
+			};
+			if (!op.empty() && (reads_other_alone(comparison.Left()) || reads_other_alone(comparison.Right()))) {
+				guarded.push_back(side(comparison.Left()) + " " + op + " " + side(comparison.Right()));
+				continue;
+			}
+		}
+		guarded.push_back("(CASE WHEN " + guard + " THEN " + conjunct->ToString() + " END)");
+	}
+	auto condition = StringUtil::Join(guarded, " AND ") + " AND " + guard;
 	string other_sql = other.ToString();
 	if (join.type == JoinType::INNER) {
 		BranchStep step {"join", b.Written("JOIN " + other.ToString() + " ON " + join.condition->ToString()), {}};
-		vector<const ParsedExpression *> conjuncts;
-		Conjuncts(*join.condition, conjuncts);
 		for (auto conjunct : conjuncts) {
 			if (conjunct->GetExpressionType() != ExpressionType::COMPARE_EQUAL) {
 				continue;
@@ -2081,11 +2224,11 @@ static bool ReadFrom(Branching &b, const TableRef &ref, BranchFrom &from, int de
 					break;
 				}
 				auto &names = side->Cast<ColumnRefExpression>().ColumnNames();
-				auto table = from.tables.find(Lowered(names[0]));
-				if (table == from.tables.end() || table->second.empty()) {
+				auto found = from.tables.find(Lowered(names[0]));
+				if (found == from.tables.end() || found->second.second.empty()) {
 					break;
 				}
-				pair.push_back(table->second + "." + names[1].GetIdentifierName());
+				pair.push_back(found->second.first + "." + found->second.second + "." + names[1].GetIdentifierName());
 			}
 			if (pair.size() == 2) {
 				step.columns.insert(step.columns.end(), pair.begin(), pair.end());
@@ -2103,13 +2246,27 @@ static bool ReadFrom(Branching &b, const TableRef &ref, BranchFrom &from, int de
 }
 
 //! One query of a branch read again: every row of the driving table with the partners each join
-//! finds, numbered by the driving row, and the first step that leaves it out
-static bool ReadLevel(Branching &b, const SelectNode &node, bool top, BranchLevel &out, int depth) {
+//! finds, numbered by the driving row, and the first step that leaves it out. A step's condition is
+//! evaluated on the rows no step before it left out, and an item of the select list on the rows that
+//! reach the output, as the view evaluates them; on a row left out, an item the driving table alone
+//! computes is evaluated with try(), so a value that would fail there reads NULL (its period, its
+//! amount), and every other item is NULL
+static bool ReadLevel(Branching &b, const SelectNode &node, const CteScope &outer, bool top, BranchLevel &out,
+                      int depth) {
 	if (depth > 16) {
 		return b.Fail("queries nested too deep");
 	}
+	auto scope = Within(node, outer);
 	if (!node.groups.group_expressions.empty() || !node.groups.grouping_sets.empty() || node.having) {
 		return b.Fail("a GROUP BY");
+	}
+	if (node.aggregate_handling != AggregateHandling::STANDARD_HANDLING) {
+		return b.Fail("a GROUP BY ALL");
+	}
+	for (auto &item : node.select_list) {
+		if (Aggregates(*item, b)) {
+			return b.Fail("an aggregate");
+		}
 	}
 	if (node.sample) {
 		return b.Fail("a sample");
@@ -2129,7 +2286,7 @@ static bool ReadLevel(Branching &b, const SelectNode &node, bool top, BranchLeve
 	}
 	auto before = b.steps.size();
 	BranchFrom from;
-	if (!ReadFrom(b, *node.from_table, from, depth)) {
+	if (!ReadFrom(b, *node.from_table, scope, from, depth)) {
 		return false;
 	}
 	auto d = QuoteName(from.driving_alias);
@@ -2150,7 +2307,7 @@ static bool ReadLevel(Branching &b, const SelectNode &node, bool top, BranchLeve
 		return b.Fail("a window over rows a step leaves out");
 	}
 	if (node.qualify) {
-		if (b.steps.size() > before || from.inner.table.empty()) {
+		if (from.inner.table.empty()) {
 			return b.Fail("a QUALIFY after a step");
 		}
 		vector<const ParsedExpression *> conjuncts;
@@ -2160,6 +2317,8 @@ static bool ReadLevel(Branching &b, const SelectNode &node, bool top, BranchLeve
 			conditions.emplace_back(conjunct->ToString(), b.steps.size());
 		}
 	}
+	// the steps in the order the SQL applies them: CASE evaluates each WHEN on the rows no WHEN before
+	// it took, so a condition is evaluated where the conditions before it hold
 	string step = "CASE WHEN " + d + ".__gloss_step IS NOT NULL THEN " + d + ".__gloss_step";
 	for (auto &marker : from.markers) {
 		step += " WHEN " + QuoteName(marker.first) + ".__gloss_m" + to_string(marker.second) + " IS NULL THEN " +
@@ -2169,6 +2328,7 @@ static bool ReadLevel(Branching &b, const SelectNode &node, bool top, BranchLeve
 		step += " WHEN NOT coalesce((" + condition.first + "), false) THEN " + to_string(condition.second);
 	}
 	step += " END";
+	bool stepped = !b.steps.empty();
 	// what the driving table alone computes: an item whose columns are all the driving item's
 	bool alone = from.tables.size() == 1;
 	auto from_driving = [&](const ParsedExpression &item) {
@@ -2190,6 +2350,11 @@ static bool ReadLevel(Branching &b, const SelectNode &node, bool top, BranchLeve
 		});
 		return only;
 	};
+	// the helper columns each name in the FROM serves, which a star leaves out by name
+	vector<string> helpers {"__gloss_rid", "__gloss_step"};
+	for (auto &marker : from.markers) {
+		helpers.push_back("__gloss_m" + to_string(marker.second));
+	}
 	vector<string> items;
 	for (auto &item : node.select_list) {
 		if (item->GetExpressionClass() == ExpressionClass::STAR) {
@@ -2200,7 +2365,7 @@ static bool ReadLevel(Branching &b, const SelectNode &node, bool top, BranchLeve
 			}
 			out.star = true;
 			if (star.RelationName().empty()) {
-				items.emplace_back("COLUMNS(lambda c: NOT starts_with(c, '__gloss_'))");
+				items.emplace_back("* EXCLUDE (" + StringUtil::Join(helpers, ", ") + ")");
 				out.items.push_back(alone && from.inner.all);
 				out.all = alone && from.inner.all && node.select_list.size() == 1;
 				continue;
@@ -2220,22 +2385,33 @@ static bool ReadLevel(Branching &b, const SelectNode &node, bool top, BranchLeve
 			out.items.push_back(relation == StringUtil::Lower(from.driving_alias) && from.inner.all);
 			continue;
 		}
-		auto text = item->ToString();
 		string name;
 		if (item->HasAlias()) {
 			name = item->GetAlias().GetIdentifierName();
-			text += " AS " + QuoteName(name);
 		} else if (item->GetExpressionClass() == ExpressionClass::COLUMN_REF) {
 			name = item->Cast<ColumnRefExpression>().GetColumnName().GetIdentifierName();
 		}
-		items.push_back(text);
+		if (StringUtil::StartsWith(StringUtil::Lower(name), HELPER_PREFIX)) {
+			return b.Fail("a column whose name begins with " + string(HELPER_PREFIX));
+		}
 		bool driving = from_driving(*item);
+		auto text = item->ToString();
+		if (stepped) {
+			text =
+			    "CASE WHEN (" + step + ") IS NULL THEN " + text + (driving ? " ELSE try(" + text + ")" : "") + " END";
+		}
+		// an item named by its column alone keeps that name
+		if (!name.empty()) {
+			text += " AS " + QuoteName(name);
+		}
+		items.push_back(text);
 		out.items.push_back(driving);
 		if (driving && !name.empty()) {
 			out.driving.insert(StringUtil::Lower(name));
 		}
 	}
 	if (out.all || (out.star && node.select_list.size() == 1 && alone)) {
+		out.dataset = from.inner.dataset;
 		out.table = from.inner.table;
 	}
 	out.sql = node.cte_map.ToString() + "SELECT " + StringUtil::Join(items, ", ") + ", " + d +
@@ -2244,69 +2420,156 @@ static bool ReadLevel(Branching &b, const SelectNode &node, bool top, BranchLeve
 }
 
 //! The driving table of a branch whose steps are not told, followed down the FROM alone
-static string DrivingTable(const Branching &b, const TableRef &ref, int depth = 0) {
+static pair<string, string> DrivingTable(const Branching &b, const TableRef &ref, const CteScope &scope,
+                                         int depth = 0) {
 	if (depth > 16) {
-		return string();
+		return {};
 	}
 	if (ref.type == TableReferenceType::JOIN) {
 		auto &join = ref.Cast<JoinRef>();
-		return DrivingTable(b, join.type == JoinType::RIGHT ? *join.right : *join.left, depth + 1);
+		return DrivingTable(b, join.type == JoinType::RIGHT ? *join.right : *join.left, scope, depth + 1);
 	}
-	const QueryNode *node = CteOf(ref, b);
+	const QueryNode *node = CteOf(ref, scope);
 	if (!node && ref.type == TableReferenceType::BASE_TABLE) {
-		return TableOf(ref, b);
+		return TableOf(ref, scope, b);
 	}
 	if (!node && ref.type == TableReferenceType::SUBQUERY) {
 		node = ref.Cast<SubqueryRef>().subquery->node.get();
 	}
 	if (!node || node->type != QueryNodeType::SELECT_NODE || !node->Cast<SelectNode>().from_table) {
+		return {};
+	}
+	return DrivingTable(b, *node->Cast<SelectNode>().from_table, Within(*node, scope), depth + 1);
+}
+
+//! The first lake table or view a query reads that the lake does not hold, as dataset.table, or empty
+static string Missing(const Branching &b, const QueryNode &node, const CteScope &outer, int depth = 0);
+
+static string Missing(const Branching &b, const ParsedExpression &expr, const CteScope &scope, int depth) {
+	string missing;
+	if (expr.GetExpressionClass() == ExpressionClass::SUBQUERY) {
+		missing = Missing(b, *expr.Cast<SubqueryExpression>().Subquery()->node, scope, depth + 1);
+	}
+	ParsedExpressionIterator::EnumerateChildren(expr, [&](const ParsedExpression &child) {
+		if (missing.empty()) {
+			missing = Missing(b, child, scope, depth);
+		}
+	});
+	return missing;
+}
+
+static string Missing(const Branching &b, const TableRef &ref, const CteScope &scope, int depth) {
+	switch (ref.type) {
+	case TableReferenceType::BASE_TABLE: {
+		if (CteOf(ref, scope)) {
+			return string();
+		}
+		auto &name = ref.Cast<BaseTableRef>().GetQualifiedName();
+		if (b.Lookup(CatalogType::TABLE_ENTRY, name) || b.Lookup(CatalogType::VIEW_ENTRY, name)) {
+			return string();
+		}
+		auto table = TableOf(ref, scope, b);
+		return table.first + "." + table.second;
+	}
+	case TableReferenceType::JOIN: {
+		auto &join = ref.Cast<JoinRef>();
+		auto missing = Missing(b, *join.left, scope, depth);
+		missing = missing.empty() ? Missing(b, *join.right, scope, depth) : missing;
+		return missing.empty() && join.condition ? Missing(b, *join.condition, scope, depth) : missing;
+	}
+	case TableReferenceType::SUBQUERY:
+		return Missing(b, *ref.Cast<SubqueryRef>().subquery->node, scope, depth + 1);
+	default:
 		return string();
 	}
-	return DrivingTable(b, *node->Cast<SelectNode>().from_table, depth + 1);
+}
+
+static string Missing(const Branching &b, const QueryNode &node, const CteScope &outer, int depth) {
+	if (depth > 16) {
+		return string();
+	}
+	auto scope = Within(node, outer);
+	for (auto &cte : node.cte_map.map) {
+		auto missing = Missing(b, *cte.second->query_node, scope, depth + 1);
+		if (!missing.empty()) {
+			return missing;
+		}
+	}
+	if (node.type == QueryNodeType::SET_OPERATION_NODE) {
+		for (auto &child : node.Cast<SetOperationNode>().children) {
+			auto missing = Missing(b, *child, scope, depth + 1);
+			if (!missing.empty()) {
+				return missing;
+			}
+		}
+		return string();
+	}
+	if (node.type != QueryNodeType::SELECT_NODE) {
+		return string();
+	}
+	auto &select = node.Cast<SelectNode>();
+	string missing = select.from_table ? Missing(b, *select.from_table, scope, depth) : string();
+	for (auto &item : select.select_list) {
+		missing = missing.empty() ? Missing(b, *item, scope, depth) : missing;
+	}
+	for (auto expr : {select.where_clause.get(), select.having.get(), select.qualify.get()}) {
+		missing = missing.empty() && expr ? Missing(b, *expr, scope, depth) : missing;
+	}
+	return missing;
 }
 
 namespace {
-//! A branch of a view's union: its SELECT and the CTEs around it
+//! A branch of a view's union: its SELECT, the CTEs around it, and the scope they open
 struct ViewBranch {
 	const QueryNode *node;
 	vector<const CommonTableExpressionMap *> ctes;
+	CteScope scope;
 };
 } // namespace
 
-//! The branches of a view's union, each SELECT * FROM a CTE or a subquery followed into it; false
-//! where the view is no union of SELECTs
-static bool ViewBranches(const QueryNode &node, const Branching &b, vector<const CommonTableExpressionMap *> ctes,
-                         vector<ViewBranch> &into, int depth = 0) {
+//! The branches of a view's union, each SELECT * FROM a CTE or a subquery followed into it; empty
+//! where the view is a union of SELECTs, else why it is not
+static string ViewBranches(const QueryNode &node, const CteScope &outer, vector<const CommonTableExpressionMap *> ctes,
+                           vector<ViewBranch> &into, int depth = 0) {
 	if (depth > 16) {
-		return false;
+		return "queries nested too deep";
 	}
 	if (node.type == QueryNodeType::SET_OPERATION_NODE) {
 		auto &setop = node.Cast<SetOperationNode>();
-		if (setop.setop_type != SetOperationType::UNION || !setop.setop_all || !setop.modifiers.empty()) {
-			return false;
+		if (setop.setop_type != SetOperationType::UNION || !setop.setop_all) {
+			return "a set operation that is no UNION ALL";
 		}
-		ctes.push_back(&node.cte_map);
-		for (auto &child : setop.children) {
-			if (!ViewBranches(*child, b, ctes, into, depth + 1)) {
-				return false;
+		for (auto &modifier : setop.modifiers) {
+			if (modifier->type != ResultModifierType::ORDER_MODIFIER) {
+				return modifier->type == ResultModifierType::DISTINCT_MODIFIER ? "a DISTINCT on the union"
+				                                                               : "a LIMIT on the union";
 			}
 		}
-		return true;
+		auto scope = Within(node, outer);
+		ctes.push_back(&node.cte_map);
+		for (auto &child : setop.children) {
+			auto why = ViewBranches(*child, scope, ctes, into, depth + 1);
+			if (!why.empty()) {
+				return why;
+			}
+		}
+		return string();
 	}
 	if (node.type != QueryNodeType::SELECT_NODE) {
-		return false;
+		return "a query that is no SELECT";
 	}
 	auto from = PassThrough(node.Cast<SelectNode>());
-	const QueryNode *inner = from ? CteOf(*from, b) : nullptr;
+	auto scope = Within(node, outer);
+	const QueryNode *inner = from ? CteOf(*from, scope) : nullptr;
 	if (from && !inner && from->type == TableReferenceType::SUBQUERY) {
 		inner = from->Cast<SubqueryRef>().subquery->node.get();
 	}
 	if (inner) {
 		ctes.push_back(&node.cte_map);
-		return ViewBranches(*inner, b, ctes, into, depth + 1);
+		return ViewBranches(*inner, scope, ctes, into, depth + 1);
 	}
-	into.push_back({&node, ctes});
-	return true;
+	into.push_back({&node, ctes, outer});
+	return string();
 }
 
 //! A branch's query inside the CTEs around it
@@ -2320,30 +2583,70 @@ static string WithCtes(const vector<const CommonTableExpressionMap *> &ctes, str
 	return sql;
 }
 
+//! Whether a query reads a lake table or view, through its FROM, a subquery or a CTE there
+static bool ReadsLake(const QueryNode &node, const CteScope &outer, int depth = 0);
+
+static bool ReadsLake(const TableRef &ref, const CteScope &scope, int depth) {
+	switch (ref.type) {
+	case TableReferenceType::BASE_TABLE: {
+		auto cte = CteOf(ref, scope);
+		return !cte || ReadsLake(*cte, scope, depth + 1);
+	}
+	case TableReferenceType::JOIN:
+		return ReadsLake(*ref.Cast<JoinRef>().left, scope, depth) ||
+		       ReadsLake(*ref.Cast<JoinRef>().right, scope, depth);
+	case TableReferenceType::SUBQUERY:
+		return ReadsLake(*ref.Cast<SubqueryRef>().subquery->node, scope, depth + 1);
+	default:
+		return false;
+	}
+}
+
+static bool ReadsLake(const QueryNode &node, const CteScope &outer, int depth) {
+	if (depth > 16) {
+		return true;
+	}
+	auto scope = Within(node, outer);
+	if (node.type == QueryNodeType::SET_OPERATION_NODE) {
+		for (auto &child : node.Cast<SetOperationNode>().children) {
+			if (ReadsLake(*child, scope, depth + 1)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	if (node.type != QueryNodeType::SELECT_NODE) {
+		return true;
+	}
+	auto &select = node.Cast<SelectNode>();
+	return select.from_table && ReadsLake(*select.from_table, scope, depth);
+}
+
 static unique_ptr<TableRef> BranchRowsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	Inner inner(context);
 	const string empty =
 	    "SELECT NULL::INTEGER AS branch, NULL::VARCHAR AS kind, NULL::BIGINT AS rid, NULL::INTEGER AS step, "
-	    "NULL::VARCHAR AS what, NULL::VARCHAR AS text, NULL::VARCHAR[] AS columns, NULL::VARCHAR[] AS \"values\" "
-	    "WHERE false";
+	    "NULL::VARCHAR AS what, NULL::VARCHAR AS text, NULL::VARCHAR[] AS columns, NULL::VARCHAR[] AS \"values\", "
+	    "NULL::VARCHAR AS dataset, NULL::VARCHAR AS table_name WHERE false";
 	auto subject = ResolveSubject(context, input.inputs[0].ToString());
 	auto parts = SubjectParts(subject);
 	if (parts.size() != 2) {
 		throw InvalidInputException("glossql: branch_rows takes a view as dataset.view, got '%s'", subject);
 	}
 	Branching b;
+	b.context = &context;
 	b.lake = inner.ws.lake;
 	b.dataset = parts[0];
-	auto sql = inner.Scalar("SELECT sql FROM duckdb_views() WHERE database_name = " + QuoteText(b.lake) +
-	                        " AND schema_name = " + QuoteText(parts[0]) + " AND view_name = " + QuoteText(parts[1]) +
-	                        " AND NOT internal");
-	if (sql.IsNull()) {
+	// the view as the caller's transaction holds it
+	auto view = b.Lookup(CatalogType::VIEW_ENTRY,
+	                     QualifiedName(Identifier(b.lake), Identifier(parts[0]), Identifier(parts[1])));
+	if (!view || view->type != CatalogType::VIEW_ENTRY) {
 		return make_uniq<SubqueryRef>(ParseSelect(empty));
 	}
 	auto options = ParserOptions::Builtin();
 	options.compiled_grammar = CompiledGrammar::DefaultGrammar();
 	Parser parser(options);
-	parser.ParseQuery(sql.ToString());
+	parser.ParseQuery(view->Cast<ViewCatalogEntry>().ToSQL());
 	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::CREATE_STATEMENT) {
 		return make_uniq<SubqueryRef>(ParseSelect(empty));
 	}
@@ -2352,15 +2655,15 @@ static unique_ptr<TableRef> BranchRowsBindReplace(ClientContext &context, TableF
 		return make_uniq<SubqueryRef>(ParseSelect(empty));
 	}
 	auto &query = *info.Cast<CreateViewInfo>().query->node;
-	CollectCtes(query, b.ctes);
-	Qualify(query, b);
+	Qualify(query, CteScope(), b);
 	vector<string> names;
 	for (auto &column : DatasetColumns(context, parts[0], parts[1], true)) {
 		names.push_back(column.column);
 	}
 	vector<ViewBranch> branches;
-	if (!ViewBranches(query, b, {}, branches)) {
-		branches = {{&query, {}}};
+	auto whole = ViewBranches(query, CteScope(), {}, branches);
+	if (!whole.empty()) {
+		branches = {{&query, {}, CteScope()}};
 	}
 	auto list = [](const vector<string> &items) {
 		vector<string> quoted;
@@ -2377,21 +2680,32 @@ static unique_ptr<TableRef> BranchRowsBindReplace(ClientContext &context, TableF
 		auto &branch = branches[i];
 		auto number = to_string(i + 1) + "::INTEGER";
 		Branching one;
+		one.context = &context;
 		one.lake = b.lake;
 		one.dataset = b.dataset;
-		one.ctes = b.ctes;
 		BranchLevel level;
-		bool told = branch.node->type == QueryNodeType::SELECT_NODE &&
-		            ReadLevel(one, branch.node->Cast<SelectNode>(), true, level, 0);
-		if (branch.node->type != QueryNodeType::SELECT_NODE) {
-			one.Fail("a query that is no union of SELECTs");
+		auto missing = Missing(one, *branch.node, branch.scope);
+		bool none = whole.empty() && missing.empty() && !ReadsLake(*branch.node, branch.scope);
+		bool told = false;
+		if (!whole.empty()) {
+			one.Fail(whole);
+		} else if (!missing.empty()) {
+			one.Fail("it reads " + missing + ", which the lake does not hold");
+		} else if (!none) {
+			told = ReadLevel(one, branch.node->Cast<SelectNode>(), branch.scope, true, level, 0);
+		}
+		for (auto &name : names) {
+			if (StringUtil::StartsWith(StringUtil::Lower(name), HELPER_PREFIX)) {
+				told = one.Fail("a column whose name begins with " + string(HELPER_PREFIX));
+			}
 		}
 		string read;
 		if (told) {
 			read = WithCtes(branch.ctes, level.sql);
+			// a last check, on the committed catalog: a read that does not plan is not told
 			auto prepared = inner.con.Prepare(read);
 			if (prepared->HasError()) {
-				told = one.Fail("a read the engine does not plan: " + FirstLine(prepared->GetError()));
+				told = one.Fail("a read the engine does not plan");
 			}
 		}
 		// the view's columns the branch computes from the driving table alone, by position
@@ -2410,35 +2724,53 @@ static unique_ptr<TableRef> BranchRowsBindReplace(ClientContext &context, TableF
 		}
 		if (!told) {
 			one.steps.clear();
-			if (branch.node->type == QueryNodeType::SELECT_NODE && branch.node->Cast<SelectNode>().from_table) {
-				one.driving = DrivingTable(b, *branch.node->Cast<SelectNode>().from_table);
+			one.driving_dataset.clear();
+			one.driving_table.clear();
+			if (missing.empty() && branch.node->type == QueryNodeType::SELECT_NODE &&
+			    branch.node->Cast<SelectNode>().from_table) {
+				auto table =
+				    DrivingTable(one, *branch.node->Cast<SelectNode>().from_table, Within(*branch.node, branch.scope));
+				if (!table.second.empty() &&
+				    (one.Lookup(CatalogType::TABLE_ENTRY,
+				                QualifiedName(Identifier(b.lake), Identifier(table.first), Identifier(table.second))) ||
+				     one.Lookup(CatalogType::VIEW_ENTRY, QualifiedName(Identifier(b.lake), Identifier(table.first),
+				                                                       Identifier(table.second))))) {
+					one.driving_dataset = table.first;
+					one.driving_table = table.second;
+				}
 			}
 		}
-		auto driving_parts = SubjectParts(one.driving);
-		parts_sql.push_back("SELECT " + number + ", 'branch', NULL::BIGINT, NULL::INTEGER, " + text(one.driving) +
-		                    ", " + text(one.untold) + ", " + list(driving) + ", NULL::VARCHAR[]");
+		parts_sql.push_back("SELECT " + number + ", 'branch', NULL::BIGINT, NULL::INTEGER, NULL::VARCHAR, " +
+		                    text(one.untold) + ", " + list(driving) + ", NULL::VARCHAR[], " +
+		                    text(one.driving_dataset) + ", " + text(one.driving_table));
 		for (idx_t k = 0; k < one.steps.size(); k++) {
 			auto &step = one.steps[k];
 			parts_sql.push_back("SELECT " + number + ", 'step', NULL::BIGINT, " + to_string(k + 1) + "::INTEGER, " +
 			                    QuoteText(step.kind) + ", " + QuoteText(step.text) + ", " + list(step.columns) +
-			                    ", NULL::VARCHAR[]");
+			                    ", NULL::VARCHAR[], NULL::VARCHAR, NULL::VARCHAR");
 		}
 		if (told) {
 			parts_sql.push_back("SELECT " + number +
 			                    ", 'read', __gloss_rid, __gloss_step, NULL::VARCHAR, NULL::VARCHAR, NULL::VARCHAR[], "
-			                    "list_value(*COLUMNS(* EXCLUDE (__gloss_rid, __gloss_step))) FROM (SELECT COLUMNS(* "
-			                    "EXCLUDE (__gloss_rid, __gloss_step))::VARCHAR, __gloss_rid, __gloss_step FROM (" +
+			                    "list_value(*COLUMNS(* EXCLUDE (__gloss_rid, __gloss_step))), NULL::VARCHAR, "
+			                    "NULL::VARCHAR FROM (SELECT COLUMNS(* EXCLUDE (__gloss_rid, __gloss_step))::VARCHAR, "
+			                    "__gloss_rid, __gloss_step FROM (" +
 			                    read + "))");
-		} else if (driving_parts.size() == 2) {
+		} else if (!one.driving_table.empty()) {
 			parts_sql.push_back("SELECT " + number +
 			                    ", 'read', row_number() OVER ()::BIGINT, NULL::INTEGER, NULL::VARCHAR, NULL::VARCHAR, "
-			                    "NULL::VARCHAR[], NULL::VARCHAR[] FROM " +
-			                    inner.Table(driving_parts[0], driving_parts[1]));
+			                    "NULL::VARCHAR[], NULL::VARCHAR[], NULL::VARCHAR, NULL::VARCHAR FROM " +
+			                    inner.Table(one.driving_dataset, one.driving_table));
 		}
-		parts_sql.push_back("SELECT " + number +
-		                    ", 'served', NULL::BIGINT, NULL::INTEGER, NULL::VARCHAR, NULL::VARCHAR, NULL::VARCHAR[], "
-		                    "list_value(*COLUMNS(*)) FROM (SELECT COLUMNS(*)::VARCHAR FROM (" +
-		                    WithCtes(branch.ctes, branch.node->ToString()) + "))");
+		// a branch that reads a table the lake does not hold serves nothing the read could run
+		if (missing.empty()) {
+			parts_sql.push_back(
+			    "SELECT " + number +
+			    ", 'served', NULL::BIGINT, NULL::INTEGER, NULL::VARCHAR, NULL::VARCHAR, NULL::VARCHAR[], "
+			    "list_value(*COLUMNS(*)), NULL::VARCHAR, NULL::VARCHAR FROM (SELECT "
+			    "COLUMNS(*)::VARCHAR FROM (" +
+			    WithCtes(branch.ctes, branch.node->ToString()) + "))");
+		}
 	}
 	auto union_sql = "SELECT * FROM (" + empty + ") UNION ALL " + StringUtil::Join(parts_sql, " UNION ALL ");
 	return make_uniq<SubqueryRef>(ParseSelect(union_sql));

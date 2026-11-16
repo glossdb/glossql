@@ -213,6 +213,28 @@ FROM main.measurements WHERE function = 'relationship_coherence' AND subject = '
 ----
 [100, 99]	2
 
+# a pair of key columns: grouped by the columns, so values with a comma stay apart, each key shown as a JSON
+# list; a long value cut in the examples, counted whole
+statement ok
+CREATE TABLE fin.child AS SELECT * FROM (VALUES ('a, b', 'c'), ('a', 'b, c'), ('x', 'y'), (NULL, 'q'), ('p', NULL), ('t1', '1'), ('t2', '1')) t(k1, k2)
+UNION ALL SELECT repeat('k', 150), '0';
+
+statement ok
+CREATE TABLE fin.parent AS SELECT * FROM (VALUES ('x', 'y')) t(k1, k2);
+
+statement ok
+DECLARE RELATIONSHIP child.(k1, k2) -> parent.(k1, k2);
+
+statement ok
+SELECT relationship_coherence() FROM child.(k1, k2) -> parent.(k1, k2);
+
+query TIII
+SELECT json_extract_string(value, '$.orphan_keys[*].key')[1:2], (value->>'orphan_distinct')::INT, (value->>'orphans')::INT,
+       len(from_json(json_extract_string(value, '$.orphan_keys[2].key'), '["VARCHAR"]')[1])
+FROM main.measurements WHERE function = 'relationship_coherence' AND subject = 'fin.child.(k1, k2) -> fin.parent.(k1, k2)';
+----
+['["a","b, c"]', '["a, b","c"]']	5	5	100
+
 # its inputs: the data of the relationship, its two tables, and its own declarations
 query T
 SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements m

@@ -508,14 +508,15 @@ SELECT branch, derivation, alias, condition FROM glossql_views_mapping('fin') WH
 # --- branch_rows(view): per branch of the union, the table that drives it, the steps that can leave a row
 # out, each row of the driving table with the first step that leaves it out, and the rows the branch serves
 
-# the second branch's condition is its one step; a branch that reads no table tells no step and reads nothing
+# the second branch's condition is its one step; a branch that reads no table is followed: it reads nothing and
+# serves its row
 query ITTITT
-SELECT branch, kind, what, step, CASE kind WHEN 'step' THEN text ELSE (text IS NULL)::VARCHAR END, array_to_string(columns, ' ') FROM branch_rows('fin.onhand') WHERE kind IN ('branch', 'step') ORDER BY branch, kind, step;
+SELECT branch, kind, coalesce(dataset || '.' || table_name, what), step, CASE kind WHEN 'step' THEN text ELSE (text IS NULL)::VARCHAR END, array_to_string(columns, ' ') FROM branch_rows('fin.onhand') WHERE kind IN ('branch', 'step') ORDER BY branch, kind, step;
 ----
 1	branch	fin.stock_dk	NULL	true	part source_system quantity
 2	branch	fin.stock_pl	NULL	true	part source_system quantity
 2	step	condition	1	(p.status = 'D')	(empty)
-3	branch	NULL	NULL	false	(empty)
+3	branch	NULL	NULL	true	(empty)
 
 query ITII
 SELECT branch, kind, count(*), count(step) FROM branch_rows('fin.onhand') WHERE kind IN ('read', 'served') GROUP BY ALL ORDER BY ALL;
@@ -555,7 +556,7 @@ SELECT step, "values" FROM branch_rows('fin.brand_of') WHERE kind = 'read' AND s
 
 # a CTE the branch reads from: followed to its table, a left join leaves nothing out
 query TT
-SELECT what, array_to_string(columns, ' ') FROM branch_rows('fin.part') WHERE kind = 'branch';
+SELECT dataset || '.' || table_name, array_to_string(columns, ' ') FROM branch_rows('fin.part') WHERE kind = 'branch';
 ----
 fin.stock_dk	matnr
 
