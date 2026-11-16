@@ -100,6 +100,13 @@ that now arrives under another type.
 `GLOSSARY()` and `TESTS()` are computed once per version of the
 catalog and the lake and kept in DuckDB's object cache. A write, a
 load or a delete changes the version, and the next read computes
-again.
+again. Which stored results are out of date is checked once per
+version too, for the whole workspace: the results' `current` mark and
+`glossql_outdated()` read the same check.
+
+A kit keeps a read of its own the same way: `glossql_kept('<macro>')`
+serves the rows of the table macro `main.<macro>()`, which takes no
+arguments, over the dataset in use, computed once per version. A read
+that several reads compose is then planned and run once per write.
 
 Normative text: [SPEC.md §5.3](../../SPEC.md#53-reading).

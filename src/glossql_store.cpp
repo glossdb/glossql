@@ -39,6 +39,12 @@
 #include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/storage/object_cache.hpp"
 
+#include <exception>
+#include <functional>
+#include <mutex>
+#include <pthread.h>
+#include <set>
+
 #include <algorithm>
 #include <functional>
 
@@ -602,17 +608,28 @@ static string CheckSQL(Inner &inner) {
 	       " ON o.id = r.result)";
 }
 
+//! Every current result that is out of date, with why: (id, dataset, function, subject, input, reason), id
+//! the snapshot that stored it. A read that returns other rows now than when the result was computed
+//! (changed), or a read of results that returned one that is out of date (outdated). Its ids are the
+//! results out of date. Computed once per store version for the whole workspace (glossql_cached
+//! 'check'): the results' current mark and glossql_outdated() both read it
+static string CheckRowsSQL(Inner &inner) {
+	return CheckSQL(inner) +
+	       " SELECT c.id, c.dataset, c.function, c.subject, m.input, 'changed' AS reason FROM rc_moved m JOIN rc_cur c"
+	       " USING (id) UNION SELECT c.id, c.dataset, c.function, c.subject, h.input, 'outdated' FROM now_results r"
+	       " JOIN rc_outdated o ON o.id = r.result JOIN rc_cur c ON c.id = r.id JOIN rc_held h ON h.id = r.id"
+	       " AND h.\"read\" = r.\"read\" AND h.what = r.what AND h.\"where\" = r.\"where\"";
+}
+
+static constexpr const char *KEPT_CHECK = "glossql_cached('check', NULL, NULL)";
+
 string CurrentResultsSQL(Inner &inner) {
-	return CheckSQL(inner) + " SELECT m.*, m.begin_snapshot NOT IN (SELECT id FROM rc_outdated) AS current FROM " +
+	return "SELECT m.*, m.begin_snapshot NOT IN (SELECT id FROM " + string(KEPT_CHECK) + ") AS current FROM " +
 	       inner.ws.Store("measurements") + " m WHERE m.end_snapshot IS NULL";
 }
 
 string OutdatedSQL(Inner &inner) {
-	return CheckSQL(inner) +
-	       " SELECT c.dataset, c.function, c.subject, m.input, 'changed' AS reason FROM rc_moved m JOIN rc_cur c"
-	       " USING (id) UNION SELECT c.dataset, c.function, c.subject, h.input, 'outdated' FROM now_results r"
-	       " JOIN rc_outdated o ON o.id = r.result JOIN rc_cur c ON c.id = r.id JOIN rc_held h ON h.id = r.id"
-	       " AND h.\"read\" = r.\"read\" AND h.what = r.what AND h.\"where\" = r.\"where\"";
+	return "SELECT DISTINCT dataset, function, subject, input, reason FROM " + string(KEPT_CHECK);
 }
 
 struct InitState : public GlobalTableFunctionState {
@@ -1705,6 +1722,12 @@ static string MissingSQL(const vector<TestRow> &tests, const ReadScope &scope) {
 //! withheld while two actors' values are current and the test's score exceeds its
 //! threshold; one value is never in conflict, it is served with its test state
 //! (SPEC §5.3); every gap visible
+//! The tests of a whole dataset as kept (glossql_cached 'tests'): the detectors run once per store version,
+//! for the tests read and for the collapse, which reads each test's state
+static string KeptTestsSQL(const ReadScope &whole) {
+	return "glossql_cached('tests', " + QuoteText(whole.dataset) + ", NULL)";
+}
+
 static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const ReadScope &scope, const Value &aspect) {
 	auto aspect_filter = AspectFilter(aspect);
 	auto missing = MissingSQL(tests, scope);
@@ -1717,8 +1740,8 @@ static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const Rea
 	       "), annotations AS (SELECT * FROM " + string(HOISTED) + " WHERE true" + aspect_filter +
 	       "), picked AS (SELECT subject, aspect, body AS value, stale FROM annotations QUALIFY row_number() OVER ("
 	       "PARTITION BY subject, aspect ORDER BY CASE actor WHEN 'human' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END,"
-	       " ord DESC) = 1), results AS (" +
-	       ResultsSQL(inner, tests, scope) +
+	       " ord DESC) = 1), results AS (SELECT subject, aspect, test, state, score FROM " +
+	       KeptTestsSQL(scope) +
 	       "), judged AS (SELECT v.subject, v.aspect, v.state, v.score, w.threshold FROM results v LEFT JOIN " +
 	       Newest(scope.ws, "tests") +
 	       " w ON w.name = v.test QUALIFY row_number() OVER (PARTITION BY v.subject, v.aspect"
@@ -1915,32 +1938,90 @@ static string ReadSQL(Inner &inner, const string &kind, const ReadScope &whole) 
 	throw InvalidInputException("glossql_cached serves a read: collapsed, raw, tests or values, not '%s'", kind);
 }
 
-//! One kind of read over a whole dataset: as kept while the store's version
-//! holds, else computed on the inner connection and kept
-static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const string &kind, const ReadScope &whole) {
-	auto &cache = ObjectCache::GetObjectCache(context);
-	auto key = CacheKey(inner.ws.lake, kind, whole.dataset);
-	ReadFill::Of(*inner.con.context).filling = true;
-	auto version = inner.Scalar(StoreVersionSQL(inner.ws)).ToString();
-	auto kept = cache.Get<CachedRead>(key);
-	if (kept && kept->version == version) {
-		return kept;
+//! The stack a fill runs on. A fill is planned inside the bind of the read that composes it, and a
+//! kept read composes others, each planned in the bind of the one before; the bind may itself run
+//! on a worker thread of the engine, whose stack is the platform's default (512 KB on macOS)
+static constexpr size_t FILL_STACK = static_cast<size_t>(64) * 1024 * 1024;
+
+struct FillWork {
+	std::function<void()> work;
+	std::exception_ptr raised;
+};
+
+static void *RunFill(void *argument) {
+	auto &fill = *static_cast<FillWork *>(argument);
+	try {
+		fill.work();
+	} catch (...) {
+		fill.raised = std::current_exception();
 	}
-	auto result = inner.Run(ReadSQL(inner, kind, whole));
+	return nullptr;
+}
+
+//! Runs work on a thread of its own with the fill's stack and waits for it; what it raises is raised here
+static void OnFillStack(std::function<void()> work) {
+	FillWork fill {std::move(work), nullptr};
+	pthread_attr_t attributes;
+	pthread_attr_init(&attributes);
+	pthread_attr_setstacksize(&attributes, FILL_STACK);
+	pthread_t thread;
+	auto failed = pthread_create(&thread, &attributes, RunFill, &fill);
+	pthread_attr_destroy(&attributes);
+	if (failed) {
+		fill.work();
+		return;
+	}
+	pthread_join(thread, nullptr);
+	if (fill.raised) {
+		std::rethrow_exception(fill.raised);
+	}
+}
+
+//! The rows of a statement run on the inner connection, kept under a key at a version
+static shared_ptr<CachedRead> Keep(ClientContext &context, Inner &inner, const string &key, const string &version,
+                                   const string &sql) {
 	auto read = make_shared_ptr<CachedRead>();
-	read->rows = make_shared_ptr<ColumnDataCollection>(Allocator::Get(context), result->GetTypes());
-	while (auto chunk = result->Fetch()) {
-		read->rows->Append(*chunk);
-	}
-	read->names = result->GetNames();
-	read->types = result->GetTypes();
+	OnFillStack([&]() {
+		auto result = inner.Run(sql);
+		read->rows = make_shared_ptr<ColumnDataCollection>(Allocator::Get(context), result->GetTypes());
+		while (auto chunk = result->Fetch()) {
+			read->rows->Append(*chunk);
+		}
+		read->names = result->GetNames();
+		read->types = result->GetTypes();
+	});
 	read->version = version;
-	cache.Put(key, read);
+	ObjectCache::GetObjectCache(context).Put(key, read);
 	return read;
 }
 
+//! One kind of read over a whole dataset: as kept while the store's version
+//! holds, else computed on the inner connection and kept
+static shared_ptr<CachedRead> Cached(ClientContext &context, Inner &inner, const string &kind, const ReadScope &whole) {
+	auto key = CacheKey(inner.ws.lake, kind, whole.dataset);
+	ReadFill::Of(*inner.con.context).filling = true;
+	auto version = inner.Scalar(StoreVersionSQL(inner.ws)).ToString();
+	auto kept = ObjectCache::GetObjectCache(context).Get<CachedRead>(key);
+	if (kept && kept->version == version) {
+		return kept;
+	}
+	return Keep(context, inner, key, version, ReadSQL(inner, kind, whole));
+}
+
+//! The check of every current result (CheckRowsSQL), kept per store version for the workspace. It
+//! reads the store and the lake, never a read of the glossary, so its connection is no fill
+static shared_ptr<CachedRead> CachedCheck(ClientContext &context, Inner &inner) {
+	auto key = CacheKey(inner.ws.lake, "check", "");
+	auto version = inner.Scalar(StoreVersionSQL(inner.ws)).ToString();
+	auto kept = ObjectCache::GetObjectCache(context).Get<CachedRead>(key);
+	if (kept && kept->version == version) {
+		return kept;
+	}
+	return Keep(context, inner, key, version, CheckRowsSQL(inner));
+}
+
 //! glossql_cached(kind, dataset, aspect): a dataset's read as kept, scanned; the
-//! reads narrow it in SQL
+//! reads narrow it in SQL. Kind 'check' is the workspace's check of its results, whatever the dataset
 struct CachedBindData : public FunctionData {
 	shared_ptr<CachedRead> read;
 
@@ -1962,9 +2043,13 @@ struct CachedScanState : public GlobalTableFunctionState {
 static unique_ptr<FunctionData> CachedBind(ClientContext &context, TableFunctionBindInput &input,
                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
 	Inner inner(context);
-	auto whole = WholeOf(ScopeOf(context, input.inputs[1]), inner.ws);
+	auto kind = input.inputs[0].ToString();
 	auto result = make_uniq<CachedBindData>();
-	result->read = Cached(context, inner, input.inputs[0].ToString(), whole);
+	if (kind == "check") {
+		result->read = CachedCheck(context, inner);
+	} else {
+		result->read = Cached(context, inner, kind, WholeOf(ScopeOf(context, input.inputs[1]), inner.ws));
+	}
 	return_types = result->read->types;
 	names = result->read->names;
 	return result;
@@ -2013,22 +2098,11 @@ static unique_ptr<FunctionData> KeptViewBind(ClientContext &context, TableFuncti
 	auto dataset = input.inputs[0].ToString();
 	auto view = input.inputs[1].ToString();
 	auto version = input.inputs[2].ToString();
-	auto &cache = ObjectCache::GetObjectCache(context);
 	auto key = ViewKey(LakeName(context), dataset, view);
-	auto kept = cache.Get<CachedRead>(key);
+	auto kept = ObjectCache::GetObjectCache(context).Get<CachedRead>(key);
 	if (!kept || kept->version != version) {
 		Inner inner(context);
-		auto result = inner.Run("SELECT * FROM " + inner.Table(dataset, view));
-		auto read = make_shared_ptr<CachedRead>();
-		read->rows = make_shared_ptr<ColumnDataCollection>(Allocator::Get(context), result->GetTypes());
-		while (auto chunk = result->Fetch()) {
-			read->rows->Append(*chunk);
-		}
-		read->names = result->GetNames();
-		read->types = result->GetTypes();
-		read->version = version;
-		cache.Put(key, read);
-		kept = std::move(read);
+		kept = Keep(context, inner, key, version, "SELECT * FROM " + inner.Table(dataset, view));
 	}
 	auto result = make_uniq<CachedBindData>();
 	result->read = kept;
@@ -2040,6 +2114,92 @@ static unique_ptr<FunctionData> KeptViewBind(ClientContext &context, TableFuncti
 static TableFunction GlossKeptViewFunction() {
 	return TableFunction("glossql_kept_view", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                     CachedExec, KeptViewBind, CachedInit);
+}
+
+//===--------------------------------------------------------------------===//
+// A kit's read kept: the rows of a table macro of the lake's main schema, with
+// no arguments, over the caller's dataset, computed once per store version on a
+// connection of its own and kept beside the reads. A read that several reads
+// compose (the views' summary, the tests on the views) is then planned and run
+// once per write, and each read that composes it scans the rows. The rows are
+// the read's at the store version: a write, a load, a definition and a
+// removal move it. A macro is declared at open, before any read keeps it.
+//===--------------------------------------------------------------------===//
+
+static string KeptReadKey(ClientContext &context, const string &read) {
+	return "glossql_kept|" + LakeName(context) + "|" + CurrentDataset(context) + "|" + read;
+}
+
+//! The kept reads being computed, on any connection. A read that binds a kept read while it is being
+//! computed (a view's lineage binds every view of its schema, a composed read among them) binds the
+//! macro itself, so a fill never waits on itself
+struct KeptNow {
+	std::mutex lock;
+	std::set<string> keys;
+
+	static KeptNow &Get() {
+		static KeptNow now;
+		return now;
+	}
+};
+
+struct Keeping {
+	string key;
+	explicit Keeping(string key_p) : key(std::move(key_p)) {
+		auto &now = KeptNow::Get();
+		std::lock_guard<std::mutex> guard(now.lock);
+		now.keys.insert(key);
+	}
+	~Keeping() {
+		auto &now = KeptNow::Get();
+		std::lock_guard<std::mutex> guard(now.lock);
+		now.keys.erase(key);
+	}
+	Keeping(const Keeping &) = delete;
+	Keeping &operator=(const Keeping &) = delete;
+};
+
+static bool BeingKept(const string &key) {
+	auto &now = KeptNow::Get();
+	std::lock_guard<std::mutex> guard(now.lock);
+	return now.keys.count(key) > 0;
+}
+
+//! glossql_kept(read): the rows of main.<read>() on the caller's dataset, in its order
+static unique_ptr<FunctionData> KeptReadBind(ClientContext &context, TableFunctionBindInput &input,
+                                             vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto read = input.inputs[0].ToString();
+	Inner inner(context);
+	auto key = KeptReadKey(context, read);
+	auto version = StoreVersion(inner);
+	auto kept = ObjectCache::GetObjectCache(context).Get<CachedRead>(key);
+	if (!kept || kept->version != version) {
+		Keeping mark(key);
+		kept = Keep(context, inner, key, version,
+		            "SELECT * FROM " + QuoteName(inner.ws.lake) + ".main." + QuoteName(read) + "()");
+	}
+	auto result = make_uniq<CachedBindData>();
+	result->read = kept;
+	return_types = kept->types;
+	names = kept->names;
+	return result;
+}
+
+//! While this connection fills a read, a kept read is the macro itself, whose gloss reads bind as their
+//! shape: a fill never computes another read of its own dataset. While the read is being kept, it is the
+//! macro too
+static unique_ptr<TableRef> KeptReadBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	if (!ReadFill::Of(context).filling && !BeingKept(KeptReadKey(context, input.inputs[0].ToString()))) {
+		return nullptr;
+	}
+	return make_uniq<SubqueryRef>(ParseSelect("SELECT * FROM " + QuoteName(LakeName(context)) + ".main." +
+	                                          QuoteName(input.inputs[0].ToString()) + "()"));
+}
+
+static TableFunction GlossKeptReadFunction() {
+	TableFunction function("glossql_kept", {LogicalType::VARCHAR}, CachedExec, KeptReadBind, CachedInit);
+	function.bind_replace = KeptReadBindReplace;
+	return function;
 }
 
 //! The columns of each kind of read, as the empty relation a bind serves while
@@ -2112,6 +2272,7 @@ void RegisterGlossStore(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossTestsFunction());
 	loader.RegisterFunction(GlossCachedFunction());
 	loader.RegisterFunction(GlossKeptViewFunction());
+	loader.RegisterFunction(GlossKeptReadFunction());
 	loader.RegisterFunction(GlossColumnsFunctions());
 }
 

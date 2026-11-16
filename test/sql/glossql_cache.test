@@ -114,6 +114,69 @@ SELECT count(*) FROM glossql_cached('tests', 'fin', NULL);
 ----
 0
 
+# the check of the workspace's results is kept too: no result is stored, none is out of date
+query I
+SELECT count(*) FROM glossql_cached('check', NULL, NULL);
+----
+0
+
+# --- a kit's read kept: the rows of a table macro of main on the caller's dataset, computed once per
+# store version
+
+statement ok
+CREATE MACRO ws.main.meanings() AS TABLE
+SELECT subject, value->>'value' AS v FROM glossql_glossary(current_schema(), 'meaning', false) ORDER BY subject;
+
+query II
+SELECT * FROM glossql_kept('meanings');
+----
+fin.orders.amount	the order's amount
+fin.orders.id	the order's number, assigned at booking
+fin.spend.total	the orders' total
+
+# a write on another connection moves the version: the rows are the read's again
+statement ok con1
+GLOSS meaning ON orders.amount AS $${"value": "the order's amount in euro"}$$;
+
+query II
+SELECT * FROM glossql_kept('meanings');
+----
+fin.orders.amount	the order's amount in euro
+fin.orders.id	the order's number, assigned at booking
+fin.spend.total	the orders' total
+
+# each dataset keeps its own rows
+statement ok
+DECLARE DATASET ops SET (purpose: 'a second dataset');
+
+statement ok
+USE ws.ops;
+
+statement ok
+CREATE TABLE ws.ops.t (x INTEGER);
+
+statement ok
+GLOSS meaning ON t.x AS $${"value": "a number"}$$;
+
+query II
+SELECT * FROM glossql_kept('meanings');
+----
+ops.t.x	a number
+
+statement ok
+USE ws.fin;
+
+query I
+SELECT count(*) FROM glossql_kept('meanings');
+----
+3
+
+# a kept read names a table macro of main
+statement error
+SELECT * FROM glossql_kept('no_such_read');
+----
+Catalog Error
+
 # --- a read is kept per lake: two workspaces attached to one instance, a dataset of one name in each,
 # both at one version, each served its own rows
 
