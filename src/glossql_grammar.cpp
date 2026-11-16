@@ -16,6 +16,7 @@
 
 #include "glossql_grammar.hpp"
 
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -686,6 +687,39 @@ static arena_ptr<TransformResultValue> FinalizeTestsRead(PEGTransformer &transfo
 }
 GLOSSQL_TRANSFORM(StartTestsRead, FinalizeTestsRead)
 
+//! GlossGlossaryQuoted <- 'GLOSSARY' Parens(GlossQuotedArgs) TableAlias?
+//! GlossTestsQuoted <- 'TESTS' Parens(GlossQuotedArgs) TableAlias?
+//! GlossQuotedArgs <- StringLiteral GlossAspectNarrow? GlossAllTail?
+//! A subject is a path (grammar.ebnf), never a string: a string where it stands is refused by
+//! code with the form that reads it, where the stock parser would look up a table function of
+//! the read's name
+static arena_ptr<TransformResultValue> QuotedReadRefusal(PEGTransformer &transformer, ParseResult &parse_result,
+                                                         const char *read) {
+	auto &list = parse_result.Cast<ListParseResult>();
+	auto &args = InParens(list.GetChild(1)).Cast<ListParseResult>();
+	auto form = Text(transformer, args.GetChild(0));
+	auto &narrow = args.Child<OptionalParseResult>(1);
+	if (narrow.HasResult()) {
+		form += "::" + Ident(transformer, narrow.GetResult().Cast<ListParseResult>().GetChild(1));
+	}
+	if (args.Child<OptionalParseResult>(2).HasResult()) {
+		form += ", all => true";
+	}
+	throw InvalidInputException("glossql: quoted_subject: %s() takes its subject as a name, not a string: %s(%s); "
+	                            "%s() alone reads the dataset in use",
+	                            read, read, form, read);
+}
+
+static arena_ptr<TransformResultValue> FinalizeGlossaryQuoted(PEGTransformer &transformer, ParseResult &parse_result) {
+	return QuotedReadRefusal(transformer, parse_result, "GLOSSARY");
+}
+GLOSSQL_TRANSFORM(StartGlossaryQuoted, FinalizeGlossaryQuoted)
+
+static arena_ptr<TransformResultValue> FinalizeTestsQuoted(PEGTransformer &transformer, ParseResult &parse_result) {
+	return QuotedReadRefusal(transformer, parse_result, "TESTS");
+}
+GLOSSQL_TRANSFORM(StartTestsQuoted, FinalizeTestsQuoted)
+
 //===--------------------------------------------------------------------===//
 // The grammar extension
 //===--------------------------------------------------------------------===//
@@ -811,6 +845,14 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	    GrammarChange::AddRule("GlossTestsRead <- 'TESTS' Parens(GlossTestsArgs?) TableAlias?", StartTestsRead));
 	rule("GlossTestsArgs <- GlossSubject GlossAspectNarrow?");
 	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossTestsRead"));
+	// a string where the subject stands: refused by code, not left to the stock parser
+	changes.push_back(GrammarChange::AddRule("GlossGlossaryQuoted <- 'GLOSSARY' Parens(GlossQuotedArgs) TableAlias?",
+	                                         StartGlossaryQuoted));
+	changes.push_back(
+	    GrammarChange::AddRule("GlossTestsQuoted <- 'TESTS' Parens(GlossQuotedArgs) TableAlias?", StartTestsQuoted));
+	rule("GlossQuotedArgs <- StringLiteral GlossAspectNarrow? GlossAllTail?");
+	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossGlossaryQuoted"));
+	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossTestsQuoted"));
 
 	// Tests
 	statement("GlossDeclareTest <- 'DECLARE' 'TEST' Identifier 'ON' Identifier GlossBy? GlossDetector? "

@@ -140,6 +140,34 @@ SELECT subject, aspect, test, state, current FROM TESTS() WHERE state = 'red';
 ----
 fin.orders.amount	additivity	additivity_test	red	true
 
+# a subject is a name, not a string: the quoted form is refused by its code, for both reads, with or without the
+# aspect and the all flag, and not looked up as a table function of the read's name
+statement error
+SELECT * FROM TESTS('orders.amount');
+----
+quoted_subject
+
+statement error
+SELECT * FROM TESTS('orders.amount'::additivity);
+----
+quoted_subject
+
+statement error
+SELECT * FROM GLOSSARY('orders.amount');
+----
+quoted_subject
+
+statement error
+SELECT * FROM GLOSSARY('orders.amount', all => true) g;
+----
+quoted_subject
+
+# the double-quoted name is an identifier, and reads as the bare one
+query I
+SELECT count(*) FROM TESTS("orders".amount::additivity);
+----
+1
+
 # the raw read shows every value with its aspect's kind and its test
 query TTTTT
 SELECT subject, aspect, kind, test, actor FROM GLOSSARY(orders.amount, all => true) ORDER BY actor;
