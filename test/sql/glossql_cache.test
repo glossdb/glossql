@@ -114,12 +114,6 @@ SELECT count(*) FROM glossql_cached('tests', 'fin', NULL);
 ----
 0
 
-# the check of the workspace's results is kept too: no result is stored, none is out of date
-query I
-SELECT count(*) FROM glossql_cached('check', NULL, NULL);
-----
-0
-
 # --- a kit's read kept: the rows of a table macro of main on the caller's dataset, computed once per
 # store version
 

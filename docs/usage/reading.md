@@ -100,9 +100,9 @@ that now arrives under another type.
 `GLOSSARY()` and `TESTS()` are computed once per version of the
 catalog and the lake and kept in DuckDB's object cache. A write, a
 load or a delete changes the version, and the next read computes
-again. Which stored results are out of date is checked once per
-version too, for the whole workspace: the results' `current` mark and
-`glossql_outdated()` read the same check.
+again. Which stored results are out of date is asked when it is read:
+`glossql_outdated()` checks every result, and the `current` mark of a
+result checks that result and the results it read.
 
 A kit keeps a read of its own the same way: `glossql_kept('<macro>')`
 serves the rows of the table macro `main.<macro>()`, which takes no

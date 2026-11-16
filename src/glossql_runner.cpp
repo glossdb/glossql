@@ -1858,9 +1858,10 @@ SELECT DISTINCT asset, what FROM (
 
 //! The stored row for the call while it is current, (value, error), else empty
 static vector<Value> Served(Inner &inner, const string &dataset, const string &name, const string &subject) {
-	return inner.Row("SELECT value, error FROM (" + CurrentResultsSQL(inner) +
-	                 ") WHERE current AND dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
-	                 " AND subject = " + QuoteText(subject));
+	return inner.Row("SELECT value, error FROM (" +
+	                 CurrentResultsSQL(inner, "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
+	                                              " AND subject = " + QuoteText(subject)) +
+	                 ") WHERE current");
 }
 
 //! What extraction serves of a value: its top-level summary object when the body

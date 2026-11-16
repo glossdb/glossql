@@ -210,9 +210,10 @@ struct Workspace {
 
 class Inner;
 
-//! The current stored results, each row with `current`: no node it read changed after the snapshot
-//! it read at, and no result it read is out of date (SPEC §6)
-string CurrentResultsSQL(Inner &inner);
+//! The current stored results `filter` selects, a condition on the measurements relation, each row with
+//! `current`: no node it read changed after the snapshot it read at, and no result it read is out of
+//! date (SPEC §6). The check walks only those results and what they read
+string CurrentResultsSQL(Inner &inner, const string &filter);
 //! Why a stored result is out of date: (dataset, function, subject, asset, what, reason), a node it
 //! read that changed after it read (reason `changed`), or a result it read that is out of date (reason
 //! `outdated`)
