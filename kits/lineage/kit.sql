@@ -207,6 +207,45 @@ UNION ALL SELECT subject, 'the dataset', asset FROM main.place_dataset(dataset_n
 UNION ALL SELECT subject, 'the dataset''s metrics', asset FROM main.place_metrics(dataset_name)
 UNION ALL SELECT subject, 'its dataset', asset FROM main.place_its_dataset(dataset_name);
 
+-- view_reads(dataset): the tables and views each view of a dataset
+-- reads, through the views it reads, (view, relation)
+CREATE OR REPLACE MACRO main.view_reads(dataset_name) AS TABLE
+WITH RECURSIVE direct AS (SELECT DISTINCT "from" AS view, "to" AS relation FROM main.lineage(dataset_name)
+                          WHERE kind = 'reads' AND len(string_split("to", '.')) = 2),
+walk(view, relation) AS (SELECT view, relation FROM direct
+  UNION SELECT w.view, d.relation FROM walk w JOIN direct d ON d.view = w.relation)
+SELECT view, relation FROM walk;
+
+-- place_nodes(dataset): the nodes each place's walk passes, (subject,
+-- where, asset, what), beside the assets places() lists: a relation's
+-- definition, a view's and those of what it reads; the relationships of a
+-- table, a view and what it reads, or a dataset; a table's recipe; a
+-- dataset's assets. A result that read a place read these too, so a
+-- member added to the place later changes a node it read.
+CREATE OR REPLACE MACRO main.place_nodes(dataset_name) AS TABLE
+WITH cols AS MATERIALIZED (SELECT table_name, column_name, table_type FROM glossql_columns(dataset_name)),
+walked AS MATERIALIZED (
+  SELECT DISTINCT dataset_name || '.' || table_name AS subject, table_type = 'VIEW' AS is_view,
+         dataset_name || '.' || table_name AS relation FROM cols
+  UNION SELECT view, true, relation FROM main.view_reads(dataset_name)),
+plans AS (FROM main.plans_edges(dataset_name))
+SELECT w.subject, u.place AS "where", w.relation AS asset, 'definition' AS what
+FROM walked w, unnest(['its columns', 'its sources', 'the columns it joins on', 'its relationships',
+                       'its source systems']) u(place)
+WHERE w.is_view OR u.place = 'its columns'
+UNION ALL SELECT subject, 'its relationships', relation, 'relationships' FROM walked
+UNION ALL SELECT subject, 'its source systems', relation, 'recipe' FROM walked
+UNION ALL SELECT dataset_name || '.' || table_name || '.' || column_name, 'its relationships',
+                 dataset_name || '.' || table_name, 'relationships' FROM cols
+UNION ALL SELECT left_side || ' ' || op || ' ' || right_side, 'its relationships', dataset_name, 'relationships'
+          FROM main.relationships WHERE dataset = dataset_name
+UNION ALL SELECT p."from", 'its metric', w.relation, 'definition' FROM plans p
+          JOIN walked w ON (w.subject = p."from" AND w.relation = p."from") OR w.subject = p."to"
+UNION ALL SELECT dataset_name, u.place, dataset_name, s.what
+          FROM unnest(['its columns', 'the dataset', 'the dataset''s metrics']) u(place),
+               unnest(['assets', 'relationships']) s(what)
+UNION ALL SELECT dataset_name, 'its relationships', dataset_name, 'relationships';
+
 CREATE OR REPLACE MACRO main.place(where_) AS TABLE
 FROM query(CASE where_
   WHEN 'itself' THEN 'SELECT main.read_subject() AS asset'
@@ -221,29 +260,19 @@ FROM query(CASE where_
   WHEN 'the dataset''s metrics' THEN 'SELECT asset FROM main.place_metrics(split_part(main.read_subject(), ''.'', 1))'
   ELSE 'SELECT error(''not_a_place: ' || replace(where_, '''', '''''') || ' names no place; place_list() lists them'')::VARCHAR AS asset' END);
 
--- tables_read(dataset): the relations of the lake whose rows each
--- asset's data is, (asset, asset_kind, table_name): a table its own; a
--- view itself, the views it reads and the tables it scans; a column those
--- of its table or view; a relationship those of its columns; the dataset
--- every table. What a stored result that read data depends on: each at
--- DuckLake's version of it, a view's the definition it holds
+-- tables_read(dataset): the relation whose rows each asset's data is,
+-- (asset, asset_kind, table_name): a table or a view itself; a column its
+-- table's or view's; a relationship those of its two sides; the dataset
+-- every table. What a view reads in turn is view_reads().
 CREATE OR REPLACE MACRO main.tables_read(dataset_name) AS TABLE
 WITH cols AS (SELECT table_name, column_name, table_type FROM glossql_columns(dataset_name)),
-tables AS (SELECT DISTINCT dataset_name || '.' || table_name AS t FROM cols WHERE table_type = 'BASE TABLE'),
-views AS (SELECT DISTINCT dataset_name || '.' || table_name AS v FROM cols WHERE table_type = 'VIEW'),
-lin AS MATERIALIZED (FROM main.lineage(dataset_name)),
-relations AS (
-  SELECT t AS asset, 'table' AS asset_kind, t AS table_name FROM tables
-  UNION SELECT v, 'view', v FROM views
-  UNION SELECT dataset_name || '.' || s.view, 'view', s.table_name FROM glossql_views_scans(dataset_name) s
-  UNION SELECT l."from", 'view', l."to" FROM lin l WHERE l.kind = 'reads' AND l."to" IN (SELECT v FROM views))
-SELECT asset, asset_kind, table_name FROM relations
-UNION ALL SELECT dataset_name || '.' || c.table_name || '.' || c.column_name, 'column', r.table_name
-          FROM cols c JOIN relations r ON r.asset = dataset_name || '.' || c.table_name
-UNION ALL SELECT DISTINCT l."from", 'relationship', r.table_name
-          FROM lin l JOIN lin c ON c.kind = 'contains' AND c."to" = l."to" JOIN relations r ON r.asset = c."from"
-          WHERE l.kind = 'relates'
-UNION ALL SELECT dataset_name, 'dataset', t FROM tables;
+rels AS (SELECT DISTINCT dataset_name || '.' || table_name AS r, CASE table_type WHEN 'VIEW' THEN 'view' ELSE 'table' END AS k
+         FROM cols)
+SELECT r AS asset, k AS asset_kind, r AS table_name FROM rels
+UNION ALL SELECT dataset_name || '.' || table_name || '.' || column_name, 'column', dataset_name || '.' || table_name FROM cols
+UNION ALL SELECT left_side || ' ' || op || ' ' || right_side, 'relationship', split_part(side, '.', 1) || '.' || split_part(side, '.', 2)
+          FROM main.relationships, unnest([left_side, right_side]) u(side) WHERE dataset = dataset_name
+UNION ALL SELECT dataset_name, 'dataset', r FROM rels WHERE k = 'table';
 
 --===------------------------------------------------------------------===--
 -- annotations(property, where): one row per asset of the place the

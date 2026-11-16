@@ -35,7 +35,7 @@ query TTI
 SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
-lineage	glossql	26
+lineage	glossql	28
 quality	kits/quality/kit.sql	23
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
@@ -235,12 +235,12 @@ FROM main.measurements WHERE function = 'relationship_coherence' AND subject = '
 ----
 ['["a","b, c"]', '["a, b","c"]']	5	5	100
 
-# its inputs: the data of the relationship, its two tables, and its own declarations
+# its inputs: the data of the relationship's two tables, and the declarations of the function and the macro it follows
 query T
-SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements m
+SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements m
 WHERE function = 'relationship_coherence' AND subject = 'fin.payments.invoice_id -> fin.invoices.invoice_id';
 ----
-data(data, itself),function,property
+fin.invoices data,fin.payments data,main.relationship_checks declaration,relationship_coherence declaration
 
 # over a dataset it computes nothing: the check is one relationship's
 statement ok

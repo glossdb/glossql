@@ -210,39 +210,12 @@ struct Workspace {
 
 class Inner;
 
-//! What a stored result reads, by kind of read, per dataset: which of the kits' relations the
-//! digests of those reads walk (ReadsNowSQL)
-struct ReadNeeds {
-	std::set<string> places;
-	std::set<string> tables;
-	std::set<string> definitions;
-	std::set<string> lineage;
-	std::set<string> annotations;
-	//! the macros the functions' bodies follow, each with a digest of its definition now (MacroDigests)
-	std::map<string, string> macros;
-
-	//! A read of this kind (annotations, results, definition, data, lineage) of a result in the dataset
-	void Add(const string &dataset, const string &read);
-};
-//! What a set of reads returns now, each as a digest (SPEC §6): CTE definitions to follow a WITH
-//! over the caller's `wanted` (id, dataset, subject, function, aspect, read, what, where), ending
-//! in now_versions (id, read, what, where, version) and now_results (id, read, what, where,
-//! result), the stored results each read of results returned. A result stores these digests when
-//! it is computed, and is current while its reads return the same (glossql_store.cpp)
-string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs);
-//! The macros the bodies of the current functions follow, or of one function's, as their reads name
-//! them (functions.reads), each with a digest of its definition as the catalog holds it now; `gone`
-//! where none does (glossql_runner.cpp)
-std::map<string, string> MacroDigests(Inner &inner, const string &function);
-//! An input's name, as the inputs relation stores it: read(what, where) for a read function's call
-//! and for data; function and property for the declarations
-string InputName(const string &read, const string &what, const string &where);
-//! The current stored results, each row with `current`: each of its reads returns now what it
-//! returned when it was computed, and no result it read is out of date (SPEC §6)
+//! The current stored results, each row with `current`: no node it read changed after the snapshot
+//! it read at, and no result it read is out of date (SPEC §6)
 string CurrentResultsSQL(Inner &inner);
-//! Why a stored result is out of date: (dataset, function, subject, input, reason), a read that
-//! returns other rows now (reason `changed`), or a read of results that returned one out of date
-//! (reason `outdated`)
+//! Why a stored result is out of date: (dataset, function, subject, asset, what, reason), a node it
+//! read that changed after it read (reason `changed`), or a result it read that is out of date (reason
+//! `outdated`)
 string OutdatedSQL(Inner &inner);
 //! The session variable that names the subject a function computes a result for: the
 //! engine sets it on the connection of the run, and the read functions walk from it

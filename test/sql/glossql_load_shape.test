@@ -61,11 +61,6 @@ width	fin.whole	width	2	true
 statement ok
 SELECT assets() FROM fin;
 
-query T
-SELECT input FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'width' AND input LIKE 'annotations%';
-----
-annotations(note, its columns)
-
 # --- a replace load of the same columns
 
 statement ok
@@ -96,11 +91,12 @@ true
 statement ok
 DECLARE RECIPE whole ON fin FROM files AS $$SELECT id::INTEGER AS id, segment, id * 2 AS twice FROM read_csv('load_shape.csv')$$;
 
-query TT
-SELECT function, input FROM glossql_outdated() ORDER BY ALL;
+query TTT
+SELECT function, asset, what FROM glossql_outdated() ORDER BY ALL;
 ----
-assets	annotations(note, the dataset)
-width	annotations(note, its columns)
+assets	fin	assets
+assets	fin.whole	definition
+width	fin.whole	definition
 
 query TTTTT
 SELECT width() FROM whole;
@@ -115,10 +111,10 @@ SELECT assets() FROM fin;
 statement ok
 CREATE VIEW fin.halves AS SELECT id FROM fin.whole WHERE id % 2 = 0;
 
-query TT
-SELECT function, input FROM glossql_outdated() ORDER BY ALL;
+query TTT
+SELECT function, asset, what FROM glossql_outdated() ORDER BY ALL;
 ----
-assets	annotations(note, the dataset)
+assets	fin	assets
 
 statement ok
 SELECT assets() FROM fin;
@@ -187,10 +183,10 @@ COPY (SELECT i AS id, 'acct' || i AS account, i * 1.5 AS amount, CASE WHEN i < 5
 statement ok
 IMPORT ledger;
 
-query T
-SELECT input FROM glossql_outdated() WHERE function = 'ledger_total';
+query TT
+SELECT asset, what FROM glossql_outdated() WHERE function = 'ledger_total';
 ----
-data(data, fin.ledger)
+fin.ledger	data
 
 query I
 SELECT count(*) FROM fin.ledger WHERE note IS NULL;
@@ -208,10 +204,10 @@ COPY (SELECT i AS id, 'acct' || i AS account, i * 1.5 AS amount, 'x' AS note FRO
 statement ok
 IMPORT ledger;
 
-query T
-SELECT input FROM glossql_outdated() WHERE function = 'ledger_total';
+query TT
+SELECT asset, what FROM glossql_outdated() WHERE function = 'ledger_total';
 ----
-data(data, fin.ledger)
+fin.ledger	data
 
 query I
 SELECT count(*) FROM fin.ledger;

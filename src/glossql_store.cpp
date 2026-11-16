@@ -340,15 +340,17 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "name VARCHAR NOT NULL, scope VARCHAR NOT NULL, script VARCHAR NOT NULL, returns VARCHAR, reads VARCHAR, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "begin_snapshot, name, scope, script, returns, reads::JSON AS reads, declared_at, declared_by"},
+    // read_at: the lake's newest snapshot when the computation began to read; changed_at: the
+    // snapshot its value and error last changed at, kept by a computation that returns the same
     {"measurements",
 	 "dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, "
-	 "value VARCHAR, computed_at TIMESTAMP NOT NULL, error VARCHAR",
-	 "begin_snapshot, dataset, function, subject, aspect, value::JSON AS value, computed_at, error"},
-    // what a stored result read, one row per read with a digest of what it returned (SPEC §6):
-    // the rows begin with their result, whose begin_snapshot they share, and end with it. The
-    // read, its what and its where are the input's name taken apart
-    {"inputs", "input VARCHAR NOT NULL, version VARCHAR, \"read\" VARCHAR, what VARCHAR, \"where\" VARCHAR",
-	 "begin_snapshot, input, version"},
+	 "value VARCHAR, computed_at TIMESTAMP NOT NULL, error VARCHAR, read_at BIGINT NOT NULL, changed_at BIGINT NOT "
+	 "NULL",
+	 "begin_snapshot, dataset, function, subject, aspect, value::JSON AS value, computed_at, error, read_at, "
+	 "changed_at"},
+    // one row per node a stored result read (SPEC §6): the rows begin with their result, whose
+    // begin_snapshot they share, and end with it
+    {"inputs", "asset VARCHAR NOT NULL, what VARCHAR NOT NULL", "begin_snapshot, asset, what"},
     {"tests",
 	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
@@ -361,276 +363,7 @@ static string Newest(const Workspace &ws, const string &relation) {
 	return "(SELECT * FROM " + ws.Store(relation) + " WHERE end_snapshot IS NULL)";
 }
 
-//===--------------------------------------------------------------------===//
-// Inputs (SPEC §6): what each read of a stored result returned, kept as a
-// digest, and evaluated again for the result's subject to tell whether it is
-// current. One definition serves both: the digest a result stores when it is
-// computed and the digest its reads return now are the same SQL
-//===--------------------------------------------------------------------===//
-
 static string AnnotationsOverSQL(const Workspace &ws, const string &filter);
-static string SourceGrainSQL(const Workspace &ws);
-
-//! The lake's tables and views, each at its version, (name, version): a table's the last snapshot
-//! that wrote, altered or dropped it, from the lake's own change log, where compaction is not a
-//! write; a view's the snapshot that defined it
-static string RelationVersionsSQL(const Workspace &ws) {
-	string changes = "(SELECT snapshot_id, v AS ids FROM (SELECT snapshot_id, unnest(map_keys(changes)) AS k,"
-	                 " unnest(map_values(changes)) AS v FROM ducklake_snapshots(" +
-	                 QuoteText(ws.lake) +
-	                 ")) WHERE k IN ('tables_inserted_into', 'tables_deleted_from', 'tables_altered',"
-	                 " 'tables_dropped', 'inlined_insert', 'inlined_delete'))";
-	return "SELECT s.schema_name || '.' || t.table_name AS name, greatest(t.begin_snapshot, coalesce("
-	       "(SELECT max(c.snapshot_id) FROM " +
-	       changes + " c WHERE list_contains(c.ids, t.table_id::VARCHAR)), 0))::VARCHAR AS version FROM " +
-	       ws.Meta("table") + " t JOIN " + ws.Meta("schema") +
-	       " s ON s.schema_id = t.schema_id AND s.end_snapshot IS NULL WHERE t.end_snapshot IS NULL"
-	       " UNION ALL SELECT s.schema_name || '.' || v.view_name, v.begin_snapshot::VARCHAR FROM " +
-	       ws.Meta("view") + " v JOIN " + ws.Meta("schema") +
-	       " s ON s.schema_id = v.schema_id AND s.end_snapshot IS NULL WHERE v.end_snapshot IS NULL";
-}
-
-void ReadNeeds::Add(const string &dataset, const string &read) {
-	if (read == "annotations" || read == "results" || read == "definition" || read == "data" || read == "lineage") {
-		places.insert(dataset);
-	}
-	if (read == "data") {
-		tables.insert(dataset);
-	}
-	if (read == "definition") {
-		definitions.insert(dataset);
-	}
-	if (read == "lineage") {
-		lineage.insert(dataset);
-	}
-	if (read == "annotations") {
-		annotations.insert(dataset);
-	}
-}
-
-//! A kit's relation over each dataset, as one UNION ALL tagged with the dataset; the empty
-//! relation of its columns where there is none
-static string EachDataset(const std::set<string> &datasets, const string &select, const string &macro,
-                          const string &empty) {
-	vector<string> parts;
-	for (auto &dataset : datasets) {
-		parts.push_back("SELECT " + QuoteText(dataset) + " AS dataset, " + select + " FROM main." + macro + "(" +
-		                QuoteText(dataset) + ")");
-	}
-	return parts.empty() ? "SELECT NULL::VARCHAR AS dataset, " + empty + " WHERE false"
-	                     : StringUtil::Join(parts, " UNION ALL ");
-}
-
-string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs) {
-	const string key = "a.id, a.\"read\", a.what, a.\"where\"";
-	const string none =
-	    "SELECT NULL::BIGINT AS id, NULL::VARCHAR AS \"read\", NULL::VARCHAR AS what, NULL::VARCHAR AS \"where\","
-	    " NULL::VARCHAR AS row WHERE false";
-	// the places a where names, as the lineage kit lists them (place_list()); an anchored place is the
-	// same for every subject of a dataset, and is walked from the dataset
-	string sql = "rn_place AS (SELECT p.\"where\", p.anchored FROM unnest(main.place_list()) u(p)), ";
-	sql += "rn_w AS (SELECT *, CASE WHEN \"where\" IN (SELECT \"where\" FROM rn_place WHERE anchored) THEN dataset"
-	       " ELSE subject END AS anchor FROM wanted), ";
-	sql += "rn_m AS (SELECT begin_snapshot AS result, dataset, function, subject, aspect, value, error FROM " +
-	       ws.Store("measurements") + " WHERE end_snapshot IS NULL), ";
-	sql += "rn_pl AS (" +
-	       EachDataset(needs.places, "subject, \"where\", asset", "places",
-	                   "NULL::VARCHAR AS subject, NULL::VARCHAR AS \"where\", NULL::VARCHAR AS asset") +
-	       "), ";
-	// the assets each read reads: those of its place, walked from its subject; a data read of a table
-	// the body names, that table
-	sql +=
-	    "rn_a AS (SELECT w.id, w.dataset, w.function, w.\"read\", w.what, w.\"where\", w.subject AS asset FROM rn_w w"
-	    " WHERE w.\"where\" = 'itself' UNION ALL SELECT w.id, w.dataset, w.function, w.\"read\", w.what, w.\"where\","
-	    " p.asset FROM rn_w w JOIN rn_pl p ON p.dataset = w.dataset AND p.\"where\" = w.\"where\" AND p.subject ="
-	    " w.anchor UNION ALL SELECT w.id, w.dataset, w.function, w.\"read\", w.what, w.\"where\", w.\"where\""
-	    " FROM rn_w w WHERE w.\"read\" = 'data' AND w.\"where\" NOT IN (SELECT \"where\" FROM rn_place)), ";
-	// the first branch names the columns
-	vector<string> rows {none};
-	// the stored results a read returned: a read of results, each asset's result of the function; a read
-	// of annotations, the values functions stored under the property on each asset, the reader's own
-	// results apart, which are never its input
-	vector<string> held {"SELECT " + key + ", m.result FROM rn_a a JOIN rn_m m ON m.dataset = a.dataset" +
-	                     " AND m.function = a.what AND m.subject = a.asset WHERE a.\"read\" = 'results'"};
-	// annotations: each asset of the place the property is declared on, with every annotation of it by a
-	// person or an agent, its stale mark, and the values functions stored under it; and the property's
-	// declaration and tests, with the script of each test's detector, which its collapse follows.
-	// 'x-kind <kind>' reads every property of that kind
-	if (!needs.annotations.empty()) {
-		vector<string> datasets;
-		for (auto &dataset : needs.annotations) {
-			datasets.push_back(QuoteText(dataset));
-		}
-		// a source's annotations are the workspace's, whichever dataset they were written in
-		sql += "rn_ann AS (" +
-		       AnnotationsOverSQL(ws, "(dataset IN (" + StringUtil::Join(datasets, ", ") + ") OR " +
-		                                  SourceGrainSQL(ws) + ")") +
-		       "), ";
-		sql += "rn_decl AS (SELECT a.name, from_json(a.grains, '[\"VARCHAR\"]') AS grains,"
-		       " json_extract_string(a.schema, '$.x-kind') AS xkind, (a.name, a.kind, a.grains, a.condition,"
-		       " a.schema)::VARCHAR || coalesce((SELECT string_agg((t.name, t.actors, t.detector, t.threshold,"
-		       " (SELECT string_agg((f.scope, f.script)::VARCHAR, ',' ORDER BY f.scope) FROM " +
-		       ws.Store("functions") +
-		       " f WHERE f.name = t.detector AND f.end_snapshot IS NULL))::VARCHAR, ',' ORDER BY t.name) FROM " +
-		       ws.Store("tests") + " t WHERE t.aspect = a.name AND t.end_snapshot IS NULL), '') AS row FROM " +
-		       ws.Store("aspects") + " a WHERE a.end_snapshot IS NULL), ";
-		sql += "rn_props AS (SELECT w.id, w.dataset, w.\"read\", w.what, w.\"where\", d.name AS property, d.grains,"
-		       " d.row FROM rn_w w JOIN rn_decl d ON d.name = w.what OR (starts_with(w.what, 'x-kind ')"
-		       " AND d.xkind = substr(w.what, 8)) WHERE w.\"read\" = 'annotations'), ";
-		string over = " FROM rn_props p JOIN rn_a a ON a.id = p.id AND a.\"read\" = p.\"read\" AND a.what = p.what"
-		              " AND a.\"where\" = p.\"where\"";
-		string valued = over + " JOIN rn_m m ON m.dataset = p.dataset AND m.subject = a.asset AND m.aspect ="
-		                       " p.property AND m.function <> a.function";
-		rows.push_back("SELECT id, \"read\", what, \"where\", 'declared ' || row FROM rn_props");
-		rows.push_back("SELECT " + key + ", (a.asset, p.property, g.actor, g.body::VARCHAR, g.stale)::VARCHAR" + over +
-		               " LEFT JOIN rn_ann g ON (g.dataset = p.dataset OR main.asset_grain(a.asset) = 'SOURCE')"
-		               " AND g.subject = a.asset AND g.aspect = p.property"
-		               " WHERE len(p.grains) = 0 OR list_contains(p.grains, main.asset_grain(a.asset))");
-		rows.push_back("SELECT " + key + ", (a.asset, p.property, 'function', m.value, m.error)::VARCHAR" + valued);
-		held.push_back("SELECT " + key + ", m.result" + valued);
-	}
-	// results: each asset of the place, with the function's result stored on it, or none
-	string results = " FROM rn_a a LEFT JOIN rn_m m ON m.dataset = a.dataset AND m.function = a.what"
-	                 " AND m.subject = a.asset WHERE a.\"read\" = 'results'";
-	rows.push_back("SELECT " + key + ", (a.asset, m.value, m.error)::VARCHAR" + results);
-	// the definition: each view of the place, as definition() returns it
-	if (!needs.definitions.empty()) {
-		sql += "rn_defs AS (" +
-		       EachDataset(needs.definitions,
-		                   "view, (kind, plan_of, covers, sql, stopped, columns, reads, joins)::VARCHAR AS row",
-		                   "definitions", "NULL::VARCHAR AS view, NULL::VARCHAR AS row") +
-		       "), ";
-		rows.push_back("SELECT " + key +
-		               ", a.asset || ' ' || d.row FROM rn_a a JOIN rn_defs d"
-		               " ON d.dataset = a.dataset AND d.view = a.asset WHERE a.\"read\" = 'definition'");
-	}
-	// data: each loaded table the place's assets read, and each view, at DuckLake's version of it.
-	// what says which assets: 'tables' the loaded tables, 'views' the views, 'data' any
-	if (!needs.tables.empty()) {
-		sql += "rn_tr AS (" +
-		       EachDataset(needs.tables, "asset, asset_kind, table_name", "tables_read",
-		                   "NULL::VARCHAR AS asset, NULL::VARCHAR AS asset_kind, NULL::VARCHAR AS table_name") +
-		       "), ";
-		sql += "rn_tv AS (" + RelationVersionsSQL(ws) + "), ";
-		rows.push_back(
-		    "SELECT DISTINCT " + key +
-		    ", t.table_name || ' ' || coalesce(v.version, 'gone') FROM rn_a a JOIN rn_tr t"
-		    " ON t.dataset = a.dataset AND t.asset = a.asset LEFT JOIN rn_tv v ON v.name = t.table_name"
-		    " WHERE a.\"read\" = 'data' AND (a.what = 'data' OR (a.what = 'tables' AND t.asset_kind = 'table')"
-		    " OR (a.what = 'views' AND t.asset_kind = 'view'))");
-		rows.push_back(
-		    "SELECT " + key +
-		    ", a.asset || ' ' || coalesce(v.version, 'gone') FROM rn_a a LEFT JOIN rn_tv v ON lower(v.name) ="
-		    " lower(a.asset) WHERE a.\"read\" = 'data' AND a.\"where\" NOT IN (SELECT \"where\" FROM rn_place)");
-	}
-	// the lineage's edges of one kind from each asset of the place
-	if (!needs.lineage.empty()) {
-		sql += "rn_lin AS (" +
-		       EachDataset(needs.lineage, "\"from\", \"to\", kind", "lineage",
-		                   "NULL::VARCHAR AS \"from\", NULL::VARCHAR AS \"to\", NULL::VARCHAR AS kind") +
-		       "), ";
-		rows.push_back("SELECT " + key +
-		               ", (l.\"from\", l.\"to\")::VARCHAR FROM rn_a a JOIN rn_lin l"
-		               " ON l.dataset = a.dataset AND l.\"from\" = a.asset AND l.kind = a.what"
-		               " WHERE a.\"read\" = 'lineage'");
-	}
-	// the function's own declaration, with the definition of each macro its body follows as the
-	// catalog holds it now (functions.reads names them), and the property it returns
-	vector<string> macros;
-	for (auto &macro : needs.macros) {
-		macros.push_back("(" + QuoteText(macro.first) + ", " + QuoteText(macro.second) + ")");
-	}
-	sql += "rn_mac(name, digest) AS (" +
-	       (macros.empty() ? string("SELECT NULL::VARCHAR, NULL::VARCHAR WHERE false")
-	                       : "VALUES " + StringUtil::Join(macros, ", ")) +
-	       "), ";
-	sql += "rn_fmac AS (SELECT f.name, f.scope, string_agg(u.r.read || ' ' || coalesce(m.digest, 'gone'), ','"
-	       " ORDER BY u.r.read) AS macros FROM " +
-	       ws.Store("functions") +
-	       " f, unnest(from_json(f.reads, '[{\"kind\": \"VARCHAR\", \"read\": \"VARCHAR\"}]')) u(r)"
-	       " LEFT JOIN rn_mac m ON m.name = u.r.read WHERE f.end_snapshot IS NULL AND u.r.kind = 'macro'"
-	       " GROUP BY f.name, f.scope), ";
-	rows.push_back("SELECT w.id, w.\"read\", w.what, w.\"where\", (f.scope, f.script, f.returns)::VARCHAR ||"
-	               " coalesce(' ' || fm.macros, '') FROM rn_w w JOIN " +
-	               ws.Store("functions") +
-	               " f ON f.name = w.function AND f.scope IN (w.dataset, 'GLOBAL') AND f.end_snapshot IS NULL"
-	               " LEFT JOIN rn_fmac fm ON fm.name = f.name AND fm.scope = f.scope WHERE w.\"read\" = 'function'");
-	rows.push_back("SELECT w.id, w.\"read\", w.what, w.\"where\", (a.kind, a.grains, a.condition, a.schema)::VARCHAR"
-	               " FROM rn_w w JOIN " +
-	               ws.Store("aspects") +
-	               " a ON a.name = w.aspect AND a.end_snapshot IS NULL WHERE w.\"read\" = 'property'");
-	sql += "now_versions AS (SELECT w.id, w.\"read\", w.what, w.\"where\", md5(coalesce(string_agg(r.row, chr(10)"
-	       " ORDER BY r.row), '')) AS version FROM rn_w w LEFT JOIN (" +
-	       StringUtil::Join(rows, " UNION ALL ") +
-	       ") r ON r.id = w.id AND r.\"read\" = w.\"read\" AND r.what = w.what AND r.\"where\" = w.\"where\""
-	       " GROUP BY w.id, w.\"read\", w.what, w.\"where\"), ";
-	// the stored results each read returned: one out of date outdates its reader
-	sql += "now_results AS (" + StringUtil::Join(held, " UNION ALL ") + ")";
-	return sql;
-}
-
-string InputName(const string &read, const string &what, const string &where) {
-	if (read == "function" || read == "property") {
-		return read;
-	}
-	return read + "(" + what + ", " + where + ")";
-}
-
-//! The reads of the current results, each with what it returned when the result was computed and
-//! what it returns now, ending in rc_moved (id, read, what, where): a read whose digest differs; and rc_outdated (id):
-//! those results, and every result that read one of them, directly or through another
-static string CheckSQL(Inner &inner) {
-	auto &ws = inner.ws;
-	ReadNeeds needs;
-	auto held = inner.Run("SELECT DISTINCT m.dataset, i.\"read\" FROM " + ws.Store("inputs") + " i JOIN " +
-	                      ws.Store("measurements") +
-	                      " m ON m.begin_snapshot = i.begin_snapshot AND m.end_snapshot IS NULL"
-	                      " WHERE i.end_snapshot IS NULL");
-	while (auto chunk = held->Fetch()) {
-		for (idx_t r = 0; r < chunk->size(); r++) {
-			needs.Add(chunk->GetValue(0, r).ToString(), chunk->GetValue(1, r).ToString());
-		}
-	}
-	needs.macros = MacroDigests(inner, "");
-	return "WITH RECURSIVE rc_cur AS (SELECT begin_snapshot AS id, dataset, function, subject, aspect FROM " +
-	       ws.Store("measurements") +
-	       " WHERE end_snapshot IS NULL), rc_held AS (SELECT i.begin_snapshot AS id, i.input, i.version, i.\"read\","
-	       " i.what, i.\"where\" FROM " +
-	       ws.Store("inputs") +
-	       " i JOIN rc_cur c ON c.id = i.begin_snapshot WHERE i.end_snapshot IS NULL), wanted AS (SELECT h.id,"
-	       " c.dataset, c.subject, c.function, c.aspect, h.\"read\", h.what, h.\"where\" FROM rc_held h JOIN rc_cur c"
-	       " USING (id)), " +
-	       ReadsNowSQL(ws, needs) +
-	       ", rc_moved AS (SELECT h.id, h.input FROM rc_held h LEFT JOIN now_versions n"
-	       " ON n.id = h.id AND n.\"read\" = h.\"read\" AND n.what = h.what AND n.\"where\" = h.\"where\""
-	       " WHERE n.version IS DISTINCT FROM h.version),"
-	       " rc_outdated(id) AS (SELECT id FROM rc_moved UNION SELECT r.id FROM now_results r JOIN rc_outdated o"
-	       " ON o.id = r.result)";
-}
-
-//! Every current result that is out of date, with why: (id, dataset, function, subject, input, reason), id
-//! the snapshot that stored it. A read that returns other rows now than when the result was computed
-//! (changed), or a read of results that returned one that is out of date (outdated). Its ids are the
-//! results out of date. Computed once per store version for the whole workspace (glossql_cached
-//! 'check'): the results' current mark and glossql_outdated() both read it
-static string CheckRowsSQL(Inner &inner) {
-	return CheckSQL(inner) +
-	       " SELECT c.id, c.dataset, c.function, c.subject, m.input, 'changed' AS reason FROM rc_moved m JOIN rc_cur c"
-	       " USING (id) UNION SELECT c.id, c.dataset, c.function, c.subject, h.input, 'outdated' FROM now_results r"
-	       " JOIN rc_outdated o ON o.id = r.result JOIN rc_cur c ON c.id = r.id JOIN rc_held h ON h.id = r.id"
-	       " AND h.\"read\" = r.\"read\" AND h.what = r.what AND h.\"where\" = r.\"where\"";
-}
-
-static constexpr const char *KEPT_CHECK = "glossql_cached('check', NULL, NULL)";
-
-string CurrentResultsSQL(Inner &inner) {
-	return "SELECT m.*, m.begin_snapshot NOT IN (SELECT id FROM " + string(KEPT_CHECK) + ") AS current FROM " +
-	       inner.ws.Store("measurements") + " m WHERE m.end_snapshot IS NULL";
-}
-
-string OutdatedSQL(Inner &inner) {
-	return "SELECT DISTINCT dataset, function, subject, input, reason FROM " + string(KEPT_CHECK);
-}
 
 struct InitState : public GlobalTableFunctionState {
 	bool done = false;
@@ -1175,10 +908,19 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 			auto source_grain =
 			    inner.Scalar("SELECT " + SourceGrainSQL(inner.ws) + " FROM (SELECT " + QuoteText(resolved) +
 				             " AS subject, " + QuoteText(aspect.name) + " AS aspect)");
-			write.End("glossary",
-			          "subject = " + QuoteText(resolved) + " AND aspect = " + QuoteText(aspect.name) +
-			              " AND actor_kind = " + QuoteText(actor) +
-			              (source_grain.GetValue<bool>() ? string() : " AND dataset = " + QuoteText(dataset)));
+			auto held = "subject = " + QuoteText(resolved) + " AND aspect = " + QuoteText(aspect.name) +
+			            " AND actor_kind = " + QuoteText(actor) +
+			            (source_grain.GetValue<bool>() ? string() : " AND dataset = " + QuoteText(dataset));
+			// the same body by the same actor on an annotation that is not stale writes nothing
+			auto same = inner.Scalar("SELECT g.body = " + QuoteText(body) + " AND g.actor_id IS NOT DISTINCT FROM " +
+			                         ActorIdOf(context).ToSQLString() + " AND NOT a.stale FROM (SELECT * FROM " +
+			                         inner.Current("glossary") + " WHERE " + held + ") g JOIN (" +
+			                         AnnotationsOverSQL(inner.ws, held) + ") a ON a.ord = g.begin_snapshot");
+			if (!same.IsNull() && same.GetValue<bool>()) {
+				outcome = "gloss " + bind.row[1].ToString() + " on " + resolved + " unchanged: no-op";
+				return;
+			}
+			write.End("glossary", held);
 			write.Insert("glossary", QuoteText(dataset) + ", " + QuoteText(resolved) + ", " + QuoteText(aspect.name) +
 			                             ", " + QuoteText(actor) + ", " + ActorIdOf(context).ToSQLString() + ", " +
 			                             QuoteText(body) + ", now()");
@@ -1396,6 +1138,116 @@ static string ViewsSQL(const Workspace &ws) {
 //! The loads, for the re-derivation rule: each with the lineage it recorded
 static string LoadsSQL(const Workspace &ws) {
 	return "SELECT dataset, table_name, lineage, snapshot_id, begin_snapshot FROM " + ws.Store("imports");
+}
+
+//===--------------------------------------------------------------------===//
+// The check (SPEC §6): the lake's snapshot id is the only version. A node a
+// result read changed at the latest snapshot one of its rows begins or ends
+// at, and rows are ended, never deleted; a result is out of date when a node
+// it read changed after the snapshot it read at
+//===--------------------------------------------------------------------===//
+
+//! When each node changed, (asset, what, dataset, function, changed_at), as docs/specification/tables/
+//! inputs.md names the nodes. dataset and function are NULL but for a stored result: a result read is
+//! the reader's dataset's, and a function's own results are no input of its own
+static string NodeChangesSQL(const Workspace &ws) {
+	auto at = [](const string &row) {
+		return "greatest(" + row + "begin_snapshot, coalesce(" + row + "end_snapshot, 0))";
+	};
+	auto node = [&](const string &asset, const string &what, const string &from) {
+		return "SELECT " + asset + " AS asset, " + what + " AS what, NULL AS dataset, NULL AS function, " + at("") +
+		       " AS changed_at FROM " + from;
+	};
+	auto store = [&](const string &relation) {
+		return ws.Store(relation);
+	};
+	// a table by its path, whatever id each of its rows carries
+	string tables = "SELECT s.schema_name || '.' || t.table_name AS name, t.table_id, t.begin_snapshot,"
+	                " t.end_snapshot FROM " +
+	                ws.Meta("table") + " t JOIN (SELECT DISTINCT schema_id, schema_name FROM " + ws.Meta("schema") +
+	                ") s USING (schema_id)";
+	string changes = "SELECT snapshot_id, unnest(map_keys(changes)) AS k, unnest(map_values(changes)) AS ids FROM "
+	                 "ducklake_snapshots(" +
+	                 QuoteText(ws.lake) + ")";
+	string views =
+	    "SELECT schema_name || '.' || view_name AS name, begin_snapshot, end_snapshot FROM (" + ViewsSQL(ws) + ")";
+	// a view's definition: the annotation that defines it, its row in the lake, its property's row
+	string defined = "SELECT subject || '.' || aspect AS name, begin_snapshot, end_snapshot FROM " + store("glossary") +
+	                 " WHERE NOT contains(subject, '.') AND aspect IN (SELECT name FROM " + store("aspects") +
+	                 " WHERE kind = 'VIEW')";
+	vector<string> arms {
+	    node("subject", "'annotation ' || aspect", store("glossary")),
+	    // a stored result: the current row's changed_at, else the last row's end
+	    "SELECT subject, w, dataset, function, coalesce(max(changed_at) FILTER (WHERE end_snapshot IS NULL),"
+	    " max(end_snapshot)) FROM " +
+	        store("measurements") + ", unnest(['result ' || function, 'value ' || aspect]) u(w) GROUP BY ALL",
+	    node("name", "'definition'", "(" + tables + ")"),
+	    node("schema_name || '.' || table_name", "'definition'", "(" + ColumnsSQL(ws) + ")"),
+	    // a load whose recipe derived the columns otherwise than the load before it
+	    "SELECT dataset || '.' || table_name, 'definition', NULL, NULL, snapshot_id FROM (SELECT *, lag(lineage) OVER"
+	    " (PARTITION BY dataset, table_name ORDER BY begin_snapshot) AS before FROM " +
+	        store("imports") + ") WHERE before IS DISTINCT FROM lineage AND before IS NOT NULL",
+	    node("name", "'definition'", "(" + views + ")"), node("name", "'definition'", "(" + defined + ")"),
+	    "SELECT v.name, 'definition', NULL, NULL, " + at("a.") + " FROM (" + views + " UNION ALL " + defined +
+	        ") v JOIN " + store("aspects") + " a ON a.name = substr(v.name, strpos(v.name, '.') + 1)",
+	    "SELECT dataset || '.' || table_name, 'data', NULL, NULL, snapshot_id FROM " + store("imports"),
+	    node("name", "'data'", "(" + tables + ")"),
+	    "SELECT t.name, 'data', NULL, NULL, c.snapshot_id FROM (" + tables + ") t JOIN (SELECT snapshot_id, id FROM (" +
+	        changes +
+	        "), unnest(ids) u(id) WHERE k IN ('tables_inserted_into', 'tables_deleted_from', 'tables_altered',"
+	        " 'inlined_insert', 'inlined_delete')) c ON c.id = t.table_id::VARCHAR",
+	    node("dataset || '.' || table_name", "'recipe'", store("recipes")),
+	    node("name", "'declaration'", store("aspects")), node("aspect", "'declaration'", store("tests")),
+	    node("name", "'declaration'", store("functions")),
+	    node("s.schema_name || '.' || m.macro_name", "'declaration'",
+		     ws.Meta("macro") + " m JOIN (SELECT DISTINCT schema_id, schema_name FROM " + ws.Meta("schema") +
+		         ") s USING (schema_id)"),
+	    node("split_part(side, '.', 1) || '.' || split_part(side, '.', 2)", "'relationships'",
+		     store("relationships") + ", unnest([left_side, right_side]) u(side)"),
+	    node("dataset", "'relationships'", store("relationships")),
+	    node("split_part(name, '.', 1)", "'assets'", "(" + tables + ")"),
+	    node("schema_name", "'assets'", "(" + ColumnsSQL(ws) + ")"),
+	    node("split_part(name, '.', 1)", "'assets'", "(" + views + ")"),
+	    node("json_extract_string(schema, '$.x-kind')", "'declarations'",
+		     store("aspects") + " WHERE json_extract_string(schema, '$.x-kind') IS NOT NULL")};
+	return "SELECT asset, what, dataset, function, max(changed_at) AS changed_at FROM (" +
+	       StringUtil::Join(arms, " UNION ALL ") + ") GROUP BY ALL";
+}
+
+//! Every current result that is out of date, with why: (id, dataset, function, subject, asset, what,
+//! reason), id the snapshot that stored it. A node it read changed after the snapshot it read at
+//! (changed), or a result it read is out of date (outdated). Kept per snapshot for the workspace
+//! (glossql_cached 'check'): the results' current mark and glossql_outdated() both read it
+static string CheckRowsSQL(const Workspace &ws) {
+	return "WITH RECURSIVE ck_cur AS (SELECT begin_snapshot AS id, dataset, function, subject, aspect, read_at FROM " +
+	       ws.Store("measurements") +
+	       " WHERE end_snapshot IS NULL), ck_in AS (SELECT begin_snapshot AS id, asset, what"
+	       " FROM " +
+	       ws.Store("inputs") + " WHERE end_snapshot IS NULL), ck_node AS (" + NodeChangesSQL(ws) +
+	       "), ck_changed AS (SELECT c.id, i.asset, i.what FROM ck_cur c JOIN ck_in i USING (id) JOIN ck_node n"
+	       // a name is matched as the lake matches it, whatever its case: a table read before the lake held it
+	       " ON lower(n.asset) = lower(i.asset) AND n.what = i.what AND (n.dataset IS NULL OR n.dataset = c.dataset)"
+	       " AND n.function IS DISTINCT FROM c.function WHERE n.changed_at > c.read_at),"
+	       // a result read, through a read of its function's results or of the values of its property
+	       " ck_reads AS (SELECT r.id AS reader, q.id AS read, i.asset, i.what FROM ck_in i JOIN ck_cur r USING (id)"
+	       " JOIN ck_cur q ON q.dataset = r.dataset AND q.subject = i.asset AND (i.what = 'result ' || q.function"
+	       " OR (i.what = 'value ' || q.aspect AND q.function <> r.function))),"
+	       " ck_out(id) AS (SELECT id FROM ck_changed UNION SELECT r.reader FROM ck_reads r JOIN ck_out o"
+	       " ON o.id = r.read)"
+	       " SELECT c.id, c.dataset, c.function, c.subject, x.asset, x.what, 'changed' AS reason FROM ck_changed x"
+	       " JOIN ck_cur c USING (id) UNION SELECT c.id, c.dataset, c.function, c.subject, r.asset, r.what,"
+	       " 'outdated' FROM ck_reads r JOIN ck_out o ON o.id = r.read JOIN ck_cur c ON c.id = r.reader";
+}
+
+static constexpr const char *KEPT_CHECK = "glossql_cached('check', NULL, NULL)";
+
+string CurrentResultsSQL(Inner &inner) {
+	return "SELECT m.*, m.begin_snapshot NOT IN (SELECT id FROM " + string(KEPT_CHECK) + ") AS current FROM " +
+	       inner.ws.Store("measurements") + " m WHERE m.end_snapshot IS NULL";
+}
+
+string OutdatedSQL(Inner &inner) {
+	return "SELECT DISTINCT dataset, function, subject, asset, what, reason FROM " + string(KEPT_CHECK);
 }
 
 //! The annotations in scope, each with whether its subject changed after the
@@ -2017,7 +1869,7 @@ static shared_ptr<CachedRead> CachedCheck(ClientContext &context, Inner &inner) 
 	if (kept && kept->version == version) {
 		return kept;
 	}
-	return Keep(context, inner, key, version, CheckRowsSQL(inner));
+	return Keep(context, inner, key, version, CheckRowsSQL(inner.ws));
 }
 
 //! glossql_cached(kind, dataset, aspect): a dataset's read as kept, scanned; the

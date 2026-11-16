@@ -54,6 +54,8 @@
 #include "duckdb/parser/query_node/set_operation_node.hpp"
 #include "duckdb/parser/query_node/recursive_cte_node.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/tableref/expressionlistref.hpp"
 #include "duckdb/parser/tableref/joinref.hpp"
@@ -680,7 +682,33 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 		keys = KeyOnce(inner, key, recipe.sql);
 	}
 	if (replace || key.empty()) {
-		inner.Run("CREATE OR REPLACE TABLE " + target + " AS " + recipe.sql);
+		// a recipe that returns the table's columns again replaces its rows and leaves its definition as it is
+		auto shape = [&](const string &relation) {
+			auto result = inner.Run("SELECT * FROM " + relation + " LIMIT 0");
+			string text;
+			for (idx_t i = 0; i < result->ColumnCount(); i++) {
+				text += result->ColumnName(i).GetIdentifierName() + " " + result->GetTypes()[i].ToString() + ",";
+			}
+			return text;
+		};
+		bool held = false;
+		try {
+			held = shape(target) == shape("(" + recipe.sql + ")");
+		} catch (std::exception &) {
+		}
+		if (held) {
+			inner.Run("BEGIN");
+			try {
+				inner.Run("DELETE FROM " + target);
+				inner.Run("INSERT INTO " + target + " " + recipe.sql);
+				inner.Run("COMMIT");
+			} catch (...) {
+				inner.con.Query("ROLLBACK");
+				throw;
+			}
+		} else {
+			inner.Run("CREATE OR REPLACE TABLE " + target + " AS " + recipe.sql);
+		}
 		loaded.mode = "replace";
 		loaded.how = "replaced";
 		loaded.source_rows = inner.Scalar("SELECT count(*) FROM " + target).GetValue<int64_t>();
@@ -926,8 +954,8 @@ static bool SameValue(const Value &before, const Value &after) {
 // or view of the lake named in FROM, by its canonical dataset.table, a name
 // without a dataset kept as written and taken in the subject's dataset, a table
 // the lake does not hold yet by its name, or a primitive over the data of the
-// subject; `macro` a macro followed, by its canonical name, whose definition is
-// part of the function's digest; `catalog` the catalog reached otherwise;
+// subject; `macro` a macro followed, by its canonical name, whose declaration
+// a result of the function reads; `catalog` the catalog reached otherwise;
 // `other` a table function that reads nothing (range, unnest); `untracked` what
 // the engine cannot follow: a body that does not parse, a table outside the
 // lake, a table function that reads outside it, a function the catalog does not
@@ -1476,51 +1504,6 @@ static string ReadsJson(const std::set<BodyRead> &reads) {
 	return "[" + StringUtil::Join(items, ",") + "]";
 }
 
-std::map<string, string> MacroDigests(Inner &inner, const string &function) {
-	std::map<string, string> digests;
-	auto rows = inner.Run("SELECT DISTINCT u.r.read FROM " + inner.Current("functions") +
-	                      " f, unnest(from_json(f.reads, '[{\"kind\": \"VARCHAR\", \"read\": \"VARCHAR\"}]')) u(r)"
-	                      " WHERE u.r.kind = 'macro'" +
-	                      (function.empty() ? string() : " AND f.name = " + QuoteText(function)));
-	vector<string> names;
-	while (auto chunk = rows->Fetch()) {
-		for (idx_t r = 0; r < chunk->size(); r++) {
-			names.push_back(chunk->GetValue(0, r).ToString());
-		}
-	}
-	if (names.empty()) {
-		return digests;
-	}
-	auto &context = *inner.con.context;
-	context.RunFunctionInTransaction([&]() {
-		for (auto &name : names) {
-			auto parts = StringUtil::Split(name, '.');
-			optional_ptr<CatalogEntry> entry;
-			if (parts.size() == 3) {
-				QualifiedName qualified {Identifier(parts[0]), Identifier(parts[1]), Identifier(parts[2])};
-				for (auto type : {CatalogType::TABLE_MACRO_ENTRY, CatalogType::MACRO_ENTRY}) {
-					try {
-						entry = entry ? entry
-						              : Catalog::GetEntry(context, EntryLookupInfo(type, qualified),
-						                                  OnEntryNotFound::RETURN_NULL);
-					} catch (std::exception &) {
-					}
-				}
-			}
-			if (!entry) {
-				digests[name] = "gone";
-				continue;
-			}
-			MD5Context md5;
-			md5.Add(entry->ToSQL());
-			char digest[MD5Context::MD5_HASH_LENGTH_TEXT + 1];
-			md5.FinishHex(digest);
-			digests[name] = string(digest, MD5Context::MD5_HASH_LENGTH_TEXT);
-		}
-	});
-	return digests;
-}
-
 //! The cycle a function's reads close over the functions' reads, as the path of function names
 //! from it back to it, or empty: a read of results reads that function's; a read of annotations reads
 //! the values of the functions that return the property
@@ -1796,32 +1779,78 @@ static vector<Read> ReadsOfFunction(ClientContext &context, Inner &inner, const 
 	return vector<Read>(reads.begin(), reads.end());
 }
 
-//! What each read returns now for the subject, as the digest a result stores (ReadsNowSQL). Whether
-//! a result it read is current is no part of the digest: a result is out of date while one it read
-//! is, whenever it was computed (CurrentResultsSQL)
-static vector<pair<Read, Value>> InputsNow(Inner &inner, const string &dataset, const string &subject,
-                                           const string &function, const string &aspect, const vector<Read> &reads) {
-	ReadNeeds needs;
-	needs.macros = MacroDigests(inner, function);
-	vector<string> wanted;
+//! The nodes a result of the function on the subject reads (docs/specification/tables/inputs.md),
+//! (asset, what), taken before the body runs: per read, the nodes of its place's assets and those its
+//! place's walk passes (main.place_nodes()); and the declarations of the function, of each macro its
+//! body follows and of the property it fills
+static vector<pair<string, string>> NodesRead(Inner &inner, const string &dataset, const string &subject,
+                                              const string &function, const string &scope, const string &returns,
+                                              const vector<Read> &reads) {
+	vector<string> wanted {"(NULL, NULL, NULL)"};
 	for (auto &read : reads) {
-		needs.Add(dataset, read.read);
-		wanted.push_back("(0::BIGINT, " + QuoteText(dataset) + ", " + QuoteText(subject) + ", " + QuoteText(function) +
-		                 ", " + QuoteText(aspect) + ", " + QuoteText(read.read) + ", " + QuoteText(read.what) + ", " +
-		                 QuoteText(read.where) + ")");
-	}
-	auto rows = inner.Run("WITH wanted(id, dataset, subject, function, aspect, \"read\", what, \"where\") AS (VALUES " +
-	                      StringUtil::Join(wanted, ", ") + "), " + ReadsNowSQL(inner.ws, needs) +
-	                      " SELECT \"read\", what, \"where\", version FROM now_versions ORDER BY ALL");
-	vector<pair<Read, Value>> inputs;
-	while (auto chunk = rows->Fetch()) {
-		for (idx_t r = 0; r < chunk->size(); r++) {
-			inputs.emplace_back(Read {chunk->GetValue(0, r).ToString(), chunk->GetValue(1, r).ToString(),
-			                          chunk->GetValue(2, r).ToString()},
-			                    chunk->GetValue(3, r));
+		if (read.read != "function" && read.read != "property") {
+			wanted.push_back("(" + QuoteText(read.read) + ", " + QuoteText(read.what) + ", " + QuoteText(read.where) +
+			                 ")");
 		}
 	}
-	return inputs;
+	// $d the dataset, $s the subject, $f the function, $p the property it fills; a table a body names
+	// is no place, and is its own asset
+	string sql = R"(WITH w("read", what, "where") AS (VALUES $wanted),
+pl AS (SELECT p."where", p.anchored FROM unnest(main.place_list()) u(p)),
+wa AS (SELECT *, CASE WHEN "where" IN (SELECT "where" FROM pl WHERE anchored) THEN $d ELSE $s END AS anchor
+       FROM w WHERE "read" IS NOT NULL),
+a AS (SELECT "read", what, "where", anchor AS asset FROM wa WHERE "where" = 'itself'
+      UNION ALL SELECT wa."read", wa.what, wa."where", p.asset FROM wa
+                JOIN main.places($d) p ON p."where" = wa."where" AND p.subject = wa.anchor
+      UNION ALL SELECT "read", what, "where", "where" FROM wa WHERE "where" NOT IN (SELECT "where" FROM pl)),
+props AS (SELECT DISTINCT wa.what, x.name FROM wa JOIN $aspects x ON x.name = wa.what
+          OR (starts_with(wa.what, 'x-kind ') AND json_extract_string(x.schema, '$.x-kind') = substr(wa.what, 8))
+          WHERE wa."read" = 'annotations'),
+vr AS MATERIALIZED (FROM main.view_reads($d)),
+rd AS (SELECT t.table_name AS r FROM a JOIN main.tables_read($d) t ON t.asset = a.asset
+       WHERE a."read" = 'data' AND (a.what = 'data' OR (a.what = 'tables' AND t.asset_kind = 'table')
+                                    OR (a.what = 'views' AND t.asset_kind = 'view'))
+       UNION SELECT asset FROM a WHERE "read" = 'data' AND "where" NOT IN (SELECT "where" FROM pl)),
+rv AS (SELECT r FROM rd UNION SELECT vr.relation FROM rd JOIN vr ON vr.view = rd.r)
+SELECT DISTINCT asset, what FROM (
+  SELECT n.asset, n.what FROM wa JOIN main.place_nodes($d) n ON n."where" = wa."where" AND n.subject = wa.anchor
+  UNION ALL SELECT a.asset, u.k || ' ' || p.name FROM a JOIN props p ON p.what = a.what,
+            unnest(['annotation', 'value']) u(k) WHERE a."read" = 'annotations'
+  UNION ALL SELECT split_part(asset, '.', 1) || '.' || split_part(asset, '.', 2), 'definition' FROM a
+            WHERE "read" = 'annotations' AND contains(asset, '.') AND main.asset_grain(asset) <> 'RELATIONSHIP'
+  UNION ALL SELECT name, 'declaration' FROM props
+  UNION ALL SELECT t.detector, 'declaration' FROM $tests t JOIN props p ON p.name = t.aspect WHERE t.detector IS NOT NULL
+  UNION ALL SELECT substr(what, 8), 'declarations' FROM wa WHERE "read" = 'annotations' AND starts_with(what, 'x-kind ')
+  UNION ALL SELECT asset, 'result ' || what FROM a WHERE "read" = 'results'
+  UNION ALL SELECT asset, 'definition' FROM a WHERE "read" = 'definition'
+  UNION ALL SELECT vr.relation, u.k FROM a JOIN vr ON vr.view = a.asset, unnest(['definition', 'recipe']) u(k)
+            WHERE a."read" = 'definition'
+  UNION ALL SELECT r, CASE WHEN r IN (SELECT schema_name || '.' || view_name FROM duckdb_views()
+                                      WHERE database_name = $lake) THEN 'definition' ELSE 'data' END FROM rv
+  UNION ALL SELECT unnest([$f, $p]), 'declaration'
+  UNION ALL SELECT substr(u.r.read, strpos(u.r.read, '.') + 1), 'declaration'
+            FROM $functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) u(r)
+            WHERE f.name = $f AND f.scope = $scope AND u.r.kind = 'macro') ORDER BY ALL)";
+	for (auto &term : vector<pair<string, string>> {{"$wanted", StringUtil::Join(wanted, ", ")},
+	                                                {"$aspects", inner.Current("aspects")},
+	                                                {"$tests", inner.Current("tests")},
+	                                                {"$functions", inner.Current("functions")},
+	                                                {"$lake", QuoteText(inner.ws.lake)},
+	                                                {"$scope", QuoteText(scope)},
+	                                                {"$d", QuoteText(dataset)},
+	                                                {"$s", QuoteText(subject)},
+	                                                {"$f", QuoteText(function)},
+	                                                {"$p", QuoteText(returns)}}) {
+		sql = StringUtil::Replace(sql, term.first, term.second);
+	}
+	vector<pair<string, string>> nodes;
+	auto rows = inner.Run(sql);
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			nodes.emplace_back(chunk->GetValue(0, r).ToString(), chunk->GetValue(1, r).ToString());
+		}
+	}
+	return nodes;
 }
 
 //! The stored row for the call while it is current, (value, error), else empty
@@ -1885,7 +1914,7 @@ static bool RaisedByBody(const ErrorData &error) {
 
 //! Takes a function's reads again from its body, and stores them where they moved (BodyReadSet).
 //! Returns the read no input can follow, where a macro the body calls now makes one, or empty: the
-//! reads are stored all the same, so the macros they follow keep the function's digest
+//! reads are stored all the same, so a result reads the declarations of the macros they follow
 static string RetakeReads(ClientContext &context, Inner &inner, const string &name, const string &scope,
                           const Value &returns) {
 	auto current = inner.Row("SELECT script, reads, declared_at, declared_by FROM " + inner.Current("functions") +
@@ -1965,10 +1994,12 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		// read functions makes the computation fail, stored with the function's declaration as its
 		// input: a change to the macros it follows makes it out of date
 		auto untracked = RetakeReads(context, inner, name, scope, returns);
-		// what its reads return, read before it runs: a change under it is a change after it
-		auto reads = InputsNow(inner, dataset, subject, name, returns.ToString(),
-		                       untracked.empty() ? ReadsOfFunction(context, inner, name, scope, dataset)
-		                                         : vector<Read> {{"function", "", ""}, {"property", "", ""}});
+		// the snapshot it reads at and the nodes it reads, taken before it runs: a change under it is a
+		// change after it
+		auto read_at = inner.Scalar("SELECT max(snapshot_id) FROM " + inner.ws.Meta("snapshot"));
+		auto nodes =
+		    NodesRead(inner, dataset, subject, name, scope, returns.ToString(),
+			          untracked.empty() ? ReadsOfFunction(context, inner, name, scope, dataset) : vector<Read>());
 		// a computation that fails is a result too: stored with its error, which serves while it is current.
 		// An error the body did not raise (an interrupt, the engine's own) stores nothing
 		Value value;
@@ -1999,25 +2030,34 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		if (!error.empty()) {
 			value = Value();
 		}
-		// stored with what each read returned: the next extraction serves it while they return
-		// the same. The result it replaces ends, and its inputs with it
+		// stored with the nodes it read. The result it replaces ends, and its inputs with it; the same
+		// value and error keep the snapshot they changed at, so what read them stays current
+		auto failure = error.empty() ? Value() : Value(error);
 		inner.Write(context, [&](CatalogWrite &write) {
 			auto key = "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
 			           " AND subject = " + QuoteText(subject);
-			auto replaced =
-			    inner.Scalar("SELECT begin_snapshot FROM " + inner.Current("measurements") + " WHERE " + key);
-			if (!replaced.IsNull()) {
-				write.End("inputs", "begin_snapshot = " + replaced.ToString());
+			auto replaced = inner.Row("SELECT begin_snapshot, value, error, changed_at FROM " +
+			                          inner.Current("measurements") + " WHERE " + key);
+			auto changed_at = Value::BIGINT(write.snapshot);
+			if (!replaced.empty()) {
+				if (SameValue(replaced[1], value) && SameValue(replaced[2], failure)) {
+					changed_at = replaced[3];
+				}
+				write.End("inputs", "begin_snapshot = " + replaced[0].ToString());
 				write.End("measurements", key);
 			}
 			write.Insert("measurements", QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) +
 			                                 ", " + returns.ToSQLString() + ", " +
 			                                 (value.IsNull() ? string("NULL") : QuoteText(value.ToString())) +
-			                                 ", now(), " + (error.empty() ? string("NULL") : QuoteText(error)));
-			for (auto &input : reads) {
-				write.Insert("inputs", QuoteText(InputName(input.first.read, input.first.what, input.first.where)) +
-				                           ", " + input.second.ToSQLString() + ", " + QuoteText(input.first.read) +
-				                           ", " + QuoteText(input.first.what) + ", " + QuoteText(input.first.where));
+			                                 ", now(), " + failure.ToSQLString() + ", " + read_at.ToString() + ", " +
+			                                 changed_at.ToString());
+			vector<string> rows;
+			for (auto &node : nodes) {
+				rows.push_back("(" + to_string(write.snapshot) + ", NULL, " + QuoteText(node.first) + ", " +
+				               QuoteText(node.second) + ")");
+			}
+			if (!rows.empty()) {
+				write.Run("INSERT INTO " + inner.Store("inputs") + " VALUES " + StringUtil::Join(rows, ", "));
 			}
 		});
 		if (!error.empty()) {
@@ -3171,6 +3211,34 @@ static string ScriptHash(const string &script) {
 	return string(digest, MD5Context::MD5_HASH_LENGTH_TEXT);
 }
 
+//! Whether a kit's CREATE OR REPLACE of a macro or a view states what the catalog holds already: such
+//! a statement is not run, so an open writes nothing for an entry it leaves as it is
+static bool HeldAlready(ClientContext &context, SQLStatement &statement) {
+	if (statement.type != StatementType::CREATE_STATEMENT) {
+		return false;
+	}
+	auto &info = *statement.Cast<CreateStatement>().info;
+	if (info.on_conflict != OnCreateConflict::REPLACE_ON_CONFLICT ||
+	    (info.type != CatalogType::MACRO_ENTRY && info.type != CatalogType::TABLE_MACRO_ENTRY &&
+	     info.type != CatalogType::VIEW_ENTRY)) {
+		return false;
+	}
+	bool same = false;
+	context.RunFunctionInTransaction([&]() {
+		auto entry = Catalog::GetEntry(context, EntryLookupInfo(info.type, info.GetQualifiedName()),
+		                               OnEntryNotFound::RETURN_NULL);
+		if (!entry) {
+			return;
+		}
+		auto held = entry->GetInfo();
+		auto stated = info.Copy();
+		stated->GetQualifiedNameMutable() = held->GetQualifiedName();
+		stated->on_conflict = held->on_conflict;
+		same = stated->ToString() == held->ToString();
+	});
+	return same;
+}
+
 vector<pair<string, string>> RunKit(ClientContext &context, const string &name, const string &location,
                                     const string &script, bool in_lake) {
 	vector<pair<string, string>> rows;
@@ -3194,6 +3262,10 @@ vector<pair<string, string>> RunKit(ClientContext &context, const string &name, 
 	for (auto &statement : statements) {
 		auto head = FirstLine(statement->query);
 		if (current && statement->type != StatementType::LOAD_STATEMENT) {
+			continue;
+		}
+		if (HeldAlready(*inner.con.context, *statement)) {
+			rows.emplace_back(head, "unchanged: no-op");
 			continue;
 		}
 		auto result = inner.con.Query(std::move(statement));

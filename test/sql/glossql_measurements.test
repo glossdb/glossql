@@ -37,18 +37,18 @@ DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max"
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 
-# --- extraction stores the row with what its reads returned: one row per read, a digest of what it returned
+# --- extraction stores the row with the nodes it read: one row per node
 
 query TTTTT
 SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
 
-# the data of its subject, and the declarations of the function and of the property it returns
+# the data of its subject's table, and the declaration of the function and of the property it returns
 query T
-SELECT string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot);
+SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i USING (begin_snapshot);
 ----
-data(data, itself),function,property
+fin.orders data,min_max declaration
 
 # --- a repeat is a serve, not a rerun
 
@@ -89,10 +89,10 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":9.0}	true
 
 query TT
-SELECT value, (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs_history i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements_history m ORDER BY begin_snapshot;
+SELECT value, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs_history i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements_history m ORDER BY begin_snapshot;
 ----
-{"min":0.0,"max":4.5}	data(data, itself),function,property
-{"min":0.0,"max":9.0}	data(data, itself),function,property
+{"min":0.0,"max":4.5}	fin.orders data,min_max declaration
+{"min":0.0,"max":9.0}	fin.orders data,min_max declaration
 
 # a re-declared function is never served from a measurement of its older body
 
@@ -166,9 +166,9 @@ SELECT answer() FROM orders.amount;
 answer	fin.orders.amount	answer	42	true
 
 query TT
-SELECT function, (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function = 'answer';
+SELECT function, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function = 'answer';
 ----
-answer	function,property
+answer	answer declaration
 
 statement ok
 INSERT INTO fin.other VALUES (3);
@@ -312,7 +312,7 @@ SELECT count(*) > 0 FROM GLOSSARY(fin.orders) WHERE subject LIKE 'fin.orders.%';
 ----
 true
 
-# --- dataset_cells() over a dataset reads its every table: a new view leaves the result current, a table's load does not
+# --- dataset_cells() over a dataset reads its every table and walks the dataset's assets: a new view and a table's load each outdate the result
 
 statement ok
 DECLARE ASPECT cell_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
@@ -324,7 +324,7 @@ statement ok
 SELECT cell_count() FROM fin;
 
 query IT
-SELECT count(*), bool_and(EXISTS (SELECT 1 FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot AND i.input = 'data(tables, the dataset)')) FROM measurements m WHERE function = 'cell_count';
+SELECT count(*), bool_and(EXISTS (SELECT 1 FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot AND i.asset = 'fin.other' AND i.what = 'data')) FROM measurements m WHERE function = 'cell_count';
 ----
 1	true
 
@@ -348,18 +348,18 @@ SELECT cell_count() FROM fin;
 query I
 SELECT count(*) FROM measurements_history WHERE function = 'cell_count';
 ----
-2
+3
 
-# --- which result is out of date, and which read returns other rows now: glossql_outdated()
+# --- which result is out of date, and which node it read changed: glossql_outdated()
 
 statement ok
 INSERT INTO fin.orders VALUES (11, 11.0);
 
-query TTT
-SELECT function, input, reason FROM glossql_outdated() WHERE subject = 'fin.orders.amount' AND function IN ('min_max', 'profile') ORDER BY ALL;
+query TTTT
+SELECT function, asset, what, reason FROM glossql_outdated() WHERE subject = 'fin.orders.amount' AND function IN ('min_max', 'profile') ORDER BY ALL;
 ----
-min_max	data(data, itself)	changed
-profile	data(data, itself)	changed
+min_max	fin.orders	data	changed
+profile	fin.orders	data	changed
 
 # --- a read of annotations names the property it read: an annotation on another property leaves the result current, one on its own within its place outdates it
 

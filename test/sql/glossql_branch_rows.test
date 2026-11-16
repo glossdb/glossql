@@ -383,14 +383,14 @@ statement ok
 SELECT kept_rows() FROM fin.v_null;
 
 query T
-SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'kept_rows';
+SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'kept_rows';
 ----
-data(data, itself),function,property
+fin.m data,fin.s data,fin.v_null definition,kept_rows declaration
 
 statement ok
 INSERT INTO fin.m VALUES ('Z','PL','brandZ');
 
-query TT
-SELECT subject, input FROM glossql_outdated() WHERE function = 'kept_rows';
+query TTT
+SELECT subject, asset, what FROM glossql_outdated() WHERE function = 'kept_rows' ORDER BY ALL;
 ----
-fin.v_null	data(data, itself)
+fin.v_null	fin.m	data
