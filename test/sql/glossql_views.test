@@ -88,7 +88,7 @@ min_max	fin.spend.value	min_max	{"min":1.0,"max":2.0}	true
 query T
 SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m;
 ----
-fin.spend definition,fin.t data,min_max declaration
+fin.spend definition,fin.t data,min_max function,min_max property
 
 query TTTTT
 SELECT min_max() FROM spend.value;
@@ -164,7 +164,7 @@ min_max	fin.spend_total.value	min_max	{"min":16.0,"max":16.0}	true
 query T
 SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m ORDER BY begin_snapshot DESC LIMIT 1;
 ----
-fin.spend definition,fin.spend_total definition,fin.t data,min_max declaration
+fin.spend definition,fin.spend_total definition,fin.t data,min_max function,min_max property
 
 statement ok
 GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t"}$$;

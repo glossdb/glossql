@@ -220,8 +220,9 @@ SELECT view, relation FROM walk;
 -- where, asset, what), beside the assets places() lists: a relation's
 -- definition, a view's and those of what it reads; the relationships of a
 -- table, a view and what it reads, or a dataset; a table's recipe; a
--- dataset's assets. A result that read a place read these too, so a
--- member added to the place later changes a node it read.
+-- dataset's assets; which of a dataset's views are metrics. A result that
+-- read a place read these too, so a member added to the place later
+-- changes a node it read.
 CREATE OR REPLACE MACRO main.place_nodes(dataset_name) AS TABLE
 WITH cols AS MATERIALIZED (SELECT table_name, column_name, table_type FROM glossql_columns(dataset_name)),
 walked AS MATERIALIZED (
@@ -242,8 +243,11 @@ UNION ALL SELECT left_side || ' ' || op || ' ' || right_side, 'its relationships
 UNION ALL SELECT p."from", 'its metric', w.relation, 'definition' FROM plans p
           JOIN walked w ON (w.subject = p."from" AND w.relation = p."from") OR w.subject = p."to"
 UNION ALL SELECT dataset_name, u.place, dataset_name, s.what
-          FROM unnest(['its columns', 'the dataset', 'the dataset''s metrics']) u(place),
-               unnest(['assets', 'relationships']) s(what)
+          FROM unnest(['its columns', 'the dataset']) u(place), unnest(['assets', 'relationships']) s(what)
+-- the dataset's metrics: which views are metrics, and the definition of each
+UNION ALL SELECT dataset_name, 'the dataset''s metrics', dataset_name, 'views metric'
+UNION ALL SELECT dataset_name, 'the dataset''s metrics', asset, 'definition' FROM main.place_metrics(dataset_name)
+          WHERE len(string_split(asset, '.')) = 2
 UNION ALL SELECT dataset_name, 'its relationships', dataset_name, 'relationships';
 
 CREATE OR REPLACE MACRO main.place(where_) AS TABLE

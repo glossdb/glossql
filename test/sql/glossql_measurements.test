@@ -48,7 +48,7 @@ min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
 query T
 SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i USING (begin_snapshot);
 ----
-fin.orders data,min_max declaration
+fin.orders data,min_max function,min_max property
 
 # --- a repeat is a serve, not a rerun
 
@@ -91,8 +91,8 @@ min_max	fin.orders.amount	min_max	{"min":0.0,"max":9.0}	true
 query TT
 SELECT value, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs_history i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements_history m ORDER BY begin_snapshot;
 ----
-{"min":0.0,"max":4.5}	fin.orders data,min_max declaration
-{"min":0.0,"max":9.0}	fin.orders data,min_max declaration
+{"min":0.0,"max":4.5}	fin.orders data,min_max function,min_max property
+{"min":0.0,"max":9.0}	fin.orders data,min_max function,min_max property
 
 # a re-declared function is never served from a measurement of its older body
 
@@ -168,7 +168,7 @@ answer	fin.orders.amount	answer	42	true
 query TT
 SELECT function, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function = 'answer';
 ----
-answer	answer declaration
+answer	answer function,answer property
 
 statement ok
 INSERT INTO fin.other VALUES (3);

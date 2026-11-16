@@ -240,7 +240,7 @@ query T
 SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements m
 WHERE function = 'relationship_coherence' AND subject = 'fin.payments.invoice_id -> fin.invoices.invoice_id';
 ----
-fin.invoices data,fin.payments data,main.relationship_checks declaration,relationship_coherence declaration
+fin.invoices data,fin.payments data,main.relationship_checks macro,relationship_coherence function,relationship_coherence property
 
 # over a dataset it computes nothing: the check is one relationship's
 statement ok

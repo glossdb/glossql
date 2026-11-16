@@ -1803,9 +1803,13 @@ a AS (SELECT "read", what, "where", anchor AS asset FROM wa WHERE "where" = 'its
       UNION ALL SELECT wa."read", wa.what, wa."where", p.asset FROM wa
                 JOIN main.places($d) p ON p."where" = wa."where" AND p.subject = wa.anchor
       UNION ALL SELECT "read", what, "where", "where" FROM wa WHERE "where" NOT IN (SELECT "where" FROM pl)),
-props AS (SELECT DISTINCT wa.what, x.name FROM wa JOIN $aspects x ON x.name = wa.what
+props AS (SELECT DISTINCT wa.what, x.name, from_json(x.grains, '["VARCHAR"]') AS grains FROM wa JOIN $aspects x
+          ON x.name = wa.what
           OR (starts_with(wa.what, 'x-kind ') AND json_extract_string(x.schema, '$.x-kind') = substr(wa.what, 8))
           WHERE wa."read" = 'annotations'),
+-- the assets an annotations read returns rows for: those of the property's grains
+ann AS (SELECT a.asset, p.name FROM a JOIN props p ON p.what = a.what
+        WHERE a."read" = 'annotations' AND (len(p.grains) = 0 OR list_contains(p.grains, main.asset_grain(a.asset)))),
 vr AS MATERIALIZED (FROM main.view_reads($d)),
 rd AS (SELECT t.table_name AS r FROM a JOIN main.tables_read($d) t ON t.asset = a.asset
        WHERE a."read" = 'data' AND (a.what = 'data' OR (a.what = 'tables' AND t.asset_kind = 'table')
@@ -1814,21 +1818,20 @@ rd AS (SELECT t.table_name AS r FROM a JOIN main.tables_read($d) t ON t.asset = 
 rv AS (SELECT r FROM rd UNION SELECT vr.relation FROM rd JOIN vr ON vr.view = rd.r)
 SELECT DISTINCT asset, what FROM (
   SELECT n.asset, n.what FROM wa JOIN main.place_nodes($d) n ON n."where" = wa."where" AND n.subject = wa.anchor
-  UNION ALL SELECT a.asset, u.k || ' ' || p.name FROM a JOIN props p ON p.what = a.what,
-            unnest(['annotation', 'value']) u(k) WHERE a."read" = 'annotations'
-  UNION ALL SELECT split_part(asset, '.', 1) || '.' || split_part(asset, '.', 2), 'definition' FROM a
-            WHERE "read" = 'annotations' AND contains(asset, '.') AND main.asset_grain(asset) <> 'RELATIONSHIP'
-  UNION ALL SELECT name, 'declaration' FROM props
-  UNION ALL SELECT t.detector, 'declaration' FROM $tests t JOIN props p ON p.name = t.aspect WHERE t.detector IS NOT NULL
-  UNION ALL SELECT substr(what, 8), 'declarations' FROM wa WHERE "read" = 'annotations' AND starts_with(what, 'x-kind ')
+  UNION ALL SELECT asset, u.k || ' ' || name FROM ann, unnest(['annotation', 'value']) u(k)
+  UNION ALL SELECT split_part(asset, '.', 1) || '.' || split_part(asset, '.', 2), 'definition' FROM ann
+            WHERE contains(asset, '.') AND main.asset_grain(asset) <> 'RELATIONSHIP'
+  UNION ALL SELECT name, 'property' FROM props
+  UNION ALL SELECT t.detector, 'function' FROM $tests t JOIN props p ON p.name = t.aspect WHERE t.detector IS NOT NULL
+  UNION ALL SELECT substr(what, 8), 'properties' FROM wa WHERE "read" = 'annotations' AND starts_with(what, 'x-kind ')
   UNION ALL SELECT asset, 'result ' || what FROM a WHERE "read" = 'results'
   UNION ALL SELECT asset, 'definition' FROM a WHERE "read" = 'definition'
   UNION ALL SELECT vr.relation, u.k FROM a JOIN vr ON vr.view = a.asset, unnest(['definition', 'recipe']) u(k)
             WHERE a."read" = 'definition'
   UNION ALL SELECT r, CASE WHEN r IN (SELECT schema_name || '.' || view_name FROM duckdb_views()
                                       WHERE database_name = $lake) THEN 'definition' ELSE 'data' END FROM rv
-  UNION ALL SELECT unnest([$f, $p]), 'declaration'
-  UNION ALL SELECT substr(u.r.read, strpos(u.r.read, '.') + 1), 'declaration'
+  UNION ALL SELECT $f, 'function' UNION ALL SELECT $p, 'property'
+  UNION ALL SELECT substr(u.r.read, strpos(u.r.read, '.') + 1), 'macro'
             FROM $functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) u(r)
             WHERE f.name = $f AND f.scope = $scope AND u.r.kind = 'macro') ORDER BY ALL)";
 	for (auto &term : vector<pair<string, string>> {{"$wanted", StringUtil::Join(wanted, ", ")},

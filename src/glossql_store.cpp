@@ -1197,9 +1197,9 @@ static string NodeChangesSQL(const Workspace &ws) {
 	        "), unnest(ids) u(id) WHERE k IN ('tables_inserted_into', 'tables_deleted_from', 'tables_altered',"
 	        " 'inlined_insert', 'inlined_delete')) c ON c.id = t.table_id::VARCHAR",
 	    node("dataset || '.' || table_name", "'recipe'", store("recipes")),
-	    node("name", "'declaration'", store("aspects")), node("aspect", "'declaration'", store("tests")),
-	    node("name", "'declaration'", store("functions")),
-	    node("s.schema_name || '.' || m.macro_name", "'declaration'",
+	    node("name", "'property'", store("aspects")), node("aspect", "'property'", store("tests")),
+	    node("name", "'function'", store("functions")),
+	    node("s.schema_name || '.' || m.macro_name", "'macro'",
 		     ws.Meta("macro") + " m JOIN (SELECT DISTINCT schema_id, schema_name FROM " + ws.Meta("schema") +
 		         ") s USING (schema_id)"),
 	    node("split_part(side, '.', 1) || '.' || split_part(side, '.', 2)", "'relationships'",
@@ -1208,7 +1208,17 @@ static string NodeChangesSQL(const Workspace &ws) {
 	    node("split_part(name, '.', 1)", "'assets'", "(" + tables + ")"),
 	    node("schema_name", "'assets'", "(" + ColumnsSQL(ws) + ")"),
 	    node("split_part(name, '.', 1)", "'assets'", "(" + views + ")"),
-	    node("json_extract_string(schema, '$.x-kind')", "'declarations'",
+	    // a view of a kind added to or removed from a dataset; a view defined again is the same member
+	    "SELECT split_part(e.name, '.', 1), 'views ' || coalesce(json_extract_string(a.schema, '$.x-kind'), 'metric'),"
+	    " NULL, NULL, e.at FROM (SELECT name, begin_snapshot AS at FROM (" +
+	        views + ") v WHERE NOT EXISTS (SELECT 1 FROM (" + views +
+	        ") w WHERE w.name = v.name AND w.end_snapshot = v.begin_snapshot) UNION ALL SELECT name, end_snapshot FROM "
+			"(" +
+	        views + ") v WHERE end_snapshot IS NOT NULL AND NOT EXISTS (SELECT 1 FROM (" + views +
+	        ") w WHERE w.name = v.name AND w.begin_snapshot = v.end_snapshot)) e JOIN " + store("aspects") +
+	        " a ON a.kind = 'VIEW' AND a.name = substr(e.name, strpos(e.name, '.') + 1) AND a.begin_snapshot <= e.at"
+	        " AND (a.end_snapshot IS NULL OR a.end_snapshot >= e.at)",
+	    node("json_extract_string(schema, '$.x-kind')", "'properties'",
 		     store("aspects") + " WHERE json_extract_string(schema, '$.x-kind') IS NOT NULL")};
 	return "SELECT asset, what, dataset, function, max(changed_at) AS changed_at FROM (" +
 	       StringUtil::Join(arms, " UNION ALL ") + ") GROUP BY ALL";

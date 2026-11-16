@@ -547,11 +547,11 @@ plan plans, the source each table is loaded from):
 
 The lake's snapshot id is the only version. An input is a node: an
 asset and what was read of it, such as `fin.orders.amount`
-`annotation role`, `fin.orders` `data` or `min_max` `declaration`.
+`annotation role`, `fin.orders` `data` or `min_max` `function`.
 A read records the nodes of each asset of its place and those its
 place's walk passed (a view's definition and those of what it reads,
-a table's relationships, a dataset's assets), so a member added to
-the place later changes a node it read. A node changed at the latest
+a table's relationships, which views of a dataset are metrics), so a
+member added to the place later changes a node it read. A node changed at the latest
 snapshot one of its catalog rows begins or ends at; rows are ended,
 never deleted. The nodes, and what each read records, are listed in
 `docs/specification/tables/inputs.md`.

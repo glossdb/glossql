@@ -16,7 +16,7 @@ at. No digest of what a read returned is stored or compared.
 |---|---|---|
 | `begin_snapshot` | BIGINT | The lake snapshot the result took: `measurements.begin_snapshot`. |
 | `end_snapshot` | BIGINT | The snapshot of the write that replaced the result; NULL while the result is current. The view leaves this column out. |
-| `asset` | VARCHAR | The asset read, by its path; for a declaration the name of the property or function, or a macro's `schema.name`; for a set of declarations the kind. |
+| `asset` | VARCHAR | The asset read, by its path; the name of a property or a function; a macro's `schema.name`; an x-kind for the set of its properties. |
 | `what` | VARCHAR | What was read of it, one of the nodes below. |
 
 ## Nodes
@@ -30,16 +30,18 @@ at. No digest of what a read returned is stored or compared.
 | `definition` | a view | the annotation that defines it, its view row in the lake, and its property's `aspects` row |
 | `data` | a table | its table rows in the lake (created, dropped), its loads (`imports.snapshot_id`) and the lake's change log for it |
 | `recipe` | a table | its `recipes` rows |
-| `declaration` | a property | its `aspects` and `tests` rows |
-| `declaration` | a function | its `functions` rows |
-| `declaration` | a macro | its macro rows in the lake |
+| `property` | a property | its `aspects` and `tests` rows |
+| `function` | a function | its `functions` rows |
+| `macro` | a macro | its macro rows in the lake |
 | `relationships` | a table | the `relationships` rows with a side on the table |
 | `relationships` | a dataset | the `relationships` rows of the dataset |
 | `assets` | a dataset | the table, column and view rows of its schema in the lake |
-| `declarations` | an x-kind | the `aspects` rows of that x-kind |
+| `views <kind>` | a dataset | the view rows of its schema in the lake whose property has that x-kind (`metric` where it names none): a view added or removed; a view defined again stays a member |
+| `properties` | an x-kind | the `aspects` rows of that x-kind |
 
-The last four are sets: a member added or removed is a row begun or
-ended, so the set changed at that snapshot.
+The last five are sets: a member added or removed is a row begun or
+ended, so the set changed at that snapshot. A member's own definition
+is a node of its own.
 
 ## What a read records
 
@@ -49,13 +51,13 @@ was walked over.
 
 | Read | Nodes |
 |---|---|
-| `annotations(p, where)` | per asset of the place `annotation p`, `value p` and the `definition` of the asset's table or view (an annotation is stale once its asset's definition moved); `declaration` of `p` and of each detector its tests name |
-| `annotations('x-kind k', where)` | the same for each property of the kind, and `declarations` of `k` |
+| `annotations(p, where)` | per asset of the place that `p`'s grains admit, `annotation p`, `value p` and the `definition` of the asset's table or view (an annotation is stale once its asset's definition moved); `property` `p`, and `function` of each detector its tests name |
+| `annotations('x-kind k', where)` | the same for each property of the kind, and `properties` of `k` |
 | `results(f, where)` | per asset of the place `result f` |
 | `definition(where)` | per view of the place its `definition`, the `definition` of each table and view it reads, through views, and the `recipe` of each table |
 | the subject's data, or a table the body names | `data` of each table read, through views, and the `definition` of each view on the way |
 | the lineage, read by a primitive (`glossql_additivity_cells`) | the nodes its place's walk passes |
-| the function itself | `declaration` of the function, of each macro its body follows, and of the property it fills |
+| the function itself | `function` of the function, `macro` of each macro its body follows, and `property` of the property it fills |
 
 | Place | Nodes its walk passes |
 |---|---|
@@ -65,7 +67,8 @@ was walked over.
 | `its relationships` | a view's `definition`, those of what it reads, and `relationships` of the view and of each table and view it reads; a table's or a column's: `relationships` of the table; a dataset's or a relationship's: the dataset's `relationships` |
 | `its metric` | the plan's `definition`; the metric's and those of what it reads |
 | `its source systems` | a table's `recipe`; a view's `definition`, those of what it reads, and each table's `recipe` |
-| `the dataset`, `the dataset's metrics` | the dataset's `assets` and `relationships` |
+| `the dataset` | the dataset's `assets` and `relationships` |
+| `the dataset's metrics` | the dataset's `views metric`, and each metric's `definition` |
 
 ## The check
 

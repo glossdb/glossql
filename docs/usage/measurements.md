@@ -48,7 +48,7 @@ and stores one row in
 - [inputs](../specification/tables/inputs.md) holds one row per node
   the result read, as an asset and what was read of it:
   `fin.orders.amount` `annotation role`, `fin.orders` `data`,
-  `fin.revenue` `definition`, `min_max` `declaration`. Join it to a
+  `fin.revenue` `definition`, `min_max` `function`. Join it to a
   result on `begin_snapshot`.
 - The lake's snapshot id is the version. A result stores the snapshot
   it read at (`read_at`). The next run returns the stored row while no

@@ -429,8 +429,9 @@ SELECT count(*) FROM functions_history WHERE name = 'raw_rows';
 ----
 0
 
-# --- the dataset's metrics: the views that are metrics, not plans. Its walk passes the dataset's assets,
-# so a plan defined in the dataset outdates a reader of the metrics; a role on a metric's column too
+# --- the dataset's metrics: the views that are metrics, not plans. Its walk passes which views are metrics,
+# so a plan defined in the dataset leaves a reader of the metrics current; a role on a metric's column and a
+# metric defined outdate it
 
 statement ok
 DECLARE ASPECT metric_cells WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
@@ -452,13 +453,10 @@ SELECT count(*) FROM glossql_outdated() WHERE function = 'metric_cells';
 statement ok
 GLOSS points_target ON f1 AS $${"sql": "SELECT period, value * 1.1 AS value FROM f1.points"}$$;
 
-query TT
-SELECT asset, what FROM glossql_outdated() WHERE function = 'metric_cells';
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'metric_cells';
 ----
-f1	assets
-
-statement ok
-SELECT metric_cells() FROM f1;
+0
 
 statement ok
 GLOSS role ON points_target.value AS $${"value": "measure"}$$;
@@ -475,6 +473,22 @@ query TT
 SELECT asset, what FROM glossql_outdated() WHERE function = 'metric_cells';
 ----
 f1.points.value	annotation role
+
+statement ok
+SELECT metric_cells() FROM f1;
+
+# a metric defined in the dataset is a member added: the reader of the metrics is out of date
+
+statement ok
+DECLARE ASPECT race_points WITH $${"title": "Points per race"}$$ AS VIEW;
+
+statement ok
+GLOSS race_points ON f1 AS $${"sql": "SELECT race_id, sum(points) AS value FROM f1.results GROUP BY 1"}$$;
+
+query TT
+SELECT asset, what FROM glossql_outdated() WHERE function = 'metric_cells';
+----
+f1	views metric
 
 # --- a function's value read through annotations() is a result read: once it is out of date, so is its reader
 
@@ -536,7 +550,7 @@ DECLARE FUNCTION remark_judge FOR f1 AS $$ SELECT subject, 'red' AS state, 1.0 A
 query TT
 SELECT asset, what FROM glossql_outdated() WHERE function = 'remark_seen';
 ----
-remark_judge	declaration
+remark_judge	function
 
 # --- the read serves the threshold of the property's test, and a test declared again with another one
 # outdates its readers
@@ -561,7 +575,7 @@ DECLARE TEST remark_test ON remark BY (AGENT, HUMAN) DETECTOR remark_judge THRES
 query TT
 SELECT asset, what FROM glossql_outdated() WHERE function = 'remark_bar';
 ----
-remark	declaration
+remark	property
 
 statement ok
 SELECT remark_bar() FROM circuits;
@@ -596,7 +610,7 @@ DECLARE FUNCTION remark_bar FOR GLOBAL AS $$ SELECT min(threshold) AS bar FROM a
 query TT
 SELECT asset, what FROM glossql_outdated() WHERE function = 'remark_bar';
 ----
-remark_bar	declaration
+remark_bar	function
 
 # --- a macro the body follows is read with the function: replaced, it outdates the results, and the reads
 # are taken again when the function computes
@@ -619,7 +633,7 @@ CREATE OR REPLACE MACRO main.circuit_count() AS TABLE SELECT count(*) AS n FROM 
 query TT
 SELECT asset, what FROM glossql_outdated() WHERE function = 'counted';
 ----
-main.circuit_count	declaration
+main.circuit_count	macro
 
 query TTTTT
 SELECT counted() FROM circuits;
@@ -804,7 +818,7 @@ query TT
 SELECT m.error IS NOT NULL, string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset) FROM measurements m JOIN inputs i USING (begin_snapshot)
 WHERE m.function = 'lapped' GROUP BY ALL;
 ----
-true	lapped declaration,main.lap_count declaration
+true	lapped function,lapped property,main.lap_count macro
 
 query I
 SELECT count(*) FROM glossql_outdated() WHERE function = 'lapped';
@@ -817,7 +831,7 @@ CREATE OR REPLACE MACRO main.lap_count() AS TABLE SELECT count(*) AS n FROM othe
 query TT
 SELECT asset, what FROM glossql_outdated() WHERE function = 'lapped';
 ----
-main.lap_count	declaration
+main.lap_count	macro
 
 query TTTTT
 SELECT lapped() FROM other.laps;
