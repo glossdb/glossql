@@ -17,6 +17,7 @@
 
 #include "glossql_grammar.hpp"
 
+#include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
@@ -92,15 +93,26 @@ static void ServiceRun(DataChunk &args, ExpressionState &state, Vector &result, 
 			headers.Insert("Authorization", "Bearer " + token);
 		}
 		PostRequestInfo post(url, headers, *params, const_data_ptr_cast(body_t.GetData()), body_t.GetSize());
-		auto response = util.Request(post);
-		auto body = response->body.empty() ? post.buffer_out : response->body;
-		if (response->HasRequestError()) {
-			auto text = StringUtil::Format("the service at %s did not answer: %s", url, response->GetRequestError());
+		// httpfs throws where the connection fails or a read times out, where
+		// another client answers a request error: either way, no answer
+		unique_ptr<HTTPResponse> response;
+		string unanswered;
+		try {
+			response = util.Request(post);
+		} catch (std::exception &e) {
+			unanswered = ErrorData(e).RawMessage();
+		}
+		if (unanswered.empty() && response->HasRequestError()) {
+			unanswered = response->GetRequestError();
+		}
+		if (!unanswered.empty()) {
+			auto text = StringUtil::Format("the service at %s did not answer: %s", url, unanswered);
 			if (soft) {
 				return StringVector::AddString(result, ErrorJson(text));
 			}
 			throw IOException(text);
 		}
+		auto body = response->body.empty() ? post.buffer_out : response->body;
 		if (!response->Success()) {
 			auto text = StringUtil::Format("the service answered %d on %s: %s", static_cast<int>(response->status),
 			                               route, body.substr(0, 4000));
