@@ -111,7 +111,7 @@ scalar cell of a dataset's tables, or of one table, as one relation.
   numbers the columns, `rn` the rows of each table. Nested columns are
   left out.
 - The second argument is `'tables'` (the default), `'views'`,
-  `'all'`, or a place of the lineage kit (`'itself'`, `'its metric'`,
+  `'all'`, or a place (`'itself'`, `'its columns'`,
   `'the dataset''s metrics'`): the tables and views of that place,
   walked from the running function's subject; `true` means `'all'`.
 - `cells => n` bounds what is read. A table with more scalar cells

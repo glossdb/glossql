@@ -61,6 +61,29 @@ DECLARE ASPECT sales_plan WITH $${"title": "Sales plan", "x-kind": "plan", "x-pl
 statement ok
 GLOSS sales_plan ON fin AS $${"sql": "SELECT DATE '2024-01-01' AS period, 100.0 AS value"}$$;
 
+# a kind of asset a kit declares, as the plan kit does: its edges join the lineage, its place is a place
+
+statement ok
+CREATE OR REPLACE MACRO main.lineage_assets_plan(dataset_name) AS TABLE
+SELECT dataset_name || '.' || name AS asset, 'plan' AS kind, dataset_name || '.' || name AS node_asset,
+       'definition' AS node_what
+FROM main.aspects
+WHERE kind = 'VIEW' AND json_extract_string(schema, '$.x-kind') = 'plan'
+  AND name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW');
+
+statement ok
+CREATE OR REPLACE MACRO main.lineage_edges_plan(dataset_name) AS TABLE
+SELECT p.asset AS "from", dataset_name || '.' || json_extract_string(a.schema, '$.x-plan-of') AS "to", 'plans' AS kind
+FROM main.lineage_assets_plan(dataset_name) p JOIN main.aspects a ON dataset_name || '.' || a.name = p.asset
+WHERE json_extract_string(a.schema, '$.x-plan-of') IS NOT NULL;
+
+statement ok
+CREATE OR REPLACE MACRO main.lineage_places_plan(dataset_name) AS TABLE
+SELECT NULL::VARCHAR AS subject, 'its metric' AS "where", NULL::VARCHAR AS asset
+UNION ALL SELECT "from", 'its metric', "to" FROM main.lineage_edges_plan(dataset_name)
+UNION ALL SELECT e."from", 'its metric', c."to" FROM main.lineage_edges_plan(dataset_name) e
+          JOIN main.contains_edges(dataset_name) c ON c."from" = e."to";
+
 statement ok
 GLOSS role ON sales.period AS $${"value": "timestamp"}$$;
 
@@ -199,7 +222,7 @@ SELECT view FROM definition('its metric');
 fin.sales
 
 query TT
-SELECT view, plan_of FROM definition('itself');
+SELECT view, schema->>'x-plan-of' FROM definition('itself');
 ----
 fin.sales_plan	sales
 
@@ -387,7 +410,7 @@ data	fin.sources
 # --- the places: the engine reads them from place_list(), place() answers each, and an unknown where is refused
 
 query T
-SELECT string_agg(p."where", '|' ORDER BY p."where") FROM unnest(main.place_list()) u(p);
+SELECT string_agg(p."where", '|' ORDER BY p."where") FROM (SELECT unnest(main.place_list()) AS p);
 ----
 its columns|its dataset|its metric|its relationships|its source systems|its sources|itself|the columns it joins on|the dataset|the dataset's metrics
 

@@ -163,6 +163,16 @@ A **subject** is what a gloss, a function SELECT, or a test attaches to:
 - `table.column -> table.column` — a declared relationship, addressed by its
   pair path (relationships have no names). An endpoint is a column or a
   column tuple: `table.(a, b)` — the tuple is the key.
+- `dataset.name` — an asset of a kind a kit declares (a plan, a scenario).
+  A kit declares a kind by three table macros in `main`, each taking the
+  dataset: `lineage_assets_<kind>` (`asset, kind, node_asset, node_what`:
+  its assets and the node that declares each), `lineage_edges_<kind>`
+  (`from, to, kind`: its lineage edges) and `lineage_places_<kind>`
+  (`subject, where, asset`: the places it adds; a row with no subject
+  names a place). Such an asset is of its kind, which no grain names, so a
+  property declared `ON TABLE` does not admit it; it and a relation of its
+  dataset do not share a name (`asset_name_taken`). An asset that is a
+  relation itself, as a plan's view is, keeps the relation's grain.
 
 A dataset's name and a table's name carry no dot; a column's may,
 spelled quoted, and the column is what follows the second dot.
@@ -530,8 +540,8 @@ SELECT * FROM definition('itself');
 
 The where is a place, walked from the function's subject over the
 lineage (`lineage(dataset)`: what a dataset contains, what a view
-reads and joins on, the two columns of a relationship, the metric a
-plan plans, the source each table is loaded from):
+reads and joins on, the two columns of a relationship, the source each
+table is loaded from, and the edges of each kind a kit declares, §4):
 
 | Where | The assets |
 |---|---|
@@ -540,11 +550,15 @@ plan plans, the source each table is loaded from):
 | `its sources` | the tables, columns and views a view reads |
 | `the columns it joins on` | the two columns of each join in a view |
 | `its relationships` | a view's: those between the tables it reads and those that touch the view; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
-| `its metric` | the metric a plan plans, and its columns |
 | `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads |
 | `its dataset` | the subject's dataset itself |
 | `the dataset's metrics` | the metrics of the subject's dataset and their columns |
 | `the dataset` | the subject's dataset and every asset in it |
+
+and each place a kit adds for its kind of asset (§4), such as the plan
+kit's `its metric`. On an asset a kit declares by an annotation,
+`annotations('x-kind <kind>', 'itself')` reads that annotation alone,
+and a result on such an asset reads the node that declares it.
 
 The lake's snapshot id is the only version. An input is a node: an
 asset and what was read of it, such as `fin.orders.amount`

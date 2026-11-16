@@ -621,6 +621,13 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 		               : parts.size() == 2 ? "TABLE"
 		               : is_source         ? "SOURCE"
 		                                   : "DATASET";
+		// an asset of a kind a kit declares is of that kind, which no grain names
+		if (!pair && parts.size() == 2 && !KindNameTaken(inner, parts[0], parts[1]).empty()) {
+			grain = StringUtil::Upper(inner
+			                              .Scalar("SELECT max(kind) FROM glossql_kind_assets(" + QuoteText(parts[0]) +
+			                                      ") WHERE lower(asset) = lower(" + QuoteText(subject) + ")")
+			                              .ToString());
+		}
 		bool admitted =
 		    HasGrain(aspect, grain) || (is_source && SchemaExists(context, subject) && HasGrain(aspect, "DATASET"));
 		if (!admitted) {
@@ -818,6 +825,17 @@ static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 	return true;
 }
 
+string KindNameTaken(Inner &inner, const string &dataset, const string &relation) {
+	auto d = QuoteText(dataset);
+	auto named =
+	    relation.empty()
+	        ? "lower(split_part(k.asset, '.', 2)) IN (SELECT lower(table_name) FROM glossql_columns(" + d + "))"
+	        : "lower(k.asset) = lower(" + QuoteText(dataset + "." + relation) + ")";
+	auto taken = inner.Scalar("SELECT min(k.asset) FROM glossql_kind_assets(" + d +
+	                          ") k WHERE k.node_what <> 'definition' AND " + named);
+	return taken.IsNull() ? string() : taken.ToString();
+}
+
 //! A source-grain row: its subject names a declared source and its aspect
 //! declares ON SOURCE. Such a row reads and supersedes workspace-wide (SPEC
 //! §5.1); a grainless aspect on a source name stays dataset-scoped
@@ -926,6 +944,13 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 			                             QuoteText(body) + ", now()");
 			if (aspect.kind == "VIEW") {
 				DefineView(write, resolved, aspect.name);
+			}
+			// an asset of a kind a kit declares and a relation of its dataset do not share a name
+			auto taken = KindNameTaken(inner, dataset, "");
+			if (!taken.empty()) {
+				throw InvalidInputException("glossql: asset_name_taken: %s names a relation of %s and an asset a kit "
+				                            "declares; name one otherwise",
+				                            taken, dataset);
 			}
 			outcome = "glossed " + bind.row[1].ToString() + " on " + resolved + " as " + actor;
 		} else {
@@ -1768,6 +1793,87 @@ struct CachedRead : public ObjectCacheEntry {
 	}
 };
 
+//===--------------------------------------------------------------------===//
+// The kinds of asset a kit declares (SPEC §4): a kit brings table macros in
+// the lake's main named lineage_assets_<kind>, lineage_edges_<kind> and
+// lineage_places_<kind>, each taking the dataset, and the lineage reads them
+// through glossql_kind_assets(), glossql_kind_edges() and glossql_kind_places():
+// their rows unioned by name. The core names no kind
+//===--------------------------------------------------------------------===//
+
+struct KindStem {
+	const char *function;
+	const char *stem;
+	//! the columns, as the empty relation where no kit declares the stem
+	const char *empty;
+};
+
+static const KindStem KIND_STEMS[] = {
+    {"glossql_kind_assets", "lineage_assets_",
+	 "SELECT NULL::VARCHAR AS asset, NULL::VARCHAR AS kind, NULL::VARCHAR AS node_asset, NULL::VARCHAR AS node_what"},
+    {"glossql_kind_edges", "lineage_edges_",
+	 "SELECT NULL::VARCHAR AS \"from\", NULL::VARCHAR AS \"to\", NULL::VARCHAR AS kind"},
+    {"glossql_kind_places", "lineage_places_",
+	 "SELECT NULL::VARCHAR AS subject, NULL::VARCHAR AS \"where\", NULL::VARCHAR AS asset"}};
+
+//! The stem's rows for a dataset, or for every declared dataset where it is NULL. Asked with NULL, a
+//! places macro is asked with the empty dataset alone: a row with no subject names a place it adds
+static unique_ptr<TableRef> KindBindReplace(ClientContext &context, TableFunctionBindInput &input,
+                                            const KindStem *kind) {
+	auto lake = LakeName(context);
+	vector<string> macros;
+	auto &catalog = Catalog::GetCatalog(context, Identifier(lake));
+	auto schema = catalog.GetSchema(context, Identifier("main"), OnEntryNotFound::RETURN_NULL);
+	if (schema) {
+		schema->Scan(context, CatalogType::TABLE_MACRO_ENTRY, [&](CatalogEntry &entry) {
+			auto macro = entry.name.GetIdentifierName();
+			if (StringUtil::StartsWith(macro, kind->stem)) {
+				macros.push_back(macro);
+			}
+		});
+	}
+	std::sort(macros.begin(), macros.end());
+	vector<string> datasets;
+	if (!input.inputs[0].IsNull()) {
+		datasets.push_back(QuoteText(input.inputs[0].ToString()));
+	} else if (string(kind->stem) == "lineage_places_") {
+		datasets.push_back("''");
+	} else {
+		Connection con(*context.db);
+		auto rows = con.Query("SELECT name FROM " + QuoteName(lake) + ".main.datasets ORDER BY name");
+		while (!rows->HasError()) {
+			auto chunk = rows->Fetch();
+			if (!chunk || chunk->size() == 0) {
+				break;
+			}
+			for (idx_t r = 0; r < chunk->size(); r++) {
+				datasets.push_back(QuoteText(chunk->GetValue(0, r).ToString()));
+			}
+		}
+	}
+	vector<string> parts;
+	for (auto &macro : macros) {
+		for (auto &dataset : datasets) {
+			parts.push_back("SELECT * FROM " + QuoteName(lake) + ".main." + QuoteName(macro) + "(" + dataset + ")");
+		}
+	}
+	auto sql = parts.empty() ? string(kind->empty) + " WHERE false"
+	                         : "SELECT * FROM (" + string(kind->empty) + " WHERE false UNION ALL BY NAME " +
+	                               StringUtil::Join(parts, " UNION ALL BY NAME ") + ")";
+	return make_uniq<SubqueryRef>(ParseSelect(sql));
+}
+
+template <idx_t STEM>
+static unique_ptr<TableRef> KindBind(ClientContext &context, TableFunctionBindInput &input) {
+	return KindBindReplace(context, input, &KIND_STEMS[STEM]);
+}
+
+static TableFunction GlossKindFunction(idx_t stem, table_function_bind_replace_t bind) {
+	TableFunction function(KIND_STEMS[stem].function, {LogicalType::VARCHAR}, nullptr);
+	function.bind_replace = bind;
+	return function;
+}
+
 //! The fill mark on the second connection (ClientContextState) while it
 //! computes a read: a gloss read bound meanwhile is the shape of a dataset
 //! view glossql_columns binds, never a read run, and binds as an empty relation
@@ -2146,6 +2252,9 @@ void RegisterGlossStore(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossKeptViewFunction());
 	loader.RegisterFunction(GlossKeptReadFunction());
 	loader.RegisterFunction(GlossColumnsFunctions());
+	loader.RegisterFunction(GlossKindFunction(0, KindBind<0>));
+	loader.RegisterFunction(GlossKindFunction(1, KindBind<1>));
+	loader.RegisterFunction(GlossKindFunction(2, KindBind<2>));
 }
 
 } // namespace duckdb

@@ -27,9 +27,10 @@ CREATE OR REPLACE MACRO main.read_subject() AS coalesce(getvariable('glossql_sub
 --             view's SQL resolves to the loaded tables; view -> each view
 --             its SQL names
 --   relates   relationship -> each of its columns
---   plans     plan -> the metric it plans (x-plan-of)
 --   loaded from  table -> the source its recipe loads it from, a source
 --             named as it is declared
+--   and the edges of each kind of asset a kit declares
+--             (glossql_kind_edges(): its lineage_edges_<kind> macro)
 --===------------------------------------------------------------------===--
 -- contains_edges(dataset): the lineage's contains edges alone
 CREATE OR REPLACE MACRO main.contains_edges(dataset_name) AS TABLE
@@ -52,14 +53,6 @@ SELECT dataset_name || '.' || r.table_name AS "from", r.source AS "to", 'loaded 
 FROM main.recipes r
 WHERE r.dataset = dataset_name
   AND r.table_name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'BASE TABLE');
-
--- plans_edges(dataset): the lineage's plans edges alone, plan -> metric
-CREATE OR REPLACE MACRO main.plans_edges(dataset_name) AS TABLE
-SELECT dataset_name || '.' || a.name AS "from", dataset_name || '.' || json_extract_string(a.schema, '$.x-plan-of') AS "to",
-       'plans' AS kind
-FROM main.aspects a
-WHERE a.kind = 'VIEW' AND json_extract_string(a.schema, '$.x-plan-of') IS NOT NULL
-  AND a.name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW');
 
 CREATE OR REPLACE MACRO main.lineage(dataset_name) AS TABLE
 WITH cols AS (SELECT table_name, column_name, table_type FROM glossql_columns(dataset_name)),
@@ -91,13 +84,17 @@ UNION ALL SELECT DISTINCT * FROM (
         JOIN cols c ON dataset_name || '.' || c.table_name || '.' || c.column_name IN (j.left_column, j.right_column)
   UNION SELECT dataset_name || '.' || n.name, dataset_name || '.' || n.other, 'reads' FROM named n
         WHERE n.other <> n.name AND n.other IN (SELECT name FROM views))
-UNION ALL SELECT * FROM main.plans_edges(dataset_name)
-UNION ALL SELECT * FROM main.loaded_from_edges(dataset_name);
+UNION ALL SELECT * FROM main.loaded_from_edges(dataset_name)
+UNION ALL SELECT "from", "to", kind FROM glossql_kind_edges(dataset_name);
 
 -- The class of an asset by its path: what a property's grains name. A bare
--- name is a dataset, or a source where no dataset carries it
+-- name is a dataset, or a source where no dataset carries it; an asset of a
+-- kind a kit declares is of that kind, unless it is the relation itself
 CREATE OR REPLACE MACRO main.asset_grain(asset) AS
   CASE WHEN contains(asset, ' -> ') OR contains(asset, ' <-> ') THEN 'RELATIONSHIP'
+       WHEN len(string_split(asset, '.')) = 2 AND asset IN (SELECT k.asset FROM glossql_kind_assets(NULL) k
+                                                            WHERE k.node_what <> 'definition')
+         THEN (SELECT upper(max(k.kind)) FROM glossql_kind_assets(NULL) k WHERE k.asset = asset)
        WHEN NOT contains(asset, '.') AND asset IN (SELECT name FROM main.sources)
             AND asset NOT IN (SELECT name FROM main.datasets) THEN 'SOURCE'
        WHEN NOT contains(asset, '.') THEN 'DATASET'
@@ -115,7 +112,6 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --                              and those that touch the view; a table's or
 --                              a column's: those that touch it;
 --                              a dataset's: all; a relationship: itself
---   'its metric'               the metric a plan plans, and its columns
 --   'its source systems'       a table's: the source it is loaded from; a
 --                              view's: those of the tables it reads
 --   'its dataset'              the subject's dataset itself
@@ -123,22 +119,24 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --   'the dataset's metrics'    the views of the subject's dataset that are
 --                              metrics (no plan, relation, single value or
 --                              sample), and their columns
--- Any other where is refused, not_a_place.
+-- and the places of each kind of asset a kit declares
+-- (glossql_kind_places(): its lineage_places_<kind> macro; a row with no
+-- subject names a place it adds). Any other where is refused, not_a_place.
 --===------------------------------------------------------------------===--
 -- place_list(): the places, one entry each: the where, and whether it is
 -- anchored, the same for every subject of the dataset. The engine reads the
 -- places from here.
-CREATE OR REPLACE MACRO main.place_list() AS [
+CREATE OR REPLACE MACRO main.place_list() AS list_concat([
   {'where': 'itself', 'anchored': false},
   {'where': 'its columns', 'anchored': false},
   {'where': 'its sources', 'anchored': false},
   {'where': 'the columns it joins on', 'anchored': false},
   {'where': 'its relationships', 'anchored': false},
-  {'where': 'its metric', 'anchored': false},
   {'where': 'its source systems', 'anchored': false},
   {'where': 'its dataset', 'anchored': true},
   {'where': 'the dataset''s metrics', 'anchored': true},
-  {'where': 'the dataset', 'anchored': true}];
+  {'where': 'the dataset', 'anchored': true}],
+  coalesce((SELECT list(DISTINCT {'where': "where", 'anchored': false}) FROM glossql_kind_places(NULL) WHERE subject IS NULL), []));
 
 -- Each where is a macro of its own over the whole dataset, place_<where>
 -- (dataset): (subject, asset) for every subject at once, so that the
@@ -168,11 +166,6 @@ UNION SELECT s.subject, r.rel FROM (SELECT DISTINCT subject FROM sources) s, rel
                         AND NOT EXISTS (SELECT 1 FROM sources y WHERE y.subject = s.subject AND y.t = x.t))
 UNION SELECT u.a, e.rel FROM endpoints e, unnest([e.t, e.endpoint]) u(a);
 
-CREATE OR REPLACE MACRO main.place_metric(dataset_name) AS TABLE
-WITH planned AS (SELECT "from" AS subject, "to" AS metric FROM main.plans_edges(dataset_name))
-SELECT subject, metric AS asset FROM planned
-UNION SELECT p.subject, c."to" FROM planned p JOIN main.contains_edges(dataset_name) c ON c."from" = p.metric;
-
 CREATE OR REPLACE MACRO main.place_systems(dataset_name) AS TABLE
 WITH loaded AS (SELECT "from" AS t, "to" AS source FROM main.loaded_from_edges(dataset_name))
 SELECT t AS subject, source AS asset FROM loaded
@@ -201,11 +194,11 @@ SELECT subject, 'its columns' AS "where", asset FROM main.place_columns(dataset_
 UNION ALL SELECT subject, 'its sources', asset FROM main.place_sources(dataset_name)
 UNION ALL SELECT subject, 'the columns it joins on', asset FROM main.place_joined(dataset_name)
 UNION ALL SELECT subject, 'its relationships', asset FROM main.place_relationships(dataset_name)
-UNION ALL SELECT subject, 'its metric', asset FROM main.place_metric(dataset_name)
 UNION ALL SELECT subject, 'its source systems', asset FROM main.place_systems(dataset_name)
 UNION ALL SELECT subject, 'the dataset', asset FROM main.place_dataset(dataset_name)
 UNION ALL SELECT subject, 'the dataset''s metrics', asset FROM main.place_metrics(dataset_name)
-UNION ALL SELECT subject, 'its dataset', asset FROM main.place_its_dataset(dataset_name);
+UNION ALL SELECT subject, 'its dataset', asset FROM main.place_its_dataset(dataset_name)
+UNION ALL SELECT subject, "where", asset FROM glossql_kind_places(dataset_name) WHERE subject IS NOT NULL;
 
 -- view_reads(dataset): the tables and views each view of a dataset
 -- reads, through the views it reads, (view, relation)
@@ -229,7 +222,6 @@ walked AS MATERIALIZED (
   SELECT DISTINCT dataset_name || '.' || table_name AS subject, table_type = 'VIEW' AS is_view,
          dataset_name || '.' || table_name AS relation FROM cols
   UNION SELECT view, true, relation FROM main.view_reads(dataset_name)),
-plans AS (FROM main.plans_edges(dataset_name))
 SELECT w.subject, u.place AS "where", w.relation AS asset, 'definition' AS what
 FROM walked w, unnest(['its columns', 'its sources', 'the columns it joins on', 'its relationships',
                        'its source systems']) u(place)
@@ -240,8 +232,12 @@ UNION ALL SELECT dataset_name || '.' || table_name || '.' || column_name, 'its r
                  dataset_name || '.' || table_name, 'relationships' FROM cols
 UNION ALL SELECT left_side || ' ' || op || ' ' || right_side, 'its relationships', dataset_name, 'relationships'
           FROM main.relationships WHERE dataset = dataset_name
-UNION ALL SELECT p."from", 'its metric', w.relation, 'definition' FROM plans p
-          JOIN walked w ON (w.subject = p."from" AND w.relation = p."from") OR w.subject = p."to"
+-- a kit's place: its subject's own node, and the definition of each relation among its assets and of
+-- what that relation reads
+UNION ALL SELECT k.subject, k."where", a.node_asset, a.node_what FROM glossql_kind_places(dataset_name) k
+          JOIN glossql_kind_assets(dataset_name) a ON a.asset = k.subject
+UNION ALL SELECT k.subject, k."where", w.relation, 'definition' FROM glossql_kind_places(dataset_name) k
+          JOIN walked w ON w.subject = split_part(k.asset, '.', 1) || '.' || split_part(k.asset, '.', 2)
 UNION ALL SELECT dataset_name, u.place, dataset_name, s.what
           FROM unnest(['its columns', 'the dataset']) u(place), unnest(['assets', 'relationships']) s(what)
 -- the dataset's metrics: which views are metrics, and the definition of each
@@ -257,12 +253,14 @@ FROM query(CASE where_
   WHEN 'its sources' THEN 'SELECT asset FROM main.place_sources(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'the columns it joins on' THEN 'SELECT asset FROM main.place_joined(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'its relationships' THEN 'SELECT asset FROM main.place_relationships(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
-  WHEN 'its metric' THEN 'SELECT asset FROM main.place_metric(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'its source systems' THEN 'SELECT asset FROM main.place_systems(split_part(main.read_subject(), ''.'', 1)) WHERE subject = main.read_subject()'
   WHEN 'the dataset' THEN 'SELECT asset FROM main.place_dataset(split_part(main.read_subject(), ''.'', 1))'
   WHEN 'its dataset' THEN 'SELECT split_part(main.read_subject(), ''.'', 1) AS asset'
   WHEN 'the dataset''s metrics' THEN 'SELECT asset FROM main.place_metrics(split_part(main.read_subject(), ''.'', 1))'
-  ELSE 'SELECT error(''not_a_place: ' || replace(where_, '''', '''''') || ' names no place; place_list() lists them'')::VARCHAR AS asset' END);
+  ELSE 'SELECT asset FROM glossql_kind_places(split_part(main.read_subject(), ''.'', 1)) WHERE "where" = '''
+       || replace(where_, '''', '''''') || ''' AND subject = main.read_subject() UNION ALL SELECT error(''not_a_place: '
+       || replace(replace(where_, '''', ''''''), '''', '''''') || ' names no place; place_list() lists them'')::VARCHAR WHERE '''
+       || replace(where_, '''', '''''') || ''' NOT IN (SELECT "where" FROM glossql_kind_places(NULL) WHERE subject IS NULL)' END);
 
 -- tables_read(dataset): the relation whose rows each asset's data is,
 -- (asset, asset_kind, table_name): a table or a view itself; a column its
@@ -288,7 +286,8 @@ UNION ALL SELECT dataset_name, 'dataset', r FROM rels WHERE k = 'table';
 -- tables returns no row for a column. A what of the form 'x-kind <kind>' names every property
 -- declared with that x-kind, a scenario's among them: one row per
 -- property and asset, the value a person's newest annotation, else an
--- agent's, state current, or missing.
+-- agent's, state current, or missing; on an asset of a kind a kit declares
+-- by an annotation, that annotation alone.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.annotations_of(property, where_) AS TABLE
 WITH grains AS (SELECT grains FROM main.aspects WHERE name = property)
@@ -307,8 +306,12 @@ held AS (
 SELECT p.asset, pr.name AS property, h.body AS value, CASE WHEN h.body IS NULL THEN 'missing' ELSE 'current' END AS state,
        (SELECT max(t.threshold) FROM main.tests t WHERE t.aspect = pr.name) AS threshold
 FROM main.place(where_) p
-JOIN props pr ON len(pr.grains) = 0 OR list_contains(pr.grains, main.asset_grain(p.asset))
-LEFT JOIN held h ON h.subject = p.asset AND h.aspect = pr.name;
+-- an asset of a kind a kit declares by an annotation: that annotation is its own
+LEFT JOIN glossql_kind_assets(split_part(main.read_subject(), '.', 1)) k
+  ON k.asset = p.asset AND starts_with(k.node_what, 'annotation ')
+JOIN props pr ON CASE WHEN k.asset IS NOT NULL THEN pr.name = substr(k.node_what, 12)
+                      ELSE len(pr.grains) = 0 OR list_contains(pr.grains, main.asset_grain(p.asset)) END
+LEFT JOIN held h ON h.subject = coalesce(k.node_asset, p.asset) AND h.aspect = pr.name;
 
 CREATE OR REPLACE MACRO main.annotations(property, where_) AS TABLE
 FROM query(CASE WHEN starts_with(property, 'x-kind ')
@@ -328,7 +331,8 @@ LEFT JOIN main.measurements m
 
 --===------------------------------------------------------------------===--
 -- definition(where): one row per view of the place, its definition: view
--- (its path), kind (the property's x-kind), plan_of, covers, the SQL of
+-- (its path), kind (the property's x-kind), schema (the property's, where a
+-- kit reads its own keys), the SQL of
 -- the annotation that defines it (sql, or stopped), its columns with what
 -- each is computed from (name, position, derivation, shape), what it
 -- reads of each loaded table (table_name, columns) and its joins
@@ -354,8 +358,7 @@ ma AS (SELECT DISTINCT view, table_name, branch, alias, condition FROM glossql_v
 bodies AS (FROM main.view_bodies(dataset_name))
 SELECT dataset_name || '.' || a.name AS view,
        json_extract_string(a.schema, '$.x-kind') AS kind,
-       json_extract_string(a.schema, '$.x-plan-of') AS plan_of,
-       json_extract_string(a.schema, '$.x-covers') AS covers,
+       a.schema::JSON AS schema,
        json_extract_string(b.body, '$.sql') AS sql,
        json_extract_string(b.body, '$.stopped') AS stopped,
        (SELECT list({'name': c.column_name, 'position': c.ordinal_position, 'derivation': l.derivation, 'shape': l.shape}

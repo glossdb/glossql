@@ -58,6 +58,7 @@ was walked over.
 | the subject's data, or a table the body names | `data` of each table read, through views, and the `definition` of each view on the way |
 | the lineage, read by a primitive (`glossql_additivity_cells`) | the nodes its place's walk passes |
 | the function itself | `function` of the function, `macro` of each macro its body follows, and `property` of the property it fills |
+| a subject of a kind a kit declares | the node that declares it (`node_asset`, `node_what` of `lineage_assets_<kind>`); `annotations('x-kind k', 'itself')` on it records that node and no `properties k` |
 
 | Place | Nodes its walk passes |
 |---|---|
@@ -65,7 +66,7 @@ was walked over.
 | `its columns` | a table's `definition`; a view's and those of what it reads; a dataset's `assets` and `relationships` |
 | `its sources`, `the columns it joins on` | the view's `definition` and those of what it reads |
 | `its relationships` | a view's `definition`, those of what it reads, and `relationships` of the view and of each table and view it reads; a table's or a column's: `relationships` of the table; a dataset's or a relationship's: the dataset's `relationships` |
-| `its metric` | the plan's `definition`; the metric's and those of what it reads |
+| a kit's own | the node that declares its subject (`lineage_assets_<kind>`), and the `definition` of each relation among its assets and of what that relation reads |
 | `its source systems` | a table's `recipe`; a view's `definition`, those of what it reads, and each table's `recipe` |
 | `the dataset` | the dataset's `assets` and `relationships` |
 | `the dataset's metrics` | the dataset's `views metric`, and each metric's `definition` |

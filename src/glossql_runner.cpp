@@ -812,6 +812,11 @@ static void RecipeExec(ClientContext &context, TableFunctionInput &data, DataChu
 		throw InvalidInputException("glossql: dataset '%s' is not declared", dataset);
 	}
 
+	auto taken = KindNameTaken(inner, dataset, name);
+	if (!taken.empty()) {
+		throw InvalidInputException(
+		    "glossql: asset_name_taken: %s is an asset a kit declares; load the table under another name", taken);
+	}
 	auto loaded = LoadTable(context, inner, dataset, name, recipe, true);
 	inner.Write(context, [&](CatalogWrite &write) {
 		write.End("recipes", "dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(name));
@@ -1433,7 +1438,7 @@ private:
 //! The places a where names, as the lineage kit lists them (place_list())
 static std::set<string> PlaceNames(Inner &inner) {
 	std::set<string> places;
-	auto rows = inner.Run("SELECT p.\"where\" FROM unnest(main.place_list()) u(p)");
+	auto rows = inner.Run("SELECT p.\"where\" FROM (SELECT unnest(main.place_list()) AS p)");
 	while (auto chunk = rows->Fetch()) {
 		for (idx_t r = 0; r < chunk->size(); r++) {
 			places.insert(chunk->GetValue(0, r).ToString());
@@ -1796,7 +1801,7 @@ static vector<pair<string, string>> NodesRead(Inner &inner, const string &datase
 	// $d the dataset, $s the subject, $f the function, $p the property it fills; a table a body names
 	// is no place, and is its own asset
 	string sql = R"(WITH w("read", what, "where") AS (VALUES $wanted),
-pl AS (SELECT p."where", p.anchored FROM unnest(main.place_list()) u(p)),
+pl AS (SELECT p."where", p.anchored FROM (SELECT unnest(main.place_list()) AS p)),
 wa AS (SELECT *, CASE WHEN "where" IN (SELECT "where" FROM pl WHERE anchored) THEN $d ELSE $s END AS anchor
        FROM w WHERE "read" IS NOT NULL),
 a AS (SELECT "read", what, "where", anchor AS asset FROM wa WHERE "where" = 'itself'
@@ -1811,6 +1816,7 @@ props AS (SELECT DISTINCT wa.what, x.name, from_json(x.grains, '["VARCHAR"]') AS
 ann AS (SELECT a.asset, p.name FROM a JOIN props p ON p.what = a.what
         WHERE a."read" = 'annotations' AND (len(p.grains) = 0 OR list_contains(p.grains, main.asset_grain(a.asset)))),
 vr AS MATERIALIZED (FROM main.view_reads($d)),
+kind AS MATERIALIZED (FROM glossql_kind_assets($d)),
 rd AS (SELECT t.table_name AS r FROM a JOIN main.tables_read($d) t ON t.asset = a.asset
        WHERE a."read" = 'data' AND (a.what = 'data' OR (a.what = 'tables' AND t.asset_kind = 'table')
                                     OR (a.what = 'views' AND t.asset_kind = 'view'))
@@ -1824,6 +1830,9 @@ SELECT DISTINCT asset, what FROM (
   UNION ALL SELECT name, 'property' FROM props
   UNION ALL SELECT t.detector, 'function' FROM $tests t JOIN props p ON p.name = t.aspect WHERE t.detector IS NOT NULL
   UNION ALL SELECT substr(what, 8), 'properties' FROM wa WHERE "read" = 'annotations' AND starts_with(what, 'x-kind ')
+            AND NOT ("where" = 'itself' AND $s IN (SELECT asset FROM kind))
+  -- a result on an asset of a kind a kit declares reads the node that declares it
+  UNION ALL SELECT node_asset, node_what FROM kind WHERE asset = $s
   UNION ALL SELECT asset, 'result ' || what FROM a WHERE "read" = 'results'
   UNION ALL SELECT asset, 'definition' FROM a WHERE "read" = 'definition'
   UNION ALL SELECT vr.relation, u.k FROM a JOIN vr ON vr.view = a.asset, unnest(['definition', 'recipe']) u(k)

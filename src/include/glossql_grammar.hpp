@@ -218,6 +218,9 @@ string CurrentResultsSQL(Inner &inner, const string &filter);
 //! read that changed after it read (reason `changed`), or a result it read that is out of date (reason
 //! `outdated`)
 string OutdatedSQL(Inner &inner);
+//! An asset of a kind a kit declares (glossql_kind_assets()) that a relation of the dataset names too, or
+//! that `relation` would name; empty where none does (SPEC §4)
+string KindNameTaken(Inner &inner, const string &dataset, const string &relation);
 //! The session variable that names the subject a function computes a result for: the
 //! engine sets it on the connection of the run, and the read functions walk from it
 constexpr const char *RUN_SUBJECT = "glossql_subject";
