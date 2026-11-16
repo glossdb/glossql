@@ -1239,9 +1239,10 @@ WHERE (asset, what) IN (SELECT asset, what FROM nc_want) GROUP BY ALL)";
 
 //! The current results that are out of date, with why: (id, dataset, function, subject, asset, what,
 //! reason), id the snapshot that stored it. A node it read changed after the snapshot it read at
-//! (changed), or a result it read is out of date (outdated). Asked on demand: `roots` empty asks about
-//! every current result; else it is a condition on the measurements relation, and the check walks only
-//! the results it selects and those they read, through their inputs
+//! (changed), or a result it read is out of date or possibly so (possibly): it reads as it read until that
+//! result is computed again, which keeps its changed_at when its value is the same. Asked on demand: `roots` empty asks
+//! about every current result; else it is a condition on the measurements relation, and the check walks only the
+//! results it selects and those they read, through their inputs
 static string CheckRowsSQL(const Workspace &ws, const string &roots) {
 	string sql = R"(WITH RECURSIVE ck_all AS (SELECT begin_snapshot AS id, dataset, function, subject, aspect, read_at
                                 FROM $measurements WHERE end_snapshot IS NULL),
@@ -1259,7 +1260,7 @@ ck_changed AS (SELECT c.id, i.asset, i.what FROM ck_cur c JOIN ck_in i USING (id
               AND n.function IS DISTINCT FROM c.function WHERE n.changed_at > c.read_at),
 ck_out(id) AS (SELECT id FROM ck_changed UNION SELECT r.reader FROM ck_reads r JOIN ck_out o ON o.id = r.read)
 SELECT c.id, c.dataset, c.function, c.subject, x.asset, x.what, 'changed' AS reason FROM ck_changed x JOIN ck_cur c USING (id)
-UNION SELECT c.id, c.dataset, c.function, c.subject, r.asset, r.what, 'outdated' FROM ck_reads r
+UNION SELECT c.id, c.dataset, c.function, c.subject, r.asset, r.what, 'possibly' FROM ck_reads r
 JOIN ck_out o ON o.id = r.read JOIN ck_cur c ON c.id = r.reader)";
 	auto scope = roots.empty() ? string("SELECT id FROM ck_all")
 	                           : "SELECT begin_snapshot FROM $measurements WHERE end_snapshot IS NULL AND (" + roots +
@@ -1274,9 +1275,10 @@ JOIN ck_out o ON o.id = r.read JOIN ck_cur c ON c.id = r.reader)";
 }
 
 string CurrentResultsSQL(Inner &inner, const string &filter) {
-	return "SELECT m.*, m.begin_snapshot NOT IN (SELECT id FROM (" + CheckRowsSQL(inner.ws, filter) +
-	       ")) AS current FROM " + inner.ws.Store("measurements") + " m WHERE m.end_snapshot IS NULL AND (" + filter +
-	       ")";
+	return "SELECT m.*, k.id IS NULL AS current, coalesce(NOT k.changed, false) AS possibly FROM " +
+	       inner.ws.Store("measurements") + " m LEFT JOIN (SELECT id, bool_or(reason = 'changed') AS changed FROM (" +
+	       CheckRowsSQL(inner.ws, filter) +
+	       ") GROUP BY id) k ON k.id = m.begin_snapshot WHERE m.end_snapshot IS NULL AND (" + filter + ")";
 }
 
 string OutdatedSQL(Inner &inner) {
@@ -1350,7 +1352,7 @@ static string AnnotationsOverSQL(const Workspace &ws, const string &filter) {
 	       g + ", " + col_then + ", " + col_now + ", " + tbl_then + ", " + load_then + ", " + load_now + ", " +
 	       view_then +
 	       " SELECT g.subject, g.aspect, g.actor_kind AS actor, g.body::JSON AS body, g.written_at, coalesce(" + stale +
-	       ", false) AS stale, g.id AS ord, NULL::VARCHAR AS error, g.dataset FROM g"
+	       ", false) AS stale, g.id AS ord, NULL::VARCHAR AS error, g.dataset, false AS possibly FROM g"
 	       " LEFT JOIN col_then ct ON ct.id = g.id"
 	       " LEFT JOIN col_now cn ON cn.schema_name = g.sch AND cn.table_name = g.tbl AND cn.column_name = g.col"
 	       " LEFT JOIN tbl_then tt ON tt.id = g.id"
@@ -1370,7 +1372,7 @@ static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter
 static string ValuesSQL(Inner &inner, const ReadScope &scope, const string &aspect_filter) {
 	return "(" + AnnotationsSQL(scope, aspect_filter) +
 	       ") UNION ALL SELECT subject, aspect, 'function' AS actor, value::JSON AS body, computed_at AS written_at,"
-	       " NOT current AS stale, begin_snapshot AS ord, error, dataset FROM (" +
+	       " NOT current AND NOT possibly AS stale, begin_snapshot AS ord, error, dataset, possibly FROM (" +
 	       CurrentResultsSQL(inner, scope.filter + aspect_filter) + ")";
 }
 
@@ -1463,7 +1465,7 @@ static constexpr const char *HOISTED = "annotations_all";
 
 //! A test's values as a detector reads them, from the hoisted relation
 static string TestValuesSQL(const string &relation, const string &aspect) {
-	return "SELECT subject, aspect, actor AS actor_kind, body, NOT stale AS current FROM " + relation +
+	return "SELECT subject, aspect, actor AS actor_kind, body, NOT stale AND NOT possibly AS current FROM " + relation +
 	       " WHERE aspect = " + QuoteText(aspect);
 }
 
@@ -1623,7 +1625,8 @@ static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const Rea
 	// a stale value is served and marked (SPEC §5.3)
 	return "WITH " + string(HOISTED) + " AS (SELECT * FROM " + string(STORED_VALUES) +
 	       "), annotations AS (SELECT * FROM " + string(HOISTED) + " WHERE true" + aspect_filter +
-	       "), picked AS (SELECT subject, aspect, body AS value, stale FROM annotations QUALIFY row_number() OVER ("
+	       "), picked AS (SELECT subject, aspect, body AS value, stale, possibly FROM annotations QUALIFY row_number() "
+	       "OVER ("
 	       "PARTITION BY subject, aspect ORDER BY CASE actor WHEN 'human' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END,"
 	       " ord DESC) = 1), results AS (SELECT subject, aspect, test, state, score FROM " +
 	       KeptTestsSQL(scope) +
@@ -1638,7 +1641,7 @@ static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const Rea
 	       "value,"
 	       " j.state AS test_state, j.score, CASE WHEN j.score > j.threshold AND v.n > 1 THEN 'conflict' WHEN p.stale "
 	       "THEN 'stale'"
-	       " ELSE 'current' END AS state"
+	       " WHEN p.possibly THEN 'possibly' ELSE 'current' END AS state"
 	       " FROM picked p LEFT JOIN judged j ON j.subject = p.subject AND j.aspect = p.aspect"
 	       " LEFT JOIN annotation_counts v ON v.subject = p.subject AND v.aspect = p.aspect"
 	       " UNION ALL "
@@ -1652,7 +1655,7 @@ static string CollapsedSQL(Inner &inner, const vector<TestRow> &tests, const Rea
 //! error); a failed computation is a row with its error and no body
 static string RawSQL(const ReadScope &whole) {
 	return "SELECT s.subject, s.aspect, a.kind, w.name AS test, s.actor, s.body, s.written_at,"
-	       " NOT s.stale AS current, s.error FROM (" +
+	       " NOT s.stale AND NOT s.possibly AS current, s.error FROM (" +
 	       KeptValuesSQL(whole) + ") s LEFT JOIN " + Newest(whole.ws, "aspects") +
 	       " a ON a.name = s.aspect LEFT JOIN " + Newest(whole.ws, "tests") +
 	       " w ON w.aspect = s.aspect ORDER BY s.subject, s.aspect, s.actor";

@@ -2155,10 +2155,10 @@ static TableFunction SubjectColumnFunction() {
 }
 
 //===--------------------------------------------------------------------===//
-// glossql_outdated(): why each stored result that is out of date is — (dataset,
-// function, subject, input, reason): a read that returns other rows now than
-// when the result was computed (changed), or a read of results that returned
-// one that is out of date (outdated)
+// glossql_outdated(): each stored result that is out of date or possibly so —
+// (dataset, function, subject, asset, what, reason): a node it read changed
+// after it read (changed), or a result it read is out of date or possibly so
+// and has not been computed again (possibly)
 //===--------------------------------------------------------------------===//
 
 static unique_ptr<TableRef> OutdatedBindReplace(ClientContext &context, TableFunctionBindInput &input) {

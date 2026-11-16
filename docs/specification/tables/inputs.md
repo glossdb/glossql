@@ -79,8 +79,12 @@ with the node that changed:
 SELECT dataset, function, subject, asset, what, reason FROM glossql_outdated();
 ```
 
-`reason` is `changed` (the node changed after the result read it) or
-`outdated` (a result it read is out of date). A result computed again
+`reason` is `changed` (the node changed after the result read it: the
+result is out of date) or `possibly` (a result it read is out of date or
+possibly so and is not computed again yet). Once that result is
+computed again, the same value leaves its reader current and another
+value is a `result <function>` or `value <property>` node that changed,
+so its reader is out of date. A result computed again
 with the value and error it had keeps its `changed_at`, so what read
 it stays current. A value changed and changed back is two snapshots:
 the results that read it are computed once more. A node's name is

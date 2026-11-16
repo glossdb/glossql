@@ -405,9 +405,10 @@ the read never hides one:
   never in conflict: it is served with its test state.
 - `current` — served, basis unchanged.
 - `stale` — served **and marked**: the subject changed since the write
-  (§5.2), or an input the serving function value read has moved since
-  it stored (§7). Staleness never suppresses judgment; it shows beside
-  it.
+  (§5.2), or a node the serving function value read changed after it
+  read (§6). Staleness never suppresses judgment; it shows beside it.
+- `possibly` — served **and marked**: the serving function value read a
+  result that is out of date and not computed again yet (§6).
 
 ```sql
 SELECT * FROM GLOSSARY(orders.amount, all => true);
@@ -418,7 +419,7 @@ The raw read: one row per (subject, aspect, kind, test) —
 every value side by side; precedence between them is the reader's
 business. `kind` is the aspect's kind; who annotated is `actor`, under
 `test`; `current` is false for a function value that is out of date
-(§6). A computation that failed is a row with its `error` and no
+or possibly so (§6). A computation that failed is a row with its `error` and no
 `body`; the collapsed read and the tests never count it as a value.
 
 With no subject, `GLOSSARY()` sweeps the `USE`'d dataset. A subject serves
@@ -569,10 +570,13 @@ A result stores the snapshot it read at (`read_at`, the lake's newest
 snapshot before its body ran) and the snapshot its value and error
 last changed at (`changed_at`). A stored result is current while no
 node it read changed after `read_at` and no result it read is out of
-date. `glossql_outdated()` serves each stored result that is out of
-date with the node: `(dataset, function, subject, asset, what,
-reason)`, the reason `changed` (the node changed after the result
-read it) or `outdated` (a result it read is out of date). An
+date or possibly so. `glossql_outdated()` serves each stored result
+that is not current with the node: `(dataset, function, subject,
+asset, what, reason)`, the reason `changed` (the node changed after
+the result read it: out of date) or `possibly` (a result it read is
+out of date or possibly so, and is not computed again yet). Once that
+result is computed again, the same value leaves its reader current and
+another value is a node that changed. An
 annotation changed and changed back is two snapshots: the results
 that read it compute once more. A result computed again with the
 value and error it had keeps its `changed_at`, so what read it stays

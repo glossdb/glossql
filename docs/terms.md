@@ -18,7 +18,7 @@ adds are in the kit's `SKILL.md` ([kits](kits.md)).
 | `DECLARE TEST` | test | Declared on an aspect: who may annotate it, which detector scores it, and a threshold |
 | `TESTS()` | test results | One row per asset and test: `state`, `score`, whether it is current |
 | `GLOSSARY()` | business glossary | One row per asset and aspect, with its value and state |
-| `current` · `stale` · `conflict` · `missing` | valid · outdated · conflict · missing value | The state of a row in `GLOSSARY()` |
+| `current` · `stale` · `possibly` · `conflict` · `missing` | valid · outdated · possibly outdated · conflict · missing value | The state of a row in `GLOSSARY()` |
 | `state` in `TESTS()`, `test_state` in `GLOSSARY()` | test status | `green`, `yellow`, `orange`, `red` or `error` |
 | the `inputs` table | provenance | What a measurement read: one row per asset and what was read of it |
 | `DECLARE SOURCE` | connection | A directory, a URL prefix, or an attached database |

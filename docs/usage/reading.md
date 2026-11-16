@@ -18,7 +18,8 @@ function's.
 | State | Meaning |
 |---|---|
 | `current` | the value is served and what it describes is unchanged |
-| `stale` | the value is served; the asset changed after it was written, or a table the computed value read has changed |
+| `stale` | the value is served; the asset changed after it was written, or something the computed value read has changed |
+| `possibly` | the computed value is served; a result it read is out of date and not computed again yet |
 | `conflict` | the values differ and the test's score is above its threshold; `value` is NULL, `test_state` and `score` say how far |
 | `missing` | the property is required here and nobody has recorded it; `value` is NULL |
 

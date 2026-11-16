@@ -170,8 +170,9 @@ role_check	f1.points
 statement ok
 SELECT role_check() FROM points;
 
-# --- changed and changed back is two snapshots: the result is out of date. Computed again with the same
-# value, it keeps the snapshot its value changed at, and a result that read it stays current
+# --- changed and changed back is two snapshots: the result is out of date, and a result that read it
+# possibly so. Computed again with the same value, it keeps the snapshot its value changed at, and the
+# result that read it is current again without being computed
 
 statement ok
 DECLARE ASPECT checked WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
@@ -196,8 +197,16 @@ GLOSS role ON races.date AS $${"value": "timestamp"}$$;
 query TTTT
 SELECT function, asset, what, reason FROM glossql_outdated() WHERE subject = 'f1.race_count' ORDER BY ALL;
 ----
-checked	f1.race_count	result role_check	outdated
+checked	f1.race_count	result role_check	possibly
 role_check	f1.races.date	annotation role	changed
+
+# a result it read is out of date: it is served marked, possibly out of date, and its value is as it was
+
+query TT
+SELECT aspect, state FROM GLOSSARY(race_count) WHERE aspect IN ('checked', 'role_check') ORDER BY ALL;
+----
+checked	possibly
+role_check	stale
 
 query TTTTT
 SELECT role_check() FROM race_count;
@@ -227,7 +236,7 @@ GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FR
 query TTTT
 SELECT function, asset, what, reason FROM glossql_outdated() WHERE subject = 'f1.race_count' ORDER BY ALL;
 ----
-checked	f1.race_count	result role_check	outdated
+checked	f1.race_count	result role_check	possibly
 role_check	f1.race_count	definition	changed
 scans	f1.race_count	definition	changed
 
@@ -257,8 +266,18 @@ SELECT function, asset, what FROM glossql_outdated() WHERE subject = 'f1.race_co
 ----
 role_check	f1.circuits.circuit_id	annotation role
 
+# computed again with another value, the result it read is a node that changed: its reader is out of date
+
 statement ok
-SELECT role_check(), checked() FROM race_count;
+SELECT role_check() FROM race_count;
+
+query TTTT
+SELECT function, asset, what, reason FROM glossql_outdated() WHERE subject = 'f1.race_count' ORDER BY ALL;
+----
+checked	f1.race_count	result role_check	changed
+
+statement ok
+SELECT checked() FROM race_count;
 
 # --- a relationship declared after a check that walked a view's relationships ran outdates that check,
 # naming the set it joined; one between tables the view does not read leaves it current
@@ -391,7 +410,7 @@ INSERT INTO f1.results VALUES (0, 0, 11);
 query TTTT
 SELECT function, asset, what, reason FROM glossql_outdated() WHERE subject = 'f1.points' AND function = 'widths';
 ----
-widths	f1.results.points	result width	outdated
+widths	f1.results.points	result width	possibly
 
 # --- a body that reads the catalog past the read functions is refused at its declaration: no input could
 # follow what it read
@@ -514,7 +533,7 @@ query TTTT
 SELECT function, asset, what, reason FROM glossql_outdated() WHERE function IN ('size', 'size_seen') ORDER BY ALL;
 ----
 size	f1.circuits	data	changed
-size_seen	f1.circuits	value size	outdated
+size_seen	f1.circuits	value size	possibly
 
 # --- a detector declared again moves the annotations its test judges: their readers are out of date
 

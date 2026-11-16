@@ -21,7 +21,7 @@ property.
 | default | `subject VARCHAR`, `aspect VARCHAR`, `value JSON`, `test_state VARCHAR`, `score DOUBLE`, `state VARCHAR` |
 | `all => true` | `subject`, `aspect`, `kind`, `test`, `actor`, `body`, `written_at`, `current` |
 
-`state` is `current`, `stale`, `conflict` or `missing`. See
+`state` is `current`, `stale`, `possibly`, `conflict` or `missing`. See
 [reading](usage/reading.md).
 
 ## TESTS
