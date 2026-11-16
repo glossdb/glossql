@@ -1,14 +1,12 @@
-# 25 · Mixed-case names (avito run) — DECIDED: an unquoted name folds to lowercase
+# Mixed-case names
 
-Source: our own sealed runs on the Avito export, whose files and
-columns carry capitals (`AdsInfo.tsv`, `SearchStream.tsv`, `AdID`).
-The agent stored the tables under the file names and read them back
-unquoted; the statement had kept `AdsInfo` and the engine looked for
-`adsinfo`. Decided: glossql names fold as the host's do (SPEC.md §1) —
-an unquoted name is lowercased at the declaration and at the read, a
-double-quoted one keeps its case.
+Exports often carry capitals in file and column names. The examples
+show the rule: an unquoted name is lowercased where it is declared and
+where it is read, and a double-quoted name keeps its case.
 
-## 1. Stored under the file's name, read back unquoted
+## A table declared unquoted
+
+Both reads reach the same table.
 
 ```glossql
 USE avito;
@@ -20,11 +18,9 @@ SELECT count(*) FROM adsinfo;
 SELECT count(*) FROM AdsInfo;
 ```
 
-Both reads reach the same table: `AdsInfo` folds to `adsinfo` in the
-declaration and in the read. The recipe aliases the export's columns
-lowercase, so no read of this table needs quotes.
+## A table declared quoted
 
-## 2. A quoted name keeps its case
+Unquoted, `SearchStream` reads as `searchstream` and finds no table.
 
 ```glossql
 USE avito;
@@ -34,11 +30,10 @@ SELECT count(*) FROM "SearchStream";
 GLOSS entity ON "SearchStream" AS $${"value": "one ad shown in one search"}$$;
 ```
 
-Unquoted, `SearchStream` folds to `searchstream` and misses. The
-quotes are the whole difference — in the declaration, the read and
-the subject alike.
+## Columns keep the export's spelling
 
-## 3. A column is stored spelled as the export spelled it
+An unquoted column name reaches the one column that differs from it by
+case alone. Where two columns differ by case alone, the quotes decide.
 
 ```glossql
 USE avito;
@@ -48,13 +43,3 @@ SELECT count(*) FROM location WHERE RegionID = 3;
 SELECT count(*) FROM location WHERE "RegionID" = 3;
 GLOSS role ON location.LocationID AS $${"value": "key"}$$;
 ```
-
-The recipe writes the export's columns as spelled — `LocationID`,
-`RegionID` — and nobody declared them here. Unquoted, `RegionID` folds
-to `regionid`, which no column of `location` is, and exactly one
-column differs from it by case alone: both reads reach `"RegionID"`,
-and the gloss is stored under `location.LocationID`. Two columns that
-differ by case alone — an `Amount` beside an `AMOUNT` — refuse the
-unquoted name and name both; there the quotes decide. Decided: a table
-is named here and folds as declared (§1, §2); a column is named by the
-export and is reached as the export spelled it (SPEC.md §1).

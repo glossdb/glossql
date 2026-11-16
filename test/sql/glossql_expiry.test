@@ -1,0 +1,133 @@
+# name: test/sql/glossql_expiry.test
+# description: expiring the lake's snapshots removes the column and view rows a write ended; an annotation or a result that is out of date reads out of date after it, and one that is current may read out of date once
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_expiry_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'expiry');
+
+statement ok
+USE fin;
+
+statement ok
+CREATE TABLE fin.t AS SELECT i AS a, i * 2 AS b FROM range(3) t(i);
+
+statement ok
+CREATE TABLE fin.kept AS SELECT 1 AS k;
+
+statement ok
+DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON COLUMN, TABLE;
+
+statement ok
+DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS VIEW;
+
+statement ok
+GLOSS spend ON fin AS $${"sql": "SELECT a AS value FROM fin.t"}$$;
+
+statement ok
+GLOSS note ON t.a AS $${"text": "a number"}$$;
+
+statement ok
+GLOSS note ON t AS $${"text": "a table"}$$;
+
+statement ok
+GLOSS note ON spend.value AS $${"text": "a view's column"}$$;
+
+statement ok
+GLOSS note ON spend AS $${"text": "a view"}$$;
+
+statement ok
+GLOSS note ON kept.k AS $${"text": "unchanged"}$$;
+
+statement ok
+DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max": {}}}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
+
+statement ok
+SELECT min_max() FROM t.b;
+
+statement ok
+SELECT min_max() FROM kept.k;
+
+# the table made again with a column of another type, the view defined again: what was written on them is out of date
+
+statement ok
+CREATE OR REPLACE TABLE fin.t AS SELECT 'x' || i AS a, i * 2 AS b FROM range(3) t(i);
+
+statement ok
+GLOSS spend ON fin AS $${"sql": "SELECT b AS value FROM fin.t"}$$;
+
+query TTT
+SELECT subject, aspect, current FROM GLOSSARY(fin, all => true) WHERE aspect IN ('note', 'min_max') ORDER BY ALL;
+----
+fin.kept.k	min_max	true
+fin.kept.k	note	true
+fin.spend	note	false
+fin.spend.value	note	false
+fin.t	note	false
+fin.t.a	note	false
+fin.t.b	min_max	false
+
+# every snapshot but the newest expired: the rows the writes ended are gone from the lake's catalog
+
+statement ok
+CALL ducklake_expire_snapshots('ws', older_than => (now()::TIMESTAMP + INTERVAL 1 HOUR)::TIMESTAMPTZ);
+
+query I
+SELECT count(*) FROM ducklake_snapshots('ws');
+----
+1
+
+# a write after the expiry, on another subject, so the read is computed again over the lake's catalog as it is now
+
+statement ok
+GLOSS note ON kept AS $${"text": "written after the expiry"}$$;
+
+query TTT
+SELECT subject, aspect, current FROM GLOSSARY(fin, all => true) WHERE aspect IN ('note', 'min_max') ORDER BY ALL;
+----
+fin.kept	note	true
+fin.kept.k	min_max	true
+fin.kept.k	note	true
+fin.spend	note	false
+fin.spend.value	note	false
+fin.t	note	false
+fin.t.a	note	false
+fin.t.b	min_max	false
+
+# the result out of date is computed again, and then holds; the one that held still holds
+
+statement ok
+SELECT min_max() FROM t.b;
+
+statement ok
+SELECT min_max() FROM t.b;
+
+query TT
+SELECT subject, current FROM GLOSSARY(fin, all => true) WHERE aspect = 'min_max' ORDER BY subject;
+----
+fin.kept.k	true
+fin.t.b	true
+
+query I
+SELECT count(*) FROM measurements_history WHERE function = 'min_max' AND subject = 'fin.t.b';
+----
+2

@@ -1,30 +1,8 @@
-# 24 · Functions carry their own body — the run-4 result
+# A function's body
 
-Source: our own test run, driven through the MCP
-interface alone. Two validations were judged, authored and left half-built:
-the inventory roll-forward closed exactly on 5,280 of 5,280
-product-location-months, and the AP mismatch analysis settled that a
-payment settles its bill in full. Both stored as expectation glosses
-with their tolerances. Neither got a measuring value, because a
-function's body lived on disk and **an agent connected over MCP has
-statements, not a filesystem**.
-
-The same wall holds in front of reading one. The reference library is
-fifteen worked examples that ship in every workspace, and the skill
-that taught function authoring said "read the one closest to your task
-before writing" — pointing at a directory the interface cannot open:
-
-```sql
-SELECT name, script FROM functions
--- band_breach | functions/band_breach.rhai
-```
-
-Decided: **a function's body is data.** `FROM 'path'` is
-replaced by `AS $$…$$`, the store keeps the script itself, and the
-`functions/` directory retires. Writing a function and reading one
-become the same two statements every other kind of knowledge uses.
-
-## The declarations the run could not make
+A function that checks a validation is written in SQL. The example
+declares two checks with their bodies in the statement (`AS $$…$$`) and
+a test on the first.
 
 ```glossql
 USE fin;
@@ -52,43 +30,17 @@ DECLARE TEST inventory_rollforward_test ON inventory_rollforward
   BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;
 ```
 
-## Reading a shipped one is the same statement it always was
+A function's body is read back from the catalog:
 
-The exemplar set becomes readable the moment the body is the column,
-so the authoring instruction stops pointing outside the interface:
-
-```sql
+```glossql
 SELECT script FROM functions WHERE name = 'rate_tolerance'
 ```
 
-## The retired form
+The language does not take a function's body from a file path. This is
+by design: a client of the MCP interface sends statements and has no
+filesystem.
 
 ```glossql-gap
 DECLARE FUNCTION outliers FOR GLOBAL FROM 'functions/outliers.rhai'
   ACCEPTS (column_profile) RETURNS outlier_profile;
 ```
-
-## Findings
-
-- **The body is the only thing that moved.** `FOR`,
-  `RETURNS` and role-by-shape (no `RETURNS` declares a detector) are
-  untouched. A declaration that named a path now carries what the path
-  pointed at.
-- **Two capabilities arrive with it, and neither is new grammar.**
-  Authoring: the check half of a validation is writable over the interface,
-  which run 4 could not do. Reading: `SELECT script FROM functions`
-  serves the reference library as fifteen worked examples instead of
-  fifteen paths, so a skill can say "read the closest one" and mean it.
-- **`FROM` and `AS` did not both survive.** Two homes for one body is
-  the staleness the `x-unit` review decision was written against —
-  the copies disagree and nothing says which wins. The path form is
-  retired rather than deprecated; the gap block above is its epitaph.
-- The workspace `functions/` directory retires with it. Bootstrap
-  carried the reference scripts to disk so an operator could edit
-  them; an operator edits them with a statement now, like everyone
-  else, and the declaration supersedes.
-- INFORMATION LOST (accepted): a function body no longer sits in a
-  file an editor can open, so authoring it is composing a
-  dollar-quoted string. The reference library stays in the repo as the
-  source the binary ships from — a file for the operator who builds
-  the server, never a file the workspace reads.

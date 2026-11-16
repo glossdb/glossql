@@ -16,6 +16,7 @@
 
 #include "glossql_grammar.hpp"
 
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -477,17 +478,18 @@ GLOSSQL_TRANSFORM(StartExtract, FinalizeExtract)
 
 //! GlossDeclareTest <- 'DECLARE' 'TEST' Identifier 'ON' Identifier GlossBy? GlossDetector?
 //!                          GlossThreshold?
-//! GlossBy <- 'BY' Parens(List(GlossSpeaker)) ; GlossSpeaker <- GlossSpeakerAgent / GlossSpeakerHuman
+//! GlossBy <- 'BY' Parens(List(GlossActorKind)) ; GlossActorKind <- GlossActorKindAgent / GlossActorKindHuman
 //! GlossDetector <- 'DETECTOR' Identifier ; GlossThreshold <- 'THRESHOLD' NumberLiteral
 static arena_ptr<TransformResultValue> FinalizeDeclareTest(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	auto name = Ident(transformer, list.GetChild(2));
 	auto aspect = Ident(transformer, list.GetChild(4));
-	vector<Value> speakers;
+	vector<Value> actor_kinds;
 	auto &by = list.Child<OptionalParseResult>(5);
 	if (by.HasResult()) {
-		for (auto &speaker : ListItems(InParens(by.GetResult().Cast<ListParseResult>().GetChild(1)))) {
-			speakers.push_back(Value(IsRule(GetChoice(speaker.get()), "GlossSpeakerHuman") ? "HUMAN" : "AGENT"));
+		for (auto &actor_kind : ListItems(InParens(by.GetResult().Cast<ListParseResult>().GetChild(1)))) {
+			actor_kinds.push_back(
+			    Value(IsRule(GetChoice(actor_kind.get()), "GlossActorKindHuman") ? "HUMAN" : "AGENT"));
 		}
 	}
 	Value detector(LogicalType::VARCHAR);
@@ -506,12 +508,12 @@ static arena_ptr<TransformResultValue> FinalizeDeclareTest(PEGTransformer &trans
 		}
 		threshold = Value::DOUBLE(value);
 	}
-	if (speakers.empty() && detector.IsNull()) {
+	if (actor_kinds.empty() && detector.IsNull()) {
 		throw ParserException("DECLARE TEST names BY or DETECTOR, or both");
 	}
 	return MakeStatement(
 	    transformer, "test", "",
-	    {Value(name), Value(aspect), Value::LIST(LogicalType::VARCHAR, std::move(speakers)), detector, threshold},
+	    {Value(name), Value(aspect), Value::LIST(LogicalType::VARCHAR, std::move(actor_kinds)), detector, threshold},
 	    "DECLARE TEST " + name + " ON " + aspect);
 }
 GLOSSQL_TRANSFORM(StartDeclareTest, FinalizeDeclareTest)
@@ -584,7 +586,7 @@ static arena_ptr<TransformResultValue> FinalizeDeclareAspect(PEGTransformer &tra
 		}
 	}
 	if (kind == "VIEW" && !grains.empty()) {
-		// SPEC §5.1: a metric is grounded on the dataset; a grain clause is refused
+		// SPEC §5.1: a metric is defined on the dataset; a grain clause is refused
 		throw ParserException("a VIEW aspect takes no grain clause: its grain is the dataset");
 	}
 	return MakeWrite(
@@ -684,6 +686,39 @@ static arena_ptr<TransformResultValue> FinalizeTestsRead(PEGTransformer &transfo
 	return ReadRef(transformer, "glossql_tests", std::move(children), list.Child<OptionalParseResult>(2));
 }
 GLOSSQL_TRANSFORM(StartTestsRead, FinalizeTestsRead)
+
+//! GlossGlossaryQuoted <- 'GLOSSARY' Parens(GlossQuotedArgs) TableAlias?
+//! GlossTestsQuoted <- 'TESTS' Parens(GlossQuotedArgs) TableAlias?
+//! GlossQuotedArgs <- StringLiteral GlossAspectNarrow? GlossAllTail?
+//! A subject is a path (grammar.ebnf), never a string: a string where it stands is refused by
+//! code with the form that reads it, where the stock parser would look up a table function of
+//! the read's name
+static arena_ptr<TransformResultValue> QuotedReadRefusal(PEGTransformer &transformer, ParseResult &parse_result,
+                                                         const char *read) {
+	auto &list = parse_result.Cast<ListParseResult>();
+	auto &args = InParens(list.GetChild(1)).Cast<ListParseResult>();
+	auto form = Text(transformer, args.GetChild(0));
+	auto &narrow = args.Child<OptionalParseResult>(1);
+	if (narrow.HasResult()) {
+		form += "::" + Ident(transformer, narrow.GetResult().Cast<ListParseResult>().GetChild(1));
+	}
+	if (args.Child<OptionalParseResult>(2).HasResult()) {
+		form += ", all => true";
+	}
+	throw InvalidInputException("glossql: quoted_subject: %s() takes its subject as a name, not a string: %s(%s); "
+	                            "%s() alone reads the dataset in use",
+	                            read, read, form, read);
+}
+
+static arena_ptr<TransformResultValue> FinalizeGlossaryQuoted(PEGTransformer &transformer, ParseResult &parse_result) {
+	return QuotedReadRefusal(transformer, parse_result, "GLOSSARY");
+}
+GLOSSQL_TRANSFORM(StartGlossaryQuoted, FinalizeGlossaryQuoted)
+
+static arena_ptr<TransformResultValue> FinalizeTestsQuoted(PEGTransformer &transformer, ParseResult &parse_result) {
+	return QuotedReadRefusal(transformer, parse_result, "TESTS");
+}
+GLOSSQL_TRANSFORM(StartTestsQuoted, FinalizeTestsQuoted)
 
 //===--------------------------------------------------------------------===//
 // The grammar extension
@@ -810,15 +845,23 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	    GrammarChange::AddRule("GlossTestsRead <- 'TESTS' Parens(GlossTestsArgs?) TableAlias?", StartTestsRead));
 	rule("GlossTestsArgs <- GlossSubject GlossAspectNarrow?");
 	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossTestsRead"));
+	// a string where the subject stands: refused by code, not left to the stock parser
+	changes.push_back(GrammarChange::AddRule("GlossGlossaryQuoted <- 'GLOSSARY' Parens(GlossQuotedArgs) TableAlias?",
+	                                         StartGlossaryQuoted));
+	changes.push_back(
+	    GrammarChange::AddRule("GlossTestsQuoted <- 'TESTS' Parens(GlossQuotedArgs) TableAlias?", StartTestsQuoted));
+	rule("GlossQuotedArgs <- StringLiteral GlossAspectNarrow? GlossAllTail?");
+	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossGlossaryQuoted"));
+	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossTestsQuoted"));
 
 	// Tests
 	statement("GlossDeclareTest <- 'DECLARE' 'TEST' Identifier 'ON' Identifier GlossBy? GlossDetector? "
 	          "GlossThreshold?",
 	          StartDeclareTest);
-	rule("GlossBy <- 'BY' Parens(List(GlossSpeaker))");
-	rule("GlossSpeaker <- GlossSpeakerAgent / GlossSpeakerHuman");
-	rule("GlossSpeakerAgent <- 'AGENT'");
-	rule("GlossSpeakerHuman <- 'HUMAN'");
+	rule("GlossBy <- 'BY' Parens(List(GlossActorKind))");
+	rule("GlossActorKind <- GlossActorKindAgent / GlossActorKindHuman");
+	rule("GlossActorKindAgent <- 'AGENT'");
+	rule("GlossActorKindHuman <- 'HUMAN'");
 	rule("GlossDetector <- 'DETECTOR' Identifier");
 	rule("GlossThreshold <- 'THRESHOLD' NumberLiteral");
 

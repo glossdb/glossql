@@ -1,10 +1,10 @@
-# 17 · The relational spine — the sqlite run
+# Load from a relational database
 
-Source: our own test run — dataset `fin2` over the
-BookSQL SQLite dump (`~/glossql-data/finance_2/accounting.sqlite`, seven
-tables, 1,012,948 rows), the first full flow over a relational source
-through the ADBC executor. The spine below is what the
-run spoke, abridged to the columns that carried the findings.
+A relational source runs the load query itself, in its own SQL dialect.
+The example loads a ledger from a SQLite file: declare the source, read
+the source's own catalog, write the load query with explicit casts,
+read the table back, and load again, first in full and then
+incrementally by key.
 
 ## Declare the source
 
@@ -12,10 +12,13 @@ run spoke, abridged to the columns that carried the findings.
 USE fin2;
 
 DECLARE SOURCE books SET (type: relational_db,
-                          location: '/Users/x/glossql-data/finance_2/accounting.sqlite');
+                          location: 'exports/accounting.sqlite');
 ```
 
-## Harvest the source's own catalog — evidence, never declarations
+## Read the source's catalog
+
+The source's declared foreign keys are evidence for a relationship,
+not a declaration.
 
 ```glossql
 PREVIEW books AS $$SELECT name, type FROM pragma_table_info('master_txn_table')$$;
@@ -23,12 +26,7 @@ PREVIEW books AS $$SELECT "table", "from", "to"
 FROM pragma_foreign_key_list('master_txn_table')$$;
 ```
 
-Six declared FKs came back. Two survived judging against the stored
-data — a declared key describes the source's tables, not the tables a
-recipe is stored, so harvested keys enter the relationship judge as
-evidence only.
-
-## The recipe runs at the source, in the source's dialect
+## Write the load query in the source's dialect
 
 ```glossql
 DECLARE RECIPE ledger ON fin2 FROM books AS $$
@@ -42,15 +40,8 @@ DECLARE RECIPE ledger ON fin2 FROM books AS $$
   FROM master_txn_table$$;
 ```
 
-Two dialect facts the run paid for, both now in the add-source skill:
-
-- **Forced storage classes.** SQLite's dynamic typing means a declared
-  `DOUBLE` column can hold text rows (`billing_rate`: text in all
-  50,000 rows); `CAST(x AS REAL)` in the recipe fixes the storage
-  class so the wire carries a numeric.
-- **The cast trap.** `CAST(date(x) AS DATE)` does not fail — `DATE`
-  takes NUMERIC affinity, and `'2010-12-27'` is stored as int64 `2010`.
-  Measured through the source:
+In SQLite, `CAST(date(x) AS DATE)` returns an integer. The preview
+shows it:
 
 ```glossql
 PREVIEW books AS $$SELECT date('2010-12-27')              AS iso,
@@ -58,36 +49,23 @@ PREVIEW books AS $$SELECT date('2010-12-27')              AS iso,
                         unixepoch('2010-12-27')          AS epoch$$;
 ```
 
-→ `iso` wires as string `2010-12-27`, `trap` as int64 `2010`, `epoch`
-as int64 `1293408000`. The honest spellings land untyped; the typed
-read is at read time.
-
-## Read back what was stored
+## Read back what was loaded
 
 ```glossql
 DESCRIBE ledger;
 SELECT CAST(transaction_date AS DATE) AS d, credit FROM ledger LIMIT 5;
 ```
 
-`DESCRIBE` passes the allowlist (the run burned a
-diagnostic re-landing to learn its types before it did). The second read is the
-typed contract this dialect can carry: cast at read over ISO text.
+## Load again
 
-## The update runs at the source too
+A load replaces the table with the query's result.
 
 ```glossql
 IMPORT ledger;
 ```
 
-The recipe runs again at the source and the table becomes its result,
-replaced in one commit: a relational source computes the whole result
-itself, so there is no file for the engine to leave out. The outcome
-says so (`replaced: the source computes the whole result`), and the
-load's row in `imports` carries `mode = 'replace'`.
-
-A million-row ledger is not re-read whole every night. The owner
-fences the source into a view of what changed, and the recipe names
-the table's key:
+With a key (`SET (key: id)`), a load merges the query's rows into the
+table by that key.
 
 ```glossql
 DECLARE RECIPE ledger ON fin2 FROM books SET (key: id) AS $$
@@ -99,23 +77,3 @@ DECLARE RECIPE ledger ON fin2 FROM books SET (key: id) AS $$
   FROM master_txn_changes$$;
 IMPORT ledger;
 ```
-
-Every import merges the view's rows into the table by `id`: a row
-with a known key replaces it, a new key joins, every other row
-holds. A row the view never shows cannot be merged, so a source that
-deletes is fenced with the deletes as rows carrying a flag. The
-load's row carries `mode = 'merge'`.
-
-## Results
-
-- **TRANSCRIBES** — the spine (source, harvest probe,
-  at-source recipe, read-back) is existing surface; the run needed no
-  new grammar.
-- **INFORMATION LOST** — the temporal *type*: SQLite's wire has no
-  temporal storage class, so no recipe spelling writes a Date/Timestamp
-  column from this dialect. `temporal()` names the gap in its
-  abstention reason; `additivity_evidence()` abstains dataset-wide
-  without a typed period axis. A typed backend (PostgreSQL) does not
-  share the loss — the recipe cast is stored temporal there. Decided:
-  no load-side machinery; the dialect teaching carries
-  it, and SQLite stays a cheap ADBC test, not a product target.

@@ -1,107 +1,111 @@
 ---
 name: glossql-kpi
-description: The KPI kit's vocabulary for a glossql workspace — what each aspect means, the order of a round, the keys a metric definition carries. Use after glossql_kit('kits/kpi/kit.sql') when glossing columns, tables, sources and metrics.
+description: The kpi kit's properties for a glossql workspace — what each one means, the order of the work, how a metric is defined as a view. Use after glossql_kit('kits/kpi/kit.sql') when annotating columns, tables, sources and metrics.
 ---
 
-# The KPI kit: what it teaches
+# The kpi kit
 
-For an actor working in a DuckDB that has the glossql extension loaded and
-this kit declared. The extension knows the grammar and the store; this
-file is the vocabulary, the order of a round, and the keys a metric's
-metric definition carries. Everything live is read through the language, never
-taught: the tables, the declarations, the glossary.
+For an agent working in a DuckDB that has the glossql extension loaded
+and this kit. The kit declares the semantic model's properties, two
+measurements that profile a column, a detector, and a test per
+property. Read the tables, the declarations and the glossary from the
+workspace; this page says what the words mean.
 
 ## Load and check
 
 ```sql
-FROM glossql_kit('kits/kpi/kit.sql');     -- one row per statement; the same line in the opener, so every process starts with the kit
-SELECT * FROM kits;                        -- what this workspace runs
+FROM glossql_kit('kits/kpi/kit.sql');     -- also in the opener, so every session has the kit
+SELECT * FROM kits;
 SELECT name, kind, grains FROM aspects;
 ```
 
-## The words
+## The properties
 
-| Aspect | On | Body | Says |
+| Property | On | Body | Says |
 |---|---|---|---|
 | `meaning` | table, column, relationship | `value`: a sentence; `term`: the business term | what it is |
-| `role` | column | `value`: `key`, `measure`, `dimension`, `timestamp`, `attribute` | what kind of column; the first claim, the others wait on it |
-| `additivity` | measure columns | `value`: `additive` (a flow: sums over time and members), `semi-additive` (a stock: a level, sums over members, never over time), `ratio`, `non-additive`; `numerator` and `denominator` for a ratio; `grounds` | how the number combines over periods and members; `none`: examined, does not apply |
-| `unit` | measure columns | `value`: the unit; `source_column`: where a row's unit sits | what the number counts |
-| `dimension` | dimension columns | `value`: `primary`, `supporting`, `none`; `grounds` | whether reports slice by it |
-| `entity` | table | `value`: what one row is; `role`; `grain`; `time_axis`; `identity_columns` | the identity every aggregate holds on |
-| `conventions` | source | any object | fiscal calendar, signs, what nulls mean |
-| `definitions` | dataset | `definitions`: one object per metric name | the handbook: meaning, unit, owner, source of each metric, and a derived metric's `formula` over its siblings, text a person corrects, never computed |
+| `role` | column | `value`: `key`, `measure`, `dimension`, `timestamp`, `attribute` | what kind of column it is. Annotate it first: the properties below are required by role |
+| `additivity` | measure columns | `value`: `additive` (a flow: sums over time and members), `semi-additive` (a stock: sums over members, not over time), `ratio`, `non-additive`; `numerator` and `denominator` for a ratio; `basis` | how the number combines over periods and members |
+| `unit` | measure columns | `value`: the unit; `source_column`: the column that holds each row's unit | the unit of measure |
+| `dimension` | dimension columns | `value`: `primary`, `supporting`, `none`; `basis` | whether reports slice by it |
+| `entity` | table | `value`: what one row is; `role`: `fact` or `dimension`; `grain`; `time_axis`; `identity_columns` | the table's grain and key |
+| `conventions` | source | any object | fiscal calendar, sign conventions, what nulls mean |
+| `definitions` | dataset | `definitions`: one object per metric name | the business glossary of metrics: meaning, unit, owner, source, and a derived metric's `formula` as text |
 
-`role`, `additivity` and `unit` are judged by `slot_entropy`: when the
-agent's and the human's values differ, the claim is in `conflict`, its
-value withheld, the result `red` above 0.7. `meaning`, `entity` and
-`dimension` take both kinds of actor without a detector.
+The measurements: `column_profile` (`total`, `null_ratio`, `distinct`,
+`min`, `max`) and `outlier_profile`, both on a column.
 
-## The order of a round
+The tests: every property takes annotations from an agent and a
+person. `role`, `additivity` and `unit` are scored by `value_entropy`
+with threshold 0.7: where the agent's and the person's values differ,
+the asset reads `conflict` and its value is withheld. `meaning`,
+`entity` and `dimension` have no detector.
 
-1. Read what is required. Every gap is a row, never an omission:
+## The order of the work
+
+1. Read what is missing:
    `SELECT * FROM GLOSSARY(orders) WHERE state <> 'current';`
-2. Gloss `role` on every column first. `additivity` and `unit` are required
-   only on measures, `dimension` only on dimensions, so the backlog opens
-   as roles land.
-3. Extract before claiming. `SELECT column_profile() FROM orders.amount;`
-   and `SELECT outlier_profile() FROM orders.amount;` land evidence that
-   `GLOSSARY()` serves beside the glosses; cite it in `grounds`. With the
-   quality kit loaded and the edges declared, `SELECT additivity_evidence()
-   FROM orders.amount;` writes the stock/flow evidence: read its result
-   and the anchor that decided before glossing `additivity`. It is
-   evidence, never a value.
-4. Gloss with grounds: `GLOSS additivity ON orders.amount AS $${"value":
-   "additive", "grounds": "sums over orders, never a balance"}$$;`. You speak
-   as `agent`. A person's review decision arrives as `human`, which the wrapper
-   sets with `SET VARIABLE glossql_actor = 'human'`; never set it yourself.
-5. Read the results: `SELECT * FROM TESTS(orders.amount::role);`. A red
-   band is a disagreement to resolve by re-glossing, not to overwrite.
+2. Annotate `role` on every column first. `additivity` and `unit` are
+   required only on measures, `dimension` only on dimensions.
+3. Measure before you annotate. `SELECT column_profile() FROM
+   orders.amount;` and `SELECT outlier_profile() FROM orders.amount;`
+   store results that `GLOSSARY()` returns beside the annotations. Name
+   them in `basis`. With the quality kit loaded and the relationships
+   declared, `SELECT additivity_evidence() FROM orders.amount;` says
+   whether a column looks like a stock or a flow.
+4. Annotate with a basis: `GLOSS additivity ON orders.amount AS
+   $${"value": "additive", "basis": "sums over orders, not a
+   balance"}$$;`. You write as `agent`. A person's review decision is
+   written as `human`, on the person's own connection. Do not set
+   `human` yourself.
+5. Read the results: `SELECT * FROM TESTS(orders.amount::role);`. A
+   `red` state is a disagreement. Resolve it with the person; do not
+   overwrite it.
 
 ## Metrics
 
-A metric is a VIEW aspect, declared thin and grounded by a gloss on the
-dataset. The metric definition is served as a view under the metric's name, and
-the view is a table of the dataset: its columns take this kit's words
-like a loaded table's columns do, and that is where a reader of the
-numbers finds what it needs — never in the body.
+A metric is a `VIEW` property, defined by an annotation on the
+dataset. Its SQL is served as a view under the metric's name. The view
+is a table of the dataset, so its columns take this kit's properties
+like a loaded table's columns. That is where a reader of the numbers
+finds what it needs.
 
 ```sql
 DECLARE ASPECT revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS VIEW;
-GLOSS revenue ON fin AS $${
-  "sql": "SELECT month AS period, customer, sum(amount) AS value FROM fin.orders GROUP BY ALL",
+GLOSS revenue ON shop AS $${
+  "sql": "SELECT month AS period, customer, sum(amount) AS value FROM shop.orders GROUP BY ALL",
   "assumptions": [{"dimension": "scope", "assumption": "amounts are net of tax",
-                   "basis": "column_stats", "confidence": 0.9}]
+                   "basis": "column_profile", "confidence": 0.9}]
 }$$;
 GLOSS role ON revenue.period AS $${"value": "timestamp"}$$;
 GLOSS role ON revenue.value AS $${"value": "measure"}$$;
 GLOSS additivity ON revenue.value AS $${"value": "additive"}$$;
 GLOSS role ON revenue.customer AS $${"value": "dimension"}$$;
-FROM fin.revenue;
+FROM shop.revenue;
 ```
 
-The body is the engine's contract, and nothing else is read from it:
+The body:
 
-- `sql` or `stopped`. `stopped` records that you serve no number, and
-  why: what is missing, where, what closes it.
-- `assumptions`: disclosed, each with its `assumption`; `dimension`,
-  `basis` and `confidence` in 0..1 when you have them.
+- `sql`, or `stopped`. `stopped` says that you serve no number, and
+  why: what is missing and what would fix it.
+- `assumptions`: each with its `assumption`, and `dimension`, `basis`
+  and `confidence` (0 to 1) when you have them.
 
-On the view's columns: `role` says which column is the period and which
-the value; `additivity` on the value says how the number combines — a flow
-sums, a stock keeps the period's last level, a ratio re-divides the
-summed halves the view serves under the names `numerator` and
-`denominator` give; `dimension` on a dimension column says whether the
-series slices by it; `entity` on the view says what one row is and its
-`grain`. A kit that serves the series reads them.
+On the view's columns:
 
-Re-glossing supersedes your own value; a human's value holds beside it.
-What the company revises, the metric's meaning, unit, owner or source,
-goes into `definitions` on the dataset, never into the declaration: a
-declaration cannot change once anything is glossed on it.
+- `role` says which column is the period and which the measure.
+- `additivity` on the measure says how it combines: a flow sums, a
+  stock takes the period's last level, a ratio divides the summed
+  columns that `numerator` and `denominator` name.
+- `dimension` says whether the metric is sliced by a column.
+- `entity` on the view says what one row is.
 
-## What this kit does not do
+Annotating again replaces your own value. A person's value is kept
+beside it. Put what the company revises (a metric's meaning, unit,
+owner or source) into `definitions` on the dataset: the metric's
+declaration cannot change once it is annotated.
 
-It records the words and ships no reader of the numbers: a metrics
-kit serves the series over the view and its columns' claims. Interfaces and
-identity stay outside.
+## Limits
+
+The kit stores the annotations. It has no function that reads a
+metric's series from the view.

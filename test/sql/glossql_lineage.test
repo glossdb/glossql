@@ -1,5 +1,5 @@
 # name: test/sql/glossql_lineage.test
-# description: lineage: what computes each column of a query, read off its bound plan; a landing records it, a gloss reads stale once the derivation behind its column moved (SPEC §3), and the landings' diff is the drift record of what a source sends
+# description: lineage: what computes each column of a query, read off its bound plan; a load records it, a gloss reads stale once the derivation behind its column moved (SPEC §3), and the loads' diff is the drift record of what a source sends
 # group: [sql]
 
 require glossql
@@ -82,9 +82,9 @@ SELECT count(DISTINCT derivation) FROM (SELECT derivation FROM glossql_lineage($
 statement error
 SELECT "column", derivation, complete FROM glossql_lineage($$CREATE TABLE x AS SELECT 1$$);
 ----
-takes one SELECT
+Invalid Input Error
 
-# --- a landing records its recipe's lineage per column
+# --- a load records its recipe's lineage per column
 
 statement ok
 COPY (SELECT i AS id, i * 10 AS amount, 'c' || (i % 2) AS customer FROM range(4) t(i)) TO '{TEST_DIR}/sales.csv' (HEADER);
@@ -139,7 +139,7 @@ fin.sales	agent	false
 fin.sales.amount	agent	false
 fin.sales.id	agent	true
 
-# a re-gloss stands at the newest landing
+# a re-gloss is current at the newest load
 statement ok
 GLOSS note ON sales.amount AS $${"text": "net"}$$;
 
@@ -164,7 +164,7 @@ fin.sales	current
 fin.sales.amount	current
 fin.sales.id	current
 
-# a table made by hand has no landing and never re-derives
+# a table made by hand has no load and never re-derives
 statement ok
 GLOSS note ON orders.amount AS $${"text": "made by hand"}$$;
 
@@ -173,7 +173,7 @@ SELECT subject, state FROM GLOSSARY(orders.amount);
 ----
 fin.orders.amount	current
 
-# --- drift in what the source sends: under the same recipe the leaf moves, and the landings' diff shows it
+# --- drift in what the source sends: under the same recipe the leaf moves, and the loads' diff shows it
 
 statement ok
 COPY (SELECT i AS id, i * 10 AS amount FROM range(3) t(i)) TO '{TEST_DIR}/raw.csv' (HEADER);
@@ -189,7 +189,7 @@ SELECT lineage->>'amount' FROM imports WHERE table_name = 'raw';
 ----
 cast(read_csv.amount:BIGINT as DOUBLE)
 
-# the source now sends fractions: the landed column keeps its type, the lake sees no change, the lineage does
+# the source now sends fractions: the loaded column keeps its type, the lake sees no change, the lineage does
 statement ok
 COPY (SELECT i AS id, i * 10.5 AS amount FROM range(3) t(i)) TO '{TEST_DIR}/raw.csv' (HEADER);
 
@@ -202,7 +202,7 @@ SELECT subject, state FROM GLOSSARY(raw.amount);
 fin.raw.amount	stale
 
 query TT
-SELECT mode, lineage->>'amount' FROM imports WHERE table_name = 'raw' ORDER BY seq;
+SELECT mode, lineage->>'amount' FROM imports_history WHERE table_name = 'raw' ORDER BY begin_snapshot;
 ----
 replace	cast(read_csv.amount:BIGINT as DOUBLE)
 replace	read_csv.amount:DOUBLE
@@ -266,12 +266,12 @@ SELECT dataset, view, table_name FROM glossql_views_scans(NULL) WHERE view = 'vi
 ----
 ops	visit_count	ops.visits
 
-# --- glossql_views_joins(dataset): the column pairs a view's joins equate, a join's ON, USING and a WHERE alike; a shared column the view only reads is no pair
+# --- glossql_views_joins(dataset): the column pairs a view's joins equate, a join's ON, USING and a WHERE alike, the left side as the predicate's left input; a shared column the view only reads is no pair
 
 query TTT
 SELECT view, left_column, right_column FROM glossql_views_joins('fin') WHERE view = 'big_customers';
 ----
-big_customers	fin.customers.customer	fin.orders.customer
+big_customers	fin.orders.customer	fin.customers.customer
 
 statement ok
 CREATE VIEW fin.where_join AS SELECT o.id, c.segment FROM fin.orders o, fin.customers c WHERE o.customer = c.customer AND c.segment = 'seg1';
@@ -279,7 +279,7 @@ CREATE VIEW fin.where_join AS SELECT o.id, c.segment FROM fin.orders o, fin.cust
 query TT
 SELECT left_column, right_column FROM glossql_views_joins('fin') WHERE view = 'where_join';
 ----
-fin.customers.customer	fin.orders.customer
+fin.orders.customer	fin.customers.customer
 
 statement ok
 CREATE VIEW fin.no_join AS SELECT customer FROM fin.orders UNION ALL SELECT customer FROM fin.customers;
@@ -294,7 +294,7 @@ SELECT count(*) FROM glossql_views_joins('fin') WHERE view = 'no_join';
 query TTTT
 SELECT left_column, right_column, left_unique, right_unique FROM glossql_views_joins('fin') WHERE view = 'big_customers';
 ----
-fin.customers.customer	fin.orders.customer	false	false
+fin.orders.customer	fin.customers.customer	false	false
 
 statement ok
 CREATE VIEW fin.join_grouped AS SELECT o.id, c.segment FROM fin.orders o JOIN (SELECT customer, max(segment) AS segment FROM fin.customers GROUP BY customer) c ON o.customer = c.customer;
@@ -320,13 +320,30 @@ CREATE VIEW fin.join_after_fan AS SELECT o.id FROM fin.orders o JOIN (SELECT g.c
 query TTTTT
 SELECT view, left_column, right_column, left_unique, right_unique FROM glossql_views_joins('fin') WHERE view LIKE 'join_%' ORDER BY ALL;
 ----
-join_after_fan	fin.customers.customer	fin.orders.customer	false	false
-join_cte	fin.customers.customer	fin.orders.customer	true	false
-join_distinct	fin.customers.customer	fin.orders.customer	true	false
-join_grouped	fin.customers.customer	fin.orders.customer	true	false
-join_latest	fin.customers.customer	fin.orders.customer	true	false
-join_latest_where	fin.customers.customer	fin.orders.customer	true	false
-join_wider_key	fin.customers.customer	fin.orders.customer	false	false
+join_after_fan	fin.customers.customer	fin.orders.customer	true	false
+join_after_fan	fin.orders.customer	fin.customers.customer	false	false
+join_cte	fin.orders.customer	fin.customers.customer	false	true
+join_distinct	fin.orders.customer	fin.customers.customer	false	true
+join_grouped	fin.orders.customer	fin.customers.customer	false	true
+join_latest	fin.orders.customer	fin.customers.customer	false	true
+join_latest_where	fin.orders.customer	fin.customers.customer	false	true
+join_wider_key	fin.orders.customer	fin.customers.customer	false	false
+
+# --- join_number: the pairs of one join, its key, share a number; two joins of the same two tables are two keys
+
+statement ok
+CREATE VIEW fin.join_pair AS SELECT o.id FROM fin.orders o JOIN fin.customers c ON c.customer = o.customer AND c.segment = o.customer;
+
+statement ok
+CREATE VIEW fin.join_twice AS SELECT o.id FROM fin.orders o JOIN fin.customers c ON c.customer = o.customer JOIN fin.customers d ON d.segment = o.customer;
+
+query TTTI
+SELECT view, left_column, right_column, join_number FROM glossql_views_joins('fin') WHERE view IN ('join_pair', 'join_twice') ORDER BY ALL;
+----
+join_pair	fin.orders.customer	fin.customers.customer	1
+join_pair	fin.orders.customer	fin.customers.segment	1
+join_twice	fin.orders.customer	fin.customers.customer	1
+join_twice	fin.orders.customer	fin.customers.segment	2
 
 # --- shape: how a column was computed, where that decides how it adds up. A division by an aggregate is a ratio, an average an average, a distinct count distinct; a sum over one keeps it, a division by a constant has none
 
@@ -355,3 +372,232 @@ daily_rate	value	ratio
 revenue	customer	NULL
 revenue	total	NULL
 summed_rate	value	ratio
+
+# --- each expression reads as what it is: a CASE, a COALESCE, a comparison, a conjunction, IN and IS NULL by their own
+# names over their operands, the columns they read listed inside, a literal as written; a real UNNEST reads unnest
+
+statement ok
+CREATE TABLE fin.products AS SELECT i AS id, CASE WHEN i % 2 = 0 THEN 'D' ELSE 'A' END AS status, 'brand' || i AS global_brand, i AS parent FROM range(4) t(i);
+
+statement ok
+CREATE VIEW fin.product_forms AS
+SELECT CASE WHEN p.status = 'D' THEN 'available' WHEN p.status = 'A' THEN 'active' ELSE 'other' END AS availability,
+       coalesce(p.global_brand, up.global_brand, top.global_brand) AS brand,
+       p.id = up.id AS is_root,
+       p.id > 1 AND (up.id < 3 OR top.id IS NULL) AS in_range,
+       p.status IN ('D', 'A') AS known,
+       p.global_brand IS NULL AS unbranded,
+       p.id BETWEEN 1 AND 3 AS middle
+FROM fin.products p JOIN fin.products up ON p.parent = up.id JOIN fin.products top ON up.parent = top.id;
+
+query TTT
+SELECT "column", derivation, complete FROM glossql_views_lineage('fin') WHERE view = 'product_forms' ORDER BY "column";
+----
+availability	case(when =(fin.products.status:VARCHAR, 'D') then 'available', when =(fin.products.status:VARCHAR, 'A') then 'active', else 'other')	true
+brand	coalesce(fin.products.global_brand:VARCHAR, fin.products.global_brand:VARCHAR, fin.products.global_brand:VARCHAR)	true
+in_range	and(>(fin.products.id:BIGINT, cast(1 as BIGINT)), or(<(fin.products.id:BIGINT, cast(3 as BIGINT)), is_null(fin.products.id:BIGINT)))	true
+is_root	=(fin.products.id:BIGINT, fin.products.id:BIGINT)	true
+known	in(fin.products.status:VARCHAR, 'D', 'A')	true
+middle	and(>=(fin.products.id:BIGINT, cast(1 as BIGINT)), <=(fin.products.id:BIGINT, cast(3 as BIGINT)))	true
+unbranded	is_null(fin.products.global_brand:VARCHAR)	true
+
+# the columns each derivation reads are found inside it, as the kits read them
+query TT
+SELECT "column", list_sort(list_distinct(regexp_extract_all(derivation, '([A-Za-z_]+\.[A-Za-z_]+\.[A-Za-z_]+):', 1)))
+FROM glossql_views_lineage('fin') WHERE view = 'product_forms' ORDER BY "column";
+----
+availability	[fin.products.status]
+brand	[fin.products.global_brand]
+in_range	[fin.products.id]
+is_root	[fin.products.id]
+known	[fin.products.status]
+middle	[fin.products.id]
+unbranded	[fin.products.global_brand]
+
+query TT
+SELECT "column", derivation FROM glossql_lineage($$SELECT NOT p.id > 1 AS low, p.status NOT IN ('X') AS not_x, p.global_brand IS NOT NULL AS branded, (p.id + 1) BETWEEN 1 AND 3 AS shifted, p.id IS DISTINCT FROM p.parent AS moved, CASE p.status WHEN 'D' THEN 1 ELSE 0 END AS flag, row_number() OVER (PARTITION BY p.status ORDER BY p.id DESC) AS rn, sum(p.id) OVER () AS all_ids FROM fin.products p$$);
+----
+low	not(>(fin.products.id:BIGINT, cast(1 as BIGINT)))
+not_x	not(in(fin.products.status:VARCHAR, 'X'))
+branded	is_not_null(fin.products.global_brand:VARCHAR)
+shifted	and(>=(+(fin.products.id:BIGINT, cast(1 as BIGINT)), cast(1 as BIGINT)), <=(+(fin.products.id:BIGINT, cast(1 as BIGINT)), cast(3 as BIGINT)))
+moved	is_distinct_from(fin.products.id:BIGINT, fin.products.parent:BIGINT)
+flag	case(when =(fin.products.status:VARCHAR, 'D') then 1, else 0)
+rn	row_number() over(partition by fin.products.status:VARCHAR order by fin.products.id:BIGINT desc)
+all_ids	sum(fin.products.id:BIGINT) over()
+
+# a real UNNEST reads unnest; a union of three branches reads each branch
+query TT
+SELECT "column", derivation FROM glossql_lineage($$SELECT unnest([id, parent]) AS member, unnest(string_split(global_brand, 'd')) AS part FROM fin.products$$);
+----
+member	unnest(list_value(fin.products.id:BIGINT, fin.products.parent:BIGINT))
+part	unnest(string_split(fin.products.global_brand:VARCHAR, 'd'))
+
+query TTT
+SELECT "column", derivation, complete FROM glossql_lineage($$SELECT status AS code FROM fin.products UNION SELECT global_brand FROM fin.products UNION ALL SELECT coalesce(status, 'none') FROM fin.products$$);
+----
+code	union(union(fin.products.status:VARCHAR, fin.products.global_brand:VARCHAR), coalesce(fin.products.status:VARCHAR, 'none'))	true
+
+# --- glossql_views_mapping(dataset): per output column, per branch of the union the rows come from and per
+# scanned column, the branch's derivation, the table, the column, the alias of a table read more than once,
+# what the view's joins and filters require of that scan alone, and the literals the derivation tests or returns
+
+statement ok
+CREATE TABLE fin.stock_dk AS SELECT 'M' || i AS matnr, 'PAL' AS uom, i * 1.0 AS qty FROM range(3) r(i);
+
+statement ok
+CREATE TABLE fin.stock_pl AS SELECT 'I' || i AS indeks, 'pal' AS jm, i * 2.0 AS ilosc, 'D' AS status FROM range(3) r(i);
+
+statement ok
+CREATE TABLE fin.hierarchy AS SELECT m AS market, 'M' || i AS local_code, 'G' || i AS global_brand FROM range(3) r(i), (VALUES ('DK'), ('PL')) v(m);
+
+statement ok
+CREATE VIEW fin.onhand AS
+SELECT s.matnr AS part, 'SAP' AS source_system, CASE WHEN s.uom = 'PAL' THEN s.qty * 24 ELSE s.qty END AS quantity FROM fin.stock_dk s
+UNION ALL SELECT p.indeks, 'Monolith', CASE p.jm WHEN 'pal' THEN p.ilosc * 20 ELSE p.ilosc END FROM fin.stock_pl p WHERE p.status = 'D'
+UNION ALL SELECT * FROM (SELECT NULL AS part, 'none' AS source_system, 0.0 AS quantity);
+
+query ITTTTT
+SELECT branch, "column", table_name, table_column, condition, array_to_string(literals, ' ') FROM glossql_views_mapping('fin') WHERE view = 'onhand' ORDER BY ALL;
+----
+1	part	fin.stock_dk	matnr	NULL	(empty)
+1	quantity	fin.stock_dk	qty	NULL	'PAL'
+1	quantity	fin.stock_dk	uom	NULL	'PAL'
+1	source_system	NULL	NULL	NULL	'SAP'
+2	part	fin.stock_pl	indeks	=(fin.stock_pl.status:VARCHAR, 'D')	(empty)
+2	quantity	fin.stock_pl	ilosc	=(fin.stock_pl.status:VARCHAR, 'D')	'pal'
+2	quantity	fin.stock_pl	jm	=(fin.stock_pl.status:VARCHAR, 'D')	'pal'
+2	source_system	NULL	NULL	NULL	'Monolith'
+3	part	NULL	NULL	NULL	(empty)
+3	quantity	NULL	NULL	NULL	0.0
+3	source_system	NULL	NULL	NULL	'none'
+
+# the branch's derivation is the branch's alone; the view's lineage keeps the union
+query IT
+SELECT DISTINCT branch, derivation FROM glossql_views_mapping('fin') WHERE view = 'onhand' AND "column" = 'quantity' ORDER BY ALL;
+----
+1	case(when =(fin.stock_dk.uom:VARCHAR, 'PAL') then *(fin.stock_dk.qty:DECIMAL(21,1), cast(24 as DECIMAL(31,0))), else cast(fin.stock_dk.qty:DECIMAL(21,1) as DECIMAL(31,1)))
+2	case(when =(fin.stock_pl.jm:VARCHAR, 'pal') then *(fin.stock_pl.ilosc:DECIMAL(21,1), cast(20 as DECIMAL(31,0))), else cast(fin.stock_pl.ilosc:DECIMAL(21,1) as DECIMAL(31,1)))
+3	cast(0.0 as DECIMAL(31,1))
+
+# one table read under two aliases: each scan with its alias and the literal its join requires, the
+# coalesce's precedence in the derivation; a CTE resolves through
+statement ok
+CREATE VIEW fin.part AS
+WITH parts AS (SELECT matnr FROM fin.stock_dk)
+SELECT p.matnr, coalesce(pl.global_brand, dk.global_brand) AS brand, dk.global_brand AS brand_dk
+FROM parts p LEFT JOIN fin.hierarchy dk ON dk.market = 'DK' AND dk.local_code = p.matnr
+LEFT JOIN fin.hierarchy pl ON pl.market = 'PL' AND pl.local_code = p.matnr;
+
+query TTTTT
+SELECT "column", derivation, alias, condition, complete FROM glossql_views_mapping('fin') WHERE view = 'part' AND table_name = 'fin.hierarchy' ORDER BY ALL;
+----
+brand	coalesce(fin.hierarchy[pl].global_brand:VARCHAR, fin.hierarchy[dk].global_brand:VARCHAR)	dk	=(fin.hierarchy[dk].market:VARCHAR, 'DK')	true
+brand	coalesce(fin.hierarchy[pl].global_brand:VARCHAR, fin.hierarchy[dk].global_brand:VARCHAR)	pl	=(fin.hierarchy[pl].market:VARCHAR, 'PL')	true
+brand_dk	fin.hierarchy[dk].global_brand:VARCHAR	dk	=(fin.hierarchy[dk].market:VARCHAR, 'DK')	true
+
+# the lookup of each read: the equality of the join that joins it to the rows before it, the code of the
+# driving table it is looked up by on the left; the driving table is looked up by nothing
+query TTT
+SELECT DISTINCT table_name, alias, lookup FROM glossql_views_mapping('fin') WHERE view = 'part' ORDER BY ALL;
+----
+fin.hierarchy	dk	=(fin.stock_dk.matnr:VARCHAR, fin.hierarchy[dk].local_code:VARCHAR)
+fin.hierarchy	pl	=(fin.stock_dk.matnr:VARCHAR, fin.hierarchy[pl].local_code:VARCHAR)
+fin.stock_dk	NULL	NULL
+
+# a right join looks its left input up, the table that drives it on the left
+statement ok
+CREATE VIEW fin.part_right AS SELECT h.global_brand, s.qty FROM fin.hierarchy h RIGHT JOIN fin.stock_dk s ON h.local_code = s.matnr;
+
+query TT
+SELECT DISTINCT table_name, lookup FROM glossql_views_mapping('fin') WHERE view = 'part_right' ORDER BY ALL;
+----
+fin.hierarchy	=(fin.stock_dk.matnr:VARCHAR, fin.hierarchy.local_code:VARCHAR)
+fin.stock_dk	NULL
+
+# the lineage a load and a gloss read is unchanged by the aliases
+query T
+SELECT derivation FROM glossql_views_lineage('fin') WHERE view = 'part' AND "column" = 'brand';
+----
+coalesce(fin.hierarchy.global_brand:VARCHAR, fin.hierarchy.global_brand:VARCHAR)
+
+# where the text names a table another number of times than the plan scans it (here through a view it
+# reads), no alias is given: the derivation reads two scans alike and is not complete
+statement ok
+CREATE VIEW fin.brands AS SELECT coalesce(a.global_brand, b.global_brand) AS brand, p.brand_dk FROM fin.part p, fin.hierarchy a, fin.hierarchy b WHERE a.market = 'DK' AND b.market = 'PL';
+
+query TTT
+SELECT DISTINCT "column", alias, complete FROM glossql_views_mapping('fin') WHERE view = 'brands' AND "column" = 'brand';
+----
+brand	NULL	false
+
+# a table each branch of a union reads once under one name: the name tells no read apart and none is given
+statement ok
+CREATE VIEW fin.brand_by_market AS SELECT h.global_brand FROM fin.hierarchy h WHERE h.market = 'DK' UNION ALL SELECT h.global_brand FROM fin.hierarchy h WHERE h.market = 'PL';
+
+query ITTT
+SELECT branch, derivation, alias, condition FROM glossql_views_mapping('fin') WHERE view = 'brand_by_market' ORDER BY ALL;
+----
+1	fin.hierarchy.global_brand:VARCHAR	NULL	=(fin.hierarchy.market:VARCHAR, 'DK')
+2	fin.hierarchy.global_brand:VARCHAR	NULL	=(fin.hierarchy.market:VARCHAR, 'PL')
+
+# --- branch_rows(view): per branch of the union, the table that drives it, the steps that can leave a row
+# out, each row of the driving table with the first step that leaves it out, and the rows the branch serves
+
+# the second branch's condition is its one step; a branch that reads no table is followed: it reads nothing and
+# serves its row
+query ITTITT
+SELECT branch, kind, coalesce(dataset || '.' || table_name, what), step, CASE kind WHEN 'step' THEN text ELSE (text IS NULL)::VARCHAR END, array_to_string(columns, ' ') FROM branch_rows('fin.onhand') WHERE kind IN ('branch', 'step') ORDER BY branch, kind, step;
+----
+1	branch	fin.stock_dk	NULL	true	part source_system quantity
+2	branch	fin.stock_pl	NULL	true	part source_system quantity
+2	step	condition	1	(p.status = 'D')	(empty)
+3	branch	NULL	NULL	true	(empty)
+
+query ITII
+SELECT branch, kind, count(*), count(step) FROM branch_rows('fin.onhand') WHERE kind IN ('read', 'served') GROUP BY ALL ORDER BY ALL;
+----
+1	read	3	0
+1	served	3	0
+2	read	3	0
+2	served	3	0
+3	served	1	0
+
+# a join that repeats each row (two markets per code) and a condition: every partner is a row read, the
+# condition leaves out both of the row it fails
+statement ok
+CREATE VIEW fin.brand_of AS SELECT s.matnr, h.global_brand FROM fin.stock_dk s JOIN fin.hierarchy h ON h.local_code = s.matnr WHERE s.qty > 0;
+
+query TITT
+SELECT kind, step, what, array_to_string(columns, ' ') FROM branch_rows('fin.brand_of') WHERE kind = 'step' ORDER BY step;
+----
+step	1	join	fin.hierarchy.local_code fin.stock_dk.matnr
+step	2	condition	(empty)
+
+query TIIII
+SELECT kind, count(*), count(DISTINCT rid), count(*) FILTER (WHERE step = 2), count(*) FILTER (WHERE step IS NULL)
+FROM branch_rows('fin.brand_of') WHERE kind IN ('read', 'served') GROUP BY kind ORDER BY kind;
+----
+read	6	3	2	4
+served	4	0	0	4
+
+# a code the join finds no partner for: its row read, left out by the join
+statement ok
+INSERT INTO fin.stock_dk VALUES ('X9', 'CS', 5.0);
+
+query IT
+SELECT step, "values" FROM branch_rows('fin.brand_of') WHERE kind = 'read' AND step = 1;
+----
+1	[X9, NULL]
+
+# a CTE the branch reads from: followed to its table, a left join leaves nothing out
+query TT
+SELECT dataset || '.' || table_name, array_to_string(columns, ' ') FROM branch_rows('fin.part') WHERE kind = 'branch';
+----
+fin.stock_dk	matnr
+
+query TII
+SELECT kind, count(*), count(step) FROM branch_rows('fin.part') WHERE kind IN ('read', 'served') GROUP BY kind ORDER BY kind;
+----
+read	4	0
+served	4	0

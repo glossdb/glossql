@@ -8,19 +8,19 @@
 INSTALL spatial;
 LOAD spatial;
 
--- the words are owed on geometry columns alone: WHEN TYPE is the gate
+-- the words are required on geometry columns alone: WHEN TYPE is the gate
 DECLARE ASPECT shape WITH $${
   "type": "object", "required": ["value", "represents"],
   "properties": {"value": {"enum": ["point", "line", "polygon", "mixed"]},
-                 "represents": {"type": "string"}, "grounds": {"type": "string"}}
+                 "represents": {"type": "string"}, "basis": {"type": "string"}}
 }$$ AS FACT ON COLUMN WHEN TYPE = 'GEOMETRY';
 
 DECLARE ASPECT crs WITH $${
   "type": "object", "required": ["value"],
-  "properties": {"value": {"type": "string"}, "unit": {"type": "string"}, "grounds": {"type": "string"}}
+  "properties": {"value": {"type": "string"}, "unit": {"type": "string"}, "basis": {"type": "string"}}
 }$$ AS FACT ON COLUMN WHEN TYPE = 'GEOMETRY';
 
--- the profile: what the geometries are. The CRS is not here: the lake lands a
+-- the profile: what the geometries are. The CRS is not here: the lake loads a
 -- geometry without the CRS its reader carried, so the crs gloss is where it lives
 DECLARE ASPECT geometry_profile WITH $${
   "type": "object", "required": ["total", "null_ratio", "kinds", "invalid", "empty"],

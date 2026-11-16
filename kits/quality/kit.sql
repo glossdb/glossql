@@ -13,12 +13,12 @@
 -- glossql_relationship_checks and glossql_additivity_cells, are what names a
 -- column; a screen is SQL over them. A primitive names what its bind read
 -- beside the plan, the record's edges and roles and the tables' shapes, so a
--- measurement over a screen is served while those stand and computes when one
+-- measurement over a screen is served while those are current and computes when one
 -- moves, as when a table it read moves. A screen that pairs a
 -- table's columns reads it under a bound of cells (SPEC §6): a larger table
 -- is read as a sample of its rows kept by the hash of each row, the same
 -- rows every run, and `rows` says how many were read. Each screen's measurement function reads the screen, keeps what
--- crosses its line, and lands the aspect; the thresholds are the function's,
+-- crosses its line, and stores the aspect; the thresholds are the function's,
 -- the counts the screen's. A key a screen did not reach is null, and the
 -- schemas say so.
 
@@ -126,7 +126,7 @@ scoped AS (
          p.dk AS pdk, s.dk AS sdk, s.overlap AS s_overlap, p.k_temporal, s.k_temporal AS s_temporal
   FROM anchors p JOIN admitted s ON s.ft = p.ft AND s.kt = p.kt AND s.fc <> p.fc AND s.kc <> p.kc AND NOT s.k_uniq
   WHERE p.dk * s.dk >= 0.9 * greatest(0, p.kfilled + s.kfilled - p.krows)),
--- the column pairs the rescue needs: the anchor's and the scope's leg on each
+-- the column pairs the rescue needs: the anchor's and the scope's key column on each
 -- side of every scoped attempt, never every pair of a table (a wide table's
 -- pairs are its rows times its width squared)
 needed AS (
@@ -196,14 +196,16 @@ WHERE NOT EXISTS (SELECT 1 FROM found)
 ORDER BY seq;
 
 --===------------------------------------------------------------------===--
--- relationship_checks(dataset): whether the declared relationships hold,
--- the engine's glossql_relationship_checks: per edge, over its own two or
+-- relationship_checks(subject): whether the declared relationships hold, a
+-- dataset's every one or one relationship by its pair path, the engine's
+-- glossql_relationship_checks: per edge, over its own two or
 -- four columns, typed and linear in the rows, where a screen over the cells
 -- pivoted every cell of a table back into rows per edge. Per edge: filled
 -- rows, the orphans (child values no parent row carries; inside one table,
 -- child values that reach more than one parent), and for an edge across two
--- tables the temporal pairs: the first three date columns of each side,
--- joined on the edge, how often the child's date precedes the parent's. Legs
+-- tables the orphan keys (the three with the most rows, each with its rows),
+-- how many orphan keys there are, and the temporal pairs: the first three date columns of each side,
+-- joined on the edge, how often the child's date precedes the parent's. Key columns
 -- are one column or a pair. No declared relationships is one row that says
 -- so.
 --===------------------------------------------------------------------===--
@@ -269,47 +271,46 @@ FROM facts f WHERE f.numeric_columns < 3
 ORDER BY seq;
 
 --===------------------------------------------------------------------===--
--- grounding_collisions(dataset): metrics that are the same thing twice.
--- Two kinds: groundings whose SQL is the same statement once parsed, case
--- and spacing aside, under different aspects; and groundings whose monthly
+-- definition_collisions(dataset): metrics that are the same thing twice.
+-- It compares the definition that defines each view of the dataset now,
+-- the newest annotation of the view's property on the dataset.
+-- Two kinds: definitions whose SQL is the same statement once parsed, case
+-- and spacing aside, under different aspects; and definitions whose monthly
 -- series agree over every month though their SQL differs. The series pass
--- reads each grounding's view by the claims on its columns, as a metrics
+-- reads each definition's view by the claims on its columns, as a metrics
 -- kit does: the period is the column glossed role timestamp (one, or the
 -- one named period), the value the column glossed role measure (one, or
 -- the one named value); without the claims, the columns named period and
--- value, the first date column standing in for the period. The additivity
+-- value, the first date column serving as the period. The additivity
 -- glossed on the value column folds the month: a flow summed, a stock the
 -- month's last level, a ratio its summed halves re-divided, the columns
 -- its numerator and denominator name; none claimed reads as flow. A
--- collision is two groundings of one flavor, the aspect's x-kind: a
--- grounding flavored otherwise stands beside a metric and is never its
--- twin. No groundings is one row with groundings 0.
+-- collision is two definitions of one flavor, the aspect's x-kind: a
+-- definition flavored otherwise sits beside a metric and is never its
+-- twin. No definitions is one row with definitions 0.
 --===------------------------------------------------------------------===--
-CREATE OR REPLACE MACRO main.grounding_collisions(ds) AS TABLE
-WITH slots AS (
-  SELECT g.aspect, g.subject, g.body, coalesce(json_extract_string(a.schema, '$."x-kind"'), '') AS flavor,
-         row_number() OVER (PARTITION BY g.aspect, g.subject ORDER BY CASE g.actor_kind WHEN 'human' THEN 0 ELSE 1 END, g.seq DESC) AS rk
-  FROM main.glossary g JOIN main.aspects a ON a.name = g.aspect
-  WHERE g.dataset = ds AND a.kind = 'VIEW' AND json_extract_string(g.body, '$.sql') IS NOT NULL),
-groundings AS (SELECT aspect, subject, flavor, json_extract_string(body, '$.sql') AS sql FROM slots WHERE rk = 1),
+CREATE OR REPLACE MACRO main.definition_collisions(ds) AS TABLE
+WITH definitions AS (
+  SELECT split_part(view, '.', 2) AS aspect, ds AS subject, coalesce(kind, '') AS flavor, sql
+  FROM definition('the dataset') WHERE sql IS NOT NULL),
 canon AS (
   SELECT aspect, subject, flavor, sql,
          lower(coalesce(regexp_replace(json_serialize_sql(sql)::VARCHAR, '"query_location(_length)?":\d+,?', '', 'g'),
                         regexp_replace(trim(sql), '\s+', ' ', 'g'))) AS canon
-  FROM groundings),
+  FROM definitions),
 sql_hits AS (
   SELECT canon, list(DISTINCT aspect ORDER BY aspect) AS aspects, list(DISTINCT subject ORDER BY subject) AS subjects,
          min(sql) AS sql, count(DISTINCT aspect) AS n
   FROM canon GROUP BY canon, flavor HAVING count(DISTINCT aspect) >= 2),
-vcells AS (SELECT * FROM dataset_cells(ds, 'views') WHERE "table" IN (SELECT aspect FROM groundings)),
+vcells AS (SELECT * FROM dataset_cells(ds, 'views') WHERE "table" IN (SELECT aspect FROM definitions)),
 vcols AS (SELECT DISTINCT "table", "column", ci, column_type FROM vcells),
 claims AS (
-  SELECT split_part(subject, '.', 2) AS aspect,
-         substr(subject, length(split_part(subject, '.', 1)) + length(split_part(subject, '.', 2)) + 3) AS col,
-         g.aspect AS claim, value
-  FROM glossql_glossary(ds, NULL, false) g
-  WHERE g.aspect IN ('role', 'additivity') AND state IN ('current', 'stale') AND value IS NOT NULL
-    AND len(string_split(subject, '.')) >= 3 AND split_part(subject, '.', 2) IN (SELECT aspect FROM groundings)),
+  SELECT split_part(asset, '.', 2) AS aspect,
+         substr(asset, length(split_part(asset, '.', 1)) + length(split_part(asset, '.', 2)) + 3) AS col,
+         property AS claim, value
+  FROM (FROM annotations('role', 'the dataset') UNION ALL FROM annotations('additivity', 'the dataset'))
+  WHERE state IN ('current', 'stale') AND value IS NOT NULL
+    AND len(string_split(asset, '.')) >= 3 AND split_part(asset, '.', 2) IN (SELECT aspect FROM definitions)),
 roles AS (
   SELECT aspect, value->>'value' AS role,
          list(col ORDER BY CASE WHEN col IN ('period', 'value') THEN 0 ELSE 1 END, col) AS cols
@@ -322,7 +323,7 @@ chosen AS (
                    ORDER BY c.ci LIMIT 1)) AS period_column,
          coalesce(CASE WHEN len(m.cols) = 1 OR m.cols[1] = 'value' THEN m.cols[1] END,
                   (SELECT c."column" FROM vcols c WHERE c."table" = g.aspect AND c."column" = 'value')) AS value_column
-  FROM groundings g
+  FROM definitions g
   LEFT JOIN roles p ON p.aspect = g.aspect AND p.role = 'timestamp'
   LEFT JOIN roles m ON m.aspect = g.aspect AND m.role = 'measure'),
 folds AS (
@@ -355,11 +356,11 @@ hits AS (
   SELECT 0 AS phase, 'sql' AS kind, sql, NULL::BIGINT AS months, aspects, subjects FROM sql_hits
   UNION ALL
   SELECT 1, 'served_series', '', months, aspects, subjects FROM series_hits)
-SELECT (SELECT count(*) FROM groundings) AS groundings,
+SELECT (SELECT count(*) FROM definitions) AS definitions,
        row_number() OVER (ORDER BY phase, aspects[1]) AS seq, kind, sql, months, aspects, subjects
 FROM hits
 UNION ALL
-SELECT (SELECT count(*) FROM groundings), NULL, NULL, NULL, NULL, NULL, NULL
+SELECT (SELECT count(*) FROM definitions), NULL, NULL, NULL, NULL, NULL, NULL
 WHERE NOT EXISTS (SELECT 1 FROM hits)
 ORDER BY seq;
 
@@ -377,7 +378,7 @@ ORDER BY seq;
 -- grains, a day-native alignment serving a month beside the day, and scoped
 -- by year where the grain allows, since a cumulative that resets is a stock
 -- only inside its year. Movement terms are the event table's columns the
--- record says are measures, a role claim standing, minus the legs of
+-- record says are measures, a current role claim, minus the key columns of
 -- declared edges, and every ordered pair difference of them on a pool of
 -- eight terms or fewer; nothing is guessed from a type, and an event table
 -- with no measure glossed abstains and names the gloss to make. The event
@@ -386,7 +387,7 @@ ORDER BY seq;
 -- needs. Per entity the two
 -- residuals are Σ|y − m| / Σ|m| and Σ|Δy − m| / Σ|m| over the periods both
 -- sides carry; an entity votes when the winner is under 0.05 and the loser
--- stands off by a third of their sum, and abstains on fewer than four
+-- is off by a third of their sum, and abstains on fewer than four
 -- periods, a flat level or a dead movement. A convention decides when two
 -- entities or more voted, four in five agree, and the winners are a majority
 -- of the entities on both sides; Wilson's lower bound over those entities
@@ -395,9 +396,9 @@ ORDER BY seq;
 -- voters fire only under the negated movement, the ledger-signed reading.
 -- One anchor per alignment and scope reads the measure's own shape instead:
 -- entities that never decrease over four periods or more at the native
--- grain vote stock under the convention monotone, movers only. The verdict
--- is evidence the judge reads before glossing additivity, never a voice in its
--- slots. A column that is not numeric, an identifier (a leg of a declared
+-- grain vote stock under the convention monotone, movers only. The result
+-- is evidence the judge reads before glossing additivity, never an annotation among its
+-- values. A column that is not numeric, an identifier (a key column of a declared
 -- relationship, or an integer distinct on nine filled rows in ten, which is
 -- what the monotone reading would otherwise read as a cumulative), a table
 -- with no time axis or no declared edge to an event table is one row that
@@ -427,7 +428,7 @@ native AS (
               WHEN bool_and(period = date_trunc('quarter', period)) THEN 'quarter'
               WHEN bool_and(period = date_trunc('month', period)) THEN 'month' ELSE 'day' END AS grain
   FROM cells WHERE side IN ('measure', 'event') GROUP BY ALL),
--- the event tables' identifiers, served beside each anchor: declared legs and key-shaped integers
+-- the event tables' identifiers, served beside each anchor: declared key columns and key-shaped integers
 identifiers AS (
   SELECT event, coalesce(list(term ORDER BY term) FILTER (WHERE identifier OR value >= 0.9), []) AS identifier_columns
   FROM cells WHERE side = 'column' GROUP BY event),
@@ -515,14 +516,14 @@ diag AS (
 summaries AS (
   SELECT w.anchor_id, w.convention, w.terms, w.voted, w.winners, w.label, c.entities,
          CASE WHEN w.voted > 0 THEN w.winners / w.voted::DOUBLE ELSE 0.0 END AS agreement,
-         CASE WHEN w.voted >= 2 AND w.winners / w.voted::DOUBLE >= 0.8 THEN w.label ELSE 'abstain' END AS verdict,
+         CASE WHEN w.voted >= 2 AND w.winners / w.voted::DOUBLE >= 0.8 THEN w.label ELSE 'abstain' END AS result,
          d.r_flow, d.r_stock, d.sign_primary, d.sign_mirror, d.sign_both,
          CASE WHEN d.fired > 0 THEN d.fired * ln(greatest(d.rss, 1e-12) / d.fired) + w.terms * ln(d.fired) END AS bic,
          wilson_lower(w.winners, c.entities) AS support
   FROM winning w JOIN diag d ON d.anchor_id = w.anchor_id AND d.convention = w.convention
   JOIN common c ON c.anchor_id = w.anchor_id),
 -- the anchor's winner: among the conventions that decide, support first, a tie to the fewer terms unless ΔBIC > 10
-deciders AS (SELECT * FROM summaries WHERE verdict <> 'abstain' AND winners >= 0.5 * greatest(entities, 1)),
+deciders AS (SELECT * FROM summaries WHERE result <> 'abstain' AND winners >= 0.5 * greatest(entities, 1)),
 simple AS (SELECT anchor_id, round(support, 8) AS tie, min(bic) AS bic FROM deciders WHERE terms = 1 GROUP BY ALL),
 ranked AS (
   SELECT d.*, row_number() OVER (PARTITION BY d.anchor_id ORDER BY round(d.support, 8) DESC,
@@ -532,7 +533,7 @@ ranked AS (
 winner AS (SELECT * FROM ranked WHERE rank = 1),
 alts AS (
   SELECT s.anchor_id,
-         list_slice(list({'convention': s.convention, 'verdict': CASE WHEN d.convention IS NOT NULL THEN s.verdict ELSE 'abstain' END,
+         list_slice(list({'convention': s.convention, 'result': CASE WHEN d.convention IS NOT NULL THEN s.result ELSE 'abstain' END,
                           'voted': s.voted, 'support': s.support} ORDER BY s.voted DESC, s.support DESC, s.convention), 1, 4) AS alternatives
   FROM summaries s
   LEFT JOIN winner w ON w.anchor_id = s.anchor_id
@@ -540,23 +541,23 @@ alts AS (
   WHERE w.convention IS DISTINCT FROM s.convention
   GROUP BY s.anchor_id),
 floored AS (
-  SELECT anchor_id, verdict, voted, winners, entities,
+  SELECT anchor_id, result, voted, winners, entities,
          row_number() OVER (PARTITION BY anchor_id ORDER BY winners / greatest(entities, 1)::DOUBLE DESC, convention) AS rn
-  FROM summaries WHERE verdict <> 'abstain'),
+  FROM summaries WHERE result <> 'abstain'),
 anyvote AS (SELECT anchor_id, bool_or(voted > 0) AS any_votes FROM summaries GROUP BY anchor_id),
 recon AS (
   SELECT k.event, k.align, k.measure_time, k.event_time, k.grain, k.scope,
          CASE WHEN r.anchor_id IS NOT NULL THEN coalesce(c.entities, 0) END AS entities,
          coalesce(v.viable_entities, 0) AS viable_entities,
          i.identifier_columns,
-         CASE WHEN r.anchor_id IS NULL OR w.anchor_id IS NULL THEN 'abstain' ELSE w.verdict END AS verdict,
+         CASE WHEN r.anchor_id IS NULL OR w.anchor_id IS NULL THEN 'abstain' ELSE w.result END AS result,
          w.convention, coalesce(w.voted, f.voted) AS voted, w.agreement, w.support,
-         CASE WHEN w.verdict <> 'abstain' THEN w.r_flow END AS r_flow, CASE WHEN w.verdict <> 'abstain' THEN w.r_stock END AS r_stock,
+         CASE WHEN w.result <> 'abstain' THEN w.r_flow END AS r_flow, CASE WHEN w.result <> 'abstain' THEN w.r_stock END AS r_stock,
          w.sign_primary, w.sign_mirror, w.sign_both,
-         coalesce(al.alternatives, []::STRUCT(convention VARCHAR, verdict VARCHAR, voted BIGINT, support DOUBLE)[]) AS alternatives,
+         coalesce(al.alternatives, []::STRUCT(convention VARCHAR, result VARCHAR, voted BIGINT, support DOUBLE)[]) AS alternatives,
          CASE WHEN coalesce(v.viable_entities, 0) < 2 THEN 'fewer than two entities carry 4+ periods on this alignment'
               WHEN w.anchor_id IS NULL THEN
-                CASE WHEN f.anchor_id IS NOT NULL THEN f.winners || ' of ' || f.entities || ' common entities voted ' || f.verdict || ': under the majority floor'
+                CASE WHEN f.anchor_id IS NOT NULL THEN f.winners || ' of ' || f.entities || ' common entities voted ' || f.result || ': under the majority floor'
                      WHEN coalesce(av.any_votes, false) THEN 'votes below the candidacy floor (2 voters, 0.8 agreement)'
                      ELSE 'no entity series reconciled: wrong anchor, short series, or dead values' END
                 || CASE WHEN coalesce(t.terms, 0) > 8 THEN '; pairs not scored above 8 terms' ELSE '' END END AS reason,
@@ -595,13 +596,13 @@ mono_read AS (
 mono AS (
   SELECT mk.event, mk.align, mk.measure_time, mk.event_time, mk.grain, mk.scope,
          coalesce(r.considered, 0) AS entities, coalesce(r.considered, 0) AS viable_entities, i.identifier_columns,
-         CASE WHEN coalesce(r.considered, 0) < 2 OR coalesce(r.movers, 0) < 2 OR r.monotone * 2 < r.movers THEN 'abstain' ELSE 'semi-additive' END AS verdict,
+         CASE WHEN coalesce(r.considered, 0) < 2 OR coalesce(r.movers, 0) < 2 OR r.monotone * 2 < r.movers THEN 'abstain' ELSE 'semi-additive' END AS result,
          'monotone' AS convention,
          CASE WHEN r.considered >= 2 AND r.movers >= 2 THEN r.movers END AS voted,
          CASE WHEN r.considered >= 2 AND r.movers >= 2 THEN r.monotone / r.movers::DOUBLE END AS agreement,
          CASE WHEN r.considered >= 2 AND r.movers >= 2 THEN wilson_lower(r.monotone, r.movers) END AS support,
          NULL::DOUBLE AS r_flow, NULL::DOUBLE AS r_stock, NULL::BIGINT AS sign_primary, NULL::BIGINT AS sign_mirror, NULL::BIGINT AS sign_both,
-         []::STRUCT(convention VARCHAR, verdict VARCHAR, voted BIGINT, support DOUBLE)[] AS alternatives,
+         []::STRUCT(convention VARCHAR, result VARCHAR, voted BIGINT, support DOUBLE)[] AS alternatives,
          CASE WHEN coalesce(r.considered, 0) < 2 THEN 'fewer than two entities carry 4+ periods at the native grain'
               WHEN r.movers < 2 THEN r.movers || ' of ' || r.considered || ' entities move within the scope: no monotone evidence'
               WHEN r.monotone * 2 < r.movers THEN (r.movers - r.monotone) || ' of ' || r.movers || ' moving entities decrease within the scope over ' || r.steps || ' steps: not a cumulative here' END AS reason,
@@ -612,10 +613,10 @@ mono AS (
 -- an event table with no measure glossed: one abstaining row per alignment and axis pair, naming the gloss
 unglossed AS (
   SELECT u.event, u.align, u.term AS measure_time, u.axis AS event_time, NULL::VARCHAR AS grain, NULL::VARCHAR AS scope,
-         NULL::BIGINT AS entities, NULL::BIGINT AS viable_entities, i.identifier_columns, 'abstain' AS verdict,
+         NULL::BIGINT AS entities, NULL::BIGINT AS viable_entities, i.identifier_columns, 'abstain' AS result,
          NULL::VARCHAR AS convention, NULL::BIGINT AS voted, NULL::DOUBLE AS agreement, NULL::DOUBLE AS support,
          NULL::DOUBLE AS r_flow, NULL::DOUBLE AS r_stock, NULL::BIGINT AS sign_primary, NULL::BIGINT AS sign_mirror, NULL::BIGINT AS sign_both,
-         []::STRUCT(convention VARCHAR, verdict VARCHAR, voted BIGINT, support DOUBLE)[] AS alternatives, u.reason, 0 AS kind
+         []::STRUCT(convention VARCHAR, result VARCHAR, voted BIGINT, support DOUBLE)[] AS alternatives, u.reason, 0 AS kind
   FROM cells u LEFT JOIN identifiers i ON i.event = u.event WHERE u.side = 'unglossed'),
 numbered AS (
   SELECT *, row_number() OVER (ORDER BY measure_time, event, align, event_time, kind, grain, scope) - 1 AS seq
@@ -623,7 +624,7 @@ numbered AS (
 -- what refuses the column: the primitive's reason
 refused AS (SELECT reason FROM cells WHERE side = 'reason')
 SELECT true AS applicable, reason, seq, event, align, measure_time, event_time, grain, scope, entities, viable_entities,
-       identifier_columns, verdict, convention, voted, agreement, support, r_flow, r_stock, sign_primary, sign_mirror, sign_both, alternatives
+       identifier_columns, result, convention, voted, agreement, support, r_flow, r_stock, sign_primary, sign_mirror, sign_both, alternatives
 FROM numbered WHERE NOT EXISTS (SELECT 1 FROM refused)
 UNION ALL
 SELECT false, coalesce((SELECT min(reason) FROM refused), 'no anchor aligned: no cells on the measure side or the event side'),
@@ -632,7 +633,7 @@ WHERE NOT EXISTS (SELECT 1 FROM numbered) OR EXISTS (SELECT 1 FROM refused)
 ORDER BY seq;
 
 --===------------------------------------------------------------------===--
--- The aspects each screen lands, and the functions that land them. A
+-- The aspects each screen stores, and the functions that store them. A
 -- function reads its screen, keeps what crosses its line, and shapes the
 -- value the aspect's schema requires. Each is FOR GLOBAL: any dataset.
 --===------------------------------------------------------------------===--
@@ -689,29 +690,44 @@ $$ RETURNS relationship_candidates;
 
 DECLARE ASPECT relationship_coherence WITH $${
   "type": "object", "required": ["applicable"],
-  "properties": {"applicable": {"type": "boolean"},
-                 "relationships": {"type": ["array", "null"], "items": {"type": "object",
-                   "properties": {"relationship": {"type": "string"}, "filled": {"type": "integer"},
-                                  "orphans": {"type": "integer"}, "orphan_rate": {"type": "number"},
-                                  "temporal": {"type": "array", "items": {"type": "object",
-                                    "properties": {"child_column": {"type": "string"}, "parent_column": {"type": "string"},
-                                                   "joined": {"type": "integer"}, "precedes": {"type": "integer"},
-                                                   "precedes_rate": {"type": "number"}}}}}}}}
-}$$ AS MEASUREMENT ON DATASET;
+  "properties": {"applicable": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
+                 "relationship": {"type": ["string", "null"]}, "filled": {"type": ["integer", "null"]},
+                 "orphans": {"type": ["integer", "null"]}, "orphan_rate": {"type": ["number", "null"]},
+                 "orphan_keys": {"type": ["array", "null"], "items": {"type": "object",
+                   "properties": {"key": {"type": "string"}, "rows": {"type": "integer"}}}},
+                 "orphan_distinct": {"type": ["integer", "null"]},
+                 "temporal": {"type": ["array", "null"], "items": {"type": "object",
+                   "properties": {"child_column": {"type": "string"}, "parent_column": {"type": "string"},
+                                  "joined": {"type": "integer"}, "precedes": {"type": "integer"},
+                                  "precedes_rate": {"type": "number"}}}}}
+}$$ AS MEASUREMENT ON RELATIONSHIP;
 
+-- One result per relationship, stored on its pair path:
+-- SELECT relationship_coherence() FROM orders.customer_id -> customers.customer_id
 DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$
   WITH r AS (
-    SELECT applicable, reason, seq, relationship, filled, orphans, orphan_rate,
+    SELECT applicable, reason, relationship, filled, orphans, orphan_rate, orphan_keys, orphan_distinct,
            coalesce(list({'child_column': child_column, 'parent_column': parent_column, 'joined': joined,
                           'precedes': precedes, 'precedes_rate': precedes_rate} ORDER BY pair_seq)
                     FILTER (WHERE child_column IS NOT NULL), []) AS temporal
     FROM relationship_checks($subject)
-    GROUP BY applicable, reason, seq, relationship, filled, orphans, orphan_rate)
-  SELECT bool_and(applicable) AS applicable, min(reason) AS reason,
-         CASE WHEN bool_and(applicable) THEN coalesce(list({
-           'relationship': relationship, 'filled': filled, 'orphans': orphans, 'orphan_rate': orphan_rate, 'temporal': temporal
-         } ORDER BY seq) FILTER (WHERE relationship IS NOT NULL), []) END AS relationships
-  FROM r
+    GROUP BY applicable, reason, relationship, filled, orphans, orphan_rate, orphan_keys, orphan_distinct),
+  -- a dataset's subject would read every relationship as one: the check is one relationship's
+  one AS (SELECT contains($subject, ' -> ') OR contains($subject, ' <-> ') AS pair),
+  c AS (SELECT bool_and(r.applicable) AND any_value(one.pair) AS applicable,
+               CASE WHEN NOT any_value(one.pair)
+                    THEN 'the check is one relationship''s: SELECT relationship_coherence() FROM <child.key> -> <parent.key>'
+                    ELSE min(r.reason) END AS reason,
+               any_value(r.relationship) AS relationship, any_value(r.filled) AS filled, any_value(r.orphans) AS orphans,
+               any_value(r.orphan_rate) AS orphan_rate, any_value(r.orphan_keys) AS orphan_keys,
+               any_value(r.orphan_distinct) AS orphan_distinct, any_value(r.temporal) AS temporal
+        FROM r, one)
+  SELECT applicable, reason,
+         CASE WHEN applicable THEN relationship END AS relationship, CASE WHEN applicable THEN filled END AS filled,
+         CASE WHEN applicable THEN orphans END AS orphans, CASE WHEN applicable THEN orphan_rate END AS orphan_rate,
+         CASE WHEN applicable THEN orphan_keys END AS orphan_keys, CASE WHEN applicable THEN orphan_distinct END AS orphan_distinct,
+         CASE WHEN applicable THEN temporal END AS temporal
+  FROM c
 $$ RETURNS relationship_coherence;
 
 DECLARE ASPECT derivation_candidates WITH $${
@@ -735,21 +751,21 @@ DECLARE FUNCTION detect_derivations FOR GLOBAL AS $$
   FROM derivation_candidates($subject)
 $$ RETURNS derivation_candidates;
 
-DECLARE ASPECT grounding_collisions WITH $${
+DECLARE ASPECT definition_collisions WITH $${
   "type": "object", "required": ["applicable"],
-  "properties": {"applicable": {"type": "boolean"}, "groundings": {"type": "integer"},
+  "properties": {"applicable": {"type": "boolean"}, "definitions": {"type": "integer"},
                  "collisions": {"type": "array", "items": {"type": "object",
                    "properties": {"sql": {"type": "string"},
                                   "aspects": {"type": "array", "items": {"type": "string"}},
                                   "subjects": {"type": "array", "items": {"type": "string"}}}}}}
 }$$ AS MEASUREMENT ON DATASET;
 
-DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$
-  SELECT max(groundings) > 0 AS applicable, max(groundings) AS groundings,
+DECLARE FUNCTION detect_definition_collisions FOR GLOBAL AS $$
+  SELECT max(definitions) > 0 AS applicable, max(definitions) AS definitions,
          coalesce(list({'kind': kind, 'sql': sql, 'months': months, 'aspects': aspects, 'subjects': subjects}
                        ORDER BY seq) FILTER (WHERE kind IS NOT NULL), []) AS collisions
-  FROM grounding_collisions($subject)
-$$ RETURNS grounding_collisions;
+  FROM definition_collisions($subject)
+$$ RETURNS definition_collisions;
 
 -- The stock/flow evidence on a measure column: the anchors' election. Support
 -- first within a billionth, then a reconciliation over the monotone reading
@@ -764,7 +780,7 @@ DECLARE ASPECT additivity_evidence WITH $${
   "properties": {"applicable": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
                  "anchors_n": {"type": ["integer", "null"]}, "decided": {"type": ["integer", "null"]},
                  "summary": {"type": ["object", "null"],
-                   "properties": {"verdict": {"enum": ["semi-additive", "additive", "abstain"]},
+                   "properties": {"result": {"enum": ["semi-additive", "additive", "abstain"]},
                                   "convention": {"type": ["string", "null"]}, "support": {"type": ["number", "null"]},
                                   "voted": {"type": ["integer", "null"]}, "event": {"type": ["string", "null"]},
                                   "align": {"type": ["string", "null"]}, "grain": {"type": ["string", "null"]},
@@ -779,20 +795,20 @@ DECLARE FUNCTION additivity_evidence FOR GLOBAL AS $$
   ranked AS (
     SELECT *, convention = 'monotone' AS monotone,
            row_number() OVER (ORDER BY round(support, 8) DESC, convention = 'monotone', voted DESC, event, align) AS rank
-    FROM a WHERE applicable AND verdict <> 'abstain'),
+    FROM a WHERE applicable AND result <> 'abstain'),
   top AS (SELECT * FROM ranked WHERE rank = 1),
   runner AS (SELECT * FROM ranked WHERE rank = 2),
   quiet AS (
     SELECT reason FROM a WHERE applicable
     ORDER BY convention = 'monotone', entities IS NULL, voted DESC NULLS LAST, seq LIMIT 1),
   elected AS (
-    SELECT {'verdict': coalesce(t.verdict, 'abstain'), 'event': t.event, 'align': t.align, 'grain': t.grain, 'scope': t.scope,
+    SELECT {'result': coalesce(t.result, 'abstain'), 'event': t.event, 'align': t.align, 'grain': t.grain, 'scope': t.scope,
             'convention': t.convention, 'support': t.support, 'voted': t.voted, 'r_flow': t.r_flow, 'r_stock': t.r_stock,
             'sign': CASE WHEN t.sign_primary IS NOT NULL THEN {'primary': t.sign_primary, 'mirror': t.sign_mirror, 'both': t.sign_both} END,
             'tiebreak': CASE WHEN r.support IS NOT NULL AND abs(t.support - r.support) <= 1e-9
                              THEN CASE WHEN t.monotone <> r.monotone THEN 'reconciliation-over-monotone'
                                        WHEN t.voted <> r.voted THEN 'voted' ELSE 'event-name' END END,
-            'reason': CASE WHEN t.verdict IS NULL THEN q.reason END} AS summary
+            'reason': CASE WHEN t.result IS NULL THEN q.reason END} AS summary
     FROM (SELECT 1) one LEFT JOIN top t ON true LEFT JOIN runner r ON true LEFT JOIN quiet q ON true)
   SELECT bool_and(a.applicable) AS applicable, min(a.reason) FILTER (WHERE NOT a.applicable) AS reason,
          CASE WHEN bool_and(a.applicable) THEN count(*) END AS anchors_n,
@@ -801,7 +817,7 @@ DECLARE FUNCTION additivity_evidence FOR GLOBAL AS $$
          CASE WHEN bool_and(a.applicable) THEN list({
            'seq': a.seq, 'event': a.event, 'align': a.align, 'measure_time': a.measure_time, 'event_time': a.event_time,
            'grain': a.grain, 'scope': a.scope, 'entities': a.entities, 'viable_entities': a.viable_entities,
-           'identifier_columns': a.identifier_columns, 'verdict': a.verdict, 'convention': a.convention, 'voted': a.voted,
+           'identifier_columns': a.identifier_columns, 'result': a.result, 'convention': a.convention, 'voted': a.voted,
            'agreement': a.agreement, 'support': a.support, 'r_flow': a.r_flow, 'r_stock': a.r_stock,
            'sign_primary': a.sign_primary, 'sign_mirror': a.sign_mirror, 'sign_both': a.sign_both,
            'alternatives': a.alternatives, 'reason': a.reason} ORDER BY a.seq) END AS anchors
@@ -903,7 +919,7 @@ DECLARE FUNCTION temporal FOR GLOBAL AS $$
     FROM comp CROSS JOIN grain)
   SELECT
     (w.temporal AND w.present > 0) AS applicable,
-    CASE WHEN NOT w.temporal THEN 'column type is ' || w.ty || ', not DATE/TIMESTAMP — a date landed as text needs typing in the recipe'
+    CASE WHEN NOT w.temporal THEN 'column type is ' || w.ty || ', not DATE/TIMESTAMP — a date loaded as text needs typing in the recipe'
          WHEN w.present = 0 THEN 'no non-null values — nothing bounds a window' END AS reason,
     CASE WHEN w.temporal AND w.present > 0 THEN w.min_s END AS min,
     CASE WHEN w.temporal AND w.present > 0 THEN w.max_s END AS max,
@@ -921,9 +937,9 @@ $$ RETURNS temporal_profile;
 -- whose schema carries `tolerance` and `breach_rate`: an agent or a human
 -- glosses the expectation with the tolerance, and a function returning
 -- the same aspect is the check, its `breach_rate` the violation share
--- (0.0 passes). Per subject: no check voice yet is yellow; a rate at or
+-- (0.0 passes). Per subject: no check annotation yet is yellow; a rate at or
 -- under the tolerance is green, above it red. The human's tolerance
--- outranks the agent's; the test's THRESHOLD stands in while no
+-- outranks the agent's; the test's THRESHOLD applies while no
 -- expectation carries one, and 0.0 when neither does. One-sided: a
 -- source whose expected dirt must not be cleaned away declares its own
 -- detector, red on both sides.
@@ -932,14 +948,14 @@ $$ RETURNS temporal_profile;
 DECLARE FUNCTION rate_tolerance FOR GLOBAL AS $$
   WITH s AS (
     SELECT subject,
-           max(try_cast(body->>'breach_rate' AS DOUBLE)) FILTER (WHERE speaker = 'function') AS rate,
-           coalesce(max(try_cast(body->>'tolerance' AS DOUBLE)) FILTER (WHERE speaker = 'human'),
-                    max(try_cast(body->>'tolerance' AS DOUBLE)) FILTER (WHERE speaker = 'agent')) AS tolerance
-    FROM slots GROUP BY subject)
+           max(try_cast(body->>'breach_rate' AS DOUBLE)) FILTER (WHERE actor_kind = 'function') AS rate,
+           coalesce(max(try_cast(body->>'tolerance' AS DOUBLE)) FILTER (WHERE actor_kind = 'human'),
+                    max(try_cast(body->>'tolerance' AS DOUBLE)) FILTER (WHERE actor_kind = 'agent')) AS tolerance
+    FROM annotations GROUP BY subject)
   SELECT subject,
          CASE WHEN rate IS NULL THEN 'yellow'
               WHEN rate <= coalesce(tolerance, $threshold, 0.0) THEN 'green'
-              ELSE 'red' END AS band,
+              ELSE 'red' END AS state,
          CASE WHEN rate IS NULL OR rate <= coalesce(tolerance, $threshold, 0.0) THEN 0.0
               ELSE least(greatest(rate, 0.0), 1.0) END AS score
   FROM s

@@ -1,9 +1,13 @@
-# 10 · Remaining engine artifacts — TRANSCRIBE (coverage completion)
+# Data catalog: sources, annotations, relationships, dimensions, statistics
 
-The engine artifacts not covered by fixtures 01–09, each against its real
-table shape (engine `schema.sql`).
+A data catalog holds where the data comes from, what each column and
+table means, how tables join, which columns are dimensions and what the
+data's statistics are. The examples write each of these.
 
-## Sources, recipes (`sources`, `recipe_hash`)
+## Sources and load queries
+
+A source names its credentials with `via:`; the secret is not part of
+the statement.
 
 ```glossql
 DECLARE SOURCE erp_export SET (type: parquet, location: 'lake/erp');
@@ -11,11 +15,7 @@ DECLARE SOURCE crm SET (type: relational_db, location: 'postgres://crm.internal/
 DECLARE RECIPE segments ON fin FROM crm AS $$SELECT id, segment FROM customer_segments$$;
 ```
 
-`via:` references engine-held credentials — secrets never appear in
-statements. `recipe_hash` needs no clause: statement identity is content hash
-(implementation).
-
-## Column + table annotations (`semantic_annotations`, `column_concepts`, `table_entities`)
+## Column and table annotations
 
 ```glossql
 GLOSS meaning ON orders.amount AS $${"value": "gross invoiced amount per order line"}$$;
@@ -32,25 +32,20 @@ GLOSS entity ON orders AS $${
 }$$;
 ```
 
-(Each aspect above was declared once with `DECLARE ASPECT … AS FACT`; agent
-glosses land on agent connections, human corrections supersede on the human
-value.)
-
-## Relationships + composite keys (`relationships`, `surrogate_key_intents`)
+## Relationships
 
 ```glossql
 DECLARE RELATIONSHIP orders.customer_id -> customers.id;
 DECLARE RELATIONSHIP invoices.order_id <-> orders.id;
 ```
 
-Composite keys are tuple endpoints (decided 2026-08-05, fixture 14; the
-derived-column cure retired with it):
+A composite key is a tuple on each side:
 
 ```glossql
 DECLARE RELATIONSHIP txn.(business_id, account) -> coa.(business_id, account_name);
 ```
 
-## Dimensions, hierarchies, calendar (`slice_definitions`, `dimension_hierarchies`, `workspace_calendar`)
+## Dimensions, hierarchies, calendar
 
 ```glossql
 GLOSS dimension ON orders.channel AS $${"priority": 0.8, "context": "primary go-to-market split"}$$;
@@ -58,11 +53,10 @@ GLOSS hierarchy ON customers AS $${"levels": ["country", "region", "city"], "kin
 GLOSS calendar ON fin AS $${"fiscal_year_starts": "april"}$$;
 ```
 
-## Statistics / profiling (`column_statistics`, `relationship_candidates`)
+## Statistics
 
-Measurements are never glossed — a function `RETURNS` the aspect
-(respelled 2026-08-04: the reference is the binding, no test ceremony)
-and fills it from its cache:
+A statistic is measured by a function, not annotated. The function
+returns the aspect it fills (`RETURNS`).
 
 ```glossql
 DECLARE ASPECT min_max WITH $${
@@ -75,7 +69,9 @@ SELECT profile_min_max() FROM fin.orders.amount;
 SELECT * FROM GLOSSARY(fin.orders.amount);
 ```
 
-## Enrichment (`enriched_views`)
+## Views
+
+A view is annotated like a table.
 
 ```glossql
 CREATE VIEW orders_enriched AS
@@ -83,16 +79,3 @@ CREATE VIEW orders_enriched AS
   FROM orders o JOIN customers c ON o.customer_id = c.id;
 GLOSS meaning ON orders_enriched AS $${"value": "orders with customer region and segment"}$$;
 ```
-
-Views are glossable like tables; exposed columns are the select list.
-
-## Findings
-
-- **TRANSCRIBES.** The whole catalog/annotation plane is the aspect/gloss
-  sweet spot: one declaration per vocabulary entry, one gloss per application,
-  supersession free.
-- The vertical binding (`workspace_settings.active_vertical`) has no
-  construct: importing a vertical is running its declarations; a vertical is a
-  folder (fixture 01).
-- Coverage: with fixtures 01–09, every artifact family in the engine schema is
-  transcribed, relocated to script, or dropped by a named decision.

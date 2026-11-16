@@ -1,36 +1,14 @@
-# 04 · Validation `trial_balance` — TRANSCRIBES (aspect + test, no dedicated construct)
+# Validation: trial balance
 
-Source: `validations` table (engine schema.sql) — fields: validation_id, name,
-description, category, severity, check_type ∈ (aggregate|balance|comparison|
-constraint), tolerance, guidance, expected_outcome, relevant_cycles JSON,
-relevant_conventions JSON, tags, version, source. Seed YAML (worktree
-epic-dat-853, `finance/validations/trial_balance.yaml`):
-
-```yaml
-validation_id: trial_balance
-name: Trial Balance (Accounting Equation)
-description: >
-  Validates the expanded accounting equation:
-  Assets + Expenses = Liabilities + Equity + Revenue. …
-category: financial
-severity: critical
-version: "1.1"
-tags: [accounting, trial-balance, balance-sheet, equation]
-relevant_cycles: [journal_entry_cycle, accounts_receivable, accounts_payable]
-check_type: balance
-expected_outcome: >
-  Total debits must equal total credits across all account types. …
-```
-
-## Transcription
-
-The authored expectation is a FACT gloss; the check is a function; the test
-binds them; TESTS is the result surface. No validation construct exists.
+A trial balance check validates that total debits equal total credits.
+The example states the expectation as an annotation on the dataset,
+declares a function that measures it and a function that scores the
+result, binds them in a test (`DECLARE TEST`) and reads the test
+results.
 
 ```glossql
 DECLARE ASPECT trial_balance WITH $${
   "type": "object",
-  "required": ["outcome"],
   "properties": {
     "tolerance": {"type": "number"},
     "severity": {"enum": ["critical", "warning", "info"]},
@@ -53,30 +31,10 @@ GLOSS trial_balance ON fin AS $${
 DECLARE FUNCTION trial_balance_check FOR fin AS $$/* debits minus credits per period, as a breach rate */$$
   RETURNS trial_balance;
 
-DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
+DECLARE FUNCTION balance_states FOR fin AS $$/* detector: gives the balance values a state */$$;
 
 DECLARE TEST tb ON trial_balance BY (HUMAN)
-  DETECTOR balance_bands;
+  DETECTOR balance_states;
 
 SELECT * FROM TESTS(fin.trial_balance);
 ```
-
-## Findings
-
-- **TRANSCRIBES — the strongest confirmation in the corpus.** The old spec
-  needed `DECLARE VALIDATION` with six clauses (KIND / ON CYCLES / OVER /
-  CONVENTIONS / TOLERANCE / SEVERITY / GUIDANCE / OUTCOME); here the same
-  artifact is an aspect, a gloss, a function, and a test — all
-  general-purpose constructs.
-- The check reads its own expectation (tolerance, cycles) from the glossary —
-  the function implicitly receives its subject; the gloss is data.
-- **Role is declared by shape** (respelled 2026-08-04): the original
-  transcription had `trial_balance_check` doubling as value function and
-  detector, legal because its RETURNS transcribed the test-results schema. With
-  `RETURNS` an aspect reference, the roles separate: the check is a
-  *value* — `RETURNS trial_balance`, full SQL interface, its result is stored as a
-  value beside the human's expectation — and `balance_bands` (no RETURNS)
-  is the detector that reads both values and bands. The test-results schema left
-  the author's hands: it is the engine's contract, no longer transcribed.
-- **INFORMATION LOST (accepted):** category, tags, version — browsing
-  metadata, same relocation as fixture 03.

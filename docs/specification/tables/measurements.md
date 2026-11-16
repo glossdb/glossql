@@ -2,17 +2,21 @@
 
 A row is one result of a measurement on an asset. `SELECT f() FROM
 asset` writes it when the function's inputs changed since its last
-result; otherwise the stored row is served. No key: `GLOSSARY()` reads
-the newest row per asset, aspect and function.
+result; otherwise the stored row is served. A computation that fails
+is a row too, with its error and no value. It is current until an
+input changes; a call computes it again. Key: `dataset`,
+`function`, `subject`: the view serves the latest result, and
+`measurements_history` serves every result. What a result read is in
+[inputs](inputs.md).
 
 | Column | Type | Description |
 |---|---|---|
-| `seq` | BIGINT | The row's order in the table, from 1. |
+| `begin_snapshot` | BIGINT | The lake snapshot the write that made the row took. |
+| `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
 | `dataset` | VARCHAR | The dataset the asset belongs to. |
 | `function` | VARCHAR | The measurement that computed it. |
 | `subject` | VARCHAR | The asset it measured. |
 | `aspect` | VARCHAR | The aspect the function returns. |
-| `pin` | VARCHAR | Every input at the version read: a lake table at the last snapshot that wrote it, a catalog table at its highest `seq`. The result reads stale once an input moved. |
-| `value` | VARCHAR | The result, validated against the aspect's schema. The view serves it as JSON. |
+| `value` | VARCHAR | The result, validated against the aspect's schema. The view serves it as JSON. NULL where the computation failed. |
 | `computed_at` | TIMESTAMP | When the row was written. |
-| `reads` | VARCHAR | What the function's plan scans: lake tables as `dataset.table`, catalog tables as `glossql.<name>`, `**` for a scan that cannot be named (a file, another database). |
+| `error` | VARCHAR | Why the computation failed: the function's error, or the schema check's. NULL for a value. |

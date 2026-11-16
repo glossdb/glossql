@@ -13,6 +13,13 @@
 //     connections of its own.
 // What one inner statement does is atomic; the glossql statement itself is
 // not atomic with a transaction the caller may have open.
+//
+// A write to the store is one transaction of the catalogue database
+// (Inner::Write). It takes the lake's next snapshot id as DuckLake takes it,
+// from the primary key of ducklake_snapshot, and its rows carry that id as
+// their begin marker, so the data and the catalog have one order. A lake
+// change DuckLake itself commits (a schema, a load, a macro) comes first and
+// its row in the store follows.
 
 #include "glossql_grammar.hpp"
 
@@ -34,26 +41,39 @@
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
-#include "duckdb/parser/expression/subquery_expression.hpp"
-#include "duckdb/parser/parsed_expression_iterator.hpp"
-#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/parser/parser.hpp"
-#include "duckdb/planner/planner.hpp"
-#include "duckdb/planner/operator/logical_get.hpp"
-#include "duckdb/planner/expression/bound_columnref_expression.hpp"
-#include "duckdb/planner/expression/bound_constant_expression.hpp"
-#include "duckdb/planner/expression_iterator.hpp"
-#include "duckdb/planner/operator/logical_projection.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/parser/peg/compiled_grammar.hpp"
+#include "duckdb/parser/common_table_expression_info.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/parameter_expression.hpp"
+#include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/query_node/set_operation_node.hpp"
+#include "duckdb/parser/query_node/recursive_cte_node.hpp"
+#include "duckdb/parser/statement/select_statement.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
+#include "duckdb/parser/tableref/expressionlistref.hpp"
+#include "duckdb/parser/tableref/joinref.hpp"
+#include "duckdb/parser/tableref/pivotref.hpp"
+#include "duckdb/parser/tableref/showref.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/function/scalar_macro_function.hpp"
+#include "duckdb/function/table_macro_function.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/main/client_data.hpp"
+#include "duckdb/storage/object_cache.hpp"
+#include <chrono>
 #include <functional>
 #include <set>
+#include <tuple>
 #include <map>
+#include <thread>
 
 namespace duckdb {
 
@@ -88,7 +108,48 @@ string LakeName(ClientContext &context) {
 
 //! The lake, and the metadata catalog behind it: one the user named is visible
 //! to information_schema; the hidden default is reached by its name
+//! A lake's metadata catalog as found, kept per instance while that catalog stays attached: every
+//! connection a read opens finds it, and the lookup reads the information schema of every catalog
+struct FoundWorkspace : public ObjectCacheEntry {
+	Workspace ws;
+	weak_ptr<AttachedDatabase> meta;
+
+	static string ObjectType() {
+		return "glossql_workspace";
+	}
+	string GetObjectType() override {
+		return ObjectType();
+	}
+	optional_idx GetEstimatedCacheMemory() const override {
+		return optional_idx(0);
+	}
+};
+
+static Workspace LookUpWorkspace(ClientContext &context, Connection &con);
+
 static Workspace FindWorkspace(ClientContext &context, Connection &con) {
+	auto lake = LakeName(context);
+	auto &cache = ObjectCache::GetObjectCache(context);
+	auto key = "glossql_workspace|" + lake;
+	auto &databases = DatabaseManager::Get(context);
+	auto found = cache.Get<FoundWorkspace>(key);
+	if (found) {
+		auto meta = found->meta.lock();
+		if (meta && meta == databases.GetDatabase(Identifier(found->ws.meta))) {
+			return found->ws;
+		}
+	}
+	auto ws = LookUpWorkspace(context, con);
+	auto fill = make_shared_ptr<FoundWorkspace>();
+	fill->ws = ws;
+	fill->meta = databases.GetDatabase(Identifier(ws.meta));
+	if (fill->meta.lock()) {
+		cache.Put(key, fill);
+	}
+	return ws;
+}
+
+static Workspace LookUpWorkspace(ClientContext &context, Connection &con) {
 	Workspace ws;
 	ws.lake = LakeName(context);
 	auto visible = con.Query("SELECT table_catalog, table_schema FROM information_schema.tables"
@@ -178,7 +239,14 @@ string JsonList(const Value &list) {
 Inner::Inner(ClientContext &context) : con(*context.db), ws(FindWorkspace(context, con)) {
 	// a body resolves names and files as the caller's session does: the same search paths
 	auto &paths = ClientData::Get(context).catalog_search_path->GetSetPaths();
-	if (!paths.empty()) {
+	bool qualified = std::all_of(paths.begin(), paths.end(), [](const CatalogSearchEntry &path) {
+		return !path.GetCatalog().empty() && !path.GetSchema().empty();
+	});
+	if (!paths.empty() && qualified) {
+		// the caller's paths, set as they stand: each names its catalog and schema, which the caller's own
+		// SET verified
+		ClientData::Get(*con.context).catalog_search_path->Set(paths, CatalogSetPathType::SET_DIRECTLY);
+	} else if (!paths.empty()) {
 		Run("SET search_path = " + QuoteText(CatalogSearchEntry::ListToString(paths)));
 	}
 	Value files;
@@ -186,20 +254,155 @@ Inner::Inner(ClientContext &context) : con(*context.db), ws(FindWorkspace(contex
 	    !files.ToString().empty()) {
 		Run("SET file_search_path = " + QuoteText(files.ToString()));
 	}
+	// a read the second connection runs reads the same lake, where several are attached
+	ClientConfig::GetConfig(*con.context).SetUserVariable("glossql_workspace", Value(ws.lake));
+	// and the read functions walk from the caller's run's subject
+	Value subject;
+	if (ClientConfig::GetConfig(context).GetUserVariable(string(RUN_SUBJECT), subject)) {
+		ClientConfig::GetConfig(*con.context).SetUserVariable(RUN_SUBJECT, subject);
+	}
 }
 
-string Inner::Seq(const string &relation) const {
-	return "(SELECT coalesce(max(seq), 0) + 1 FROM " + Store(relation) + ")";
+string Inner::Current(const string &relation) const {
+	return "(SELECT * FROM " + Store(relation) + " WHERE end_snapshot IS NULL)";
+}
+
+int64_t CatalogWrite::Run(const string &sql) {
+	auto result = inner.con.Query(sql);
+	if (result->HasError()) {
+		// the catalog database's own error, its class kept: Inner::Write tells a lost race from a refusal
+		inner.catalog_failed = true;
+		result->ThrowError();
+	}
+	wrote = true;
+	auto chunk = result->Fetch();
+	if (!chunk || chunk->size() == 0 || chunk->ColumnCount() == 0 || chunk->GetValue(0, 0).IsNull()) {
+		return 0;
+	}
+	return chunk->GetValue(0, 0).GetValue<int64_t>();
+}
+
+int64_t CatalogWrite::End(const string &relation, const string &where) {
+	return Run("UPDATE " + inner.Store(relation) + " SET end_snapshot = " + to_string(snapshot) +
+	           " WHERE end_snapshot IS NULL AND (" + where + ")");
+}
+
+void CatalogWrite::Insert(const string &relation, const string &values) {
+	Run("INSERT INTO " + inner.Store(relation) + " VALUES (" + to_string(snapshot) + ", NULL, " + values + ")");
+}
+
+int64_t CatalogWrite::NewCatalogId() {
+	return next_catalog_id++;
+}
+
+void CatalogWrite::Changed(const string &entry) {
+	changes.push_back(entry);
+}
+
+// A failed write lost a race when another writer overtook it: the catalog
+// database refused the snapshot row because its id is taken (DuckDB's primary key,
+// raised once the other writer commits), reports a transaction conflict with a
+// writer still open (DuckDB's write-write conflict), or the lake's newest snapshot
+// is past the one the write read and the failure is a conflict: a statement of
+// the catalog write failed (Postgres raises its unique or serialization error, of
+// whatever class the scanner gives it, once the other writer has committed), or
+// the error says it is one, whatever class it arrives in. Any other failure is the
+// write's own and is refused as it is, on the first try.
+bool Inner::Overtaken(const ErrorData &error, int64_t head, bool taking_snapshot) {
+	if (error.Type() == ExceptionType::TRANSACTION || (taking_snapshot && error.Type() == ExceptionType::CONSTRAINT)) {
+		return true;
+	}
+	if (head < 0 || !(catalog_failed || StringUtil::Contains(StringUtil::Lower(error.RawMessage()), "conflict"))) {
+		return false;
+	}
+	auto newest = con.Query("SELECT max(snapshot_id) > " + to_string(head) + " FROM " + ws.Meta("snapshot"));
+	if (newest->HasError()) {
+		return false;
+	}
+	auto chunk = newest->Fetch();
+	return chunk && chunk->size() > 0 && chunk->GetValue(0, 0) == Value::BOOLEAN(true);
+}
+
+int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWrite &)> &body) {
+	// the tries a write takes before it gives the caller the last reason
+	static constexpr idx_t TRIES = 60;
+	string lost;
+	for (idx_t attempt = 0; attempt < TRIES; attempt++) {
+		Run("BEGIN");
+		int64_t head_id = -1;
+		bool taking_snapshot = false;
+		catalog_failed = false;
+		try {
+			auto head = Row("SELECT snapshot_id, schema_version, next_catalog_id, next_file_id FROM " +
+			                ws.Meta("snapshot") + " ORDER BY snapshot_id DESC LIMIT 1");
+			head_id = head[0].GetValue<int64_t>();
+			CatalogWrite write(*this, head_id + 1, head[2].GetValue<int64_t>());
+			body(write);
+			if (!write.wrote) {
+				con.Query("ROLLBACK");
+				return 0;
+			}
+			// the snapshot as DuckLake writes one: a lake change moves the schema version, and its
+			// change text names it; a write to the store alone has no change text
+			auto schema_version = head[1].GetValue<int64_t>() + (write.changes.empty() ? 0 : 1);
+			taking_snapshot = true;
+			write.Run("INSERT INTO " + ws.Meta("snapshot") + " VALUES (" + to_string(write.snapshot) + ", now(), " +
+			          to_string(schema_version) + ", " + to_string(write.next_catalog_id) + ", " + head[3].ToString() +
+			          ")");
+			write.Run("INSERT INTO " + ws.Meta("snapshot_changes") + " VALUES (" + to_string(write.snapshot) + ", " +
+			          (write.changes.empty() ? string("NULL") : QuoteText(StringUtil::Join(write.changes, ","))) +
+			          ", " + QuoteText(DeclaredBy(context)) + ", NULL, NULL)");
+			write.Run("COMMIT");
+			return write.snapshot;
+		} catch (std::exception &ex) {
+			ErrorData error(ex);
+			con.Query("ROLLBACK");
+			if (!Overtaken(error, head_id, taking_snapshot)) {
+				throw;
+			}
+			lost = FirstLine(error.Message());
+			std::this_thread::sleep_for(std::chrono::milliseconds(1 + (std::rand() % (5 * (attempt + 1)))));
+		} catch (...) {
+			con.Query("ROLLBACK");
+			throw;
+		}
+	}
+	throw InvalidInputException("glossql: the write lost %d races to other writers; the last: %s", TRIES, lost);
 }
 
 Value Inner::Snapshot() {
 	return Scalar("SELECT id::BIGINT FROM ducklake_current_snapshot(" + QuoteText(ws.lake) + ")");
 }
 
+// The reason of a statement the inner connection refused. A refusal, raised by
+// error() in a function body or by the extension itself, is carried as it was
+// raised: its error class and the prefix are the ones the rethrow adds, once.
+// An error of another class keeps its class's name.
+static string Reason(ErrorData &error) {
+	if (error.Type() != ExceptionType::INVALID_INPUT) {
+		return error.Message();
+	}
+	const auto &reason = error.RawMessage();
+	return StringUtil::StartsWith(reason, "glossql: ") ? reason.substr(9) : reason;
+}
+
 unique_ptr<QueryResult> Inner::Run(const string &sql) {
 	auto result = con.Query(sql);
 	if (result->HasError()) {
-		throw InvalidInputException("glossql: %s", result->GetError());
+		switch (result->GetErrorObject().Type()) {
+		// a conflict, an interrupt and the engine's own failures keep their class: a write tells a lost race
+		// by it, and a computation stores no result for them
+		case ExceptionType::TRANSACTION:
+		case ExceptionType::INTERRUPT:
+		case ExceptionType::FATAL:
+		case ExceptionType::INTERNAL:
+		case ExceptionType::OUT_OF_MEMORY:
+			result->ThrowError();
+			break;
+		default:
+			break;
+		}
+		throw InvalidInputException("glossql: %s", Reason(result->GetErrorObject()));
 	}
 	return result;
 }
@@ -236,7 +439,7 @@ string Inner::Table(const string &schema, const string &name) const {
 
 string Inner::FunctionSchema(const string &dataset, const string &name) {
 	for (auto &scope : {dataset, string("GLOBAL")}) {
-		auto found = Scalar("SELECT count(*) FROM " + Store("functions") + " WHERE name = " + QuoteText(name) +
+		auto found = Scalar("SELECT count(*) FROM " + Current("functions") + " WHERE name = " + QuoteText(name) +
 		                    " AND scope = " + QuoteText(scope));
 		if (found.GetValue<int64_t>() > 0) {
 			return scope == "GLOBAL" ? "main" : scope;
@@ -254,7 +457,7 @@ struct SourceInfo {
 
 static SourceInfo LookupSource(Inner &inner, const string &name) {
 	auto row = inner.Row("SELECT settings::JSON->>'type', settings::JSON->>'location' FROM " + inner.Store("sources") +
-	                     " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
+	                     " WHERE name = " + QuoteText(name) + " AND end_snapshot IS NULL");
 	if (row.empty()) {
 		throw InvalidInputException("glossql: source '%s' is not declared", name);
 	}
@@ -332,19 +535,22 @@ static void DatasetExec(ClientContext &context, TableFunctionInput &data, DataCh
 		throw InvalidInputException("glossql: a dataset's name carries no dot (SPEC §4): %s", name);
 	}
 
-	// the schema is the lake's and the row the store's: two catalogs, two commits;
+	// the schema is the lake's commit and its row in the store follows;
 	// an unchanged re-declaration is a no-op (SPEC §3)
 	Inner inner(context);
-	auto standing = inner.Row("SELECT settings FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(name) +
-	                          " ORDER BY seq DESC LIMIT 1");
-	if (!standing.empty() && standing[0].ToString() == inputs[1].ToString()) {
-		Outcome(output, "dataset " + name + " unchanged: no-op");
-		return;
-	}
 	inner.Run("CREATE SCHEMA IF NOT EXISTS " + QuoteName(inner.ws.lake) + "." + QuoteName(name));
-	inner.Run("INSERT INTO " + inner.Store("datasets") + " VALUES (" + inner.Seq("datasets") + ", " + QuoteText(name) +
-	          ", " + inputs[1].ToSQLString() + ", now(), " + QuoteText(DeclaredBy(context)) + ")");
-	Outcome(output, "declared dataset " + name + " (schema " + inner.ws.lake + "." + name + ")");
+	auto written = inner.Write(context, [&](CatalogWrite &write) {
+		auto current =
+		    inner.Row("SELECT settings FROM " + inner.Current("datasets") + " WHERE name = " + QuoteText(name));
+		if (!current.empty() && current[0].ToString() == inputs[1].ToString()) {
+			return;
+		}
+		write.End("datasets", "name = " + QuoteText(name));
+		write.Insert("datasets",
+		             QuoteText(name) + ", " + inputs[1].ToSQLString() + ", now(), " + QuoteText(DeclaredBy(context)));
+	});
+	Outcome(output, written == 0 ? "dataset " + name + " unchanged: no-op"
+	                             : "declared dataset " + name + " (schema " + inner.ws.lake + "." + name + ")");
 }
 
 TableFunction GlossDatasetFunction() {
@@ -377,7 +583,7 @@ struct RecipeRow {
 
 static RecipeRow NewestRecipe(Inner &inner, const string &dataset, const string &table) {
 	auto row = inner.Row("SELECT source, settings, sql FROM " + inner.Store("recipes") + " WHERE dataset = " +
-	                     QuoteText(dataset) + " AND table_name = " + QuoteText(table) + " ORDER BY seq DESC LIMIT 1");
+	                     QuoteText(dataset) + " AND table_name = " + QuoteText(table) + " AND end_snapshot IS NULL");
 	if (row.empty()) {
 		throw InvalidInputException("glossql: %s.%s has no recipe — tables come from recipes", dataset, table);
 	}
@@ -385,10 +591,17 @@ static RecipeRow NewestRecipe(Inner &inner, const string &dataset, const string 
 }
 
 //! What a load wrote: the table's rows, how they joined it (`mode`: replace
-//! or merge, the key being the recipe's), and the rows dropped on the way
-//! (SPEC §3), NULL where the host cannot count them
-struct Landed {
+//! or merge, the key being the recipe's), the rows dropped on the way
+//! (SPEC §3), NULL where the host cannot count them, the rows the recipe's
+//! result carried, the rows a merge inserted or updated, and of a whole
+//! replace of a large table its fingerprint and whether it holds the same
+//! rows as the table before
+struct Loaded {
 	int64_t rows;
+	int64_t source_rows = 0;
+	Value changed;
+	Value fingerprint;
+	Value identical;
 	string mode;
 	//! the outcome's wording of the mode
 	string how;
@@ -412,7 +625,7 @@ struct Landed {
 //! connection holds them and the count is theirs, one per line; when it does
 //! not, the host cannot count what it skipped
 static Value DroppedRows(Inner &inner, const string &sql) {
-	// looked up, never probed: a failing statement would abort the load's transaction
+	// looked up, never previewed: a failing statement would abort the load's transaction
 	auto stored = inner.Scalar("SELECT count(*) FROM information_schema.tables WHERE table_catalog = 'temp'"
 	                           " AND table_schema = 'main' AND table_name = 'reject_errors'");
 	if (stored.GetValue<int64_t>() > 0) {
@@ -428,8 +641,9 @@ static Value DroppedRows(Inner &inner, const string &sql) {
 //! A keyed recipe's result carries each key once (SPEC §3): the keys the
 //! result carries more than once, counted at the source before anything is stored;
 //! the refusal names the key, how many, and one of them. Which row holds is
-//! the recipe's to say, so the result is never deduplicated here
-static void KeyOnce(Inner &inner, const vector<string> &key, const string &sql) {
+//! the recipe's to say, so the result is never deduplicated here. Returns
+//! the keys the result carries, which are its rows
+static int64_t KeyOnce(Inner &inner, const vector<string> &key, const string &sql) {
 	vector<string> columns;
 	vector<string> texts;
 	for (auto &column : key) {
@@ -438,42 +652,82 @@ static void KeyOnce(Inner &inner, const vector<string> &key, const string &sql) 
 	}
 	auto spelled = StringUtil::Join(columns, ", ");
 	auto example = key.size() == 1 ? texts[0] : "'(' || concat_ws(', ', " + StringUtil::Join(texts, ", ") + ") || ')'";
-	auto twice = inner.Row("SELECT count(*), min(" + example + ") FROM (SELECT " + spelled + " FROM (" + sql +
-	                       ") GROUP BY ALL HAVING count(*) > 1)");
+	auto twice = inner.Row("SELECT count(*) FILTER (WHERE n > 1), min(" + example +
+	                       ") FILTER (WHERE n > 1), count(*) FROM (SELECT " + spelled + ", count(*) AS n FROM (" + sql +
+	                       ") GROUP BY ALL)");
 	auto keys = twice[0].GetValue<int64_t>();
 	if (keys > 0) {
 		throw InvalidInputException("glossql: the recipe's result carries key %s more than once: %d keys, %s among "
 		                            "them; a keyed recipe's result carries each key once (SPEC §3)",
 		                            StringUtil::Join(key, ", "), keys, twice[1].ToString());
 	}
+	return twice[2].GetValue<int64_t>();
 }
 
+//! The rows from which a whole replace is fingerprinted: the goals kit's
+//! load_modes() names a replace that changed nothing from this size on
+static constexpr int64_t FINGERPRINT_ROWS = 100000;
+
 //! Runs the recipe at its source and writes the result
-static Landed Land(Inner &inner, const string &dataset, const string &table, const RecipeRow &recipe, bool replace) {
+static Loaded LoadTable(ClientContext &context, Inner &inner, const string &dataset, const string &table,
+                        const RecipeRow &recipe, bool replace) {
 	auto target = inner.Table(dataset, table);
 	AtSource(inner, LookupSource(inner, recipe.source));
-	Landed landed;
+	Loaded loaded;
 	auto key = recipe.Key();
+	int64_t keys = 0;
 	if (!key.empty()) {
-		KeyOnce(inner, key, recipe.sql);
+		keys = KeyOnce(inner, key, recipe.sql);
 	}
 	if (replace || key.empty()) {
 		inner.Run("CREATE OR REPLACE TABLE " + target + " AS " + recipe.sql);
-		landed.mode = "replace";
-		landed.how = "replaced";
+		loaded.mode = "replace";
+		loaded.how = "replaced";
+		loaded.source_rows = inner.Scalar("SELECT count(*) FROM " + target).GetValue<int64_t>();
+		// a large table's fingerprint: the sum of its rows' hashes, one scan of the table written, compared
+		// with the load before's. Equal rows give equal sums; two different tables that sum alike pass as
+		// identical, which hides a suggestion and changes no data
+		if (loaded.source_rows >= FINGERPRINT_ROWS) {
+			loaded.fingerprint = inner.Scalar("SELECT sum(hash(*COLUMNS(*))::HUGEINT)::VARCHAR FROM " + target);
+			auto before = inner.Row("SELECT rows, fingerprint FROM " + inner.Store("imports") +
+			                        " WHERE dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(table) +
+			                        " AND end_snapshot IS NULL");
+			if (!before.empty() && !before[1].IsNull()) {
+				loaded.identical = Value::BOOLEAN(before[0].GetValue<int64_t>() == loaded.source_rows &&
+				                                  before[1].ToString() == loaded.fingerprint.ToString());
+			}
+		}
 	} else {
 		vector<string> on;
 		for (auto &column : key) {
 			on.push_back("t." + QuoteName(column) + " = s." + QuoteName(column));
 		}
-		inner.Run("MERGE INTO " + target + " AS t USING (" + recipe.sql + ") AS s ON " + StringUtil::Join(on, " AND ") +
-		          " WHEN MATCHED THEN UPDATE WHEN NOT MATCHED THEN INSERT");
-		landed.mode = "merge";
-		landed.how = "merged by " + StringUtil::Join(key, ", ");
+		// a matched row is updated only where a value it would write differs from the one it holds:
+		// a load of the same rows writes nothing, and the table's version stays. The update writes
+		// the recipe's columns by position, cast to the table's types, and is compared so
+		auto ours = inner.Run("SELECT * FROM " + target + " LIMIT 0");
+		auto theirs = inner.Run("SELECT * FROM (" + recipe.sql + ") LIMIT 0");
+		string differs;
+		if (ours->ColumnCount() == theirs->ColumnCount()) {
+			vector<string> columns;
+			for (idx_t i = 0; i < ours->ColumnCount(); i++) {
+				columns.push_back("t." + QuoteName(ours->ColumnName(i).GetIdentifierName()) +
+				                  " IS DISTINCT FROM CAST(s." + QuoteName(theirs->ColumnName(i).GetIdentifierName()) +
+				                  " AS " + ours->GetTypes()[i].ToString() + ")");
+			}
+			differs = " AND (" + StringUtil::Join(columns, " OR ") + ")";
+		}
+		loaded.changed = inner.Scalar("MERGE INTO " + target + " AS t USING (" + recipe.sql + ") AS s ON " +
+		                              StringUtil::Join(on, " AND ") + " WHEN MATCHED" + differs +
+		                              " THEN UPDATE WHEN NOT MATCHED THEN INSERT");
+		loaded.source_rows = keys;
+		loaded.mode = "merge";
+		loaded.how = "merged by " + StringUtil::Join(key, ", ");
 	}
-	landed.rows = inner.Scalar("SELECT count(*) FROM " + target).GetValue<int64_t>();
-	landed.dropped = DroppedRows(inner, recipe.sql);
-	landed.snapshot = inner.Snapshot();
+	loaded.rows = inner.Scalar("SELECT count(*) FROM " + target).GetValue<int64_t>();
+	loaded.dropped = DroppedRows(inner, recipe.sql);
+	// the load's own commit, whatever another writer committed since
+	loaded.snapshot = inner.Scalar("SELECT * FROM ducklake_last_committed_snapshot(" + QuoteText(inner.ws.lake) + ")");
 	// what computed each column, read off the recipe's plan at the source: the
 	// re-derivation rule compares loads by it (SPEC §3), and the loads' diff
 	// is the drift record of what the source sends
@@ -483,12 +737,17 @@ static Landed Land(Inner &inner, const string &dataset, const string &table, con
 	} catch (std::exception &) {
 		// a recipe the planner will not walk again is stored without its lineage
 	}
-	// the load is the lake's commit, one snapshot; its row in the store follows it
-	inner.Run("INSERT INTO " + inner.Store("imports") + " VALUES (" + inner.Seq("imports") + ", " + QuoteText(dataset) +
-	          ", " + QuoteText(table) + ", " + QuoteText(landed.mode) + ", " + to_string(landed.rows) + ", " +
-	          landed.dropped.ToSQLString() + ", " + QuoteText(lineage) + ", " + landed.snapshot.ToSQLString() +
-	          ", now())");
-	return landed;
+	// the load is the lake's commit, one snapshot; its row in the store follows it and names
+	// that snapshot, and the table's earlier load row ends
+	inner.Write(context, [&](CatalogWrite &write) {
+		write.End("imports", "dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(table));
+		write.Insert("imports", QuoteText(dataset) + ", " + QuoteText(table) + ", " + QuoteText(loaded.mode) + ", " +
+		                            to_string(loaded.rows) + ", " + loaded.dropped.ToSQLString() + ", " +
+		                            QuoteText(lineage) + ", " + loaded.snapshot.ToSQLString() + ", now(), " +
+		                            to_string(loaded.source_rows) + ", " + loaded.changed.ToSQLString() + ", " +
+		                            loaded.fingerprint.ToSQLString() + ", " + loaded.identical.ToSQLString());
+	});
+	return loaded;
 }
 
 //===--------------------------------------------------------------------===//
@@ -512,26 +771,28 @@ static void RecipeExec(ClientContext &context, TableFunctionInput &data, DataChu
 
 	Inner inner(context);
 	// identity is content (SPEC §3): an unchanged re-declaration is a no-op
-	auto standing = inner.Row("SELECT source, settings, sql FROM " + inner.Store("recipes") +
-	                          " WHERE dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(name) +
-	                          " ORDER BY seq DESC LIMIT 1");
-	if (!standing.empty() && standing[0].ToString() == recipe.source && standing[1].ToString() == recipe.settings &&
-	    standing[2].ToString() == recipe.sql) {
+	auto current = inner.Row("SELECT source, settings, sql FROM " + inner.Store("recipes") + " WHERE dataset = " +
+	                         QuoteText(dataset) + " AND table_name = " + QuoteText(name) + " AND end_snapshot IS NULL");
+	if (!current.empty() && current[0].ToString() == recipe.source && current[1].ToString() == recipe.settings &&
+	    current[2].ToString() == recipe.sql) {
 		Outcome(output, "recipe " + name + " unchanged: no-op");
 		return;
 	}
 	auto dataset_exists =
-	    inner.Scalar("SELECT count(*) FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(dataset));
+	    inner.Scalar("SELECT count(*) FROM " + inner.Current("datasets") + " WHERE name = " + QuoteText(dataset));
 	if (dataset_exists.GetValue<int64_t>() == 0) {
 		throw InvalidInputException("glossql: dataset '%s' is not declared", dataset);
 	}
 
-	auto landed = Land(inner, dataset, name, recipe, true);
-	inner.Run("INSERT INTO " + inner.Store("recipes") + " VALUES (" + inner.Seq("recipes") + ", " + QuoteText(dataset) +
-	          ", " + QuoteText(name) + ", " + QuoteText(recipe.source) + ", " + QuoteText(recipe.settings) + ", " +
-	          QuoteText(recipe.sql) + ", now(), " + QuoteText(DeclaredBy(context)) + ")");
-	landed.how = standing.empty() ? "new" : "superseded";
-	Outcome(output, "landed " + dataset + "." + name + ": " + landed.Summary());
+	auto loaded = LoadTable(context, inner, dataset, name, recipe, true);
+	inner.Write(context, [&](CatalogWrite &write) {
+		write.End("recipes", "dataset = " + QuoteText(dataset) + " AND table_name = " + QuoteText(name));
+		write.Insert("recipes", QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(recipe.source) + ", " +
+		                            QuoteText(recipe.settings) + ", " + QuoteText(recipe.sql) + ", now(), " +
+		                            QuoteText(DeclaredBy(context)));
+	});
+	loaded.how = current.empty() ? "new" : "superseded";
+	Outcome(output, "loaded " + dataset + "." + name + ": " + loaded.Summary());
 }
 
 TableFunction GlossRecipeFunction() {
@@ -557,8 +818,8 @@ static void ImportExec(ClientContext &context, TableFunctionInput &data, DataChu
 
 	Inner inner(context);
 	auto recipe = NewestRecipe(inner, dataset, table);
-	auto landed = Land(inner, dataset, table, recipe, false);
-	Outcome(output, "imported " + dataset + "." + table + ": " + landed.Summary());
+	auto loaded = LoadTable(context, inner, dataset, table, recipe, false);
+	Outcome(output, "imported " + dataset + "." + table + ": " + loaded.Summary());
 }
 
 TableFunction GlossImportFunction() {
@@ -615,7 +876,7 @@ static void PreviewExec(ClientContext &context, TableFunctionInput &data, DataCh
 }
 
 TableFunction GlossPreviewFunction() {
-	return TableFunction("glossql_probe", {LogicalType::VARCHAR, LogicalType::VARCHAR}, PreviewExec, PreviewBind,
+	return TableFunction("glossql_preview", {LogicalType::VARCHAR, LogicalType::VARCHAR}, PreviewExec, PreviewBind,
 	                     PreviewInit);
 }
 
@@ -655,6 +916,636 @@ static bool SameValue(const Value &before, const Value &after) {
 	return before.ToString() == after.ToString();
 }
 
+//===--------------------------------------------------------------------===//
+// What a body reads (SPEC §6), taken from its text as written: DuckDB's parse
+// of it, every node of the tree, a CTE's name subtracted inside the query that
+// defines it, the macros it calls followed through their definitions as the
+// catalog resolves them. One JSON object per read: kind `read` a call of a read
+// function (annotations, results, definition), its what and its where as
+// written, `constant` false where one of them is not a constant; `data` a table
+// or view of the lake named in FROM, by its canonical dataset.table, a name
+// without a dataset kept as written and taken in the subject's dataset, a table
+// the lake does not hold yet by its name, or a primitive over the data of the
+// subject; `macro` a macro followed, by its canonical name, whose definition is
+// part of the function's digest; `catalog` the catalog reached otherwise;
+// `other` a table function that reads nothing (range, unnest); `untracked` what
+// the engine cannot follow: a body that does not parse, a table outside the
+// lake, a table function that reads outside it, a function the catalog does not
+// hold, a macro past the depth the walk follows. A declaration whose body makes
+// a read no input can follow is refused (UntrackedRead). A primitive that reads the catalog at its bind, out of the
+// body's text, is stated here by what it reads: glossql_additivity_cells reads
+// the dataset's data, its roles and its relationships (the lineage's
+// `relates`). A detector's body reads the annotations its test hands it, a
+// relation by that name
+//===--------------------------------------------------------------------===//
+
+//! One read of a body, as functions.reads stores it; an empty what or where is null
+struct BodyRead {
+	string kind;
+	string read;
+	string what;
+	string where;
+	//! -1 null, 0 false, 1 true
+	int constant = -1;
+	string via;
+
+	bool operator<(const BodyRead &other) const {
+		return std::tie(kind, read, what, where, via, constant) <
+		       std::tie(other.kind, other.read, other.what, other.where, other.via, other.constant);
+	}
+};
+
+//! The relations of the catalog by name: a table named so in no dataset, or in the lake's main, is one
+static bool IsCatalogRelation(const string &name) {
+	auto base = StringUtil::Lower(name);
+	if (StringUtil::EndsWith(base, "_history")) {
+		base = base.substr(0, base.size() - 8);
+	}
+	for (auto relation : {"datasets", "kits", "sources", "recipes", "imports", "aspects", "glossary", "relationships",
+	                      "functions", "measurements", "inputs", "tests"}) {
+		if (base == relation) {
+			return true;
+		}
+	}
+	return false;
+}
+
+//! The table functions that read nothing: any other a body calls past the read functions and the
+//! data's primitives reads what the engine cannot name (duckdb_tables(), a file)
+static bool ReadsNothing(const string &function) {
+	for (auto name : {"range", "generate_series", "unnest", "repeat", "repeat_row"}) {
+		if (function == name) {
+			return true;
+		}
+	}
+	return false;
+}
+
+//! How many macros deep a walk follows a body: a macro past it is untracked
+static constexpr idx_t MACRO_DEPTH = 8;
+
+class BodyWalker {
+public:
+	//! dataset: the one an unqualified table name is taken in, empty where that is the subject's
+	BodyWalker(ClientContext &context, string lake_p, string dataset_p)
+	    : context(context), lake(std::move(lake_p)), dataset(std::move(dataset_p)) {
+	}
+
+	std::set<BodyRead> reads;
+
+	void Script(const string &script, bool detector) {
+		auto text = script;
+		StringUtil::RTrim(text);
+		while (!text.empty() && (text.back() == ';' || StringUtil::CharacterIsSpace(text.back()))) {
+			text.pop_back();
+		}
+		auto options = ParserOptions::Builtin();
+		options.compiled_grammar = CompiledGrammar::DefaultGrammar();
+		Parser parser(options);
+		try {
+			parser.ParseQuery(text);
+		} catch (std::exception &ex) {
+			Add("untracked", "the body does not parse: " + FirstLine(ErrorData(ex).RawMessage()));
+			return;
+		}
+		if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::SELECT_STATEMENT) {
+			Add("untracked", "the body is not one SELECT");
+			return;
+		}
+		std::set<string> ctes;
+		if (detector) {
+			ctes.insert("annotations");
+		}
+		Node(*parser.statements[0]->Cast<SelectStatement>().node, ctes, Env(), "", 0);
+	}
+
+private:
+	//! An argument as the walk reads it: a constant's text, else what it is
+	struct Arg {
+		bool constant;
+		string text;
+	};
+	//! A macro's parameters, by lower-case name, as its call passes them
+	using Env = std::map<string, Arg>;
+
+	ClientContext &context;
+	string lake;
+	string dataset;
+
+	void Add(const string &kind, const string &read, const string &what = string(), const string &where = string(),
+	         int constant = -1, const string &via = string()) {
+		reads.insert({kind, read, what, where, constant, via});
+	}
+
+	optional_ptr<CatalogEntry> Lookup(CatalogType type, const QualifiedName &name) {
+		try {
+			return Catalog::GetEntry(context, EntryLookupInfo(type, name), OnEntryNotFound::RETURN_NULL);
+		} catch (std::exception &) {
+			return nullptr;
+		}
+	}
+
+	static string Lower(const Identifier &name) {
+		return StringUtil::Lower(name.GetIdentifierName());
+	}
+
+	//! Whether a name is unqualified, or in the lake's main schema
+	bool InMain(const QualifiedName &name) {
+		auto &catalog = name.Catalog();
+		auto &schema = name.Schema();
+		return (catalog.empty() || StringUtil::CIEquals(catalog.GetIdentifierName(), lake)) &&
+		       (schema.empty() || Lower(schema) == "main");
+	}
+
+	Arg ArgOf(const ParsedExpression &expr, const Env &env) {
+		switch (expr.GetExpressionClass()) {
+		case ExpressionClass::CONSTANT: {
+			auto &literal = expr.Cast<ConstantExpression>().GetLiteral();
+			if (literal.IsNull()) {
+				return {false, "<NULL>"};
+			}
+			return {true, literal.text};
+		}
+		case ExpressionClass::PARAMETER:
+			return {false, "$" + expr.Cast<ParameterExpression>().Identifier().GetIdentifierName()};
+		case ExpressionClass::COLUMN_REF: {
+			auto &column = expr.Cast<ColumnRefExpression>();
+			if (!column.IsQualified()) {
+				auto bound = env.find(Lower(column.GetColumnName()));
+				if (bound != env.end()) {
+					return bound->second;
+				}
+			}
+			break;
+		}
+		default:
+			break;
+		}
+		return {false, "<" + ExpressionClassToString(expr.GetExpressionClass()) + ">"};
+	}
+
+	void Node(const QueryNode &node, std::set<string> ctes, const Env &env, const string &via, idx_t depth) {
+		// a CTE's name stands for the CTE inside the query that defines it, and its children
+		for (auto &cte : node.cte_map.map) {
+			ctes.insert(Lower(cte.first));
+		}
+		for (auto &cte : node.cte_map.map) {
+			if (cte.second->query_node) {
+				Node(*cte.second->query_node, ctes, env, via, depth);
+			}
+		}
+		switch (node.type) {
+		case QueryNodeType::SELECT_NODE: {
+			auto &select = node.Cast<SelectNode>();
+			for (auto &expr : select.select_list) {
+				Expr(*expr, ctes, env, via, depth);
+			}
+			for (auto &expr : select.groups.group_expressions) {
+				Expr(*expr, ctes, env, via, depth);
+			}
+			for (auto expr : {select.where_clause.get(), select.having.get(), select.qualify.get()}) {
+				if (expr) {
+					Expr(*expr, ctes, env, via, depth);
+				}
+			}
+			if (select.from_table) {
+				Ref(*select.from_table, ctes, env, via, depth);
+			}
+			break;
+		}
+		case QueryNodeType::SET_OPERATION_NODE:
+			for (auto &child : node.Cast<SetOperationNode>().children) {
+				Node(*child, ctes, env, via, depth);
+			}
+			break;
+		case QueryNodeType::RECURSIVE_CTE_NODE: {
+			auto &recursive = node.Cast<RecursiveCTENode>();
+			ctes.insert(Lower(recursive.ctename));
+			Node(*recursive.left, ctes, env, via, depth);
+			Node(*recursive.right, ctes, env, via, depth);
+			break;
+		}
+		default:
+			Add("untracked", "a statement that is not a query", "", "", -1, via);
+			return;
+		}
+		// ORDER BY, LIMIT and DISTINCT ON hold expressions too
+		vector<const ParsedExpression *> held;
+		for (auto &modifier : node.modifiers) {
+			switch (modifier->type) {
+			case ResultModifierType::ORDER_MODIFIER:
+				for (auto &order : modifier->Cast<OrderModifier>().orders) {
+					held.push_back(order.expression.get());
+				}
+				break;
+			case ResultModifierType::LIMIT_MODIFIER:
+				held.push_back(modifier->Cast<LimitModifier>().limit.get());
+				held.push_back(modifier->Cast<LimitModifier>().offset.get());
+				break;
+			case ResultModifierType::DISTINCT_MODIFIER:
+				for (auto &target : modifier->Cast<DistinctModifier>().distinct_on_targets) {
+					held.push_back(target.get());
+				}
+				break;
+			default:
+				break;
+			}
+		}
+		for (auto expr : held) {
+			if (expr) {
+				Expr(*expr, ctes, env, via, depth);
+			}
+		}
+	}
+
+	void Ref(const TableRef &ref, const std::set<string> &ctes, const Env &env, const string &via, idx_t depth) {
+		switch (ref.type) {
+		case TableReferenceType::BASE_TABLE:
+			Table(ref.Cast<BaseTableRef>().GetQualifiedName(), ctes, via);
+			break;
+		case TableReferenceType::JOIN: {
+			auto &join = ref.Cast<JoinRef>();
+			Ref(*join.left, ctes, env, via, depth);
+			Ref(*join.right, ctes, env, via, depth);
+			if (join.condition) {
+				Expr(*join.condition, ctes, env, via, depth);
+			}
+			break;
+		}
+		case TableReferenceType::SUBQUERY:
+			Node(*ref.Cast<SubqueryRef>().subquery->node, ctes, env, via, depth);
+			break;
+		case TableReferenceType::TABLE_FUNCTION: {
+			auto &function = ref.Cast<TableFunctionRef>();
+			if (function.function && function.function->GetExpressionClass() == ExpressionClass::FUNCTION) {
+				Call(function.function->Cast<FunctionExpression>(), true, ctes, env, via, depth);
+			}
+			if (function.subquery) {
+				Node(*function.subquery->node, ctes, env, via, depth);
+			}
+			break;
+		}
+		case TableReferenceType::EXPRESSION_LIST:
+			for (auto &row : ref.Cast<ExpressionListRef>().values) {
+				for (auto &expr : row) {
+					Expr(*expr, ctes, env, via, depth);
+				}
+			}
+			break;
+		case TableReferenceType::PIVOT: {
+			auto &pivot = ref.Cast<PivotRef>();
+			Ref(*pivot.source, ctes, env, via, depth);
+			for (auto &expr : pivot.aggregates) {
+				Expr(*expr, ctes, env, via, depth);
+			}
+			break;
+		}
+		case TableReferenceType::SHOW_REF: {
+			auto &show = ref.Cast<ShowRef>();
+			if (show.query) {
+				Node(*show.query, ctes, env, via, depth);
+			} else {
+				Add("untracked", "SHOW", "", "", -1, via);
+			}
+			break;
+		}
+		default:
+			break;
+		}
+	}
+
+	void Expr(const ParsedExpression &expr, const std::set<string> &ctes, const Env &env, const string &via,
+	          idx_t depth) {
+		switch (expr.GetExpressionClass()) {
+		case ExpressionClass::SUBQUERY: {
+			auto &subquery = expr.Cast<SubqueryExpression>();
+			if (subquery.GetChild()) {
+				Expr(*subquery.GetChild(), ctes, env, via, depth);
+			}
+			Node(*subquery.Subquery()->node, ctes, env, via, depth);
+			return;
+		}
+		case ExpressionClass::FUNCTION:
+			Call(expr.Cast<FunctionExpression>(), false, ctes, env, via, depth);
+			break;
+		default:
+			break;
+		}
+		ParsedExpressionIterator::EnumerateChildren(
+		    expr, [&](const ParsedExpression &child) { Expr(child, ctes, env, via, depth); });
+	}
+
+	//! A table named in FROM: a CTE in scope reads no table; a name of the catalog's relations,
+	//! unqualified or in main, reads the catalog; a table or view of a dataset is data, by its
+	//! canonical name; an unqualified name is taken in the function's dataset, or kept as written
+	//! for the subject's; a table of another database is untracked
+	void Table(const QualifiedName &name, const std::set<string> &ctes, const string &via) {
+		auto table = name.Name().GetIdentifierName();
+		bool bare = name.Schema().empty() && name.Catalog().empty();
+		if (bare && ctes.count(StringUtil::Lower(table))) {
+			return;
+		}
+		if (InMain(name) && (IsCatalogRelation(table) || !bare)) {
+			Add("catalog", bare ? table : "main." + table, "", "", -1, via);
+			return;
+		}
+		if (bare && dataset.empty()) {
+			Add("data", table, "", "", -1, via);
+			return;
+		}
+		auto entry = Lookup(CatalogType::TABLE_ENTRY,
+		                    bare ? QualifiedName(Identifier(lake), Identifier(dataset), Identifier(table)) : name);
+		if (!entry) {
+			// a table the lake does not hold yet is read by its name: its version is `gone` until it is
+			// loaded. One named in another database is outside the lake
+			if (bare) {
+				Add("data", dataset + "." + table, "", "", -1, via);
+			} else if (name.Catalog().empty() || StringUtil::CIEquals(name.Catalog().GetIdentifierName(), lake)) {
+				Add("data", name.Schema().GetIdentifierName() + "." + table, "", "", -1, via);
+			} else {
+				Add("untracked", name.ToString(), "", "", -1, via);
+			}
+			return;
+		}
+		if (!StringUtil::CIEquals(entry->ParentCatalog().GetName().GetIdentifierName(), lake)) {
+			Add("untracked", name.ToString(), "", "", -1, via);
+			return;
+		}
+		auto schema = entry->ParentSchema().name.GetIdentifierName();
+		if (StringUtil::Lower(schema) == "main") {
+			Add("catalog", "main." + entry->name.GetIdentifierName(), "", "", -1, via);
+			return;
+		}
+		Add("data", schema + "." + entry->name.GetIdentifierName(), "", "", -1, via);
+	}
+
+	void Call(const FunctionExpression &function, bool table, const std::set<string> &ctes, const Env &env,
+	          const string &via, idx_t depth) {
+		auto &name = function.GetQualifiedName();
+		auto fn = Lower(name.Name());
+		auto &arguments = function.GetArguments();
+		vector<Arg> args;
+		for (auto &argument : arguments) {
+			args.push_back(ArgOf(argument.GetExpression(), env));
+		}
+		auto texts = [&]() {
+			vector<string> list;
+			for (auto &arg : args) {
+				list.push_back(arg.text);
+			}
+			return StringUtil::Join(list, ", ");
+		};
+		bool main = InMain(name);
+		if (main && (fn == "annotations" || fn == "results" || fn == "definition")) {
+			bool constant = !args.empty();
+			for (auto &arg : args) {
+				constant = constant && arg.constant;
+			}
+			Add("read", fn, fn == "definition" ? "definition" : (args.empty() ? "" : args[0].text),
+			    args.empty() ? "" : args.back().text, constant ? 1 : 0, via);
+			return;
+		}
+		if (table && main && fn == "glossql_additivity_cells") {
+			Add("data", "glossql_additivity_cells", "data", "the dataset", -1, via);
+			Add("read", "annotations", "role", "the dataset", 1, via);
+			Add("read", "lineage", "relates", "the dataset", 1, via);
+			return;
+		}
+		if (table && main &&
+		    (fn == "subject_column" || fn == "dataset_cells" || fn == "glossql_relationship_checks" ||
+		     fn == "branch_rows")) {
+			Add("data", fn, texts(), "", -1, via);
+			return;
+		}
+		if (function.IsOperator()) {
+			return;
+		}
+		auto macro = Lookup(table ? CatalogType::TABLE_MACRO_ENTRY : CatalogType::MACRO_ENTRY, name);
+		if (macro && !macro->ParentCatalog().IsSystemCatalog()) {
+			Follow(macro->Cast<MacroCatalogEntry>(), arguments, env, via, depth);
+			return;
+		}
+		if (table) {
+			if (main && (StringUtil::StartsWith(fn, "glossql_") || fn == "glossary" || fn == "tests")) {
+				Add("catalog", fn, texts(), "", -1, via);
+			} else if (ReadsNothing(fn)) {
+				Add("other", fn, texts(), "", -1, via);
+			} else {
+				Add("untracked", fn + "(" + texts() + ")", "", "", -1, via);
+			}
+			return;
+		}
+		if (!macro && !Lookup(CatalogType::SCALAR_FUNCTION_ENTRY, name) &&
+		    !Lookup(CatalogType::AGGREGATE_FUNCTION_ENTRY, name) && !Lookup(CatalogType::TABLE_FUNCTION_ENTRY, name)) {
+			Add("untracked", "no function " + name.ToString(), "", "", -1, via);
+		}
+	}
+
+	//! A macro the body calls, followed as its call reads it: a parameter the call passes a constant
+	//! reads as that constant, one it leaves out as its default
+	void Follow(MacroCatalogEntry &entry, const vector<FunctionArgument> &arguments, const Env &env, const string &via,
+	            idx_t depth) {
+		auto qualified = entry.ParentCatalog().GetName().GetIdentifierName() + "." +
+		                 entry.ParentSchema().name.GetIdentifierName() + "." + entry.name.GetIdentifierName();
+		auto path = via.empty() ? entry.name.GetIdentifierName() : via + " > " + entry.name.GetIdentifierName();
+		if (depth >= MACRO_DEPTH) {
+			Add("untracked", "macros deeper than " + to_string(MACRO_DEPTH) + ": " + path, "", "", -1, via);
+			return;
+		}
+		Add("macro", qualified, "", "", -1, via);
+		idx_t positional = 0;
+		for (auto &argument : arguments) {
+			positional += argument.HasName() ? 0 : 1;
+		}
+		// the overload whose parameters the call fills, else the first
+		optional_ptr<MacroFunction> chosen;
+		for (auto &macro : entry.macros) {
+			if (!chosen || (macro->parameters.size() >= positional &&
+			                macro->parameters.size() - macro->default_parameters.size() <= positional &&
+			                chosen->parameters.size() < positional)) {
+				chosen = macro.get();
+			}
+		}
+		if (!chosen) {
+			return;
+		}
+		Env inner;
+		idx_t next = 0;
+		for (auto &parameter : chosen->parameters) {
+			auto name = parameter->Cast<ColumnRefExpression>().GetColumnName();
+			auto key = Lower(name);
+			bool bound = false;
+			for (auto &argument : arguments) {
+				if (argument.HasName() && Lower(argument.GetName()) == key) {
+					inner[key] = ArgOf(argument.GetExpression(), env);
+					bound = true;
+				}
+			}
+			if (!bound) {
+				while (next < arguments.size() && arguments[next].HasName()) {
+					next++;
+				}
+				if (next < arguments.size()) {
+					inner[key] = ArgOf(arguments[next++].GetExpression(), env);
+				} else {
+					auto fallback = chosen->default_parameters.find(name);
+					inner[key] = fallback != chosen->default_parameters.end() ? ArgOf(*fallback->second, Env())
+					                                                          : Arg {false, "<missing>"};
+				}
+			}
+		}
+		if (chosen->type == MacroType::TABLE_MACRO) {
+			Node(*chosen->Cast<TableMacroFunction>().query_node, std::set<string>(), inner, path, depth + 1);
+		} else if (chosen->type == MacroType::SCALAR_MACRO) {
+			Expr(*chosen->Cast<ScalarMacroFunction>().expression, std::set<string>(), inner, path, depth + 1);
+		}
+	}
+};
+
+//! The places a where names, as the lineage kit lists them (place_list())
+static std::set<string> PlaceNames(Inner &inner) {
+	std::set<string> places;
+	auto rows = inner.Run("SELECT p.\"where\" FROM unnest(main.place_list()) u(p)");
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			places.insert(chunk->GetValue(0, r).ToString());
+		}
+	}
+	return places;
+}
+
+//! What a body reads (BodyWalker). `dataset` is the function's own, empty for a GLOBAL one, whose
+//! unqualified names are taken in the subject's dataset when it computes
+static std::set<BodyRead> BodyReadSet(Inner &inner, const string &script, bool detector, const string &dataset) {
+	BodyWalker walker(*inner.con.context, inner.ws.lake, dataset);
+	inner.con.context->RunFunctionInTransaction([&]() { walker.Script(script, detector); });
+	return walker.reads;
+}
+
+//! The first read of a body no input can follow, as the refusal names it, or empty: the catalog
+//! reached past the read functions, a read function's what or where that is not a constant, a where
+//! that is no place, dataset_cells() over a dataset that is not the subject's, and what the walk
+//! cannot follow (SPEC §6). `dataset` is the function's own, empty for a GLOBAL one
+static string UntrackedRead(const std::set<BodyRead> &reads, const std::set<string> &places, const string &dataset) {
+	for (auto &read : reads) {
+		string named;
+		if (read.kind == "catalog" || read.kind == "untracked") {
+			named = read.what.empty() ? read.read : read.read + "(" + read.what + ")";
+		} else if (read.kind == "read" && (read.constant != 1 || !places.count(read.where))) {
+			named = read.read + "(" + read.what + ", " + read.where + ")";
+		} else if (read.kind == "data" && read.read == "dataset_cells" && read.where.empty()) {
+			auto args = StringUtil::Split(read.what, ", ");
+			bool place = false;
+			for (idx_t i = 1; i < args.size(); i++) {
+				place = place || places.count(args[i]);
+			}
+			auto first = args.empty() ? string() : args[0];
+			bool constant = !first.empty() && first[0] != '<' && first[0] != '$';
+			if (!place && constant && first.find('.') == string::npos && first != dataset) {
+				named = "dataset_cells(" + read.what + ")";
+			}
+		}
+		if (!named.empty()) {
+			return read.via.empty() ? named : named + " through " + read.via;
+		}
+	}
+	return string();
+}
+
+//! The refusal of a body's read no input can follow
+static string UntrackedRefusal(const string &function, const string &read) {
+	return StringUtil::Format("glossql: untracked_read: %s reads %s, past annotations(), results(), definition() "
+	                          "and the data: read the catalog through them, with a constant what and a place",
+	                          function, read);
+}
+
+//! What a body reads, as functions.reads stores it: a JSON list of the reads in their order
+static string ReadsJson(const std::set<BodyRead> &reads) {
+	auto text = [](const string &value) {
+		return value.empty() ? string("null") : JsonString(value);
+	};
+	vector<string> items;
+	for (auto &read : reads) {
+		items.push_back("{\"kind\":" + JsonString(read.kind) + ",\"read\":" + JsonString(read.read) +
+		                ",\"what\":" + text(read.what) + ",\"where\":" + text(read.where) + ",\"constant\":" +
+		                (read.constant < 0 ? "null"
+		                 : read.constant   ? "true"
+		                                   : "false") +
+		                ",\"via\":" + JsonString(read.via) + "}");
+	}
+	return "[" + StringUtil::Join(items, ",") + "]";
+}
+
+std::map<string, string> MacroDigests(Inner &inner, const string &function) {
+	std::map<string, string> digests;
+	auto rows = inner.Run("SELECT DISTINCT u.r.read FROM " + inner.Current("functions") +
+	                      " f, unnest(from_json(f.reads, '[{\"kind\": \"VARCHAR\", \"read\": \"VARCHAR\"}]')) u(r)"
+	                      " WHERE u.r.kind = 'macro'" +
+	                      (function.empty() ? string() : " AND f.name = " + QuoteText(function)));
+	vector<string> names;
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			names.push_back(chunk->GetValue(0, r).ToString());
+		}
+	}
+	if (names.empty()) {
+		return digests;
+	}
+	auto &context = *inner.con.context;
+	context.RunFunctionInTransaction([&]() {
+		for (auto &name : names) {
+			auto parts = StringUtil::Split(name, '.');
+			optional_ptr<CatalogEntry> entry;
+			if (parts.size() == 3) {
+				QualifiedName qualified {Identifier(parts[0]), Identifier(parts[1]), Identifier(parts[2])};
+				for (auto type : {CatalogType::TABLE_MACRO_ENTRY, CatalogType::MACRO_ENTRY}) {
+					try {
+						entry = entry ? entry
+						              : Catalog::GetEntry(context, EntryLookupInfo(type, qualified),
+						                                  OnEntryNotFound::RETURN_NULL);
+					} catch (std::exception &) {
+					}
+				}
+			}
+			if (!entry) {
+				digests[name] = "gone";
+				continue;
+			}
+			MD5Context md5;
+			md5.Add(entry->ToSQL());
+			char digest[MD5Context::MD5_HASH_LENGTH_TEXT + 1];
+			md5.FinishHex(digest);
+			digests[name] = string(digest, MD5Context::MD5_HASH_LENGTH_TEXT);
+		}
+	});
+	return digests;
+}
+
+//! The cycle a function's reads close over the functions' reads, as the path of function names
+//! from it back to it, or empty: a read of results reads that function's; a read of annotations reads
+//! the values of the functions that return the property
+static string ReadsCycle(Inner &inner, const string &name, const Value &returns, const string &reads) {
+	auto edges = "WITH f AS (SELECT name, returns, reads FROM " + inner.Current("functions") + " WHERE name <> " +
+	             QuoteText(name) + " UNION ALL SELECT " + QuoteText(name) + ", " + returns.ToSQLString() + ", " +
+	             QuoteText(reads) +
+	             "), r AS (SELECT f.name, u.r.read, u.r.what FROM f, unnest(from_json(f.reads, '[{\"kind\": "
+	             "\"VARCHAR\", \"read\": \"VARCHAR\", \"what\": \"VARCHAR\"}]')) u(r) WHERE u.r.kind = 'read'),"
+	             " p AS (SELECT a.name, 'x-kind ' || json_extract_string(a.schema, '$.x-kind') AS kind FROM " +
+	             inner.Current("aspects") +
+	             " a), e AS (SELECT r.name AS src, r.what AS dst FROM r WHERE r.read = 'results'"
+	             " UNION SELECT r.name, g.name FROM r JOIN f g ON g.returns = r.what OR g.returns IN"
+	             " (SELECT p.name FROM p WHERE p.kind = r.what) WHERE r.read = 'annotations'),"
+	             " walk(n, path) AS (SELECT dst, [src, dst] FROM e WHERE src = " +
+	             QuoteText(name) +
+	             " AND dst <> src UNION ALL SELECT e.dst, list_append(w.path, e.dst) FROM walk w JOIN e ON e.src = w.n"
+	             " WHERE w.n <> " +
+	             QuoteText(name) + " AND e.dst <> e.src AND NOT list_contains(w.path[2:], e.dst))";
+	auto cycle = inner.Scalar("WITH RECURSIVE " + edges.substr(5) +
+	                          " SELECT array_to_string(path, ' > ') FROM walk WHERE n = " + QuoteText(name) +
+	                          " ORDER BY len(path) LIMIT 1");
+	return cycle.IsNull() ? string() : cycle.ToString();
+}
+
 static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<RunnerState>();
 	if (state.done) {
@@ -668,21 +1559,34 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 	auto &returns = inputs[3];
 
 	Inner inner(context);
+	auto body = BodyReadSet(inner, script, returns.IsNull(), scope == "GLOBAL" ? string() : scope);
+	// a read no input can follow would leave its result out of date once stored (SPEC §6)
+	auto untracked = UntrackedRead(body, PlaceNames(inner), scope == "GLOBAL" ? string() : scope);
+	if (!untracked.empty()) {
+		throw InvalidInputException(UntrackedRefusal(name, untracked));
+	}
 	// identity is content (SPEC §3): an unchanged re-declaration is a no-op, so a kit replays silently
-	auto standing = inner.Row("SELECT scope, script, returns FROM " + inner.Store("functions") +
-	                          " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
-	if (!standing.empty() && standing[0].ToString() == scope && standing[1].ToString() == script &&
-	    SameValue(standing[2], returns)) {
+	auto reads = ReadsJson(body);
+	auto current = inner.Row("SELECT scope, script, returns, reads FROM " + inner.Current("functions") +
+	                         " WHERE name = " + QuoteText(name) + " ORDER BY begin_snapshot DESC LIMIT 1");
+	if (!current.empty() && current[0].ToString() == scope && current[1].ToString() == script &&
+	    SameValue(current[2], returns) && SameValue(current[3], Value(reads))) {
 		Outcome(output, "function " + name + " unchanged: no-op");
 		return;
 	}
 	auto schema = scope == "GLOBAL" ? string("main") : scope;
 	if (scope != "GLOBAL") {
 		auto declared =
-		    inner.Scalar("SELECT count(*) FROM " + inner.Store("datasets") + " WHERE name = " + QuoteText(scope));
+		    inner.Scalar("SELECT count(*) FROM " + inner.Current("datasets") + " WHERE name = " + QuoteText(scope));
 		if (declared.GetValue<int64_t>() == 0) {
 			throw InvalidInputException("glossql: dataset '%s' is not declared", scope);
 		}
+	}
+	// a function whose results it reads, directly or through others, reads its own: no value of the
+	// two settles. Its own results apart, which are never its input (SPEC §6)
+	auto cycle = ReadsCycle(inner, name, returns, reads);
+	if (!cycle.empty()) {
+		throw InvalidInputException("glossql: reads_cycle: %s reads results that read its own (%s)", name, cycle);
 	}
 	if (!returns.IsNull()) {
 		// a measurement is a table macro, a UDF for any SQL: its $subject is the parameter, named so
@@ -690,9 +1594,13 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 		inner.Run("CREATE OR REPLACE MACRO " + inner.Table(schema, name) + "(\"$subject\") AS TABLE " +
 		          ReplacePlaceholder(script, "subject", "\"$subject\""));
 	}
-	inner.Run("INSERT INTO " + inner.Store("functions") + " VALUES (" + inner.Seq("functions") + ", " +
-	          QuoteText(name) + ", " + QuoteText(scope) + ", " + QuoteText(script) + ", " + returns.ToSQLString() +
-	          ", now(), " + QuoteText(DeclaredBy(context)) + ")");
+	// the macro is the lake's commit and its row in the store follows
+	inner.Write(context, [&](CatalogWrite &write) {
+		write.End("functions", "name = " + QuoteText(name) + " AND scope = " + QuoteText(scope));
+		write.Insert("functions", QuoteText(name) + ", " + QuoteText(scope) + ", " + QuoteText(script) + ", " +
+		                              returns.ToSQLString() + ", " + QuoteText(reads) + ", now(), " +
+		                              QuoteText(DeclaredBy(context)));
+	});
 	// a detector's body is run by TESTS() over its test's values, $threshold bound there
 	Outcome(output, returns.IsNull() ? "declared detector " + name + " for " + scope
 	                                 : "declared measurement " + schema + "." + name + "($subject)");
@@ -711,47 +1619,52 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 	auto &inputs = data.bind_data->Cast<RunnerBindData>().inputs;
 	auto name = inputs[0].ToString();
 	auto aspect = inputs[1].ToString();
-	auto speakers = ListValue::GetChildren(inputs[2]);
+	auto actor_kinds = ListValue::GetChildren(inputs[2]);
 	auto &detector = inputs[3];
 	auto &threshold = inputs[4];
 
 	Inner inner(context);
-	auto declared = inner.Row("SELECT aspect, actors, detector, threshold FROM " + inner.Store("tests") +
-	                          " WHERE name = " + QuoteText(name) + " ORDER BY seq DESC LIMIT 1");
-	if (!declared.empty() && declared[0].ToString() == aspect && declared[1].ToString() == JsonList(inputs[2]) &&
-	    SameValue(declared[2], detector) &&
-	    (declared[3].IsNull() || threshold.IsNull() ? declared[3].IsNull() == threshold.IsNull()
-	                                                : declared[3].GetValue<double>() == threshold.GetValue<double>())) {
-		Outcome(output, "test " + name + " unchanged: no-op");
-		return;
-	}
-	auto standing = inner.Row("SELECT kind, schema::JSON->>'x-kind' FROM " + inner.Store("aspects") +
-	                          " WHERE name = " + QuoteText(aspect) + " ORDER BY seq DESC LIMIT 1");
-	if (standing.empty()) {
-		throw InvalidInputException("glossql: aspect '%s' is not declared", aspect);
-	}
-	auto &kind = standing[0];
-	if (!standing[1].IsNull() && standing[1].ToString() == "grounding") {
-		throw InvalidInputException("glossql: a test on grounding schema '%s' is refused: it judges nothing", aspect);
-	}
-	if (kind.ToString() == "MEASUREMENT" && !speakers.empty()) {
-		throw InvalidInputException("glossql: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
-	}
-	if (!detector.IsNull()) {
-		auto row = inner.Row("SELECT returns FROM " + inner.Store("functions") +
-		                     " WHERE name = " + QuoteText(detector.ToString()) + " ORDER BY seq DESC LIMIT 1");
-		if (row.empty()) {
-			throw InvalidInputException("glossql: detector '%s' is not a declared function", detector.ToString());
+	auto written = inner.Write(context, [&](CatalogWrite &write) {
+		auto declared = inner.Row("SELECT aspect, actors, detector, threshold FROM " + inner.Current("tests") +
+		                          " WHERE name = " + QuoteText(name) + " ORDER BY begin_snapshot DESC LIMIT 1");
+		if (!declared.empty() && declared[0].ToString() == aspect && declared[1].ToString() == JsonList(inputs[2]) &&
+		    SameValue(declared[2], detector) &&
+		    (declared[3].IsNull() || threshold.IsNull()
+		         ? declared[3].IsNull() == threshold.IsNull()
+				 : declared[3].GetValue<double>() == threshold.GetValue<double>())) {
+			return;
 		}
-		if (!row[0].IsNull()) {
-			throw InvalidInputException("glossql: '%s' returns %s: a measurement, not a detector", detector.ToString(),
-			                            row[0].ToString());
+		auto current = inner.Row("SELECT kind, schema::JSON->>'x-kind' FROM " + inner.Current("aspects") +
+		                         " WHERE name = " + QuoteText(aspect));
+		if (current.empty()) {
+			throw InvalidInputException("glossql: aspect '%s' is not declared", aspect);
 		}
-	}
-	inner.Run("INSERT INTO " + inner.Store("tests") + " VALUES (" + inner.Seq("tests") + ", " + QuoteText(name) + ", " +
-	          QuoteText(aspect) + ", " + QuoteText(JsonList(inputs[2])) + ", " + detector.ToSQLString() + ", " +
-	          threshold.ToSQLString() + ", now(), " + QuoteText(DeclaredBy(context)) + ")");
-	Outcome(output, "declared test " + name + " on " + aspect);
+		auto &kind = current[0];
+		if (!current[1].IsNull() && current[1].ToString() == "definition") {
+			throw InvalidInputException("glossql: a test on definition schema '%s' is refused: it judges nothing",
+			                            aspect);
+		}
+		if (kind.ToString() == "MEASUREMENT" && !actor_kinds.empty()) {
+			throw InvalidInputException(
+			    "glossql: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
+		}
+		if (!detector.IsNull()) {
+			auto row = inner.Row("SELECT returns FROM " + inner.Current("functions") + " WHERE name = " +
+			                     QuoteText(detector.ToString()) + " ORDER BY begin_snapshot DESC LIMIT 1");
+			if (row.empty()) {
+				throw InvalidInputException("glossql: detector '%s' is not a declared function", detector.ToString());
+			}
+			if (!row[0].IsNull()) {
+				throw InvalidInputException("glossql: '%s' returns %s: a measurement, not a detector",
+				                            detector.ToString(), row[0].ToString());
+			}
+		}
+		write.End("tests", "aspect = " + QuoteText(aspect));
+		write.Insert("tests", QuoteText(name) + ", " + QuoteText(aspect) + ", " + QuoteText(JsonList(inputs[2])) +
+		                          ", " + detector.ToSQLString() + ", " + threshold.ToSQLString() + ", now(), " +
+		                          QuoteText(DeclaredBy(context)));
+	});
+	Outcome(output, written == 0 ? "test " + name + " unchanged: no-op" : "declared test " + name + " on " + aspect);
 }
 
 TableFunction GlossTestFunction() {
@@ -792,287 +1705,130 @@ static unique_ptr<FunctionData> ExtractBind(ClientContext &context, TableFunctio
 	return result;
 }
 
-//! What a body read (SPEC §6): the lake's tables as <dataset>.<table> and the
-//! store relations as main.<relation>, by name; ** when a read could not be
-//! named, such as a file, a catalog function or another attached database;
-//! empty for a body that read nothing
-struct Reads {
-	std::set<string> names;
-	bool everything = false;
-	//! each scan of the measurements relation, with the functions the filters above it name
-	std::map<const LogicalOperator *, std::set<string>> measurements;
+//! A read of a stored result (SPEC §6): a read function's call with its what and its where; data,
+//! what the assets of its where read of the lake; the function's own declaration and the property
+//! it returns. A body that reads past them is refused at its declaration (UntrackedRead)
+struct Read {
+	string read;
+	string what;
+	string where;
 
-	//! A scan of the measurements relation names the functions its filter equates
-	//! `function` with, `main.measurements/<function>`; a scan with no such filter
-	//! names the whole relation
-	void Close() {
-		for (auto &scan : measurements) {
-			if (scan.second.empty()) {
-				names.insert("main.measurements");
-			}
-			for (auto &function : scan.second) {
-				names.insert("main.measurements/" + function);
-			}
-		}
-	}
-
-	//! `**` when the reads could not be enumerated, the names it did enumerate
-	//! after it: a store relation the body scanned pins what it holds even then
-	string Text() const {
-		auto listed = StringUtil::Join(vector<string>(names.begin(), names.end()), ",");
-		if (everything) {
-			return listed.empty() ? "**" : "**," + listed;
-		}
-		return listed;
+	bool operator<(const Read &other) const {
+		return std::tie(read, what, where) < std::tie(other.read, other.what, other.where);
 	}
 };
 
-//! Table functions that read no input
-static bool ReadsNothing(const string &function) {
-	static const std::set<string> PURE = {"range", "generate_series", "repeat", "repeat_row", "unnest"};
-	return PURE.count(function) > 0;
-}
-
-//! The operator in the subtree that owns a column binding's table index
-static optional_ptr<LogicalOperator> OwnerOf(LogicalOperator &op, TableIndex table_index) {
-	for (auto index : op.GetTableIndex()) {
-		if (index == table_index) {
-			return &op;
-		}
+//! The data a body reads, as a place: subject_column(), the relationship checks and branch_rows()
+//! the subject's own; dataset_cells() its dataset's tables, its views ('views'), both ('all', true), the tables
+//! and views of a place, or the one table it names; a dataset it names is the subject's, since one
+//! that is not is refused at the declaration. A table the body names in FROM is that table: one
+//! named without its dataset is taken in the subject's, by the name the lake spells it with, or as
+//! written where the lake holds none yet, whose version is `gone` until it is loaded
+static Read DataRead(ClientContext &context, const std::set<string> &places, const string &read, const string &args,
+                     const string &dataset) {
+	if (read == "subject_column" || read == "glossql_relationship_checks" || read == "branch_rows") {
+		return {"data", "data", "itself"};
 	}
-	for (auto &child : op.children) {
-		auto found = OwnerOf(*child, table_index);
-		if (found) {
-			return found;
-		}
-	}
-	return nullptr;
-}
-
-//! The measurements scan whose `function` column an expression is, followed
-//! through the projections between (a view expands to one), or none
-static optional_ptr<LogicalOperator> FunctionColumnOf(LogicalOperator &root, const Workspace &ws, Expression &expr) {
-	if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
-		return nullptr;
-	}
-	auto binding = expr.Cast<BoundColumnRefExpression>().Binding();
-	auto owner = OwnerOf(root, binding.table_index);
-	if (!owner) {
-		return nullptr;
-	}
-	if (owner->type == LogicalOperatorType::LOGICAL_PROJECTION) {
-		auto &projection = owner->Cast<LogicalProjection>();
-		if (binding.column_index.GetIndex() >= projection.expressions.size()) {
-			return nullptr;
-		}
-		return FunctionColumnOf(*owner, ws, *projection.expressions[binding.column_index.GetIndex()]);
-	}
-	if (owner->type != LogicalOperatorType::LOGICAL_GET) {
-		return nullptr;
-	}
-	auto &get = owner->Cast<LogicalGet>();
-	auto table = get.GetTable();
-	if (!table || string(table->ParentCatalog().GetName()) != ws.meta ||
-	    table->ParentSchema().name.GetIdentifierName() != ws.meta_schema ||
-	    table->name.GetIdentifierName() != "glossql_measurements") {
-		return nullptr;
-	}
-	auto &column_ids = get.GetColumnIds();
-	if (binding.column_index.GetIndex() >= column_ids.size()) {
-		return nullptr;
-	}
-	auto column = column_ids[binding.column_index.GetIndex()].GetPrimaryIndex();
-	return column < get.names.size() && get.names[column] == "function" ? owner : nullptr;
-}
-
-//! The constant an expression is, under the casts the binder wraps a literal in
-//! (`function = 'x'` compares to `CAST('x' AS VARCHAR)`); none otherwise
-static optional_ptr<Expression> ConstantOf(Expression &expr) {
-	if (expr.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
-		return &expr;
-	}
-	if (expr.GetExpressionType() != ExpressionType::OPERATOR_CAST) {
-		return nullptr;
-	}
-	optional_ptr<Expression> found;
-	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
-		if (!found) {
-			found = ConstantOf(child);
-		}
-	});
-	return found;
-}
-
-//! The functions a filter's expression equates the measurements relation's
-//! `function` column with — `function = 'x'`, `function IN (...)`, and each
-//! side of an AND or an OR — recorded on the scan they narrow
-static void FunctionPredicates(LogicalOperator &root, const Workspace &ws, Expression &expr, Reads &reads) {
-	auto type = expr.GetExpressionType();
-	if (type == ExpressionType::COMPARE_EQUAL || type == ExpressionType::COMPARE_IN) {
-		optional_ptr<LogicalOperator> scan;
-		vector<string> constants;
-		ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
-			if (auto constant = ConstantOf(child)) {
-				constants.push_back(constant->Cast<BoundConstantExpression>().GetValue().ToString());
-			} else if (!scan) {
-				scan = FunctionColumnOf(root, ws, child);
+	if (read == "dataset_cells") {
+		auto list = StringUtil::Split(args, ", ");
+		string what = "tables";
+		for (idx_t i = 1; i < list.size(); i++) {
+			if (places.count(list[i])) {
+				return {"data", "data", list[i]};
 			}
-		});
-		if (scan) {
-			for (auto &constant : constants) {
-				reads.measurements[scan.get()].insert(constant);
+			if (list[i] == "views") {
+				what = "views";
+			} else if (list[i] == "all" || list[i] == "true") {
+				what = "data";
 			}
 		}
-		return;
+		auto first = list.empty() ? string() : list[0];
+		bool constant = !first.empty() && first[0] != '<' && first[0] != '$';
+		if (constant && first.find('.') != string::npos) {
+			return {"data", what, first};
+		}
+		if (constant && first != dataset) {
+			throw InternalException("glossql: dataset_cells(%s) passed the declaration", args);
+		}
+		return {"data", what, "the dataset"};
 	}
-	if (type == ExpressionType::CONJUNCTION_AND || type == ExpressionType::CONJUNCTION_OR) {
-		ExpressionIterator::EnumerateChildren(expr,
-		                                      [&](Expression &child) { FunctionPredicates(root, ws, child, reads); });
+	if (read.find('.') != string::npos) {
+		return {"data", "data", read};
 	}
+	auto entry = RelationEntry(context, dataset, read);
+	if (!entry) {
+		return {"data", "data", dataset + "." + read};
+	}
+	return {"data", "data", dataset + "." + entry->name.GetIdentifierName()};
 }
 
-static void CollectReads(LogicalOperator &op, const Workspace &ws, Reads &reads) {
-	if (op.type == LogicalOperatorType::LOGICAL_GET) {
-		auto &get = op.Cast<LogicalGet>();
-		auto table = get.GetTable();
-		if (table) {
-			auto catalog = string(table->ParentCatalog().GetName());
-			auto schema = table->ParentSchema().name.GetIdentifierName();
-			auto name = table->name.GetIdentifierName();
-			if (catalog == ws.lake) {
-				reads.names.insert(schema + "." + name);
-			} else if (catalog == ws.meta && schema == ws.meta_schema && name == "glossql_measurements") {
-				reads.measurements.emplace(&op, std::set<string>());
-			} else if (catalog == ws.meta && schema == ws.meta_schema && StringUtil::StartsWith(name, "glossql_")) {
-				reads.names.insert("main." + name.substr(8));
-			} else {
-				reads.everything = true;
-			}
-		} else if (!ReadsNothing(string(get.function.GetDefinition()->name))) {
-			reads.everything = true;
-		}
-	}
-	if (op.type == LogicalOperatorType::LOGICAL_FILTER) {
-		for (auto &expr : op.expressions) {
-			FunctionPredicates(op, ws, *expr, reads);
-		}
-	}
-	for (auto &child : op.children) {
-		CollectReads(*child, ws, reads);
-	}
-}
-
-//! The views a relation holds on: itself when it is a view, and the views its
-//! query reads, through views over views — legs the plan does not name, since
-//! it expands a view to its tables. A name resolves as the binder resolves it,
-//! an unqualified one in the view's own schema
-static void ViewsOf(ClientContext &context, const Workspace &ws, const string &schema, const string &table,
-                    std::set<string> &views) {
-	auto entry = RelationEntry(context, schema, table);
-	if (!entry || entry->type != CatalogType::VIEW_ENTRY ||
-	    !views.insert(schema + "." + entry->name.GetIdentifierName()).second) {
-		return;
-	}
-	auto query = entry->Cast<ViewCatalogEntry>().GetQuery().Copy();
-	std::function<void(unique_ptr<ParsedExpression> &)> expressions;
-	std::function<void(TableRef &)> refs = [&](TableRef &ref) {
-		if (ref.type != TableReferenceType::BASE_TABLE) {
-			return;
-		}
-		auto &name = ref.Cast<BaseTableRef>().GetQualifiedName();
-		auto catalog = name.Catalog().GetIdentifierName();
-		if (!catalog.empty() && catalog != ws.lake) {
-			return;
-		}
-		auto in = name.Schema().empty() ? schema : name.Schema().GetIdentifierName();
-		ViewsOf(context, ws, in, name.Name().GetIdentifierName(), views);
+//! The reads of a result of a function, from the reads its declaration stored (functions.reads), each
+//! one an input can follow (UntrackedRead). A function's own results are no input of its own
+static vector<Read> ReadsOfFunction(ClientContext &context, Inner &inner, const string &name, const string &scope,
+                                    const string &dataset) {
+	std::set<Read> reads {{"function", "", ""}, {"property", "", ""}};
+	auto places = PlaceNames(inner);
+	auto rows = inner.Run("SELECT r.kind, r.read, r.what, r.\"where\" FROM " + inner.Current("functions") +
+	                      " f, unnest(from_json(f.reads, '[{\"kind\": \"VARCHAR\", \"read\": \"VARCHAR\", \"what\":"
+	                      " \"VARCHAR\", \"where\": \"VARCHAR\"}]')) u(r) WHERE f.name = " +
+	                      QuoteText(name) + " AND f.scope = " + QuoteText(scope));
+	auto text = [](const Value &value) {
+		return value.IsNull() ? string() : value.ToString();
 	};
-	expressions = [&](unique_ptr<ParsedExpression> &child) {
-		if (child->GetExpressionClass() == ExpressionClass::SUBQUERY) {
-			auto &subquery = child->Cast<SubqueryExpression>();
-			ParsedExpressionIterator::EnumerateQueryNodeChildren(*subquery.Subquery()->node, expressions, refs);
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			auto kind = text(chunk->GetValue(0, r));
+			auto read = text(chunk->GetValue(1, r));
+			auto what = text(chunk->GetValue(2, r));
+			auto where = text(chunk->GetValue(3, r));
+			if (kind == "read") {
+				if (read != "results" || what != name) {
+					reads.insert({read, what, where});
+				}
+			} else if (kind == "data") {
+				reads.insert(where.empty() ? DataRead(context, places, read, what, dataset)
+				                           : Read {"data", what, where});
+			} else if (kind == "catalog" || kind == "untracked") {
+				throw InternalException("glossql: %s's read %s passed the declaration", name, read);
+			}
 		}
-		ParsedExpressionIterator::EnumerateChildren(*child, expressions);
-	};
-	ParsedExpressionIterator::EnumerateQueryNodeChildren(*query->Cast<SelectStatement>().node, expressions, refs);
-}
-
-//! What a bind read beside the plan (ClientContextState): a primitive whose
-//! bind reads the catalog and the tables' shapes to write its SQL, or one
-//! column's counts to refuse, names those inputs here, since the plan it
-//! leaves cannot; the measurement's reads take them with the plan's, so the
-//! row misses when one of them moves, as it does when a table the plan reads
-//! moves
-struct BindReads : public ClientContextState {
-	std::set<string> names;
-
-	static BindReads &Of(ClientContext &context) {
-		return *context.registered_state->GetOrCreate<BindReads>("glossql_bind_reads");
 	}
-};
-
-//! A bind names an input it read: a lake relation as dataset.table, a store
-//! relation as main.name, the dataset's every relation as *
-static void BindRead(ClientContext &context, const string &name) {
-	BindReads::Of(context).names.insert(name);
+	return vector<Read>(reads.begin(), reads.end());
 }
 
-//! The reads of a call on a subject, enumerated from its bound plan: views
-//! expand to their tables, subject_column() to the subject's, before any
-//! optimizer touches it; the views the subject holds on are named beside,
-//! their definitions being legs too, and so is what a bind read beside the plan
-static string ReadsOf(Inner &inner, const string &call, const string &subject) {
-	Reads reads;
-	auto &context = *inner.con.context;
-	auto &side = BindReads::Of(context);
-	side.names.clear();
-	unique_ptr<SQLStatement> statement = ParseSelect("SELECT * FROM " + call);
-	context.RunFunctionInTransaction([&]() {
-		Planner planner(context);
-		planner.CreatePlan(std::move(statement));
-		CollectReads(*planner.plan, inner.ws, reads);
-		reads.Close();
-		reads.names.insert(side.names.begin(), side.names.end());
-		auto parts = StringUtil::Split(subject, '.');
-		if (parts.size() >= 2 && subject.find(" -> ") == string::npos && subject.find(" <-> ") == string::npos) {
-			std::set<string> views;
-			ViewsOf(context, inner.ws, parts[0], parts[1], views);
-			reads.names.insert(views.begin(), views.end());
+//! What each read returns now for the subject, as the digest a result stores (ReadsNowSQL). Whether
+//! a result it read is current is no part of the digest: a result is out of date while one it read
+//! is, whenever it was computed (CurrentResultsSQL)
+static vector<pair<Read, Value>> InputsNow(Inner &inner, const string &dataset, const string &subject,
+                                           const string &function, const string &aspect, const vector<Read> &reads) {
+	ReadNeeds needs;
+	needs.macros = MacroDigests(inner, function);
+	vector<string> wanted;
+	for (auto &read : reads) {
+		needs.Add(dataset, read.read);
+		wanted.push_back("(0::BIGINT, " + QuoteText(dataset) + ", " + QuoteText(subject) + ", " + QuoteText(function) +
+		                 ", " + QuoteText(aspect) + ", " + QuoteText(read.read) + ", " + QuoteText(read.what) + ", " +
+		                 QuoteText(read.where) + ")");
+	}
+	auto rows = inner.Run("WITH wanted(id, dataset, subject, function, aspect, \"read\", what, \"where\") AS (VALUES " +
+	                      StringUtil::Join(wanted, ", ") + "), " + ReadsNowSQL(inner.ws, needs) +
+	                      " SELECT \"read\", what, \"where\", version FROM now_versions ORDER BY ALL");
+	vector<pair<Read, Value>> inputs;
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			inputs.emplace_back(Read {chunk->GetValue(0, r).ToString(), chunk->GetValue(1, r).ToString(),
+			                          chunk->GetValue(2, r).ToString()},
+			                    chunk->GetValue(3, r));
 		}
-	});
-	return reads.Text();
-}
-
-//! The pin a computation is stored at: the dataset's tables, the store relations
-//! and whatever else the reads named, each at its version now; the dataset's
-//! views too where the reads could not be enumerated (**). A body that read the
-//! measurements relation pins the other functions' rows, one leg per function:
-//! its own rows are its output, never its input (SPEC §6)
-static string PinOf(Inner &inner, const string &dataset, const string &function, const string &reads) {
-	vector<string> named;
-	bool measurements = false;
-	for (auto &name : StringUtil::Split(reads, ',')) {
-		named.push_back(QuoteText(name));
-		measurements = measurements || name == "main.measurements";
 	}
-	named.push_back("''");
-	string others = measurements ? " OR (starts_with(name, 'main.measurements/') AND name <> " +
-	                                   QuoteText("main.measurements/" + function) + ")"
-	                             : string();
-	return inner
-	    .Scalar("SELECT coalesce(string_agg(name || ':' || version, ',' ORDER BY name || ':' || version), '') FROM (" +
-	            LegsSQL(inner.ws) + ") WHERE (starts_with(name, " + QuoteText(dataset + ".") + ") AND (kind = 'table'" +
-	            (StringUtil::StartsWith(reads, "**") ? string(" OR true") : string("")) + ")) OR name IN (" +
-	            StoreLegNames() + ") OR name IN (" + StringUtil::Join(named, ", ") + ")" + others)
-	    .ToString();
+	return inputs;
 }
 
-//! The newest stored row for the call while what it read is unchanged, else NULL
-static Value ServedValue(Inner &inner, const string &dataset, const string &name, const string &subject) {
-	return inner.Scalar("SELECT value FROM (WITH legs AS (" + LegsSQL(inner.ws) + ") SELECT m.value, " +
-	                    StandsSQL(inner.ws, "m") + " AS stands FROM " + inner.Store("measurements") +
-	                    " m WHERE m.dataset = " + QuoteText(dataset) + " AND m.function = " + QuoteText(name) +
-	                    " AND m.subject = " + QuoteText(subject) + " ORDER BY m.seq DESC LIMIT 1) WHERE stands");
+//! The stored row for the call while it is current, (value, error), else empty
+static vector<Value> Served(Inner &inner, const string &dataset, const string &name, const string &subject) {
+	return inner.Row("SELECT value, error FROM (" + CurrentResultsSQL(inner) +
+	                 ") WHERE current AND dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
+	                 " AND subject = " + QuoteText(subject));
 }
 
 //! What extraction serves of a value: its top-level summary object when the body
@@ -1113,6 +1869,47 @@ static Value ValueOf(Inner &inner, const string &call) {
 	return value;
 }
 
+//! Whether the body raised an error: one of the engine's own, an interrupt, a fatal or internal
+//! error or memory run out, is no result of the body
+static bool RaisedByBody(const ErrorData &error) {
+	switch (error.Type()) {
+	case ExceptionType::INTERRUPT:
+	case ExceptionType::FATAL:
+	case ExceptionType::INTERNAL:
+	case ExceptionType::OUT_OF_MEMORY:
+		return false;
+	default:
+		return true;
+	}
+}
+
+//! Takes a function's reads again from its body, and stores them where they moved (BodyReadSet).
+//! Returns the read no input can follow, where a macro the body calls now makes one, or empty: the
+//! reads are stored all the same, so the macros they follow keep the function's digest
+static string RetakeReads(ClientContext &context, Inner &inner, const string &name, const string &scope,
+                          const Value &returns) {
+	auto current = inner.Row("SELECT script, reads, declared_at, declared_by FROM " + inner.Current("functions") +
+	                         " WHERE name = " + QuoteText(name) + " AND scope = " + QuoteText(scope));
+	if (current.empty()) {
+		return string();
+	}
+	auto script = current[0].ToString();
+	auto dataset = scope == "GLOBAL" ? string() : scope;
+	auto body = BodyReadSet(inner, script, returns.IsNull(), dataset);
+	auto untracked = UntrackedRead(body, PlaceNames(inner), dataset);
+	auto reads = ReadsJson(body);
+	if (SameValue(current[1], Value(reads))) {
+		return untracked;
+	}
+	inner.Write(context, [&](CatalogWrite &write) {
+		write.End("functions", "name = " + QuoteText(name) + " AND scope = " + QuoteText(scope));
+		write.Insert("functions", QuoteText(name) + ", " + QuoteText(scope) + ", " + QuoteText(script) + ", " +
+		                              returns.ToSQLString() + ", " + QuoteText(reads) + ", " +
+		                              current[2].ToSQLString() + ", " + current[3].ToSQLString());
+	});
+	return untracked;
+}
+
 static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<ExtractState>();
 	if (state.done) {
@@ -1124,6 +1921,10 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 	auto dataset = DatasetOf(context, subject);
 
 	Inner inner(context);
+	// a body runs in the subject's dataset, and the read functions it reads the catalog through walk
+	// from the subject this run computes for
+	inner.Run("USE " + QuoteName(inner.ws.lake) + "." + QuoteName(dataset));
+	ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(subject));
 	idx_t row = 0;
 	for (auto &call : ListValue::GetChildren(inputs[1])) {
 		auto name = call.ToString();
@@ -1134,44 +1935,94 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		auto scope = schema == "main" ? "GLOBAL" : schema;
 		auto returns =
 		    inner.Scalar("SELECT returns FROM " + inner.Store("functions") + " WHERE name = " + QuoteText(name) +
-			             " AND scope = " + QuoteText(scope) + " ORDER BY seq DESC LIMIT 1");
+			             " AND scope = " + QuoteText(scope) + " AND end_snapshot IS NULL");
 		if (returns.IsNull()) {
 			throw InvalidInputException("glossql: %s is a detector: it runs at read, through TESTS()", name);
 		}
 		output.data[0].Append(Value(name));
 		output.data[1].Append(Value(subject));
 		output.data[2].Append(returns);
-		// served while what it read is unchanged: a repeat is a serve, not a rerun (SPEC §6)
-		auto served = ServedValue(inner, dataset, name, subject);
-		if (!served.IsNull()) {
-			output.data[3].Append(Value(Summary(inner, served.ToString())));
+		// served while it is current: a repeat is a serve, not a rerun (SPEC §6). A stored failure is not
+		// served to a call: it may come from what is no input (a service down, a configuration), so a
+		// call computes again; it stays current for a read of what is due
+		auto served = Served(inner, dataset, name, subject);
+		if (!served.empty() && served[1].IsNull()) {
+			output.data[3].Append(Value(Summary(inner, served[0].ToString())));
 			output.data[4].Append(Value::BOOLEAN(false));
 			row++;
 			continue;
 		}
-		auto invocation = inner.Table(schema, name) + "(" + QuoteText(subject) + ")";
-		auto reads = ReadsOf(inner, invocation, subject);
-		auto value = ValueOf(inner, invocation);
-		if (value.IsNull()) {
-			value = Value("null");
-		}
 		// the aspect's schema is the one contract: the output is validated against it (SPEC §6)
 		auto contract = inner.Scalar("SELECT schema::VARCHAR FROM " + inner.Store("aspects") +
-		                             " WHERE name = " + returns.ToSQLString() + " ORDER BY seq DESC LIMIT 1");
+		                             " WHERE name = " + returns.ToSQLString() + " AND end_snapshot IS NULL");
 		if (contract.IsNull()) {
 			throw InvalidInputException("glossql: %s returns %s, which is not a declared aspect", name,
 			                            returns.ToString());
 		}
-		auto error = JsonSchemaCheck(contract.ToString(), value.ToString());
-		if (!error.empty()) {
-			throw InvalidInputException("glossql: the output of %s does not conform to the schema of %s: %s", name,
-			                            returns.ToString(), error);
+		auto invocation = inner.Table(schema, name) + "(" + QuoteText(subject) + ")";
+		// what the body reads is taken again: a macro it follows may have changed, a table it names
+		// may exist now. The function's row follows where it moved. A macro that now reads past the
+		// read functions makes the computation fail, stored with the function's declaration as its
+		// input: a change to the macros it follows makes it out of date
+		auto untracked = RetakeReads(context, inner, name, scope, returns);
+		// what its reads return, read before it runs: a change under it is a change after it
+		auto reads = InputsNow(inner, dataset, subject, name, returns.ToString(),
+		                       untracked.empty() ? ReadsOfFunction(context, inner, name, scope, dataset)
+		                                         : vector<Read> {{"function", "", ""}, {"property", "", ""}});
+		// a computation that fails is a result too: stored with its error, which serves while it is current.
+		// An error the body did not raise (an interrupt, the engine's own) stores nothing
+		Value value;
+		string error;
+		try {
+			if (!untracked.empty()) {
+				throw InvalidInputException(UntrackedRefusal(name, untracked));
+			}
+			value = ValueOf(inner, invocation);
+			if (value.IsNull()) {
+				value = Value("null");
+			}
+			auto breach = JsonSchemaCheck(contract.ToString(), value.ToString());
+			if (!breach.empty()) {
+				error = StringUtil::Format("glossql: the output of %s does not conform to the schema of %s: %s", name,
+				                           returns.ToString(), breach);
+			}
+		} catch (std::exception &ex) {
+			ErrorData raised(ex);
+			if (!RaisedByBody(raised)) {
+				throw;
+			}
+			error = raised.RawMessage();
 		}
-		// stored at its pin, with what it read: the next extraction serves it while those are unchanged
-		inner.Run("INSERT INTO " + inner.Store("measurements") + " VALUES (" + inner.Seq("measurements") + ", " +
-		          QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) + ", " +
-		          returns.ToSQLString() + ", " + QuoteText(PinOf(inner, dataset, name, reads)) + ", " +
-		          QuoteText(value.ToString()) + ", now(), " + QuoteText(reads) + ")");
+		if (context.IsInterrupted()) {
+			throw InterruptException();
+		}
+		if (!error.empty()) {
+			value = Value();
+		}
+		// stored with what each read returned: the next extraction serves it while they return
+		// the same. The result it replaces ends, and its inputs with it
+		inner.Write(context, [&](CatalogWrite &write) {
+			auto key = "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
+			           " AND subject = " + QuoteText(subject);
+			auto replaced =
+			    inner.Scalar("SELECT begin_snapshot FROM " + inner.Current("measurements") + " WHERE " + key);
+			if (!replaced.IsNull()) {
+				write.End("inputs", "begin_snapshot = " + replaced.ToString());
+				write.End("measurements", key);
+			}
+			write.Insert("measurements", QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) +
+			                                 ", " + returns.ToSQLString() + ", " +
+			                                 (value.IsNull() ? string("NULL") : QuoteText(value.ToString())) +
+			                                 ", now(), " + (error.empty() ? string("NULL") : QuoteText(error)));
+			for (auto &input : reads) {
+				write.Insert("inputs", QuoteText(InputName(input.first.read, input.first.what, input.first.where)) +
+				                           ", " + input.second.ToSQLString() + ", " + QuoteText(input.first.read) +
+				                           ", " + QuoteText(input.first.what) + ", " + QuoteText(input.first.where));
+			}
+		});
+		if (!error.empty()) {
+			throw InvalidInputException(error);
+		}
 		output.data[3].Append(Value(Summary(inner, value.ToString())));
 		output.data[4].Append(Value::BOOLEAN(true));
 		row++;
@@ -1260,6 +2111,24 @@ static TableFunction SubjectColumnFunction() {
 }
 
 //===--------------------------------------------------------------------===//
+// glossql_outdated(): why each stored result that is out of date is — (dataset,
+// function, subject, input, reason): a read that returns other rows now than
+// when the result was computed (changed), or a read of results that returned
+// one that is out of date (outdated)
+//===--------------------------------------------------------------------===//
+
+static unique_ptr<TableRef> OutdatedBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	Inner inner(context);
+	return make_uniq<SubqueryRef>(ParseSelect(OutdatedSQL(inner)));
+}
+
+static TableFunction OutdatedFunction() {
+	TableFunction function("glossql_outdated", {}, nullptr);
+	function.bind_replace = OutdatedBindReplace;
+	return function;
+}
+
+//===--------------------------------------------------------------------===//
 // dataset_cells(subject [, views]): every cell of a dataset's tables, or of one
 // table, as one relation — (table, column, ci, column_type, rn, val). The structure
 // screens a kit runs over a dataset are SQL over it: a self-join on rn puts a
@@ -1284,14 +2153,16 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	if (parts.empty() || parts.size() > 2) {
 		throw InvalidInputException("glossql: dataset_cells takes a dataset or dataset.table, got '%s'", subject);
 	}
-	// the relations are listed at bind: one stored or dropped is a change the plan cannot name
-	BindRead(context, parts.size() == 1 ? "*" : parts[0] + "." + parts[1]);
 	// a second argument true (or 'all') takes the dataset's views too — a metric definition
 	// is one — each bound at bind and skipped when it does not, as a screen skips a
 	// metric definition that fails; 'views' takes the views alone, so that a read over the
-	// metric definitions — a metric's series, a plan's rows — binds no table
+	// metric definitions — a metric's series, a plan's rows — binds no table; a place (the
+	// lineage kit's) takes the tables and views of the place, walked from the running
+	// function's subject, else from the dataset
 	bool views = false;
 	bool only_views = false;
+	bool placed = false;
+	std::set<string> place;
 	if (input.inputs.size() > 1 && !input.inputs[1].IsNull()) {
 		if (input.inputs[1].type().id() == LogicalTypeId::VARCHAR) {
 			auto mode = input.inputs[1].ToString();
@@ -1299,8 +2170,23 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 				views = only_views = true;
 			} else if (mode == "all") {
 				views = true;
+			} else if (PlaceNames(inner).count(mode)) {
+				views = placed = true;
+				Value subject;
+				if (!ClientConfig::GetConfig(context).GetUserVariable(string(RUN_SUBJECT), subject)) {
+					ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(parts[0]));
+				}
+				auto rows = inner.Run(
+				    "SELECT DISTINCT split_part(asset, '.', 2) FROM main.place(" + QuoteText(mode) +
+				    ") WHERE main.asset_grain(asset) = 'TABLE' AND split_part(asset, '.', 1) = " + QuoteText(parts[0]));
+				while (auto chunk = rows->Fetch()) {
+					for (idx_t r = 0; r < chunk->size(); r++) {
+						place.insert(chunk->GetValue(0, r).ToString());
+					}
+				}
 			} else if (mode != "tables") {
-				throw InvalidInputException("glossql: dataset_cells takes tables, views or all, got '%s'", mode);
+				throw InvalidInputException("glossql: dataset_cells takes tables, views, all or a place, got '%s'",
+				                            mode);
 			}
 		} else {
 			views = input.inputs[1].GetValue<bool>();
@@ -1313,7 +2199,7 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	std::map<string, vector<pair<string, string>>> columns;
 	std::set<string> kept;
 	for (auto &column : DatasetColumns(context, parts[0], parts.size() == 2 ? parts[1] : string(), views)) {
-		if (only_views && !column.view) {
+		if ((only_views && !column.view) || (placed && !place.count(column.table))) {
 			continue;
 		}
 		if (columns.find(column.table) == columns.end()) {
@@ -1410,21 +2296,24 @@ static TableFunctionSet DatasetCellsFunctions() {
 }
 
 //===--------------------------------------------------------------------===//
-// glossql_relationship_checks(dataset): whether the declared relationships
-// hold, per edge over its own columns. The quality kit's relationship_checks
-// wraps it. An edge's legs are read from the two tables directly, typed and
+// glossql_relationship_checks(subject): whether the declared relationships
+// hold, per edge over its own columns: a dataset's every one, or one
+// relationship named by its pair path. The quality kit's relationship_checks
+// wraps it. An edge's key columns are read from the two tables directly, typed and
 // linear in their rows, where a screen over dataset_cells pivoted every cell
 // of a table back into rows per edge. Per edge: the filled child rows (every
-// leg present), the orphans (child keys no parent row carries; inside one
+// key column present), the orphans (child keys no parent row carries; inside one
 // table, child keys that reach more than one parent key on the same rows),
-// and for an edge across two tables the temporal pairs: the first three date
+// for an edge across two tables the orphan keys (the three with the most rows,
+// each with its rows; a pair of key columns as a JSON list; each value cut to
+// its first 100 characters) and how many there are, and the temporal pairs: the first three date
 // columns of each side, joined on the edge, how often the child's date
 // precedes the parent's. Keys compare as text, as the cells did
 //===--------------------------------------------------------------------===//
 
 struct EdgeSide {
 	string table;
-	vector<string> legs;
+	vector<string> key_columns;
 	//! the first three date columns, in the table's order
 	vector<string> dates;
 };
@@ -1439,9 +2328,12 @@ static EdgeSide ParseSide(ClientContext &context, const string &dataset, const s
 	result.table = parts[1];
 	auto &key = parts[2];
 	if (key.size() > 2 && key.front() == '(' && key.back() == ')') {
-		result.legs = StringUtil::Split(key.substr(1, key.size() - 2), ", ");
+		for (auto column : StringUtil::Split(key.substr(1, key.size() - 2), ',')) {
+			StringUtil::Trim(column);
+			result.key_columns.push_back(column);
+		}
 	} else {
-		result.legs.push_back(key);
+		result.key_columns.push_back(key);
 	}
 	for (auto &column : DatasetColumns(context, dataset, result.table, false)) {
 		if (result.dates.size() < 3 && (column.type == "DATE" || StringUtil::StartsWith(column.type, "TIMESTAMP"))) {
@@ -1451,16 +2343,20 @@ static EdgeSide ParseSide(ClientContext &context, const string &dataset, const s
 	return result;
 }
 
+//! How many characters of an orphan key's value the examples keep; the counts are of the whole values
+constexpr idx_t ORPHAN_KEY_LENGTH = 100;
+
 //! One edge's rows: (seq, relationship, filled, orphans, pair_seq, child_column, parent_column, joined, precedes)
 static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const string &relationship, const EdgeSide &child,
                       const EdgeSide &parent) {
-	bool two = child.legs.size() == 2;
+	bool two = child.key_columns.size() == 2;
 	auto keys = [&](const EdgeSide &s, const string &k1, const string &k2) {
-		return QuoteName(s.legs[0]) + "::VARCHAR AS " + k1 + ", " +
-		       (two ? QuoteName(s.legs[1]) + "::VARCHAR" : "NULL::VARCHAR") + " AS " + k2;
+		return QuoteName(s.key_columns[0]) + "::VARCHAR AS " + k1 + ", " +
+		       (two ? QuoteName(s.key_columns[1]) + "::VARCHAR" : "NULL::VARCHAR") + " AS " + k2;
 	};
 	auto present = [&](const EdgeSide &s) {
-		return QuoteName(s.legs[0]) + " IS NOT NULL" + (two ? " AND " + QuoteName(s.legs[1]) + " IS NOT NULL" : "");
+		return QuoteName(s.key_columns[0]) + " IS NOT NULL" +
+		       (two ? " AND " + QuoteName(s.key_columns[1]) + " IS NOT NULL" : "");
 	};
 	auto dates = [&](const EdgeSide &s, const string &prefix) {
 		string out;
@@ -1473,11 +2369,21 @@ static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const stri
 	             inner.Table(dataset, child.table) + " WHERE " + present(child) + "), p AS (SELECT " +
 	             keys(parent, "k1", "k2") + dates(parent, "d") + " FROM " + inner.Table(dataset, parent.table) +
 	             " WHERE " + present(parent) + ")";
-	string join_orphans = "(SELECT count(*) FROM c WHERE NOT EXISTS (SELECT 1 FROM p WHERE p.k1 = c.k1 AND p.k2 IS NOT "
-	                      "DISTINCT FROM c.k2))";
+	// the child keys no parent row carries, each with its rows: the orphans of an edge across tables,
+	// grouped by the key columns and served as the three with the most rows, a pair as a JSON list and
+	// each value cut to its first ORPHAN_KEY_LENGTH characters, and the count of keys
+	sql += ", o AS (SELECT k1, k2, count(*) AS n FROM c WHERE NOT EXISTS (SELECT 1 FROM p WHERE p.k1 = c.k1 AND "
+	       "p.k2 IS NOT DISTINCT FROM c.k2) GROUP BY k1, k2)";
+	auto cut = [](const string &column) {
+		return "left(" + column + ", " + to_string(ORPHAN_KEY_LENGTH) + ")";
+	};
+	string shown = two ? "to_json([" + cut("k1") + ", " + cut("k2") + "])::VARCHAR" : cut("k1");
+	string join_orphans = "(SELECT coalesce(sum(n), 0)::BIGINT FROM o)";
+	string orphan_keys = "(SELECT list({'key': " + shown + ", 'rows': n} ORDER BY n DESC, k1, k2)[1:3] FROM o)";
+	string orphan_distinct = "(SELECT count(*) FROM o)";
 	string orphans = join_orphans;
 	if (child.table == parent.table) {
-		// a nest: the parent legs do not key the table, and a child key is orphaned by
+		// a nest: the parent key columns do not key the table, and a child key is orphaned by
 		// reaching more than one parent key on the rows it sits on
 		sql += ", same_rows AS (SELECT " + keys(child, "k1", "k2") + ", " + keys(parent, "p1", "p2") + " FROM " +
 		       inner.Table(dataset, child.table) + " WHERE " + present(child) + " AND " + present(parent) + ")";
@@ -1486,8 +2392,11 @@ static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const stri
 		          "same_rows "
 		          "GROUP BY k1, k2)) ELSE " +
 		          join_orphans + " END";
+		orphan_keys = "NULL::STRUCT(key VARCHAR, \"rows\" BIGINT)[]";
+		orphan_distinct = "NULL::BIGINT";
 	}
-	sql += ", e AS (SELECT (SELECT count(*) FROM c) AS filled, " + orphans + " AS orphans)";
+	sql += ", e AS (SELECT (SELECT count(*) FROM c) AS filled, " + orphans + " AS orphans, " + orphan_keys +
+	       " AS orphan_keys, " + orphan_distinct + " AS orphan_distinct)";
 	const string no_pairs = "SELECT NULL::BIGINT AS pair_seq, NULL::VARCHAR AS child_column, NULL::VARCHAR AS "
 	                        "parent_column, NULL::BIGINT AS joined, NULL::BIGINT AS precedes WHERE false";
 	if (child.table == parent.table || child.dates.empty() || parent.dates.empty()) {
@@ -1514,18 +2423,48 @@ static string EdgeSQL(Inner &inner, const string &dataset, idx_t seq, const stri
 		       " FROM c JOIN p ON p.k1 = c.k1 AND p.k2 IS NOT DISTINCT FROM c.k2), t AS (" + rows + ")";
 	}
 	sql += " SELECT " + to_string(seq) + "::BIGINT AS seq, " + QuoteText(relationship) +
-	       " AS relationship, e.filled, e.orphans, t.pair_seq, t.child_column, t.parent_column, t.joined, t.precedes "
-	       "FROM e LEFT JOIN (SELECT * FROM t WHERE joined > 0) t ON true)";
+	       " AS relationship, e.filled, e.orphans, e.orphan_keys, e.orphan_distinct, t.pair_seq, t.child_column, "
+	       "t.parent_column, t.joined, t.precedes FROM e LEFT JOIN (SELECT * FROM t WHERE joined > 0) t ON true)";
 	return sql;
+}
+
+//! Whether two sides name the same table and key columns, as DuckDB matches names
+static bool SameSide(const EdgeSide &a, const EdgeSide &b) {
+	if (!StringUtil::CIEquals(a.table, b.table) || a.key_columns.size() != b.key_columns.size()) {
+		return false;
+	}
+	for (idx_t i = 0; i < a.key_columns.size(); i++) {
+		if (!StringUtil::CIEquals(a.key_columns[i], b.key_columns[i])) {
+			return false;
+		}
+	}
+	return true;
 }
 
 static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	Inner inner(context);
-	auto dataset = ResolveSubject(context, input.inputs[0].ToString());
-	BindRead(context, "main.relationships");
+	// a dataset's every declared relationship, or one relationship by its pair path: its two sides,
+	// as the declaration names them
+	auto subject = ResolveSubject(context, input.inputs[0].ToString());
+	string wanted_op;
+	for (auto candidate : {"<->", "->"}) {
+		if (wanted_op.empty() && subject.find(" " + string(candidate) + " ") != string::npos) {
+			wanted_op = candidate;
+		}
+	}
+	bool one = !wanted_op.empty();
+	auto dataset = one ? DatasetOf(subject) : subject;
+	EdgeSide wanted_child;
+	EdgeSide wanted_parent;
+	if (one) {
+		auto at = subject.find(" " + wanted_op + " ");
+		wanted_child = ParseSide(context, dataset, subject.substr(0, at));
+		wanted_parent = ParseSide(context, dataset, subject.substr(at + wanted_op.size() + 2));
+	}
 	vector<string> edges;
-	auto rows = inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
-	                      " WHERE dataset = " + QuoteText(dataset) + " ORDER BY seq");
+	auto rows =
+	    inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
+		          " WHERE dataset = " + QuoteText(dataset) + " AND end_snapshot IS NULL ORDER BY begin_snapshot");
 	while (auto chunk = rows->Fetch()) {
 		for (idx_t i = 0; i < chunk->size(); i++) {
 			auto left = chunk->GetValue(0, i).ToString();
@@ -1533,8 +2472,12 @@ static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context
 			auto right = chunk->GetValue(2, i).ToString();
 			auto child = ParseSide(context, dataset, left);
 			auto parent = ParseSide(context, dataset, right);
-			// legs are one column or a pair, the same count on both sides
-			if (child.legs.empty() || child.legs.size() != parent.legs.size() || child.legs.size() > 2) {
+			if (one && (op != wanted_op || !SameSide(child, wanted_child) || !SameSide(parent, wanted_parent))) {
+				continue;
+			}
+			// key columns are one column or a pair, the same count on both sides
+			if (child.key_columns.empty() || child.key_columns.size() != parent.key_columns.size() ||
+			    child.key_columns.size() > 2) {
 				continue;
 			}
 			edges.push_back(EdgeSQL(inner, dataset, edges.size(), left + " " + op + " " + right, child, parent));
@@ -1544,13 +2487,15 @@ static unique_ptr<TableRef> RelationshipChecksBindReplace(ClientContext &context
 		return make_uniq<SubqueryRef>(
 		    ParseSelect("SELECT false AS applicable, 'no declared relationships' AS reason, NULL::BIGINT AS seq,"
 			            " NULL::VARCHAR AS relationship, NULL::BIGINT AS filled, NULL::BIGINT AS orphans,"
-			            " NULL::DOUBLE AS orphan_rate, NULL::BIGINT AS pair_seq, NULL::VARCHAR AS child_column,"
+			            " NULL::DOUBLE AS orphan_rate, NULL::STRUCT(key VARCHAR, \"rows\" BIGINT)[] AS orphan_keys,"
+			            " NULL::BIGINT AS orphan_distinct, NULL::BIGINT AS pair_seq, NULL::VARCHAR AS child_column,"
 			            " NULL::VARCHAR AS parent_column, NULL::BIGINT AS joined, NULL::BIGINT AS precedes,"
 			            " NULL::DOUBLE AS precedes_rate"));
 	}
 	string sql =
 	    "SELECT true AS applicable, NULL::VARCHAR AS reason, seq, relationship, filled, orphans, CASE WHEN filled "
-	    "= 0 THEN 0.0 ELSE orphans / filled::DOUBLE END AS orphan_rate, pair_seq, child_column, parent_column, "
+	    "= 0 THEN 0.0 ELSE orphans / filled::DOUBLE END AS orphan_rate, orphan_keys, orphan_distinct, pair_seq, "
+	    "child_column, parent_column, "
 	    "joined, precedes, CASE WHEN joined IS NULL THEN NULL ELSE precedes / joined::DOUBLE END AS "
 	    "precedes_rate FROM (" +
 	    StringUtil::Join(edges, " UNION ALL ") + ") ORDER BY seq, pair_seq";
@@ -1571,9 +2516,9 @@ static TableFunction RelationshipChecksFunction() {
 // over the declared relationships. Per alignment, both sides as cells at the
 // day: the measure side, entity and period to the column's sum, once per
 // measure axis and alignment key; the event side, entity and period to each
-// movement column's sum, the event table's numeric columns minus the legs of
+// movement column's sum, the event table's numeric columns minus the key columns of
 // declared edges, once per event axis. Beside them one row per numeric column
-// of each event table, a declared leg flagged, an integer with its distinct
+// of each event table, a declared key column flagged, an integer with its distinct
 // share over its filled rows, so the screen sets the key-shaped ones aside.
 // An alignment is a declared edge between the two tables, two edges meeting
 // at one dimension key, or an entity borrowed one hop: a measure table whose
@@ -1602,7 +2547,7 @@ static bool IsTemporalType(const string &type) {
 	return type == "DATE" || StringUtil::StartsWith(type, "TIMESTAMP");
 }
 
-//! One direction of a declared relationship: the child table and its legs onto the parent's
+//! One direction of a declared relationship: the child table and its key columns onto the parent's
 struct Pointer {
 	string src_t;
 	vector<string> src_cols;
@@ -1610,7 +2555,7 @@ struct Pointer {
 	vector<string> dst_cols;
 };
 
-//! A join one hop away: this table's legs onto the hop table's key
+//! A join one hop away: this table's key columns onto the hop table's key
 struct Hop {
 	bool set = false;
 	string table;
@@ -1625,7 +2570,7 @@ struct Axis {
 	Hop borrowed;
 };
 
-//! How the measure table and an event table key the same entity: the legs on
+//! How the measure table and an event table key the same entity: the key columns on
 //! each side, and the document each side borrows its entity through, if any
 struct Align {
 	vector<string> m_cols;
@@ -1641,7 +2586,7 @@ static string ColsLabel(const vector<string> &cols) {
 	return cols.size() == 1 ? cols[0] : "(" + StringUtil::Join(cols, ", ") + ")";
 }
 
-//! The entity as text: one column cast, legs joined by a bar
+//! The entity as text: one column cast, several joined by a bar
 static string EntityExpr(const string &base, const vector<string> &cols) {
 	vector<string> parts;
 	for (auto &column : cols) {
@@ -1805,7 +2750,7 @@ static vector<Align> Alignments(const string &table, const string &ev, const vec
 
 //! One side of an alignment as its cells read it: the FROM clause with the
 //! time table and the document joined where borrowed, the time expression, the
-//! entity as text and the guard that every leg and the time are present
+//! entity as text and the guard that every key column and the time are present
 struct SideSQL {
 	string from;
 	string texpr;
@@ -1878,7 +2823,6 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 	auto &dataset = parts[0];
 	auto &table = parts[1];
 	auto &column = parts[2];
-	BindRead(context, dataset + "." + table);
 	auto reason = [](const string &text) {
 		return make_uniq<SubqueryRef>(ParseSelect(ReasonBranch(text)));
 	};
@@ -1901,47 +2845,45 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 		}
 	}
 	if (type.empty()) {
-		return reason("no column " + subject + " on a landed table: the evidence reads a table's column");
+		return reason("no column " + subject + " on a loaded table: the evidence reads a table's column");
 	}
 	if (!IsNumericType(type)) {
 		return reason(subject + " is " + type + ", not a number: the evidence reads a numeric measure");
 	}
 	// the dataset's declared edges as pointers, both ways for <->, over tables it has
 	vector<Pointer> pointers;
-	BindRead(context, "main.relationships");
-	auto rows = inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
-	                      " WHERE dataset = " + QuoteText(dataset) + " ORDER BY seq");
+	auto rows =
+	    inner.Run("SELECT left_side, op, right_side FROM " + inner.Store("relationships") +
+		          " WHERE dataset = " + QuoteText(dataset) + " AND end_snapshot IS NULL ORDER BY begin_snapshot");
 	while (auto chunk = rows->Fetch()) {
 		for (idx_t i = 0; i < chunk->size(); i++) {
 			auto child = ParseSide(context, dataset, chunk->GetValue(0, i).ToString());
 			auto parent = ParseSide(context, dataset, chunk->GetValue(2, i).ToString());
-			if (child.legs.empty() || child.legs.size() != parent.legs.size() || !schemas.count(child.table) ||
-			    !schemas.count(parent.table)) {
+			if (child.key_columns.empty() || child.key_columns.size() != parent.key_columns.size() ||
+			    !schemas.count(child.table) || !schemas.count(parent.table)) {
 				continue;
 			}
-			pointers.push_back(Pointer {child.table, child.legs, parent.table, parent.legs});
+			pointers.push_back(Pointer {child.table, child.key_columns, parent.table, parent.key_columns});
 			if (chunk->GetValue(1, i).ToString() == "<->") {
-				pointers.push_back(Pointer {parent.table, parent.legs, child.table, child.legs});
+				pointers.push_back(Pointer {parent.table, parent.key_columns, child.table, child.key_columns});
 			}
 		}
 	}
-	std::set<pair<string, string>> legs;
+	std::set<pair<string, string>> key_columns;
 	for (auto &p : pointers) {
-		BindRead(context, dataset + "." + p.src_t);
-		BindRead(context, dataset + "." + p.dst_t);
 		for (auto &c : p.src_cols) {
-			legs.insert({p.src_t, c});
+			key_columns.insert({p.src_t, c});
 		}
 		for (auto &c : p.dst_cols) {
-			legs.insert({p.dst_t, c});
+			key_columns.insert({p.dst_t, c});
 		}
 	}
-	// the measure column screened as the event side's columns are: a declared leg
+	// the measure column screened as the event side's columns are: a declared key column
 	// is an identifier, no measure; so is an integer distinct on nine filled rows
 	// in ten, read exactly here, the one read of data at bind, since it spares
 	// every cell the screen would otherwise build before refusing
-	if (legs.count({table, column})) {
-		return reason(subject + " is a leg of a declared relationship: an identifier, no measure");
+	if (key_columns.count({table, column})) {
+		return reason(subject + " is a key column of a declared relationship: an identifier, no measure");
 	}
 	auto axes = TimeAxes(tables, schemas, pointers);
 	auto &m_axes = axes[table];
@@ -1964,9 +2906,8 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 	// a type; an event table with no measure glossed abstains and names the gloss
 	std::map<string, std::set<string>> measures;
 	std::set<string> roled;
-	BindRead(context, "main.glossary");
 	auto roles = inner.Run("SELECT subject, value->>'value' FROM glossql_glossary(" + QuoteText(dataset) +
-	                       ", NULL, false) WHERE aspect = 'role' AND state IN ('current', 'stale')");
+	                       ", 'role', false) WHERE state IN ('current', 'stale')");
 	while (auto chunk = roles->Fetch()) {
 		for (idx_t i = 0; i < chunk->size(); i++) {
 			auto claimed = SubjectParts(chunk->GetValue(0, i).ToString());
@@ -1992,7 +2933,7 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 		if (aligns.empty() || e_axes.empty()) {
 			continue;
 		}
-		// the movement pool: the event table's numeric columns glossed a measure that are no declared leg
+		// the movement pool: the event table's numeric columns glossed a measure that are no declared key column
 		vector<pair<string, string>> numeric;
 		vector<string> pool;
 		idx_t candidates = 0;
@@ -2001,7 +2942,7 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 				continue;
 			}
 			numeric.push_back(c);
-			if (legs.count({ev, c.first})) {
+			if (key_columns.count({ev, c.first})) {
 				continue;
 			}
 			candidates++;
@@ -2010,7 +2951,7 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 			}
 		}
 		if (candidates == 0) {
-			// nothing numeric beyond its legs: no movement to name, nothing required
+			// nothing numeric beyond its key columns: no movement to name, nothing required
 			continue;
 		}
 		if (pool.empty()) {
@@ -2103,22 +3044,22 @@ static unique_ptr<TableRef> AdditivityCellsBindReplace(ClientContext &context, T
 		if (!emitted) {
 			continue;
 		}
-		// the event table's numeric columns: a leg flagged, an integer with its distinct share
+		// the event table's numeric columns: a key column flagged, an integer with its distinct share
 		string aggs;
 		string names;
 		string flags;
 		for (auto &c : numeric) {
 			auto q = QuoteName(c.first);
-			bool leg = legs.count({ev, c.first}) > 0;
+			bool is_key = key_columns.count({ev, c.first}) > 0;
 			string agg = "NULL::DOUBLE";
-			if (!leg && IsIntegerType(c.second)) {
+			if (!is_key && IsIntegerType(c.second)) {
 				agg = "CASE WHEN count(" + q + ") > 0 AND approx_count_distinct(" + q +
 				      ") >= 2 THEN approx_count_distinct(" + q + ")::DOUBLE / count(" + q + ") END";
 			}
 			aggs += (aggs.empty() ? "" : ", ") + agg + " AS " + q;
 			names += (names.empty() ? "" : ", ") + q;
-			flags +=
-			    (flags.empty() ? "" : ", ") + string("(") + QuoteText(c.first) + ", " + (leg ? "true" : "false") + ")";
+			flags += (flags.empty() ? "" : ", ") + string("(") + QuoteText(c.first) + ", " +
+			         (is_key ? "true" : "false") + ")";
 		}
 		auto from = "(FROM (SELECT " + aggs + " FROM " + inner.Table(dataset, ev) +
 		            ") UNPIVOT INCLUDE NULLS (__gloss_value FOR __gloss_term IN (" + names + "))) u JOIN (VALUES " +
@@ -2150,7 +3091,7 @@ static TableFunction AdditivityCellsFunction() {
 // opens (a local path, or a URL once httpfs is loaded), run statement by
 // statement on a second connection under the glossql grammar, one row per
 // statement. Each statement commits on its own, as it does from a script; a
-// failing statement stops the load, the ones before it stand and no kits row
+// failing statement stops the load, the ones before it stay and no kits row
 // is stored, so the next load runs the kit again. A kit that ran writes a kits row
 // with the hash of its text. Run again with that text, as the opener does at
 // every start-up, the kit holds: what it declared and created is in the lake,
@@ -2230,47 +3171,63 @@ static string ScriptHash(const string &script) {
 	return string(digest, MD5Context::MD5_HASH_LENGTH_TEXT);
 }
 
+vector<pair<string, string>> RunKit(ClientContext &context, const string &name, const string &location,
+                                    const string &script, bool in_lake) {
+	vector<pair<string, string>> rows;
+	auto hash = ScriptHash(script);
+	Inner inner(context);
+	inner.Run("SET active_grammar_extensions = ['glossql']");
+	if (in_lake) {
+		inner.Run("USE " + QuoteName(inner.ws.lake));
+	}
+	auto newest = inner.Scalar("SELECT hash FROM " + inner.Current("kits") + " WHERE name = " + QuoteText(name));
+	bool current = !newest.IsNull() && newest.ToString() == hash;
+	auto statements = inner.con.ExtractStatements(script);
+	if (current && std::none_of(statements.begin(), statements.end(), [](const unique_ptr<SQLStatement> &statement) {
+		    return statement->type == StatementType::LOAD_STATEMENT;
+	    })) {
+		rows.emplace_back(name, "current");
+		return rows;
+	}
+	// every declaration the kit makes names it as its author
+	inner.Run("SET VARIABLE glossql_declared_by = " + QuoteText("kit:" + name));
+	for (auto &statement : statements) {
+		auto head = FirstLine(statement->query);
+		if (current && statement->type != StatementType::LOAD_STATEMENT) {
+			continue;
+		}
+		auto result = inner.con.Query(std::move(statement));
+		if (result->HasError()) {
+			throw InvalidInputException("glossql: kit %s stopped at statement %d (%s): %s", name, rows.size() + 1, head,
+			                            result->GetError());
+		}
+		string outcome = "ok";
+		auto chunk = result->Fetch();
+		if (chunk && chunk->ColumnCount() == 1 && chunk->size() == 1 &&
+		    chunk->data[0].GetType().id() == LogicalTypeId::VARCHAR) {
+			outcome = chunk->GetValue(0, 0).ToString();
+		}
+		rows.emplace_back(head, outcome);
+	}
+	if (current) {
+		rows.emplace_back(name, "current");
+	} else {
+		auto count = rows.size();
+		inner.Write(context, [&](CatalogWrite &write) {
+			write.End("kits", "name = " + QuoteText(name));
+			write.Insert("kits", QuoteText(name) + ", " + QuoteText(location) + ", " + to_string(count) + ", now(), " +
+			                         QuoteText(hash));
+		});
+	}
+	return rows;
+}
+
 static void KitExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<KitState>();
 	if (!state.ran) {
 		state.ran = true;
 		auto path = data.bind_data->Cast<RunnerBindData>().inputs[0].ToString();
-		auto script = ReadScript(context, path);
-		auto name = KitName(path);
-		auto hash = ScriptHash(script);
-		Inner inner(context);
-		inner.Run("SET active_grammar_extensions = ['glossql']");
-		// every declaration the kit makes names it as its author
-		inner.Run("SET VARIABLE glossql_declared_by = " + QuoteText("kit:" + name));
-		auto newest = inner.Scalar("SELECT hash FROM " + inner.Store("kits") + " WHERE name = " + QuoteText(name) +
-		                           " ORDER BY seq DESC LIMIT 1");
-		bool stands = !newest.IsNull() && newest.ToString() == hash;
-		auto statements = inner.con.ExtractStatements(script);
-		for (auto &statement : statements) {
-			auto head = FirstLine(statement->query);
-			if (stands && statement->type != StatementType::LOAD_STATEMENT) {
-				continue;
-			}
-			auto result = inner.con.Query(std::move(statement));
-			if (result->HasError()) {
-				throw InvalidInputException("glossql: kit %s stopped at statement %d (%s): %s", name,
-				                            state.rows.size() + 1, head, result->GetError());
-			}
-			string outcome = "ok";
-			auto chunk = result->Fetch();
-			if (chunk && chunk->ColumnCount() == 1 && chunk->size() == 1 &&
-			    chunk->data[0].GetType().id() == LogicalTypeId::VARCHAR) {
-				outcome = chunk->GetValue(0, 0).ToString();
-			}
-			state.rows.emplace_back(head, outcome);
-		}
-		if (stands) {
-			state.rows.emplace_back(name, "current");
-		} else {
-			inner.Run("INSERT INTO " + inner.Store("kits") + " VALUES (" + inner.Seq("kits") + ", " + QuoteText(name) +
-			          ", " + QuoteText(path) + ", " + to_string(state.rows.size()) + ", now(), " + QuoteText(hash) +
-			          ")");
-		}
+		state.rows = RunKit(context, KitName(path), path, ReadScript(context, path), false);
 	}
 	idx_t count = 0;
 	while (state.offset < state.rows.size() && count < STANDARD_VECTOR_SIZE) {
@@ -2297,6 +3254,7 @@ void RegisterGlossRunner(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossExtractFunction());
 	loader.RegisterFunction(GlossSelectOrExtractFunction());
 	loader.RegisterFunction(SubjectColumnFunction());
+	loader.RegisterFunction(OutdatedFunction());
 	loader.RegisterFunction(DatasetCellsFunctions());
 	loader.RegisterFunction(RelationshipChecksFunction());
 	loader.RegisterFunction(AdditivityCellsFunction());

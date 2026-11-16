@@ -1,4 +1,4 @@
-"""The MCP door, opened over stdio the way a client opens it, on a workspace
+"""The MCP interface, opened over stdio the way a client opens it, on a workspace
 made for the test: a fresh lake, the built extension, the opener with a dot
 command to skip.
 
@@ -13,7 +13,7 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
 REPO = Path(__file__).resolve().parents[2]
-DOOR = REPO / "examples/mcp/glossql_mcp.py"
+INTERFACE = REPO / "examples/mcp/glossql_mcp.py"
 EXTENSION = REPO / "build/release/extension/glossql/glossql.duckdb_extension"
 
 
@@ -32,9 +32,9 @@ def workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_the_door(workspace: Path) -> None:
+def test_the_interface(workspace: Path) -> None:
     async def run():
-        config = {"mcpServers": {"glossql": {"command": "uv", "args": ["run", "--quiet", str(DOOR), str(workspace)]}}}
+        config = {"mcpServers": {"glossql": {"command": "uv", "args": ["run", "--quiet", str(INTERFACE), str(workspace)]}}}
         async with Client(config) as client:
             assert [t.name for t in await client.list_tools()] == ["glossql"]
             kits = sorted(d.name for d in (REPO / "kits").iterdir() if (d / "SKILL.md").is_file())
@@ -53,7 +53,7 @@ def test_the_door(workspace: Path) -> None:
 
             # a write answers with its outcome line; a $$ body may hold a semicolon
             out = await glossql(
-                "DECLARE DATASET fin SET (purpose: 'the door'); USE fin;"
+                "DECLARE DATASET fin SET (purpose: 'the interface'); USE fin;"
                 " CREATE TABLE fin.orders AS SELECT 1 AS id;"
                 ' DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON COLUMN;'
                 ' GLOSS note ON orders.id AS $${"text": "x; y"}$$;'
@@ -67,7 +67,7 @@ def test_the_door(workspace: Path) -> None:
             assert "| fin.orders.id | note | current |" in out
             assert out.endswith("1 rows")
 
-            # a refusal stops the call, names its place, and carries what landed before it
+            # a refusal stops the call, names its place, and carries what was stored before it
             with pytest.raises(ToolError) as refused:
                 await glossql("SELECT 1 AS before; USE nowhere; SELECT 2 AS after;")
             refusal = str(refused.value)

@@ -23,7 +23,7 @@ WITH blocks AS (
     FROM blocks
 )
 SELECT filename, line,
-       coalesce(json_serialize_sql(body)->>'error_type', 'ok') AS verdict,
+       coalesce(json_serialize_sql(body)->>'error_type', 'ok') AS result,
        coalesce(json_serialize_sql(body)->>'error_message', '') AS message
 FROM bodies;
 
@@ -35,5 +35,5 @@ true
 
 # an example the parser refuses is a broken page
 query III
-SELECT filename, line, left(message, 80) FROM examples WHERE verdict = 'parser' ORDER BY ALL;
+SELECT filename, line, left(message, 80) FROM examples WHERE result = 'parser' ORDER BY ALL;
 ----

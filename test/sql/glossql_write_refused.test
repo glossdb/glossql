@@ -1,0 +1,74 @@
+# name: test/sql/glossql_write_refused.test
+# description: a catalog write the catalog database refuses, with no other writer there, is refused on its first try as its own error; only a write another writer overtook is tried again
+# group: [sql]
+
+require glossql
+
+require json
+
+require ducklake
+
+require parquet
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/refused.ducklake' AS ws (DATA_PATH '{TEST_DIR}/refused_data/');
+
+# the catalog database refuses a row of its own accord: here a check on the glossary's
+# store table, made before the workspace makes its store; on Postgres a permission,
+# a quota or a trigger refuses the same way
+statement ok
+CREATE TABLE __ducklake_metadata_ws.main.glossql_glossary (begin_snapshot BIGINT NOT NULL, end_snapshot BIGINT,
+dataset VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actor_kind VARCHAR NOT NULL,
+actor_id VARCHAR, body VARCHAR NOT NULL, written_at TIMESTAMP NOT NULL, CHECK (length(body) < 20));
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET d SET (purpose: 'refused');
+
+statement ok
+USE d;
+
+statement ok
+DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;
+
+statement ok
+GLOSS note ON d AS $${"v": 1}$$;
+
+statement ok
+CREATE TABLE memory.main.timing AS SELECT now()::TIMESTAMP AS started, (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot) AS head;
+
+# the refusal is the catalog database's own, its class kept
+statement error
+GLOSS note ON d AS $${"value": "longer than the check admits"}$$;
+----
+<REGEX>:^Constraint Error:.*
+
+# refused on the first try: no wait between tries, and nothing written
+query I
+SELECT (now()::TIMESTAMP - started) < INTERVAL 1 SECOND FROM memory.main.timing;
+----
+true
+
+query I
+SELECT (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot) = head FROM memory.main.timing;
+----
+true
+
+query I
+SELECT body->>'v' FROM glossary WHERE aspect = 'note';
+----
+1
+
+# the connection is out of the failed transaction: the next write lands
+statement ok
+GLOSS note ON d AS $${"v": 2}$$;
+
+query I
+SELECT body->>'v' FROM glossary WHERE aspect = 'note';
+----
+2

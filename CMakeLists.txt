@@ -19,6 +19,24 @@ set(CMAKE_CXX_STANDARD
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(src/include)
+
+# The lineage kit is the language's own (SPEC §6): its text is compiled in, and
+# PRAGMA glossql runs it where the workspace does not hold it
+set(LINEAGE_KIT ${CMAKE_CURRENT_SOURCE_DIR}/kits/lineage/kit.sql)
+set_property(
+  DIRECTORY
+  APPEND
+  PROPERTY CMAKE_CONFIGURE_DEPENDS ${LINEAGE_KIT})
+file(READ ${LINEAGE_KIT} LINEAGE_KIT_HEX HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," LINEAGE_KIT_BYTES
+                     "${LINEAGE_KIT_HEX}")
+file(
+  WRITE ${CMAKE_CURRENT_BINARY_DIR}/generated/glossql_lineage_kit.hpp.in
+  "#pragma once\n// kits/lineage/kit.sql, compiled in (CMakeLists.txt)\nstatic const char LINEAGE_KIT[] = {${LINEAGE_KIT_BYTES} 0x00};\n"
+)
+configure_file(${CMAKE_CURRENT_BINARY_DIR}/generated/glossql_lineage_kit.hpp.in
+               ${CMAKE_CURRENT_BINARY_DIR}/generated/glossql_lineage_kit.hpp COPYONLY)
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/generated)
 # the yyjson DuckDB ships, for the JSON Schema validator
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/yyjson/include)

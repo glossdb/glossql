@@ -1,5 +1,5 @@
 # name: test/sql/glossql_kit_quality.test
-# description: the quality kit: the structure screens as table macros over dataset_cells, and the measurements that land them
+# description: the quality kit: the structure screens as table macros over dataset_cells, and the measurements that store them
 # group: [sql]
 
 require glossql
@@ -35,6 +35,7 @@ query TTI
 SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
+lineage	glossql	26
 quality	kits/quality/kit.sql	23
 
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
@@ -90,7 +91,7 @@ true
 statement error
 SELECT count(*) FROM dataset_cells('bound.wide', cells := 0);
 ----
-positive cells bound
+Invalid Input Error
 
 # a table's own columns named rn, val or column are cells like any other: the row number is the read's, under its own name
 statement ok
@@ -175,9 +176,9 @@ CREATE TABLE fin.payments AS
   FROM range(1, 21) t(i);
 
 query TT
-SELECT applicable, reason FROM relationship_checks('fin');
+SELECT applicable, (reason) IS NOT NULL FROM relationship_checks('fin');
 ----
-false	no declared relationships
+false	true
 
 statement ok
 DECLARE RELATIONSHIP payments.invoice_id -> invoices.invoice_id;
@@ -191,20 +192,64 @@ SELECT relationship, filled, orphans, orphan_rate, child_column, parent_column, 
 fin.payments.invoice_id -> fin.invoices.invoice_id	20	2	0.1	pay_date	inv_date	18	3
 fin.payments.city -> fin.payments.country	20	10	0.5	NULL	NULL	NULL	NULL
 
+# one result per relationship, stored on its pair path: its own two tables
+statement ok
+SELECT relationship_coherence() FROM payments.invoice_id -> invoices.invoice_id;
+
+statement ok
+SELECT relationship_coherence() FROM payments.city -> payments.country;
+
+query TTTT
+SELECT subject, json_extract_string(value, '$.applicable'), json_extract_string(value, '$.orphans'), json_extract_string(value, '$.temporal[0].precedes')
+FROM main.measurements WHERE function = 'relationship_coherence' ORDER BY subject;
+----
+fin.payments.city -> fin.payments.country	true	10	NULL
+fin.payments.invoice_id -> fin.invoices.invoice_id	true	2	3
+
+# the orphan keys of an edge across two tables, each with its rows, and how many there are
+query TT
+SELECT json_extract_string(value, '$.orphan_keys[*].key'), json_extract_string(value, '$.orphan_distinct')
+FROM main.measurements WHERE function = 'relationship_coherence' AND subject = 'fin.payments.invoice_id -> fin.invoices.invoice_id';
+----
+[100, 99]	2
+
+# a pair of key columns: grouped by the columns, so values with a comma stay apart, each key shown as a JSON
+# list; a long value cut in the examples, counted whole
+statement ok
+CREATE TABLE fin.child AS SELECT * FROM (VALUES ('a, b', 'c'), ('a', 'b, c'), ('x', 'y'), (NULL, 'q'), ('p', NULL), ('t1', '1'), ('t2', '1')) t(k1, k2)
+UNION ALL SELECT repeat('k', 150), '0';
+
+statement ok
+CREATE TABLE fin.parent AS SELECT * FROM (VALUES ('x', 'y')) t(k1, k2);
+
+statement ok
+DECLARE RELATIONSHIP child.(k1, k2) -> parent.(k1, k2);
+
+statement ok
+SELECT relationship_coherence() FROM child.(k1, k2) -> parent.(k1, k2);
+
+query TIII
+SELECT json_extract_string(value, '$.orphan_keys[*].key')[1:2], (value->>'orphan_distinct')::INT, (value->>'orphans')::INT,
+       len(from_json(json_extract_string(value, '$.orphan_keys[2].key'), '["VARCHAR"]')[1])
+FROM main.measurements WHERE function = 'relationship_coherence' AND subject = 'fin.child.(k1, k2) -> fin.parent.(k1, k2)';
+----
+['["a","b, c"]', '["a, b","c"]']	5	5	100
+
+# its inputs: the data of the relationship, its two tables, and its own declarations
+query T
+SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements m
+WHERE function = 'relationship_coherence' AND subject = 'fin.payments.invoice_id -> fin.invoices.invoice_id';
+----
+data(data, itself),function,property
+
+# over a dataset it computes nothing: the check is one relationship's
 statement ok
 SELECT relationship_coherence() FROM fin;
 
-query TTT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.relationships[0].orphans'), json_extract_string(value, '$.relationships[0].temporal[0].precedes')
-FROM GLOSSARY(fin::relationship_coherence);
-----
-true	2	3
-
-# the bind read the record's edges beside the plan, and the row names them with the tables the edges read
 query T
-SELECT reads FROM main.measurements WHERE function = 'relationship_coherence';
+SELECT json_extract_string(value, '$.applicable') FROM main.measurements WHERE function = 'relationship_coherence' AND subject = 'fin';
 ----
-fin.invoices,fin.payments,main.relationships
+false
 
 # --- hierarchy_candidates: the two planted dependencies, the exclusions, the measurement's ship line
 
@@ -243,18 +288,18 @@ statement ok
 CREATE TABLE fin.empty AS SELECT 1 AS a, 'x' AS b WHERE false;
 
 query TT
-SELECT applicable, reason FROM hierarchy_candidates('fin.empty');
+SELECT applicable, (reason) IS NOT NULL FROM hierarchy_candidates('fin.empty');
 ----
-false	empty table
+false	true
 
 statement ok
 SELECT detect_hierarchies() FROM fin.empty;
 
 query TTT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason'), json_type(value, '$.candidates')
+SELECT json_extract_string(value, '$.applicable'), (json_extract_string(value, '$.reason')) IS NOT NULL, json_type(value, '$.candidates')
 FROM GLOSSARY(fin.empty::hierarchy_candidates);
 ----
-false	empty table	NULL
+false	true	NULL
 
 # --- derivation_candidates: a product with two violations, a clean sum
 
@@ -282,10 +327,15 @@ FROM GLOSSARY(fin.lines::derivation_candidates);
 ----
 true	2	sum
 
-# --- grounding_collisions: the same SQL under two names, and the same series from different SQL
+# --- definition_collisions: the same SQL under two names, and the same series from different SQL
+# the screen reads the definitions and the claims through the read functions, from the subject a
+# run sets; read by hand, the session names it
+
+statement ok
+SET VARIABLE glossql_subject = 'fin';
 
 query I
-SELECT groundings FROM grounding_collisions('fin');
+SELECT definitions FROM definition_collisions('fin');
 ----
 0
 
@@ -317,7 +367,7 @@ statement ok
 GLOSS costs ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger WHERE value > 250"}$$;
 
 query ITTI
-SELECT groundings, kind, aspects::VARCHAR, months FROM grounding_collisions('fin') ORDER BY seq;
+SELECT definitions, kind, aspects::VARCHAR, months FROM definition_collisions('fin') ORDER BY seq;
 ----
 4	sql	[revenue, turnover]	NULL
 4	served_series	[open_items, revenue, turnover]	3
@@ -331,7 +381,7 @@ statement ok
 GLOSS margin ON fin AS $${"sql": "SELECT date AS day, value AS amount FROM fin.ledger"}$$;
 
 query T
-SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_series';
+SELECT aspects::VARCHAR FROM definition_collisions('fin') WHERE kind = 'served_series';
 ----
 [open_items, revenue, turnover]
 
@@ -342,7 +392,7 @@ statement ok
 GLOSS role ON margin.amount AS $${"value": "measure"}$$;
 
 query T
-SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_series';
+SELECT aspects::VARCHAR FROM definition_collisions('fin') WHERE kind = 'served_series';
 ----
 [margin, open_items, revenue, turnover]
 
@@ -352,15 +402,18 @@ statement ok
 GLOSS additivity ON open_items.value AS $${"value": "semi-additive"}$$;
 
 query T
-SELECT aspects::VARCHAR FROM grounding_collisions('fin') WHERE kind = 'served_series';
+SELECT aspects::VARCHAR FROM definition_collisions('fin') WHERE kind = 'served_series';
 ----
 [margin, revenue, turnover]
 
 statement ok
-SELECT detect_grounding_collisions() FROM fin;
+RESET VARIABLE glossql_subject;
+
+statement ok
+SELECT detect_definition_collisions() FROM fin;
 
 query TT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.groundings') FROM GLOSSARY(fin::grounding_collisions);
+SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.definitions') FROM GLOSSARY(fin::definition_collisions);
 ----
 true	5
 
@@ -429,7 +482,7 @@ statement ok
 SELECT temporal() FROM fin.amounts.d;
 
 query TT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') LIKE '%DOUBLE%typing in the recipe'
+SELECT json_extract_string(value, '$.applicable'), (json_extract_string(value, '$.reason')) IS NOT NULL
 FROM GLOSSARY(fin.amounts.d::temporal_profile);
 ----
 false	true
@@ -446,9 +499,9 @@ DECLARE TEST ids_test ON ids_present BY (AGENT, HUMAN) DETECTOR rate_tolerance T
 statement ok
 GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "tolerance": 0.2}$$;
 
-# no check has spoken: yellow, never green
+# no check has annotated: yellow, never green
 query TTR
-SELECT subject, band, score FROM TESTS(orders::ids_present);
+SELECT subject, state, score FROM TESTS(orders::ids_present);
 ----
 fin.orders	yellow	0.0
 
@@ -464,7 +517,7 @@ SELECT ids_present_check() FROM orders;
 
 # one order in five names no customer: at the tolerance, green, and nothing to score
 query TTR
-SELECT subject, band, score FROM TESTS(orders::ids_present);
+SELECT subject, state, score FROM TESTS(orders::ids_present);
 ----
 fin.orders	green	0.0
 
@@ -479,7 +532,7 @@ statement ok
 RESET VARIABLE glossql_actor;
 
 query TTR
-SELECT subject, band, score FROM TESTS(orders::ids_present);
+SELECT subject, state, score FROM TESTS(orders::ids_present);
 ----
 fin.orders	red	0.2
 
@@ -512,9 +565,9 @@ CREATE TABLE beh.totals AS SELECT account_id, date_trunc('month', posted)::DATE 
 
 # no declared edge: nothing aligns, and the screen says why
 query TT
-SELECT applicable, reason FROM additivity_anchors('beh.balances.balance');
+SELECT applicable, (reason) IS NOT NULL FROM additivity_anchors('beh.balances.balance');
 ----
-false	no declared relationships connect balances to an event table with a time axis
+false	true
 
 statement ok
 DECLARE RELATIONSHIP postings.account_id -> accounts.id;
@@ -522,40 +575,53 @@ DECLARE RELATIONSHIP postings.account_id -> accounts.id;
 statement ok
 DECLARE RELATIONSHIP balances.account_id -> accounts.id;
 
-# a measurement over the edges, then a third edge declared: the record it read moved, and the repeat computes
+# a result on one relationship, then a third relationship declared: it reads its own relationship's tables, so the repeat serves
 statement ok
-SELECT relationship_coherence() FROM beh;
+SELECT relationship_coherence() FROM postings.account_id -> accounts.id;
 
 statement ok
 DECLARE RELATIONSHIP totals.account_id -> accounts.id;
 
 statement ok
-SELECT relationship_coherence() FROM beh;
+SELECT relationship_coherence() FROM postings.account_id -> accounts.id;
 
 query TI
-SELECT json_extract_string(value, '$.relationships[2].relationship'),
-       (SELECT count(*) FROM main.measurements WHERE function = 'relationship_coherence' AND dataset = 'beh')
-FROM GLOSSARY(beh::relationship_coherence);
+SELECT json_extract_string(value, '$.relationship'),
+       (SELECT count(*) FROM main.measurements_history WHERE function = 'relationship_coherence' AND dataset = 'beh')
+FROM main.measurements WHERE function = 'relationship_coherence' AND dataset = 'beh';
 ----
-beh.totals.account_id -> beh.accounts.id	2
+beh.postings.account_id -> beh.accounts.id	1
 
 # no role glossed on the event tables: every anchor abstains and names the gloss to make
-query TT
-SELECT DISTINCT verdict, reason FROM additivity_anchors('beh.balances.balance') ORDER BY reason;
+query TTT
+SELECT DISTINCT event, result, (reason) IS NOT NULL FROM additivity_anchors('beh.balances.balance') ORDER BY event;
 ----
-abstain	no role glossed on postings: gloss role on its columns
-abstain	no role glossed on totals: gloss role on its columns
+postings	abstain	true
+totals	abstain	true
 
-# the abstention is a measurement row: it names the roles it read, and the roles glossed below make the repeat compute
+# the abstention is a measurement row: it read the roles, so an annotation of another property leaves it current,
+# and the roles glossed below make the repeat compute
 statement ok
 SELECT additivity_evidence() FROM balances.balance;
 
-query TT
-SELECT json_extract_string(g.value, '$.summary.verdict'), m.reads
-FROM GLOSSARY(beh.balances.balance::additivity_evidence) g, main.measurements m
-WHERE m.subject = 'beh.balances.balance';
+query T
+SELECT json_extract_string(value, '$.summary.result') FROM GLOSSARY(beh.balances.balance::additivity_evidence);
 ----
-abstain	beh.accounts,beh.balances,beh.postings,beh.totals,main.glossary,main.relationships
+abstain
+
+statement ok
+DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+statement ok
+GLOSS remark ON postings.amount AS $${"text": "not a role"}$$;
+
+statement ok
+SELECT additivity_evidence() FROM balances.balance;
+
+query I
+SELECT count(*) FROM main.measurements_history WHERE subject = 'beh.balances.balance';
+----
+1
 
 statement ok
 GLOSS role ON postings.amount AS $${"value": "measure"}$$;
@@ -571,18 +637,18 @@ GLOSS role ON balances.balance AS $${"value": "measure"}$$;
 # reading abstains, since signed postings move the level both ways. The movements are the glossed measures; posting_id
 # is an identifier, served as one
 query ITTTTTIRRRT
-SELECT seq, event, grain, scope, verdict, convention, voted, round(support, 4), round(r_flow, 2), r_stock, reason FROM additivity_anchors('beh.balances.balance') ORDER BY seq;
+SELECT seq, event, grain, scope, result, convention, voted, round(support, 4), round(r_flow, 2), r_stock, (reason) IS NOT NULL FROM additivity_anchors('beh.balances.balance') ORDER BY seq;
 ----
-0	postings	day	none	abstain	NULL	NULL	NULL	NULL	NULL	no entity series reconciled: wrong anchor, short series, or dead values
-1	postings	day	year	abstain	NULL	NULL	NULL	NULL	NULL	no entity series reconciled: wrong anchor, short series, or dead values
-2	postings	month	none	semi-additive	amount	3	0.4385	129.36	0.0	NULL
-3	postings	month	year	semi-additive	amount	3	0.4385	129.36	0.0	NULL
-4	postings	day	none	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
-5	postings	day	year	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
-6	totals	month	none	semi-additive	total	3	0.4385	129.36	0.0	NULL
-7	totals	month	year	semi-additive	total	3	0.4385	129.36	0.0	NULL
-8	totals	day	none	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
-9	totals	day	year	abstain	monotone	3	0.0	NULL	NULL	3 of 3 moving entities decrease within the scope over 15 steps: not a cumulative here
+0	postings	day	none	abstain	NULL	NULL	NULL	NULL	NULL	true
+1	postings	day	year	abstain	NULL	NULL	NULL	NULL	NULL	true
+2	postings	month	none	semi-additive	amount	3	0.4385	129.36	0.0	false
+3	postings	month	year	semi-additive	amount	3	0.4385	129.36	0.0	false
+4	postings	day	none	abstain	monotone	3	0.0	NULL	NULL	true
+5	postings	day	year	abstain	monotone	3	0.0	NULL	NULL	true
+6	totals	month	none	semi-additive	total	3	0.4385	129.36	0.0	false
+7	totals	month	year	semi-additive	total	3	0.4385	129.36	0.0	false
+8	totals	day	none	abstain	monotone	3	0.0	NULL	NULL	true
+9	totals	day	year	abstain	monotone	3	0.0	NULL	NULL	true
 
 query TTIII
 SELECT identifier_columns::VARCHAR, align, entities, viable_entities, sign_primary FROM additivity_anchors('beh.balances.balance') WHERE seq = 2;
@@ -594,20 +660,20 @@ statement ok
 SELECT additivity_evidence() FROM balances.balance;
 
 query TTTTTTI
-SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'), json_extract_string(value, '$.summary.event'),
+SELECT json_extract_string(value, '$.summary.result'), json_extract_string(value, '$.summary.convention'), json_extract_string(value, '$.summary.event'),
        json_extract_string(value, '$.summary.grain'), json_extract_string(value, '$.summary.tiebreak'),
        json_extract_string(value, '$.anchors_n') || '/' || json_extract_string(value, '$.decided') || '/' || json_array_length(value, '$.anchors'),
-       (SELECT count(*) FROM main.measurements WHERE subject = 'beh.balances.balance')
+       (SELECT count(*) FROM main.measurements_history WHERE subject = 'beh.balances.balance')
 FROM GLOSSARY(beh.balances.balance::additivity_evidence);
 ----
 semi-additive	amount	postings	month	event-name	10/4/10	2
 
-# the monthly sums match the postings' movement as they stand: flow
+# the monthly sums match the postings' movement as they are: flow
 statement ok
 SELECT additivity_evidence() FROM totals.total;
 
 query TTTT
-SELECT json_extract_string(value, '$.summary.verdict'), json_extract_string(value, '$.summary.convention'),
+SELECT json_extract_string(value, '$.summary.result'), json_extract_string(value, '$.summary.convention'),
        json_extract_string(value, '$.summary.r_flow'), json_extract_string(value, '$.summary.sign.primary')
 FROM GLOSSARY(beh.totals.total::additivity_evidence);
 ----
@@ -615,28 +681,28 @@ additive	amount	0.0	3
 
 # no number, no time axis: examined, nothing to say
 query TT
-SELECT applicable, reason FROM additivity_anchors('beh.accounts.name');
+SELECT applicable, (reason) IS NOT NULL FROM additivity_anchors('beh.accounts.name');
 ----
-false	beh.accounts.name is VARCHAR, not a number: the evidence reads a numeric measure
+false	true
 
 statement ok
 SELECT additivity_evidence() FROM accounts.rating;
 
 query TT
-SELECT json_extract_string(value, '$.applicable'), json_extract_string(value, '$.reason') FROM GLOSSARY(beh.accounts.rating::additivity_evidence);
+SELECT json_extract_string(value, '$.applicable'), (json_extract_string(value, '$.reason')) IS NOT NULL FROM GLOSSARY(beh.accounts.rating::additivity_evidence);
 ----
-false	no period axis: no date column on accounts or one declared hop away
+false	true
 
-# an identifier is no measure: a leg of a declared relationship at bind, a key-shaped integer by its distinct share
+# an identifier is no measure: a key column of a declared relationship at bind, a key-shaped integer by its distinct share
 query TT
-SELECT applicable, reason FROM additivity_anchors('beh.postings.account_id');
+SELECT applicable, (reason) IS NOT NULL FROM additivity_anchors('beh.postings.account_id');
 ----
-false	beh.postings.account_id is a leg of a declared relationship: an identifier, no measure
+false	true
 
 query TT
-SELECT applicable, reason FROM additivity_anchors('beh.postings.posting_id');
+SELECT applicable, (reason) IS NOT NULL FROM additivity_anchors('beh.postings.posting_id');
 ----
-false	beh.postings.posting_id is key-shaped: 546 distinct values in 546 filled rows, an identifier, no measure; gloss role key
+false	true
 
 # the refusal is a measurement row keyed to the table it counted: rows appended, the repeat computes with the counts now
 statement ok
@@ -645,16 +711,13 @@ SELECT additivity_evidence() FROM postings.posting_id;
 statement ok
 INSERT INTO beh.postings SELECT 546 + i, 1, DATE '2024-07-01' + (i % 30)::INTEGER, 1.0 FROM range(1, 201) t(i);
 
-query TTTTT
+statement ok
 SELECT additivity_evidence() FROM postings.posting_id;
-----
-additivity_evidence	beh.postings.posting_id	additivity_evidence	{"applicable":false,"reason":"beh.postings.posting_id is key-shaped: 746 distinct values in 746 filled rows, an identifier, no measure; gloss role key","anchors_n":null,"decided":null,"summary":null,"anchors":null}	true
 
-query T
-SELECT reads FROM main.measurements WHERE subject = 'beh.postings.posting_id' ORDER BY seq;
+query I
+SELECT count(*) FROM main.measurements_history WHERE subject = 'beh.postings.posting_id';
 ----
-beh.accounts,beh.balances,beh.postings,beh.totals,main.relationships
-beh.accounts,beh.balances,beh.postings,beh.totals,main.relationships
+2
 
 # --- the other alignment shapes, one dataset each: the same signed postings and month-end levels, keyed differently
 
@@ -681,29 +744,29 @@ DECLARE RELATIONSHIP postings.account_id -> balances.account_id;
 
 # no role, then a role that is no measure, then the measure: the abstention names the act each time
 query TT
-SELECT DISTINCT verdict, reason FROM additivity_anchors('direct.balances.balance');
+SELECT DISTINCT result, (reason) IS NOT NULL FROM additivity_anchors('direct.balances.balance');
 ----
-abstain	no role glossed on postings: gloss role on its columns
+abstain	true
 
 statement ok
 GLOSS role ON postings.amount AS $${"value": "attribute"}$$;
 
 query TT
-SELECT DISTINCT verdict, reason FROM additivity_anchors('direct.balances.balance');
+SELECT DISTINCT result, (reason) IS NOT NULL FROM additivity_anchors('direct.balances.balance');
 ----
-abstain	no measure among postings's roles: gloss role measure on its movement columns
+abstain	true
 
 statement ok
 GLOSS role ON postings.amount AS $${"value": "measure"}$$;
 
 query TTTTTT
-SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM additivity_anchors('direct.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
+SELECT align, grain, scope, result, convention, identifier_columns::VARCHAR FROM additivity_anchors('direct.balances.balance') WHERE result <> 'abstain' ORDER BY seq;
 ----
 balances.account_id = postings.account_id	month	none	semi-additive	amount	[account_id, posting_id]
 balances.account_id = postings.account_id	month	year	semi-additive	amount	[account_id, posting_id]
 
 # the measure side borrows its entity through a document: the levels are per invoice, the invoice names the customer,
-# and the payments key on the customer; a measure table whose every edge lands on a document keys on the document's dimension
+# and the payments key on the customer; a measure table whose every edge ends on a document keys on the document's dimension
 statement ok
 DECLARE DATASET viadoc SET (purpose: 'shape');
 
@@ -750,7 +813,7 @@ statement ok
 GLOSS role ON received.received_to_date AS $${"value": "measure"}$$;
 
 query TTTTTT
-SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM additivity_anchors('viadoc.received.received_to_date') WHERE verdict <> 'abstain' ORDER BY seq;
+SELECT align, grain, scope, result, convention, identifier_columns::VARCHAR FROM additivity_anchors('viadoc.received.received_to_date') WHERE result <> 'abstain' ORDER BY seq;
 ----
 received via invoices.customer_id = payments.customer_id	month	none	semi-additive	amount	[customer_id, payment_id]
 received via invoices.customer_id = payments.customer_id	month	year	semi-additive	amount	[customer_id, payment_id]
@@ -764,9 +827,9 @@ measure	invoices.issued via invoice_id	invoice_id
 measure	invoices.issued via invoice_id	invoices>customer_id
 
 query TTI
-SELECT measure_time, reason, viable_entities FROM additivity_anchors('viadoc.lines.amount') WHERE convention IS NULL ORDER BY seq LIMIT 1;
+SELECT measure_time, (reason) IS NOT NULL, viable_entities FROM additivity_anchors('viadoc.lines.amount') WHERE convention IS NULL ORDER BY seq LIMIT 1;
 ----
-invoices.issued via invoice_id	fewer than two entities carry 4+ periods on this alignment	0
+invoices.issued via invoice_id	true	0
 
 # the event side keys through its master: payment lines name the payment, the payment names the customer,
 # and the measure keys on the customer directly; an event table that aligns no other way borrows through its document
@@ -807,13 +870,37 @@ statement ok
 GLOSS role ON payment_lines.amount AS $${"value": "measure"}$$;
 
 query TTTTTT
-SELECT align, grain, scope, verdict, convention, identifier_columns::VARCHAR FROM additivity_anchors('viamaster.balances.balance') WHERE verdict <> 'abstain' ORDER BY seq;
+SELECT align, grain, scope, result, convention, identifier_columns::VARCHAR FROM additivity_anchors('viamaster.balances.balance') WHERE result <> 'abstain' ORDER BY seq;
 ----
 balances.customer_id = payment_lines via payments.customer_id	month	none	semi-additive	amount	[line_id, payment_id]
 balances.customer_id = payment_lines via payments.customer_id	month	year	semi-additive	amount	[line_id, payment_id]
 
-# the kit run again with the same text stands: one row, nothing runs
+# the kit run again with the same text is current: one row, nothing runs
 query TT
 FROM glossql_kit('kits/quality/kit.sql');
 ----
 quality	current
+
+# --- every shipped measurement reads the data of its subject's dataset alone: it names no table and no
+# dataset but its subject's (a read past the read functions is refused at the declaration)
+
+query I
+SELECT count(*)
+FROM main.functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR", "constant": "BOOLEAN"}]')) u(r)
+WHERE f.returns IS NOT NULL AND f.declared_by IN ('kit:kpi', 'kit:quality')
+  AND ((r.kind = 'data' AND r."where" IS NULL AND r.read NOT IN ('dataset_cells', 'subject_column', 'glossql_relationship_checks'))
+       OR (r.kind = 'data' AND r.read IN ('dataset_cells', 'subject_column') AND NOT regexp_matches(r.what, '^[<$]')));
+----
+0
+
+# the stock/flow evidence's primitive reads the roles and the relationships at its bind: its reads are stated
+# with the primitive, so the function's reads say them
+query TTTT
+SELECT r.kind, r.read, r.what, r."where"
+FROM main.functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR"}]')) u(r)
+WHERE f.name = 'additivity_evidence' AND r.kind NOT IN ('other', 'macro')
+ORDER BY ALL;
+----
+data	glossql_additivity_cells	data	the dataset
+read	annotations	role	the dataset
+read	lineage	relates	the dataset

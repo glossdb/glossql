@@ -1,0 +1,396 @@
+# name: test/sql/glossql_branch_rows.test
+# description: branch_rows(view) on the shapes a view takes: joins on NULL, several and computed keys, conditions that guard a cast, subqueries, CTEs scoped where they are defined, a union with an ORDER BY, a branch that reads no table, names a read must quote, helper names a table carries, a dropped table, an open transaction, and the steps the read does not follow. On every followed branch the rows read, less those a step leaves out, are the rows the branch serves
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_branch_rows_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'branch rows');
+
+statement ok
+USE fin;
+
+statement ok
+CREATE TABLE fin.s AS SELECT * FROM (VALUES (1,'A','DK',10.0,'2024-01-05'::DATE),(2,'B','DK',20.0,'2024-01-06'),(3,NULL,'DK',30.0,'2024-02-01'),(4,'Z','PL',40.0,'2024-02-02'),(5,'A','PL',-5.0,'2024-02-03')) t(id,code,mkt,qty,d);
+
+statement ok
+CREATE TABLE fin.m AS SELECT * FROM (VALUES ('A','DK','brandA'),('A','PL','brandA2'),('B','DK','brandB'),(NULL,'DK','brandNull')) t(code,mkt,brand);
+
+statement ok
+CREATE TABLE fin.raw AS SELECT * FROM (VALUES ('10','x'),('abc','y'),('20','z')) t(code, tag);
+
+statement ok
+CREATE TABLE fin.cmap AS SELECT * FROM (VALUES ('x','5'),('z','7'),('y','bad')) t(tag, num);
+
+statement ok
+CREATE TABLE fin.ids AS SELECT * FROM (VALUES (10,'ten'),(20,'twenty')) t(id, name);
+
+# --- joins: on a NULL key, on two keys, with a literal of the driving table, on computed keys; conditions in
+# WHERE, with OR, with a subquery; an anti join, a left join before an inner join, a self join, one table
+# joined twice, a right join, a subquery before a join, a join that repeats a row the next join leaves out
+
+statement ok
+CREATE VIEW fin.v_null AS SELECT s.id, m.brand FROM fin.s s JOIN fin.m m ON m.code = s.code;
+
+statement ok
+CREATE VIEW fin.v_multi AS SELECT s.id, m.brand FROM fin.s s JOIN fin.m m ON m.code = s.code AND m.mkt = s.mkt;
+
+statement ok
+CREATE VIEW fin.v_lit AS SELECT s.id, m.brand FROM fin.s s JOIN fin.m m ON s.mkt = 'DK' AND m.code = s.code;
+
+statement ok
+CREATE VIEW fin.v_expr AS SELECT s.id, m.brand FROM fin.s s JOIN fin.m m ON lower(m.code) = lower(s.code);
+
+statement ok
+CREATE VIEW fin.w_or AS SELECT s.id FROM fin.s s WHERE s.qty > 15 OR s.mkt = 'PL';
+
+statement ok
+CREATE VIEW fin.w_in AS SELECT s.id FROM fin.s s WHERE s.code IN (SELECT code FROM fin.m) AND NOT s.qty < 0;
+
+statement ok
+CREATE VIEW fin.w_two AS SELECT s.id, m.brand FROM fin.s s JOIN fin.m m ON m.code = s.code WHERE m.mkt = s.mkt;
+
+statement ok
+CREATE VIEW fin.anti AS SELECT s.id FROM fin.s s LEFT JOIN fin.m m ON m.code = s.code WHERE m.code IS NULL;
+
+statement ok
+CREATE VIEW fin.lj_ij AS SELECT s.id, m.brand, n.brand AS b2 FROM fin.s s LEFT JOIN fin.m m ON m.code = s.code AND m.mkt = 'DK' JOIN fin.m n ON n.brand = m.brand;
+
+statement ok
+CREATE VIEW fin.selfj AS SELECT a.id, b.id AS id2 FROM fin.s a JOIN fin.s b ON b.code = a.code AND b.id <> a.id;
+
+statement ok
+CREATE VIEW fin.twice AS SELECT s.id, x.brand, y.brand AS b2 FROM fin.s s JOIN fin.m x ON x.code = s.code AND x.mkt = 'DK' JOIN fin.m y ON y.code = s.code AND y.mkt = 'PL';
+
+statement ok
+CREATE VIEW fin.rj AS SELECT s.id, m.brand FROM fin.m m RIGHT JOIN fin.s s ON m.code = s.code JOIN fin.m n ON n.code = s.code AND n.mkt = 'PL';
+
+statement ok
+CREATE VIEW fin.pre AS SELECT x.id, m.brand FROM (SELECT * FROM fin.s WHERE qty > 0) x JOIN fin.m m ON m.code = x.code WHERE x.mkt = 'DK';
+
+statement ok
+CREATE VIEW fin.fan2 AS SELECT s.id, m.brand, n.brand AS b2 FROM fin.s s JOIN fin.m m ON m.code = s.code JOIN fin.m n ON n.mkt = m.mkt AND n.code = 'B';
+
+statement ok
+CREATE VIEW fin.nested AS SELECT s.id FROM fin.s s WHERE s.mkt='DK' UNION ALL (SELECT s.id FROM fin.s s WHERE s.mkt='PL' UNION ALL SELECT s.id FROM fin.s s WHERE s.qty < 0);
+
+statement ok
+CREATE VIEW fin.vov AS SELECT v.id FROM fin.nested v WHERE v.id > 1;
+
+statement ok
+CREATE VIEW fin.ctestar AS WITH c AS (SELECT s.id, s.qty FROM fin.s s WHERE s.qty > 0) SELECT * FROM c;
+
+statement ok
+CREATE VIEW fin.ctefilt AS WITH f AS (SELECT * FROM fin.m WHERE mkt = 'DK') SELECT s.id, f.brand FROM fin.s s JOIN f ON f.code = s.code;
+
+statement ok
+CREATE VIEW fin.star AS SELECT * FROM fin.s s JOIN fin.m m ON m.code = s.code;
+
+statement ok
+CREATE VIEW fin.dup AS SELECT s.code, m.code, s.mkt FROM fin.s s JOIN fin.m m ON m.code = s.code;
+
+# a condition that guards a cast, in the same query, before a join, in a subquery, in a join key
+statement ok
+CREATE VIEW fin.castv AS SELECT r.code::INTEGER AS c FROM fin.raw r WHERE r.code ~ '^[0-9]+$';
+
+statement ok
+CREATE VIEW fin.castj AS SELECT r.tag, c.num::INTEGER + 1 AS n FROM fin.raw r JOIN fin.cmap c ON c.tag = r.tag WHERE r.code <> 'abc';
+
+statement ok
+CREATE VIEW fin.subq AS SELECT x.c + 1 AS c FROM (SELECT r.code::INTEGER AS c FROM fin.raw r WHERE r.code ~ '^[0-9]+$') x;
+
+statement ok
+CREATE VIEW fin.condchain AS SELECT r.tag FROM fin.raw r WHERE r.code ~ '^[0-9]+$' AND r.code::INTEGER > 15;
+
+statement ok
+CREATE VIEW fin.inner_then AS SELECT x.n FROM (SELECT r.code AS n FROM fin.raw r WHERE r.code ~ '^[0-9]+$') x WHERE x.n::INTEGER > 15;
+
+statement ok
+CREATE VIEW fin.jcast AS SELECT x.tag, i.name FROM (SELECT r.code, r.tag FROM fin.raw r WHERE r.code ~ '^[0-9]+$') x JOIN fin.ids i ON i.id = x.code::INTEGER;
+
+# a union with an ORDER BY, and a branch that reads no table
+statement ok
+CREATE VIEW fin.ordered AS SELECT s.id FROM fin.s s WHERE s.mkt = 'DK' UNION ALL SELECT s.id FROM fin.s s WHERE s.mkt = 'PL' UNION ALL SELECT 0 ORDER BY 1;
+
+# a CTE in one branch named as a table another branch reads: each name in its own scope
+statement ok
+CREATE VIEW fin.shadow AS SELECT x.brand AS v FROM (WITH s AS (SELECT brand FROM fin.m) SELECT brand FROM s) x UNION ALL SELECT t.code FROM s t;
+
+# names the read quotes: a table with a dot and a space, columns named as keywords and with a quote
+statement ok
+CREATE TABLE fin."My Tab.le" AS SELECT * FROM (VALUES (1,'A',5),(2,'Q',6)) t("Key Col", "select", "it""s");
+
+statement ok
+CREATE VIEW fin.q1 AS SELECT "t x"."Key Col" AS "Out Col", "t x"."select", "t x"."it""s", m.brand AS "group" FROM fin."My Tab.le" AS "t x" JOIN fin.m m ON m.code = "t x"."select" WHERE "t x"."it""s" > 0;
+
+statement ok
+CREATE VIEW fin.q2 AS SELECT * FROM fin."My Tab.le";
+
+# on every followed branch that reads a table, the rows read less those a step leaves out are the rows the
+# branch serves: the rows each branch reads, by the first step that leaves each out, account for every row it
+# serves
+query TIIII
+WITH rows_ AS (
+  SELECT 'v_null' AS v, * FROM branch_rows('fin.v_null')
+  UNION ALL SELECT 'v_multi' AS v, * FROM branch_rows('fin.v_multi')
+  UNION ALL SELECT 'v_lit' AS v, * FROM branch_rows('fin.v_lit')
+  UNION ALL SELECT 'v_expr' AS v, * FROM branch_rows('fin.v_expr')
+  UNION ALL SELECT 'w_or' AS v, * FROM branch_rows('fin.w_or')
+  UNION ALL SELECT 'w_in' AS v, * FROM branch_rows('fin.w_in')
+  UNION ALL SELECT 'w_two' AS v, * FROM branch_rows('fin.w_two')
+  UNION ALL SELECT 'anti' AS v, * FROM branch_rows('fin.anti')
+  UNION ALL SELECT 'lj_ij' AS v, * FROM branch_rows('fin.lj_ij')
+  UNION ALL SELECT 'selfj' AS v, * FROM branch_rows('fin.selfj')
+  UNION ALL SELECT 'twice' AS v, * FROM branch_rows('fin.twice')
+  UNION ALL SELECT 'rj' AS v, * FROM branch_rows('fin.rj')
+  UNION ALL SELECT 'pre' AS v, * FROM branch_rows('fin.pre')
+  UNION ALL SELECT 'fan2' AS v, * FROM branch_rows('fin.fan2')
+  UNION ALL SELECT 'nested' AS v, * FROM branch_rows('fin.nested')
+  UNION ALL SELECT 'vov' AS v, * FROM branch_rows('fin.vov')
+  UNION ALL SELECT 'ctestar' AS v, * FROM branch_rows('fin.ctestar')
+  UNION ALL SELECT 'ctefilt' AS v, * FROM branch_rows('fin.ctefilt')
+  UNION ALL SELECT 'star' AS v, * FROM branch_rows('fin.star')
+  UNION ALL SELECT 'dup' AS v, * FROM branch_rows('fin.dup')
+  UNION ALL SELECT 'castv' AS v, * FROM branch_rows('fin.castv')
+  UNION ALL SELECT 'castj' AS v, * FROM branch_rows('fin.castj')
+  UNION ALL SELECT 'subq' AS v, * FROM branch_rows('fin.subq')
+  UNION ALL SELECT 'condchain' AS v, * FROM branch_rows('fin.condchain')
+  UNION ALL SELECT 'inner_then' AS v, * FROM branch_rows('fin.inner_then')
+  UNION ALL SELECT 'jcast' AS v, * FROM branch_rows('fin.jcast')
+  UNION ALL SELECT 'ordered' AS v, * FROM branch_rows('fin.ordered')
+  UNION ALL SELECT 'shadow' AS v, * FROM branch_rows('fin.shadow')
+  UNION ALL SELECT 'q1' AS v, * FROM branch_rows('fin.q1')
+  UNION ALL SELECT 'q2' AS v, * FROM branch_rows('fin.q2')),
+told AS (SELECT v, branch FROM rows_ WHERE kind = 'branch' AND text IS NULL AND table_name IS NOT NULL),
+counted AS (
+  SELECT v, branch, count(*) FILTER (WHERE kind = 'read') AS partners, count(*) FILTER (WHERE kind = 'read' AND step IS NOT NULL) AS dropped,
+         count(*) FILTER (WHERE kind = 'served') AS reached
+  FROM rows_ GROUP BY ALL)
+SELECT c.v, c.branch, c.partners, c.dropped, c.reached FROM counted c JOIN told USING (v, branch)
+WHERE c.partners - c.dropped <> c.reached;
+----
+
+# every view above has each of its branches followed
+query I
+WITH rows_ AS (
+  SELECT 'v_null' AS v, * FROM branch_rows('fin.v_null')
+  UNION ALL SELECT 'v_multi' AS v, * FROM branch_rows('fin.v_multi')
+  UNION ALL SELECT 'v_lit' AS v, * FROM branch_rows('fin.v_lit')
+  UNION ALL SELECT 'v_expr' AS v, * FROM branch_rows('fin.v_expr')
+  UNION ALL SELECT 'w_or' AS v, * FROM branch_rows('fin.w_or')
+  UNION ALL SELECT 'w_in' AS v, * FROM branch_rows('fin.w_in')
+  UNION ALL SELECT 'w_two' AS v, * FROM branch_rows('fin.w_two')
+  UNION ALL SELECT 'anti' AS v, * FROM branch_rows('fin.anti')
+  UNION ALL SELECT 'lj_ij' AS v, * FROM branch_rows('fin.lj_ij')
+  UNION ALL SELECT 'selfj' AS v, * FROM branch_rows('fin.selfj')
+  UNION ALL SELECT 'twice' AS v, * FROM branch_rows('fin.twice')
+  UNION ALL SELECT 'rj' AS v, * FROM branch_rows('fin.rj')
+  UNION ALL SELECT 'pre' AS v, * FROM branch_rows('fin.pre')
+  UNION ALL SELECT 'fan2' AS v, * FROM branch_rows('fin.fan2')
+  UNION ALL SELECT 'nested' AS v, * FROM branch_rows('fin.nested')
+  UNION ALL SELECT 'vov' AS v, * FROM branch_rows('fin.vov')
+  UNION ALL SELECT 'ctestar' AS v, * FROM branch_rows('fin.ctestar')
+  UNION ALL SELECT 'ctefilt' AS v, * FROM branch_rows('fin.ctefilt')
+  UNION ALL SELECT 'star' AS v, * FROM branch_rows('fin.star')
+  UNION ALL SELECT 'dup' AS v, * FROM branch_rows('fin.dup')
+  UNION ALL SELECT 'castv' AS v, * FROM branch_rows('fin.castv')
+  UNION ALL SELECT 'castj' AS v, * FROM branch_rows('fin.castj')
+  UNION ALL SELECT 'subq' AS v, * FROM branch_rows('fin.subq')
+  UNION ALL SELECT 'condchain' AS v, * FROM branch_rows('fin.condchain')
+  UNION ALL SELECT 'inner_then' AS v, * FROM branch_rows('fin.inner_then')
+  UNION ALL SELECT 'jcast' AS v, * FROM branch_rows('fin.jcast')
+  UNION ALL SELECT 'ordered' AS v, * FROM branch_rows('fin.ordered')
+  UNION ALL SELECT 'shadow' AS v, * FROM branch_rows('fin.shadow')
+  UNION ALL SELECT 'q1' AS v, * FROM branch_rows('fin.q1')
+  UNION ALL SELECT 'q2' AS v, * FROM branch_rows('fin.q2'))
+SELECT count(*) FROM rows_ WHERE kind = 'branch' AND text IS NOT NULL;
+----
+0
+
+# a condition that guards a cast: the cast is evaluated on the rows the condition keeps; a row left out reads
+# NULL where the value would fail
+query IIT
+SELECT rid, step, "values" FROM branch_rows('fin.castv') WHERE kind = 'read' ORDER BY rid;
+----
+1	NULL	[10]
+2	1	[NULL]
+3	NULL	[20]
+
+query TT
+SELECT kind, list("values" ORDER BY "values") FROM branch_rows('fin.jcast') WHERE kind IN ('read', 'served') GROUP BY kind ORDER BY kind;
+----
+read	[[x, ten], [y, NULL], [z, twenty]]
+served	[[x, ten], [z, twenty]]
+
+# a union with an ORDER BY is followed per branch; the branch that reads no table reads nothing and serves its row
+query IITT
+SELECT branch, count(*) FILTER (WHERE kind = 'read'), any_value(dataset || '.' || table_name) FILTER (WHERE kind = 'branch'),
+       count(*) FILTER (WHERE kind = 'served')
+FROM branch_rows('fin.ordered') GROUP BY branch ORDER BY branch;
+----
+1	5	fin.s	3
+2	5	fin.s	2
+3	0	NULL	1
+
+# the CTE s is the first branch's; the second reads the lake's table s
+query ITI
+SELECT branch, dataset || '.' || table_name, (SELECT count(*) FROM branch_rows('fin.shadow') r WHERE r.branch = b.branch AND r.kind = 'read')
+FROM branch_rows('fin.shadow') b WHERE kind = 'branch' ORDER BY branch;
+----
+1	fin.m	4
+2	fin.s	5
+
+# the driving table's dataset and name apart, a name with a dot whole
+query TT
+SELECT dataset, table_name FROM branch_rows('fin.q1') WHERE kind = 'branch';
+----
+fin	My Tab.le
+
+# --- what the read does not follow: told false, with the driving table's rows as read and the rows served
+
+statement ok
+CREATE VIEW fin.agg AS SELECT sum(s.qty) AS total FROM fin.s s;
+
+statement ok
+CREATE VIEW fin.agg2 AS SELECT count(*) AS n FROM fin.s s WHERE s.qty > 0;
+
+statement ok
+CREATE VIEW fin.gball AS SELECT s.mkt, count(*) AS n FROM fin.s s GROUP BY ALL;
+
+statement ok
+CREATE VIEW fin.udist AS SELECT s.code FROM fin.s s UNION SELECT m.code FROM fin.m m;
+
+statement ok
+CREATE VIEW fin.unionlim AS (SELECT s.id FROM fin.s s UNION ALL SELECT s.id FROM fin.s s) LIMIT 3;
+
+statement ok
+CREATE VIEW fin.fullj AS SELECT s.id, m.brand FROM fin.s s FULL JOIN fin.m m ON m.code = s.code;
+
+statement ok
+CREATE VIEW fin.usingj AS SELECT s.id, brand FROM fin.s s JOIN fin.m m USING (code);
+
+statement ok
+CREATE VIEW fin.limitb AS SELECT s.id FROM fin.s s ORDER BY s.id LIMIT 2;
+
+query TTII
+WITH rows_ AS (
+  SELECT 'agg' AS v, * FROM branch_rows('fin.agg')
+  UNION ALL SELECT 'agg2' AS v, * FROM branch_rows('fin.agg2')
+  UNION ALL SELECT 'gball' AS v, * FROM branch_rows('fin.gball')
+  UNION ALL SELECT 'udist' AS v, * FROM branch_rows('fin.udist')
+  UNION ALL SELECT 'unionlim' AS v, * FROM branch_rows('fin.unionlim')
+  UNION ALL SELECT 'fullj' AS v, * FROM branch_rows('fin.fullj')
+  UNION ALL SELECT 'usingj' AS v, * FROM branch_rows('fin.usingj')
+  UNION ALL SELECT 'limitb' AS v, * FROM branch_rows('fin.limitb'))
+SELECT v, bool_and(text IS NOT NULL) FILTER (WHERE kind = 'branch'), count(*) FILTER (WHERE kind = 'step'),
+       count(*) FILTER (WHERE kind = 'served')
+FROM rows_ GROUP BY v ORDER BY v;
+----
+agg	true	0	1
+agg2	true	0	1
+fullj	true	0	8
+gball	true	0	2
+limitb	true	0	2
+udist	true	0	4
+unionlim	true	0	3
+usingj	true	0	5
+
+# a table or a view carrying a column named as the read's helpers is not followed, and serves all its columns
+statement ok
+CREATE TABLE fin.h AS SELECT 1 AS id, 'x' AS __gloss_note;
+
+statement ok
+CREATE VIEW fin.hv AS SELECT * FROM fin.h h;
+
+statement ok
+CREATE VIEW fin.hv2 AS SELECT h.id AS __gloss_rid FROM fin.h h;
+
+query TTT
+SELECT v, bool_and(text IS NOT NULL) FILTER (WHERE kind = 'branch'), any_value("values") FILTER (WHERE kind = 'served')
+FROM (SELECT 'hv' AS v, * FROM branch_rows('fin.hv')
+ UNION ALL SELECT 'hv2' AS v, * FROM branch_rows('fin.hv2')) GROUP BY v ORDER BY v;
+----
+hv	true	[1, x]
+hv2	true	[1]
+
+# a view whose table was dropped: not followed, nothing read or served; a name that is no view: no rows
+statement ok
+CREATE TABLE fin.gone_m AS SELECT * FROM fin.m;
+
+statement ok
+CREATE VIEW fin.gone AS SELECT s.id, g.brand FROM fin.s s JOIN fin.gone_m g ON g.code = s.code;
+
+statement ok
+DROP TABLE fin.gone_m;
+
+query TTI
+SELECT kind, text IS NOT NULL, count(*) FROM branch_rows('fin.gone') GROUP BY ALL;
+----
+branch	true	1
+
+query I
+SELECT count(*) FROM branch_rows('fin.nosuch');
+----
+0
+
+# inside an open transaction: the view and the rows as the transaction holds them
+statement ok
+CREATE VIEW fin.tx AS SELECT s.id FROM fin.s s WHERE s.qty > 0;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO fin.s VALUES (6,'A','DK',1.0,'2024-03-01');
+
+statement ok
+CREATE OR REPLACE VIEW fin.tx AS SELECT s.id FROM fin.s s WHERE s.qty > 15;
+
+query TII
+SELECT kind, count(*) FILTER (WHERE step IS NULL), count(*) FILTER (WHERE step IS NOT NULL) FROM branch_rows('fin.tx') WHERE kind IN ('read', 'served', 'step') GROUP BY kind ORDER BY kind;
+----
+read	3	3
+served	3	0
+step	0	1
+
+statement ok
+COMMIT;
+
+# --- a body reads it through the data of its subject: the result is out of date once a table the view reads
+# is loaded again, or the view is defined again
+statement ok
+DECLARE ASPECT kept_rows WITH $${"type": "object", "properties": {"n": {"type": "integer"}}}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION kept_rows FOR GLOBAL AS $$ SELECT count(*) FILTER (WHERE kind = 'read' AND step IS NULL) AS n, count(*) FILTER (WHERE kind = 'served') AS served FROM branch_rows($subject) $$ RETURNS kept_rows;
+
+statement ok
+SELECT kept_rows() FROM fin.v_null;
+
+query T
+SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'kept_rows';
+----
+data(data, itself),function,property
+
+statement ok
+INSERT INTO fin.m VALUES ('Z','PL','brandZ');
+
+query TT
+SELECT subject, input FROM glossql_outdated() WHERE function = 'kept_rows';
+----
+fin.v_null	data(data, itself)

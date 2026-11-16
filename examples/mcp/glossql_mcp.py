@@ -2,18 +2,18 @@
 # requires-python = ">=3.11"
 # dependencies = ["fastmcp>=4,<5", "duckdb==2.0.0"]
 # ///
-"""The MCP door: a glossql workspace behind one tool, on one DuckDB connection.
+"""The MCP interface: a glossql workspace behind one tool, on one DuckDB connection.
 
 A workspace is a directory holding the opener glossql.sql, the lake's
 catalog and its data. The server opens one connection through the duckdb
 package, runs the opener's SQL on it (the CLI's dot commands skipped) and
-keeps it for its life: the tool `gloss` runs each call's statements there,
-one after the other, and renders what each returns. The two skills are
+keeps it open: the tool `glossql` runs each call's statements there,
+one after the other, and renders what each returns. The skills are
 resources and prompts; the opener is a resource.
 
     uv run examples/mcp/glossql_mcp.py /path/to/workspace
 
-GLOSSQL_WORKSPACE stands in for the argument. The duckdb package is pinned
+GLOSSQL_WORKSPACE replaces the argument. The duckdb package is pinned
 to the release the extension is built for.
 """
 
@@ -81,11 +81,11 @@ CON = open_workspace()
 mcp = FastMCP(
     "glossql",
     instructions=(
-        "A glossql workspace: DuckDB, a DuckLake and the glossql context language on one connection, "
-        "behind one tool, `gloss`, which runs glossql statements and plain SQL. Read "
-        "skill://glossql/SKILL.md first (the door, the language, the reads, the store), then "
-        "`SELECT * FROM glossql.datasets;`. The other skill resources are the kits' vocabularies, one per "
-        "kit under kits/, for a workspace that loaded the kit (`SELECT name FROM glossql.kits;`)."
+        "A glossql workspace: DuckDB, a DuckLake and the glossql language on one connection, "
+        "behind one tool, `glossql`, which runs glossql statements and plain SQL. Read "
+        "skill://glossql/SKILL.md first (the statements, the reads, the catalog tables), then "
+        "`SELECT * FROM datasets;`. The other skill resources are the kits' properties, one per "
+        "kit under kits/, for a workspace that loaded the kit (`SELECT name FROM kits;`)."
     ),
 )
 
@@ -96,13 +96,13 @@ def glossql(statements: str, max_rows: int = 1000, max_cell: int = CELL) -> str:
     """Run glossql statements and plain SQL in the workspace, `;`-separated, on the server's one connection.
 
     The connection lives as long as the server: `USE <dataset>`, variables and the
-    actor persist from call to call, and the lake keeps what landed. A read comes
+    actor persist from call to call, and the lake keeps what was stored. A read comes
     back as a markdown table with `name:TYPE` headers and a row-count footer, whole
     up to `max_rows` rows, else its first and last rows; a cell over `max_cell`
     chars is cut, with the count of what is missing (0: whole); a write comes back
     as its outcome line. A refused statement stops the call and is the error,
-    naming its place: what landed before it stayed landed, what came after never
-    ran, except inside an explicit transaction, which the refusal rolls back whole.
+    naming its place: what was stored before it stays stored, what came after did not
+    run, except inside an explicit transaction, which the refusal rolls back whole.
     """
     out = []
     for index, statement in enumerate(CON.extract_statements(statements), 1):
@@ -121,7 +121,7 @@ def glossql(statements: str, max_rows: int = 1000, max_cell: int = CELL) -> str:
 
 
 def serve_skill(name: str, path: Path) -> None:
-    """A skill as a resource and as a prompt: the door's, and one per kit."""
+    """A skill as a resource and as a prompt: the interface's, and one per kit."""
     description = path.read_text().split("description:", 1)[1].split("\n", 1)[0].strip()
     mcp.resource(f"skill://{name}/SKILL.md", mime_type="text/markdown", description=description)(
         lambda: path.read_text()

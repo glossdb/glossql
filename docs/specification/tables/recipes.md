@@ -6,7 +6,8 @@ table once; `IMPORT` runs it again. Key: `dataset`, `table_name`.
 
 | Column | Type | Description |
 |---|---|---|
-| `seq` | BIGINT | The row's order in the table, from 1. |
+| `begin_snapshot` | BIGINT | The lake snapshot the write that made the row took. |
+| `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
 | `dataset` | VARCHAR | The dataset the table belongs to. |
 | `table_name` | VARCHAR | The table the query builds. |
 | `source` | VARCHAR | The source the query reads. |

@@ -1,20 +1,20 @@
 # Kits
 
-The extension ships the language and the catalog, and no vocabulary. A
-kit is the vocabulary for a domain: a script of declarations
-(properties, functions, tests) with a `SKILL.md` beside it that teaches
-an agent what the words mean. The extension validates what a kit
-declares; the kit decides what is said.
+The extension ships the language and the catalog. It declares no
+properties of its own. A kit adds them for one domain: a script of
+declarations (properties, functions, tests) with a `SKILL.md` beside it
+that teaches an agent what the words mean.
 
 ## The kits that ship
 
-| Kit | Brings |
-|---|---|
-| `kpi` | the semantic layer's words for columns and tables: `meaning`, `role`, `additivity` (additive, semi-additive, ratio with its numerator and denominator, non-additive), `unit`, `dimension`, `entity`; source `conventions`; the `definitions` handbook; the `slot_entropy` detector; the `column_profile` and `outlier_profile` measurements; the tests that bind them. A metric's view carries the same words on its columns |
-| `quality` | how the data holds together, over `dataset_cells()`: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `grounding_collisions` and `additivity_anchors` as table macros; the measurements that store them (`detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_grounding_collisions`, `additivity_evidence`); the `temporal` profile; the `rate_tolerance` detector, which scores a stated expectation against a computed value. Load it after `kpi` |
-| `spatial` | a small domain kit: `shape` on every geometry column (`WHEN TYPE = 'GEOMETRY'`), the `crs` its coordinates are in, and the `geometry_profile` measurement. Its first lines install and load DuckDB's `spatial` extension |
+| Kit | Adds | Skill |
+|---|---|---|
+| `lineage` | The lineage of a dataset as one relation, `lineage(dataset)`: what contains what, what a view reads, what a relationship relates, what a plan plans. The read functions a function's body reads the catalog through: `annotations(property, where)`, `results(function, where)`, `definition(where)`. No property. `PRAGMA glossql` loads it | [kits/lineage/SKILL.md](../kits/lineage/SKILL.md) |
+| `kpi` | The semantic model's words. Properties: `meaning`, `role`, `additivity`, `unit`, `dimension`, `entity`, `conventions` (on a source), `definitions` (on a dataset). Measurements: `column_profile`, `outlier_profile`. Detector: `value_entropy`. A test on each property; `role`, `additivity` and `unit` are scored by `value_entropy` | [kits/kpi/SKILL.md](../kits/kpi/SKILL.md) |
+| `quality` | Data quality checks. Table macros: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `definition_collisions`, `additivity_anchors`. Measurements that store their results: `detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_definition_collisions`, `additivity_evidence`, `temporal`. Detector: `rate_tolerance`, which compares a measured rate with a stated tolerance. Load it after `kpi` | [kits/quality/SKILL.md](../kits/quality/SKILL.md) |
+| `spatial` | Geometry columns. Properties: `shape` and `crs`, required on columns of type `GEOMETRY`. Measurement: `geometry_profile`. Its first lines install and load DuckDB's `spatial` extension | [kits/spatial/SKILL.md](../kits/spatial/SKILL.md) |
 
-A workspace loads kits of its own after these.
+`examples/spatial/` runs the `spatial` kit on a public shapefile.
 
 ## Load a kit
 
@@ -24,52 +24,39 @@ FROM glossql_kit('kits/quality/kit.sql');
 ```
 
 - The path is anything DuckDB's file system opens: a local path, or a
-  URL once `httpfs` is loaded (`INSTALL httpfs; LOAD httpfs;`).
-- The kit runs statement by statement on a second connection, under
-  the glossql grammar, and returns one row per statement:
-  `(statement, outcome)`. Each statement commits on its own; a failing
-  statement stops the load, and the ones before it stay.
-- The load is recorded in the `kits` table with its path, statement
-  count and the hash of its text. Loaded again unchanged, the kit is
-  already in place: the call returns one row and runs only its `LOAD`
-  lines.
-- A changed kit re-declares: unchanged properties stay, functions are
-  replaced, and a changed property that has values under it is refused.
+  URL once `httpfs` is loaded.
+- The statements run in order. The call returns one row per statement:
+  `(statement, outcome)`. Each statement commits on its own. A
+  statement that fails stops the load; the ones before it stay.
+- The load adds a row to the [kits](specification/tables/kits.md)
+  table with the path, the statement count and a hash of the text.
+- Loading the same text again runs only its `LOAD` and `INSTALL`
+  lines and returns one row. So a kit can be loaded at the start of
+  every session.
+- A changed text runs whole: an unchanged property does nothing, a
+  function is replaced, and a changed property that has annotations is
+  refused.
+- A declaration a kit makes has `kit:<name>` in its `declared_by`
+  column.
 
 ## Write a kit
 
 A kit is statements in order: properties first, then functions, then
-the tests that name both.
+the tests that name both. See the usage pages for each statement:
+[properties](usage/describing-data.md),
+[functions](usage/measurements.md), [tests](usage/tests.md).
 
-- A property's `WITH` schema is a JSON Schema. Annotations such as
-  `title` or `x-kind` sit beside the structure.
-- Every `VIEW` value is checked against the metric contract (`sql` or
-  `stopped`, `assumptions`). What a reader of a metric's rows needs (the
-  period, the measure and how it adds up, the slices) is recorded on
-  the view's columns under the kit's properties. A kit whose readers
-  need a key in the body declares a schema for it as an aspect with
-  `"x-kind": "grounding"`; every `VIEW` value is then checked against
-  it too.
-- A measurement (`RETURNS aspect`) becomes a table macro in the
-  dataset's schema, or in `glossql` for `GLOBAL`. Its body is DuckDB
-  SQL; names resolve as in the declaring session. A body may open with
-  its own `WITH`.
-- A detector (no `RETURNS`) runs at read over its test's `slots` with
-  `$threshold` bound, and returns `(subject, band, score)`.
-- A measurement is pinned to the tables and catalog tables its plan
-  scans. One that reads a file, a catalog function or another database
-  is served only while nothing in the dataset moved, so read tables.
-- Conditions narrow what is required: `AS FACT ON COLUMN WHEN role =
-  'measure'`.
+- A property's `WITH` schema is a JSON Schema. Keywords such as `title`
+  or `x-kind` are stored with it.
+- A kit that needs its own keys in a view's body declares a schema for
+  them: a property whose schema carries `"x-kind": "definition"`. Every
+  `VIEW` value is validated against it. It cannot be annotated or
+  tested.
+- A measurement that reads a file, a table function or another
+  database is computed again after any change in the dataset. Read
+  tables where you can.
+- A kit may hold plain SQL too, such as `CREATE MACRO`, `INSTALL` and
+  `LOAD`.
 
-The `SKILL.md` is the half the extension cannot check: what each word
-means, the order of the work, what a reader expects.
-
-## Wrap it
-
-The extension has no interface of its own. A wrapper holds one
-connection per actor, sets the actor on it
-([sessions](usage/sessions.md#say-who-is-speaking)), and exposes the
-statements: an MCP server as one tool with the kit's `SKILL.md` as a
-resource, an HTTP endpoint per route. The two that ship are in
-[interfaces](interfaces.md).
+Write the `SKILL.md` for the agent: what each word means, the order of
+the work, and what a reader of the data expects.

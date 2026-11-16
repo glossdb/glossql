@@ -1,0 +1,677 @@
+# name: test/sql/glossql_inputs.test
+# description: a result's inputs are what its reads returned: an annotation outside the place a read names leaves the result current, one inside outdates it, a change undone makes it current again, a retyped column outdates the readers of its annotation, a result read out of date outdates its reader, and a read of the catalog past the read functions is refused at the declaration (SPEC §6)
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_inputs_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET f1 SET (purpose: 'inputs');
+
+statement ok
+USE f1;
+
+statement ok
+CREATE TABLE f1.races AS SELECT i AS race_id, DATE '2024-01-01' + (i * 7)::INTEGER AS date, 'race ' || i AS name FROM range(6) t(i);
+
+statement ok
+CREATE TABLE f1.results AS SELECT i % 6 AS race_id, i % 3 AS driver_id, (i % 10)::INTEGER AS points FROM range(30) t(i);
+
+statement ok
+CREATE TABLE f1.circuits AS SELECT i::INTEGER AS circuit_id, 'circuit ' || i AS name FROM range(4) t(i);
+
+statement ok
+DECLARE ASPECT role WITH $${"type": "object", "required": ["value"], "properties": {"value": {"enum": ["key", "measure", "dimension", "timestamp", "attribute"]}}}$$ AS FACT ON COLUMN;
+
+statement ok
+DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+# two metrics: points scans results and races and joins them on race_id; race_count scans races alone
+
+statement ok
+DECLARE ASPECT points WITH $${"title": "Points"}$$ AS VIEW;
+
+statement ok
+GLOSS points ON f1 AS $${"sql": "SELECT r.date AS period, sum(x.points) AS value FROM f1.results x JOIN f1.races r ON r.race_id = x.race_id GROUP BY 1"}$$;
+
+statement ok
+DECLARE ASPECT race_count WITH $${"title": "Races"}$$ AS VIEW;
+
+statement ok
+GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1"}$$;
+
+# a check over a metric that reads one property on its sources, and one that reads its definition
+
+statement ok
+DECLARE ASPECT role_check WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION role_check FOR GLOBAL AS $$ SELECT count(value) AS n FROM annotations('role', 'its sources') $$ RETURNS role_check;
+
+statement ok
+DECLARE ASPECT scans WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION scans FOR GLOBAL AS $$ SELECT coalesce(sum(len(reads)), 0) AS n FROM definition('itself') $$ RETURNS scans;
+
+statement ok
+GLOSS role ON results.points AS $${"value": "measure"}$$;
+
+statement ok
+GLOSS meaning ON circuits.name AS $${"text": "the circuit's name"}$$;
+
+query TTTTT
+SELECT role_check(), scans() FROM points;
+----
+role_check	f1.points	role_check	1	true
+scans	f1.points	scans	2	true
+
+query TTTTT
+SELECT role_check(), scans() FROM race_count;
+----
+role_check	f1.race_count	role_check	0	true
+scans	f1.race_count	scans	1	true
+
+# the inputs: one per read, named by the read function, its what and its where, and the declarations
+
+query T
+SELECT string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot) WHERE m.function = 'role_check' AND m.subject = 'f1.points';
+----
+annotations(role, its sources),function,property
+
+query T
+SELECT string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot) WHERE m.function = 'scans' AND m.subject = 'f1.points';
+----
+definition(definition, itself),function,property
+
+# --- an annotation outside the place leaves the results current: nothing is computed
+
+statement ok
+GLOSS role ON circuits.name AS $${"value": "attribute"}$$;
+
+statement ok
+GLOSS meaning ON circuits.circuit_id AS $${"text": "the key"}$$;
+
+query TTTTT
+SELECT role_check(), scans() FROM points;
+----
+role_check	f1.points	role_check	1	false
+scans	f1.points	scans	2	false
+
+# a declaration of a property no read names leaves them current too
+
+statement ok
+DECLARE ASPECT unrelated WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+query I
+SELECT count(*) FROM glossql_outdated();
+----
+0
+
+# --- an annotation inside the place outdates the results whose read names it, and no other: races.date
+# is a source of both metrics, results.race_id of points alone, and another property than role leaves role_check current
+
+statement ok
+GLOSS meaning ON results.race_id AS $${"text": "the race"}$$;
+
+query I
+SELECT count(*) FROM glossql_outdated();
+----
+0
+
+statement ok
+GLOSS role ON results.race_id AS $${"value": "key"}$$;
+
+query TTTT
+SELECT function, subject, input, reason FROM glossql_outdated() ORDER BY ALL;
+----
+role_check	f1.points	annotations(role, its sources)	changed
+
+query TTTTT
+SELECT role_check() FROM points;
+----
+role_check	f1.points	role_check	2	true
+
+statement ok
+GLOSS role ON races.date AS $${"value": "timestamp"}$$;
+
+query TTT
+SELECT function, subject, input FROM glossql_outdated() ORDER BY ALL;
+----
+role_check	f1.points	annotations(role, its sources)
+role_check	f1.race_count	annotations(role, its sources)
+
+query TTTTT
+SELECT role_check() FROM race_count;
+----
+role_check	f1.race_count	role_check	1	true
+
+# --- what the reads return, not when it was written: a change undone makes the result current again
+
+statement ok
+GLOSS role ON races.date AS $${"value": "attribute"}$$;
+
+query T
+SELECT current FROM GLOSSARY(race_count, all => true) WHERE aspect = 'role_check';
+----
+false
+
+statement ok
+GLOSS role ON races.date AS $${"value": "timestamp"}$$;
+
+query T
+SELECT current FROM GLOSSARY(race_count, all => true) WHERE aspect = 'role_check';
+----
+true
+
+# --- the definition a body reads is the view's SQL and what it reads: an assumption added leaves it
+# current; other SQL outdates it, and a reader of its sources too, since it reads race_id now
+
+statement ok
+GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1", "assumptions": [{"assumption": "a race counts once"}]}$$;
+
+query TT
+SELECT function, input FROM glossql_outdated() WHERE subject = 'f1.race_count' ORDER BY ALL;
+----
+
+statement ok
+GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(DISTINCT race_id) AS value FROM f1.races GROUP BY 1"}$$;
+
+query TT
+SELECT function, input FROM glossql_outdated() WHERE subject = 'f1.race_count' ORDER BY ALL;
+----
+role_check	annotations(role, its sources)
+scans	definition(definition, itself)
+
+# --- a retyped column outdates the readers of its annotation, through the annotation's state: a reader of
+# role over the dataset holds while a column nobody annotated is retyped, and is out of date once the
+# annotated one is
+
+statement ok
+DECLARE ASPECT role_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
+
+statement ok
+DECLARE FUNCTION role_rows FOR GLOBAL AS $$ SELECT count(value) FILTER (WHERE state = 'current') AS n FROM annotations('role', 'the dataset') $$ RETURNS role_rows;
+
+query TTTTT
+SELECT role_rows() FROM f1;
+----
+role_rows	f1	role_rows	4	true
+
+statement ok
+ALTER TABLE f1.circuits ALTER COLUMN circuit_id TYPE BIGINT;
+
+query TTTTT
+SELECT role_rows() FROM f1;
+----
+role_rows	f1	role_rows	4	false
+
+statement ok
+ALTER TABLE f1.results ALTER COLUMN points TYPE BIGINT;
+
+query TT
+SELECT subject, state FROM GLOSSARY(results.points) WHERE aspect = 'role';
+----
+f1.results.points	stale
+
+query TTTTT
+SELECT role_rows() FROM f1;
+----
+role_rows	f1	role_rows	3	true
+
+# --- a result a read returned: its reader is out of date while it is, and a result outside the place leaves the reader current
+
+statement ok
+DECLARE ASPECT width WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION width FOR GLOBAL AS $$ SELECT count(DISTINCT v) AS n FROM subject_column($subject) $$ RETURNS width;
+
+statement ok
+DECLARE ASPECT widths WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION widths FOR GLOBAL AS $$ SELECT coalesce(sum(value::INTEGER), 0) AS n FROM results('width', 'its sources') $$ RETURNS widths;
+
+statement ok
+SELECT width() FROM results.points;
+
+statement ok
+SELECT width() FROM circuits.name;
+
+query TTTTT
+SELECT widths() FROM points;
+----
+widths	f1.points	widths	10	true
+
+statement ok
+INSERT INTO f1.circuits VALUES (9, 'circuit 9');
+
+query T
+SELECT current FROM GLOSSARY(circuits.name, all => true) WHERE aspect = 'width';
+----
+false
+
+query TTTTT
+SELECT widths() FROM points;
+----
+widths	f1.points	widths	10	false
+
+statement ok
+INSERT INTO f1.results VALUES (0, 0, 11);
+
+query TTT
+SELECT function, input, reason FROM glossql_outdated() WHERE subject = 'f1.points' AND function = 'widths';
+----
+widths	results(width, its sources)	outdated
+
+# --- a body that reads the catalog past the read functions is refused at its declaration: no input could
+# follow what it read
+
+statement ok
+DECLARE ASPECT raw_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement error
+DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM __ducklake_metadata_ws.main.glossql_glossary $$ RETURNS raw_rows;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM main.glossary $$ RETURNS raw_rows;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM annotations('role', 'its friends') $$ RETURNS raw_rows;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM annotations(lower('ROLE'), 'itself') $$ RETURNS raw_rows;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM dataset_cells('f1') $$ RETURNS raw_rows;
+----
+untracked_read
+
+query I
+SELECT count(*) FROM functions_history WHERE name = 'raw_rows';
+----
+0
+
+# --- the dataset's metrics: the views that are metrics, not plans. A plan declared and annotated leaves a
+# reader of the metrics, their annotations and their data, current
+
+statement ok
+DECLARE ASPECT metric_cells WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
+
+statement ok
+DECLARE FUNCTION metric_cells FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM dataset_cells('f1', 'the dataset''s metrics')) + (SELECT count(value) FROM annotations('role', 'the dataset''s metrics')) AS n $$ RETURNS metric_cells;
+
+statement ok
+SELECT metric_cells() FROM f1;
+
+query T
+SELECT string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot) WHERE m.function = 'metric_cells';
+----
+annotations(role, the dataset's metrics),data(data, the dataset's metrics),function,property
+
+statement ok
+DECLARE ASPECT points_target WITH $${"title": "Points target", "x-kind": "plan", "x-plan-of": "points"}$$ AS VIEW;
+
+statement ok
+GLOSS points_target ON f1 AS $${"sql": "SELECT period, value * 1.1 AS value FROM f1.points"}$$;
+
+statement ok
+GLOSS role ON points_target.value AS $${"value": "measure"}$$;
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'metric_cells';
+----
+0
+
+# a role on a metric's column outdates it
+statement ok
+GLOSS role ON points.value AS $${"value": "measure"}$$;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'metric_cells';
+----
+annotations(role, the dataset's metrics)
+
+# --- a function's value read through annotations() is a result read: once it is out of date, so is its reader
+
+statement ok
+DECLARE ASPECT size WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION size FOR GLOBAL AS $$ SELECT count(*) AS n FROM f1.circuits $$ RETURNS size;
+
+statement ok
+DECLARE ASPECT size_seen WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION size_seen FOR GLOBAL AS $$ SELECT asset, state FROM annotations('size', 'itself') $$ RETURNS size_seen;
+
+statement ok
+SELECT size(), size_seen() FROM circuits;
+
+statement ok
+INSERT INTO f1.circuits VALUES (9, 'circuit 9');
+
+query TTT
+SELECT function, input, reason FROM glossql_outdated() WHERE function IN ('size', 'size_seen') ORDER BY ALL;
+----
+size	data(data, f1.circuits)	changed
+size_seen	annotations(size, itself)	outdated
+
+# --- a detector declared again moves the annotations its test judges: their readers are out of date
+
+statement ok
+DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON TABLE;
+
+statement ok
+DECLARE FUNCTION remark_judge FOR f1 AS $$ SELECT subject, 'green' AS state, 0.0 AS score FROM annotations GROUP BY subject $$;
+
+statement ok
+DECLARE TEST remark_test ON remark BY (AGENT, HUMAN) DETECTOR remark_judge THRESHOLD 0.5;
+
+statement ok
+GLOSS remark ON circuits AS $${"value": "a"}$$;
+
+statement ok
+DECLARE ASPECT remark_seen WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION remark_seen FOR GLOBAL AS $$ SELECT asset, state FROM annotations('remark', 'itself') $$ RETURNS remark_seen;
+
+statement ok
+SELECT remark_seen() FROM circuits;
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'remark_seen';
+----
+0
+
+statement ok
+DECLARE FUNCTION remark_judge FOR f1 AS $$ SELECT subject, 'red' AS state, 1.0 AS score FROM annotations GROUP BY subject $$;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'remark_seen';
+----
+annotations(remark, itself)
+
+# --- the read serves the threshold of the property's test, and a test declared again with another one
+# outdates its readers
+
+statement ok
+DECLARE ASPECT remark_bar WITH $${"type": "number"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION remark_bar FOR GLOBAL AS $$ SELECT max(threshold) AS bar FROM annotations('remark', 'itself') $$ RETURNS remark_bar;
+
+statement ok
+SELECT remark_bar() FROM circuits;
+
+query R
+SELECT value::DOUBLE FROM measurements WHERE function = 'remark_bar';
+----
+0.5
+
+statement ok
+DECLARE TEST remark_test ON remark BY (AGENT, HUMAN) DETECTOR remark_judge THRESHOLD 0.7;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'remark_bar';
+----
+annotations(remark, itself)
+
+statement ok
+SELECT remark_bar() FROM circuits;
+
+query R
+SELECT value::DOUBLE FROM measurements WHERE function = 'remark_bar';
+----
+0.7
+
+# --- a macro the body follows is part of the function: replaced, it outdates the results, and the reads are
+# taken again when the function computes
+
+statement ok
+CREATE OR REPLACE MACRO main.circuit_count() AS TABLE SELECT count(*) AS n FROM f1.circuits;
+
+statement ok
+DECLARE ASPECT counted WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION counted FOR GLOBAL AS $$ SELECT n FROM circuit_count() $$ RETURNS counted;
+
+statement ok
+SELECT counted() FROM circuits;
+
+statement ok
+CREATE OR REPLACE MACRO main.circuit_count() AS TABLE SELECT count(*) AS n FROM f1.races;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'counted';
+----
+function
+
+query TTTTT
+SELECT counted() FROM circuits;
+----
+counted	f1.circuits	counted	6	true
+
+query T
+SELECT r.read FROM functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) u(r)
+WHERE f.name = 'counted' AND r.kind = 'data';
+----
+f1.races
+
+statement ok
+INSERT INTO f1.races SELECT 99, DATE '2025-01-01', 'race 99';
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'counted';
+----
+data(data, f1.races)
+
+# --- a table the body names before the lake holds it refuses the declaration; once it exists, the body reads it
+
+statement ok
+DECLARE ASPECT later WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement error
+DECLARE FUNCTION later FOR GLOBAL AS $$ SELECT count(*) AS n FROM f1.pit_stops $$ RETURNS later;
+----
+Catalog Error
+
+statement ok
+CREATE TABLE f1.pit_stops AS SELECT 1 AS stop;
+
+statement ok
+DECLARE FUNCTION later FOR GLOBAL AS $$ SELECT count(*) AS n FROM f1.pit_stops $$ RETURNS later;
+
+query TT
+SELECT r.kind, r.read FROM functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) u(r) WHERE f.name = 'later';
+----
+data	f1.pit_stops
+
+# --- a name the lake spells otherwise reads that table: written with another case, or without its dataset
+
+statement ok
+DECLARE ASPECT spelled_upper WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION spelled_upper FOR GLOBAL AS $$ SELECT count(*) AS n FROM F1.Circuits $$ RETURNS spelled_upper;
+
+statement ok
+DECLARE ASPECT spelled_bare WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION spelled_bare FOR GLOBAL AS $$ SELECT count(*) AS n FROM Circuits $$ RETURNS spelled_bare;
+
+statement ok
+SELECT spelled_upper(), spelled_bare() FROM circuits;
+
+query TT
+SELECT m.function, i.input FROM measurements m JOIN inputs i USING (begin_snapshot)
+WHERE m.function IN ('spelled_upper', 'spelled_bare') AND i.input LIKE 'data%' ORDER BY ALL;
+----
+spelled_bare	data(data, f1.circuits)
+spelled_upper	data(data, f1.circuits)
+
+statement ok
+INSERT INTO f1.circuits VALUES (10, 'circuit 10');
+
+query T
+SELECT function FROM glossql_outdated() WHERE function LIKE 'spelled%' ORDER BY ALL;
+----
+spelled_bare
+spelled_upper
+
+# --- the lake's catalog of tables and a table of another database are refused
+
+statement ok
+CREATE TABLE memory.main.elsewhere_rows AS SELECT 1 AS x;
+
+statement ok
+DECLARE ASPECT elsewhere WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement error
+DECLARE FUNCTION elsewhere FOR GLOBAL AS $$ SELECT count(*) AS n FROM information_schema.tables $$ RETURNS elsewhere;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION elsewhere FOR GLOBAL AS $$ SELECT count(*) AS n FROM memory.main.elsewhere_rows $$ RETURNS elsewhere;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION elsewhere FOR GLOBAL AS $$ SELECT count(*) AS n FROM duckdb_tables() $$ RETURNS elsewhere;
+----
+untracked_read
+
+# --- a body runs in its subject's dataset: the dataset the caller works in reads nothing of it
+
+statement ok
+DECLARE DATASET other SET (purpose: 'elsewhere');
+
+statement ok
+DECLARE ASPECT here WITH $${"type": "string"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION here FOR GLOBAL AS $$ SELECT current_schema() AS s $$ RETURNS here;
+
+statement ok
+USE other;
+
+query TTTTT
+SELECT here() FROM f1.circuits;
+----
+here	f1.circuits	here	"f1"	true
+
+statement ok
+USE f1;
+
+# --- a GLOBAL function's table named without its dataset is taken in the subject's: where that dataset
+# holds none yet, the computation fails and is stored with the table read by its name, and the table
+# loaded makes it out of date
+
+statement ok
+CREATE TABLE other.laps AS SELECT 1 AS lap;
+
+statement ok
+DECLARE ASPECT circuit_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION circuit_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM circuits $$ RETURNS circuit_rows;
+
+statement error
+SELECT circuit_rows() FROM other.laps;
+----
+
+query TT
+SELECT i.input, i.version IS NOT NULL FROM measurements m JOIN inputs i USING (begin_snapshot)
+WHERE m.function = 'circuit_rows' AND i.input LIKE 'data%';
+----
+data(data, other.circuits)	true
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'circuit_rows';
+----
+0
+
+statement ok
+CREATE TABLE other.Circuits AS SELECT 1 AS circuit_id;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'circuit_rows';
+----
+data(data, other.circuits)
+
+query TTTTT
+SELECT circuit_rows() FROM other.laps;
+----
+circuit_rows	other.laps	circuit_rows	1	true
+
+# --- a macro the body follows that comes to read past the read functions fails the computation, stored
+# with the function's declaration as its input: the macro restored makes it out of date, and it computes
+
+statement ok
+CREATE OR REPLACE MACRO main.lap_count() AS TABLE SELECT count(*) AS n FROM other.laps;
+
+statement ok
+DECLARE ASPECT lapped WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION lapped FOR GLOBAL AS $$ SELECT n FROM lap_count() $$ RETURNS lapped;
+
+statement ok
+CREATE OR REPLACE MACRO main.lap_count() AS TABLE SELECT count(*) AS n FROM main.glossary;
+
+statement error
+SELECT lapped() FROM other.laps;
+----
+untracked_read
+
+query TT
+SELECT m.error IS NOT NULL, string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot)
+WHERE m.function = 'lapped' GROUP BY ALL;
+----
+true	function,property
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'lapped';
+----
+0
+
+statement ok
+CREATE OR REPLACE MACRO main.lap_count() AS TABLE SELECT count(*) AS n FROM other.laps;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'lapped';
+----
+function
+
+query TTTTT
+SELECT lapped() FROM other.laps;
+----
+lapped	other.laps	lapped	1	true

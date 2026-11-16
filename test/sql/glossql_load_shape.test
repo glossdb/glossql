@@ -1,0 +1,219 @@
+# name: test/sql/glossql_load_shape.test
+# description: a load in place, replace or merge, of a table whose columns did not change leaves a result that read the table's columns current; a load that changes them, or a view the dataset did not have, outdates the readers of the place it changed
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_load_shape_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'load shape');
+
+statement ok
+USE fin;
+
+statement ok
+COPY (SELECT i AS id, 'seg' || (i % 2) AS segment FROM range(4) t(i)) TO '{TEST_DIR}/load_shape.csv' (HEADER);
+
+statement ok
+DECLARE SOURCE files SET (type: csv, location: '{TEST_DIR}');
+
+statement ok
+DECLARE RECIPE whole ON fin FROM files AS $$SELECT id::INTEGER AS id, segment FROM read_csv('load_shape.csv')$$;
+
+statement ok
+DECLARE RECIPE keyed ON fin FROM files SET (key: id) AS $$SELECT id::INTEGER AS id, segment FROM read_csv('load_shape.csv')$$;
+
+statement ok
+DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+# a result that reads the notes on the table's columns, and one that reads every asset of the dataset
+statement ok
+DECLARE ASPECT width WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION width FOR fin AS $$ SELECT count(*) AS n FROM annotations('note', 'its columns') $$ RETURNS width;
+
+statement ok
+DECLARE ASPECT assets WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
+
+statement ok
+DECLARE FUNCTION assets FOR fin AS $$ SELECT count(*) AS n FROM annotations('note', 'the dataset') $$ RETURNS assets;
+
+query TTTTT
+SELECT width() FROM whole;
+----
+width	fin.whole	width	2	true
+
+statement ok
+SELECT assets() FROM fin;
+
+query T
+SELECT input FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'width' AND input LIKE 'annotations%';
+----
+annotations(note, its columns)
+
+# --- a replace load of the same columns
+
+statement ok
+IMPORT whole;
+
+query TTTTT
+SELECT width() FROM whole;
+----
+width	fin.whole	width	2	false
+
+# --- a merge load of the same columns
+
+statement ok
+IMPORT keyed;
+
+query TTTTT
+SELECT width() FROM whole;
+----
+width	fin.whole	width	2	false
+
+query T
+SELECT current FROM GLOSSARY(fin, all => true) WHERE aspect = 'assets';
+----
+true
+
+# --- a load that changes the columns changes the place: the result is computed again
+
+statement ok
+DECLARE RECIPE whole ON fin FROM files AS $$SELECT id::INTEGER AS id, segment, id * 2 AS twice FROM read_csv('load_shape.csv')$$;
+
+query TT
+SELECT function, input FROM glossql_outdated() ORDER BY ALL;
+----
+assets	annotations(note, the dataset)
+width	annotations(note, its columns)
+
+query TTTTT
+SELECT width() FROM whole;
+----
+width	fin.whole	width	3	true
+
+statement ok
+SELECT assets() FROM fin;
+
+# --- a view the dataset did not have is an asset of the dataset: a reader of every asset is out of date, a reader of the table's columns is not
+
+statement ok
+CREATE VIEW fin.halves AS SELECT id FROM fin.whole WHERE id % 2 = 0;
+
+query TT
+SELECT function, input FROM glossql_outdated() ORDER BY ALL;
+----
+assets	annotations(note, the dataset)
+
+statement ok
+SELECT assets() FROM fin;
+
+# --- a merge load writes only the rows that differ: the same rows leave the table's version and every
+# result that read its data current; one changed cell or one added row moves it; a row the source no
+# longer sends stays, as a merge keeps it; a key sent twice is refused before anything is written
+
+statement ok
+COPY (SELECT i AS id, 'acct' || i AS account, i * 1.5 AS amount, CASE WHEN i = 2 THEN NULL ELSE 'x' END AS note FROM range(5) t(i)) TO '{TEST_DIR}/merge_rows.csv' (HEADER);
+
+statement ok
+DECLARE RECIPE ledger ON fin FROM files SET (key: id) AS $$SELECT id::BIGINT AS id, account, amount::DECIMAL(10,1) AS amount, note FROM read_csv('merge_rows.csv')$$;
+
+statement ok
+DECLARE ASPECT ledger_total WITH $${"type": "number"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION ledger_total FOR fin AS $$ SELECT sum(amount)::DOUBLE AS n FROM ledger $$ RETURNS ledger_total;
+
+statement ok
+SELECT ledger_total() FROM ledger;
+
+# the same rows, a NULL among them
+
+statement ok
+IMPORT ledger;
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'ledger_total';
+----
+0
+
+# a row the source no longer sends stays: the table does not change
+
+statement ok
+COPY (SELECT i AS id, 'acct' || i AS account, i * 1.5 AS amount, CASE WHEN i = 2 THEN NULL ELSE 'x' END AS note FROM range(4) t(i)) TO '{TEST_DIR}/merge_rows.csv' (HEADER);
+
+statement ok
+IMPORT ledger;
+
+query II
+SELECT count(*), (SELECT count(*) FROM glossql_outdated() WHERE function = 'ledger_total') FROM fin.ledger;
+----
+5	0
+
+# a key sent twice is refused, and nothing is written
+
+statement ok
+COPY (SELECT i % 4 AS id, 'acct' || i AS account, i * 1.5 AS amount, 'x' AS note FROM range(5) t(i)) TO '{TEST_DIR}/merge_rows.csv' (HEADER);
+
+statement error
+IMPORT ledger;
+----
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'ledger_total';
+----
+0
+
+# one changed cell: a NULL that became a value
+
+statement ok
+COPY (SELECT i AS id, 'acct' || i AS account, i * 1.5 AS amount, CASE WHEN i < 5 THEN 'x' END AS note FROM range(5) t(i)) TO '{TEST_DIR}/merge_rows.csv' (HEADER);
+
+statement ok
+IMPORT ledger;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'ledger_total';
+----
+data(data, fin.ledger)
+
+query I
+SELECT count(*) FROM fin.ledger WHERE note IS NULL;
+----
+0
+
+statement ok
+SELECT ledger_total() FROM ledger;
+
+# one added row
+
+statement ok
+COPY (SELECT i AS id, 'acct' || i AS account, i * 1.5 AS amount, 'x' AS note FROM range(6) t(i)) TO '{TEST_DIR}/merge_rows.csv' (HEADER);
+
+statement ok
+IMPORT ledger;
+
+query T
+SELECT input FROM glossql_outdated() WHERE function = 'ledger_total';
+----
+data(data, fin.ledger)
+
+query I
+SELECT count(*) FROM fin.ledger;
+----
+6

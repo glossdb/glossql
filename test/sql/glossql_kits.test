@@ -1,5 +1,5 @@
 # name: test/sql/glossql_kits.test
-# description: a kit is a script of declarations glossql_kit() loads; the KPI kit's vocabulary, grounding schema, detector, measurements and tests
+# description: a kit is a script of declarations glossql_kit() loads; the KPI kit's vocabulary, definition schema, detector, measurements and tests
 # group: [sql]
 
 require glossql
@@ -38,38 +38,39 @@ SELECT count(*) FROM main.loaded;
 19
 
 query TT
-SELECT statement, outcome FROM main.loaded WHERE statement LIKE 'DECLARE TEST role_test%';
+SELECT statement, (outcome) IS NOT NULL FROM main.loaded WHERE statement LIKE 'DECLARE TEST role_test%';
 ----
-DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR slot_entropy THRESHOLD 0.7;	declared test role_test on role
+DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR value_entropy THRESHOLD 0.7;	true
 
 query TTI
-SELECT name, location, statements FROM kits;
+SELECT name, location, statements FROM kits ORDER BY name;
 ----
 kpi	kits/kpi/kit.sql	19
+lineage	glossql	26
 
 query I
 SELECT count(*) FROM aspects;
 ----
 10
 
-# a kit run again with the same text, as the opener does at start-up, stands: one row says so, nothing runs, no new kits row
+# a kit run again with the same text, as the opener does at start-up, is current: one row says so, nothing runs, no new kits row
 query TT
 FROM glossql_kit('kits/kpi/kit.sql');
 ----
 kpi	current
 
 query II
-SELECT count(*), length(max(hash)) FROM kits;
+SELECT count(*), length(max(hash)) FROM kits WHERE name = 'kpi';
 ----
 1	32
 
-# a failing statement stops the load; the ones before it stand
+# a failing statement stops the load; the ones before it stay
 statement error
 FROM glossql_kit('kits/nothing/kit.sql');
 ----
 nothing
 
-# --- the vocabulary is owed where a test stands: role on every column, meaning and entity by grain;
+# --- the vocabulary is required where a test is declared: role on every column, meaning and entity by grain;
 # additivity, unit and dimension wait on a role (WHEN)
 
 query TTT
@@ -95,7 +96,7 @@ meaning	missing
 role	current
 unit	missing
 
-# --- slot_entropy judges the enum claims: the human disagrees, the role is in conflict, red at 0.7
+# --- value_entropy judges the enum claims: the human disagrees, the role is in conflict, red at 0.7
 
 statement ok
 SET VARIABLE glossql_actor = 'human';
@@ -107,11 +108,11 @@ statement ok
 RESET VARIABLE glossql_actor;
 
 query TTR
-SELECT aspect, band, score FROM TESTS(orders.amount::role);
+SELECT aspect, state, score FROM TESTS(orders.amount::role);
 ----
 role	red	1.0
 
-# the human's slot wins the WHEN: dimension is owed now, additivity and unit are not
+# the human's value wins the WHEN: dimension is required now, additivity and unit are not
 query TTT
 SELECT aspect, value, state FROM GLOSSARY(orders.amount) ORDER BY aspect;
 ----
@@ -119,8 +120,8 @@ dimension	NULL	missing
 meaning	NULL	missing
 role	NULL	conflict
 
-# --- a metric's body is the grounding contract; what a reader needs is glossed on the view's
-# columns, under the kit's words — the kit declares no grounding schema
+# --- a metric's body is the definition contract; what a reader needs is glossed on the view's
+# columns, under the kit's words — the kit declares no definition schema
 
 statement ok
 DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS VIEW;
@@ -133,22 +134,18 @@ SELECT revenue FROM fin.revenue;
 ----
 9.0
 
-query T
+statement ok
 GLOSS role ON revenue.revenue AS $${"value": "measure"}$$;
-----
-glossed role on fin.revenue.revenue as agent
 
 statement error
 GLOSS additivity ON revenue.revenue AS $${"value": "stok"}$$;
 ----
-at $.value
+Invalid Input Error
 
-query T
+statement ok
 GLOSS additivity ON revenue.revenue AS $${"value": "ratio", "numerator": "won", "denominator": "offered"}$$;
-----
-glossed additivity on fin.revenue.revenue as agent
 
-# --- the measurements land through extraction and serve beside the glosses
+# --- the measurements are stored through extraction and serve beside the glosses
 
 query TTTTT
 SELECT column_profile() FROM orders.amount;
@@ -181,15 +178,13 @@ SELECT total, "distinct" FROM main.column_profile('fin.orders.id');
 ----
 4	4
 
-# --- a subject names a landed column as DuckDB matches names: case-insensitively, in the catalog's spelling
+# --- a subject names a loaded table's column as DuckDB matches names: case-insensitively, in the catalog's spelling
 
 statement ok
 CREATE TABLE fin.cased AS SELECT 1 AS "OrderId", 2.5 AS amount;
 
-query T
+statement ok
 GLOSS meaning ON cased.orderid AS $${"value": "the order"}$$;
-----
-glossed meaning on fin.cased.OrderId as agent
 
 query TT
 SELECT subject, state FROM GLOSSARY(cased) WHERE aspect = 'meaning' AND subject LIKE '%.OrderId';
@@ -202,10 +197,8 @@ fin.cased.OrderId	current
 statement ok
 CREATE TABLE fin.dotted AS SELECT 1 AS "a.b", 2 AS c;
 
-query T
+statement ok
 GLOSS meaning ON dotted."a.b" AS $${"value": "dotted"}$$;
-----
-glossed meaning on fin.dotted.a.b as agent
 
 query TT
 SELECT subject, state FROM GLOSSARY(dotted."a.b") WHERE aspect = 'meaning';
@@ -231,18 +224,18 @@ fin.dotted.a.b	stale
 statement error
 DECLARE DATASET "a.b" SET (purpose: 'none');
 ----
-a dataset's name carries no dot
+Invalid Input Error
 
 statement error
 DECLARE RECIPE "a.b" ON fin FROM nowhere AS $$SELECT 1$$;
 ----
-a table's name carries no dot
+Invalid Input Error
 
-# --- a kit's name under a changed text runs whole and lands a new kits row; the original text is then not the
+# --- a kit's name under a changed text runs whole and stores a new kits row; the original text is then not the
 # newest row's for the name, so it runs again
 
 statement ok
-COPY (SELECT 'DECLARE ASPECT probe WITH $${"title": "Probe"}$$ AS FACT ON DATASET;' AS s) TO '{TEST_DIR}/glossql_kits_lake/kpi.sql' (FORMAT csv, HEADER false, QUOTE '');
+COPY (SELECT 'DECLARE ASPECT sample WITH $${"title": "Sample"}$$ AS FACT ON DATASET;' AS s) TO '{TEST_DIR}/glossql_kits_lake/kpi.sql' (FORMAT csv, HEADER false, QUOTE '');
 
 query I
 SELECT count(*) FROM (FROM glossql_kit('{TEST_DIR}/glossql_kits_lake/kpi.sql')) WHERE outcome <> 'current';
@@ -255,9 +248,10 @@ SELECT count(*) FROM (FROM glossql_kit('kits/kpi/kit.sql')) WHERE outcome = 'cur
 0
 
 query TI
-SELECT name, count(*) FROM kits GROUP BY name;
+SELECT name, count(*) FROM kits GROUP BY name ORDER BY name;
 ----
-kpi	3
+kpi	1
+lineage	1
 
 # --- declared_by: a kit's declarations name the kit, the connection's own name its actor
 

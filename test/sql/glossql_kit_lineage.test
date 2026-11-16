@@ -1,0 +1,579 @@
+# name: test/sql/glossql_kit_lineage.test
+# description: the lineage kit: a dataset's lineage as one relation, the read functions that walk it from the running function's subject, and the reads the engine stores with each declared function
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_kit_lineage_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET fin SET (purpose: 'lineage');
+
+statement ok
+USE fin;
+
+statement ok
+FROM glossql_kit('kits/kpi/kit.sql');
+
+statement ok
+CREATE TABLE fin.customers AS SELECT i AS customer_id, 'c' || i AS name FROM range(4) r(i);
+
+statement ok
+CREATE TABLE fin.orders AS SELECT i AS order_id, i % 5 AS customer_id, DATE '2024-01-01' + INTERVAL (i) DAY AS booked, 10.0 AS amount, 'x' AS note FROM range(10) r(i);
+
+statement ok
+CREATE TABLE fin.notes AS SELECT i AS order_id, 'n' AS text FROM range(3) r(i);
+
+statement ok
+DECLARE RELATIONSHIP orders.customer_id -> customers.customer_id;
+
+statement ok
+DECLARE RELATIONSHIP notes.order_id -> orders.order_id;
+
+statement ok
+DECLARE ASPECT sales WITH $${"title": "Sales"}$$ AS VIEW;
+
+statement ok
+GLOSS sales ON fin AS $${"sql": "SELECT date_trunc('month', o.booked)::DATE AS period, sum(o.amount) AS value, c.name FROM fin.orders o JOIN fin.customers c ON c.customer_id = o.customer_id GROUP BY ALL"}$$;
+
+statement ok
+DECLARE ASPECT sales_by_year WITH $${"title": "Sales by year"}$$ AS VIEW;
+
+statement ok
+GLOSS sales_by_year ON fin AS $${"sql": "SELECT date_trunc('year', period)::DATE AS period, sum(value) AS value FROM fin.sales GROUP BY 1"}$$;
+
+statement ok
+DECLARE ASPECT sales_plan WITH $${"title": "Sales plan", "x-kind": "plan", "x-plan-of": "sales"}$$ AS VIEW;
+
+statement ok
+GLOSS sales_plan ON fin AS $${"sql": "SELECT DATE '2024-01-01' AS period, 100.0 AS value"}$$;
+
+statement ok
+GLOSS role ON sales.period AS $${"value": "timestamp"}$$;
+
+# --- lineage(dataset): the edges, each with its kind
+
+query TI
+SELECT kind, count(*) FROM lineage('fin') GROUP BY kind ORDER BY kind;
+----
+contains	24
+plans	1
+reads	15
+relates	4
+
+# a relationship relates its two columns; the dataset contains it
+query TT
+SELECT "from", "to" FROM lineage('fin') WHERE kind = 'relates' AND "from" LIKE 'fin.orders%' ORDER BY "to";
+----
+fin.orders.customer_id -> fin.customers.customer_id	fin.customers.customer_id
+fin.orders.customer_id -> fin.customers.customer_id	fin.orders.customer_id
+
+# a view reads the tables and columns it scans and joins on; a view that reads a view reads that view
+# and, resolved, its tables
+query T
+SELECT "to" FROM lineage('fin') WHERE kind = 'reads' AND "from" = 'fin.sales_by_year' ORDER BY "to";
+----
+fin.customers
+fin.customers.customer_id
+fin.customers.name
+fin.orders
+fin.orders.amount
+fin.orders.booked
+fin.orders.customer_id
+fin.sales
+
+query TT
+SELECT "from", "to" FROM lineage('fin') WHERE kind = 'plans';
+----
+fin.sales_plan	fin.sales
+
+# --- the read functions walk from the subject: outside a run, and where none is set, the subject is the bound dataset
+
+query T
+SELECT asset FROM place('itself');
+----
+fin
+
+query TT
+SELECT asset, state FROM annotations('role', 'the dataset') WHERE asset LIKE 'fin.sales.%' ORDER BY asset;
+----
+fin.sales.name	missing
+fin.sales.period	current
+fin.sales.value	missing
+
+# a what of the form 'x-kind <kind>' names every property declared with that x-kind: one row per property
+# and asset, missing where nobody annotated it
+statement ok
+DECLARE ASPECT price_cut WITH $${"type": "object", "x-kind": "scenario"}$$ AS FACT ON DATASET;
+
+statement ok
+DECLARE ASPECT price_hold WITH $${"type": "object", "x-kind": "scenario"}$$ AS FACT ON DATASET;
+
+statement ok
+GLOSS price_cut ON fin AS $${"levers": []}$$;
+
+query TTTT
+SELECT asset, property, json_array_length(value, '$.levers'), state FROM annotations('x-kind scenario', 'the dataset') ORDER BY property;
+----
+fin	price_cut	0	current
+fin	price_hold	NULL	missing
+
+statement ok
+SET VARIABLE glossql_subject = 'fin.sales';
+
+query T
+SELECT asset FROM place('its columns') ORDER BY asset;
+----
+fin.sales.name
+fin.sales.period
+fin.sales.value
+
+query T
+SELECT asset FROM place('the columns it joins on') ORDER BY asset;
+----
+fin.customers.customer_id
+fin.orders.customer_id
+
+# a view's relationships are those between the tables it reads
+query T
+SELECT asset FROM place('its relationships');
+----
+fin.orders.customer_id -> fin.customers.customer_id
+
+# an annotation per asset of the place, and a row where nobody annotated it
+query TTT
+SELECT asset, value->>'value', state FROM annotations('role', 'its columns') ORDER BY asset;
+----
+fin.sales.name	NULL	missing
+fin.sales.period	timestamp	current
+fin.sales.value	NULL	missing
+
+# a property declared on tables returns no row for a column
+query T
+SELECT asset FROM annotations('entity', 'its sources') ORDER BY asset;
+----
+fin.customers
+fin.orders
+
+# a result per asset of the place, none stored
+query TTT
+SELECT asset, value IS NULL, error IS NULL FROM results('column_profile', 'the columns it joins on') ORDER BY asset;
+----
+fin.customers.customer_id	true	true
+fin.orders.customer_id	true	true
+
+query TTTI
+SELECT view, kind, sql IS NOT NULL, len(joins) FROM definition('itself');
+----
+fin.sales	NULL	true	1
+
+# a table's relationships are those that touch it; a plan's metric is the one it plans
+statement ok
+SET VARIABLE glossql_subject = 'fin.orders';
+
+query T
+SELECT asset FROM place('its relationships') ORDER BY asset;
+----
+fin.notes.order_id -> fin.orders.order_id
+fin.orders.customer_id -> fin.customers.customer_id
+
+statement ok
+SET VARIABLE glossql_subject = 'fin.sales_plan';
+
+query T
+SELECT view FROM definition('its metric');
+----
+fin.sales
+
+query TT
+SELECT view, plan_of FROM definition('itself');
+----
+fin.sales_plan	sales
+
+statement ok
+SET VARIABLE glossql_subject = 'fin.sales_by_year';
+
+query T
+SELECT view FROM definition('its sources');
+----
+fin.sales
+
+statement ok
+RESET VARIABLE glossql_subject;
+
+# --- in a run, the engine names the subject: a function's body reads through the read functions
+
+statement ok
+DECLARE ASPECT probe WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET, TABLE, COLUMN, RELATIONSHIP;
+
+statement ok
+DECLARE FUNCTION probe FOR GLOBAL AS $$
+  SELECT (SELECT list(asset ORDER BY asset) FROM annotations('role', 'its columns')) AS columns,
+         (SELECT list(asset ORDER BY asset) FROM results('column_profile', 'the columns it joins on')) AS joined
+$$ RETURNS probe;
+
+statement ok
+SELECT probe() FROM sales;
+
+query TT
+SELECT value->>'columns', value->>'joined' FROM main.measurements WHERE function = 'probe' AND subject = 'fin.sales';
+----
+["fin.sales.name","fin.sales.period","fin.sales.value"]	["fin.customers.customer_id","fin.orders.customer_id"]
+
+# --- the reads of a body, taken from its text at the declaration and stored with the function
+
+query TTTTT
+SELECT r.kind, r.read, r.what, r."where", r.constant
+FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR", "constant": "BOOLEAN", "via": "VARCHAR"}]')) AS r
+      FROM main.functions WHERE name = 'probe')
+ORDER BY ALL;
+----
+read	annotations	role	its columns	true
+read	results	column_profile	the columns it joins on	true
+
+# a read inside a macro the body calls is followed through the macro's definition
+statement ok
+CREATE OR REPLACE MACRO main.roles_of(w) AS TABLE FROM annotations('role', w);
+
+statement ok
+CREATE OR REPLACE MACRO main.my_roles() AS TABLE FROM annotations('role', 'its columns');
+
+statement ok
+DECLARE FUNCTION probe_macro FOR GLOBAL AS $$
+  SELECT (SELECT count(*) FROM my_roles()) AS n
+$$ RETURNS probe;
+
+query TTTTT
+SELECT r.kind, r.read, r."where", r.constant, r.via
+FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR", "constant": "BOOLEAN", "via": "VARCHAR"}]')) AS r
+      FROM main.functions WHERE name = 'probe_macro');
+----
+macro	ws.main.my_roles	NULL	NULL	(empty)
+read	annotations	its columns	true	my_roles
+
+# a macro's parameter the call passes a constant reads that constant; a parameter passed an expression, and a
+# string built at run, are not constants: the declaration is refused, naming the read
+statement ok
+DECLARE FUNCTION probe_open FOR GLOBAL AS $$
+  SELECT (SELECT count(*) FROM roles_of('its columns')) AS a
+$$ RETURNS probe;
+
+query TTTT
+SELECT r.read, r.what, r."where", r.constant
+FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR", "constant": "BOOLEAN", "via": "VARCHAR"}]')) AS r
+      FROM main.functions WHERE name = 'probe_open')
+WHERE r.kind = 'read'
+ORDER BY ALL;
+----
+annotations	role	its columns	true
+
+statement error
+DECLARE FUNCTION probe_built FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM roles_of(lower('ITSELF'))) AS c $$ RETURNS probe;
+----
+untracked_read
+
+statement error
+DECLARE FUNCTION probe_built FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM annotations('ro' || 'le', 'itself')) AS b $$ RETURNS probe;
+----
+untracked_read
+
+# the data by name and the subject's own data are each told apart; a CTE is no read; the catalog reached
+# directly is refused
+statement ok
+DECLARE FUNCTION probe_direct FOR GLOBAL AS $$
+  WITH x AS (SELECT 1 AS one)
+  SELECT (SELECT count(*) FROM fin.orders) AS b,
+         (SELECT count(*) FROM subject_column($subject)) AS c, (SELECT count(*) FROM x) AS d
+$$ RETURNS probe;
+
+query TT
+SELECT r.kind, r.read
+FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR", "constant": "BOOLEAN", "via": "VARCHAR"}]')) AS r
+      FROM main.functions WHERE name = 'probe_direct')
+ORDER BY ALL;
+----
+data	fin.orders
+data	subject_column
+
+statement error
+DECLARE FUNCTION probe_catalog FOR GLOBAL AS $$ SELECT (SELECT count(*) FROM main.glossary) AS a $$ RETURNS probe;
+----
+untracked_read
+
+# a detector reads the annotations its test hands it: no read of its own
+query T
+SELECT reads FROM main.functions WHERE name = 'value_entropy';
+----
+[]
+
+# --- a CTE's name hides a table only inside the query that defines it; a trailing semicolon parses; macros
+# past the depth followed are refused
+
+statement ok
+CREATE TABLE fin.races AS SELECT 1 AS id;
+
+statement ok
+DECLARE FUNCTION probe_cte FOR GLOBAL AS $$
+  SELECT (SELECT count(*) FROM fin.races) + (WITH races AS (SELECT 1) SELECT count(*) FROM races) AS n;
+$$ RETURNS probe;
+
+query TT
+SELECT r.kind, r.read FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) AS r
+      FROM main.functions WHERE name = 'probe_cte');
+----
+data	fin.races
+
+statement ok
+CREATE OR REPLACE MACRO main.deep0() AS (SELECT count(*) FROM fin.races);
+
+statement ok
+CREATE OR REPLACE MACRO main.deep1() AS deep0();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep2() AS deep1();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep3() AS deep2();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep4() AS deep3();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep5() AS deep4();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep6() AS deep5();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep7() AS deep6();
+
+statement ok
+CREATE OR REPLACE MACRO main.deep8() AS deep7();
+
+statement error
+DECLARE FUNCTION probe_deep FOR GLOBAL AS $$ SELECT deep8() AS n $$ RETURNS probe;
+----
+untracked_read
+
+statement ok
+DECLARE FUNCTION probe_deep FOR GLOBAL AS $$ SELECT deep7() AS n $$ RETURNS probe;
+
+# a table of the lake named like a relation of the catalog is data
+statement ok
+CREATE TABLE fin.sources AS SELECT 1 AS id;
+
+statement ok
+DECLARE FUNCTION probe_sources FOR GLOBAL AS $$ SELECT count(*) AS n FROM fin.sources $$ RETURNS probe;
+
+query TT
+SELECT r.kind, r.read FROM (SELECT unnest(from_json(reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) AS r
+      FROM main.functions WHERE name = 'probe_sources');
+----
+data	fin.sources
+
+# --- the places: the engine reads them from place_list(), place() answers each, and an unknown where is refused
+
+query T
+SELECT string_agg(p."where", '|' ORDER BY p."where") FROM unnest(main.place_list()) u(p);
+----
+its columns|its dataset|its metric|its relationships|its source systems|its sources|itself|the columns it joins on|the dataset|the dataset's metrics
+
+statement ok
+SET VARIABLE glossql_subject = 'fin';
+
+statement ok
+SELECT count(*) FROM place('itself');
+
+statement ok
+SELECT count(*) FROM place('its columns');
+
+statement ok
+SELECT count(*) FROM place('its sources');
+
+statement ok
+SELECT count(*) FROM place('the columns it joins on');
+
+statement ok
+SELECT count(*) FROM place('its relationships');
+
+statement ok
+SELECT count(*) FROM place('its metric');
+
+statement ok
+SELECT count(*) FROM place('its dataset');
+
+statement ok
+SELECT count(*) FROM place('its source systems');
+
+statement ok
+SELECT count(*) FROM place('the dataset''s metrics');
+
+statement ok
+SELECT count(*) FROM place('the dataset');
+
+statement error
+SELECT asset FROM place('its friends');
+----
+not_a_place
+
+statement ok
+RESET VARIABLE glossql_subject;
+
+# --- a join's table is the table the lineage says holds the column, a name with a dot in it too
+
+statement ok
+CREATE TABLE fin."cust.eu" AS SELECT i AS id FROM range(3) r(i);
+
+statement ok
+CREATE TABLE fin.ord AS SELECT i AS cust_id, 1.0 AS amount FROM range(5) r(i);
+
+statement ok
+DECLARE ASPECT dotted WITH $${"title": "Dotted"}$$ AS VIEW;
+
+statement ok
+GLOSS dotted ON fin AS $${"sql": "SELECT sum(o.amount) AS value FROM fin.ord o JOIN fin.\"cust.eu\" c ON c.id = o.cust_id"}$$;
+
+query T
+SELECT "to" FROM lineage('fin') WHERE "from" = 'fin.dotted' AND kind = 'reads' AND "to" IN ('fin.cust', 'fin.cust.eu', 'fin.ord') ORDER BY ALL;
+----
+fin.cust.eu
+fin.ord
+
+# --- the source a table is loaded from: an edge of the lineage, and a place a body names. A table's source
+# system is its recipe's source; a view's are those of the tables it reads
+
+statement ok
+COPY (SELECT 'M' || i AS matnr, i * 1.0 AS qty FROM range(3) r(i)) TO '{TEST_DIR}/stock_dk.csv' (HEADER);
+
+statement ok
+COPY (SELECT 'I' || i AS item, i * 2.0 AS amount FROM range(2) r(i)) TO '{TEST_DIR}/stock_ch.csv' (HEADER);
+
+statement ok
+DECLARE SOURCE erp_dk SET (type: csv, location: '{TEST_DIR}');
+
+statement ok
+DECLARE SOURCE erp_ch SET (type: csv, location: '{TEST_DIR}');
+
+statement ok
+DECLARE RECIPE stock_dk ON fin FROM erp_dk AS $$SELECT matnr, CAST(qty AS DOUBLE) AS qty FROM read_csv('stock_dk.csv')$$;
+
+statement ok
+DECLARE RECIPE stock_ch ON fin FROM erp_ch AS $$SELECT item, CAST(amount AS DOUBLE) AS amount FROM read_csv('stock_ch.csv')$$;
+
+statement ok
+DECLARE ASPECT stock WITH $${"title": "Stock", "x-kind": "relation"}$$ AS VIEW;
+
+statement ok
+GLOSS stock ON fin AS $${"sql": "SELECT matnr AS part, qty AS quantity FROM fin.stock_dk UNION ALL SELECT item, amount FROM fin.stock_ch"}$$;
+
+query TTT
+SELECT "from", "to", kind FROM lineage('fin') WHERE kind = 'loaded from' ORDER BY ALL;
+----
+fin.stock_ch	erp_ch	loaded from
+fin.stock_dk	erp_dk	loaded from
+
+# a view's definition names the source each table it reads is loaded from
+statement ok
+SET VARIABLE glossql_subject = 'fin.stock';
+
+query TT
+SELECT r.table_name, r.source FROM definition('itself'), unnest(reads) t(r) ORDER BY ALL;
+----
+fin.stock_ch	erp_ch
+fin.stock_dk	erp_dk
+
+# what the view requires of each read: nothing here, one row per branch
+query TIT
+SELECT c.table_name, c.branch, c.condition FROM definition('itself'), unnest(conditions) t(c) ORDER BY ALL;
+----
+fin.stock_ch	2	NULL
+fin.stock_dk	1	NULL
+
+# a relationship from the view's own column is one of the view's relationships
+statement ok
+DECLARE RELATIONSHIP fin.stock.part -> fin.stock_dk.matnr;
+
+query T
+SELECT asset FROM place('its relationships');
+----
+fin.stock.part -> fin.stock_dk.matnr
+
+statement ok
+RESET VARIABLE glossql_subject;
+
+statement ok
+GLOSS conventions ON erp_dk AS $${"units": "quantities in cases"}$$;
+
+statement ok
+SET VARIABLE glossql_subject = 'fin.stock_dk';
+
+query TTT
+SELECT asset, value->>'units', state FROM annotations('conventions', 'its source systems');
+----
+erp_dk	quantities in cases	current
+
+statement ok
+SET VARIABLE glossql_subject = 'fin.stock';
+
+query TT
+SELECT asset, state FROM annotations('conventions', 'its source systems') ORDER BY asset;
+----
+erp_ch	missing
+erp_dk	current
+
+statement ok
+RESET VARIABLE glossql_subject;
+
+# a table loaded without a recipe has no source system
+query I
+SELECT count(*) FROM places('fin') WHERE "where" = 'its source systems' AND subject = 'fin.orders';
+----
+0
+
+statement ok
+DECLARE ASPECT systems WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION systems FOR GLOBAL AS $$
+  SELECT list({'system': asset, 'state': state} ORDER BY asset) AS systems, count(*) FILTER (WHERE state = 'missing') AS missing FROM annotations('conventions', 'its source systems')
+$$ RETURNS systems;
+
+statement ok
+SELECT systems() FROM stock;
+
+statement ok
+SELECT systems() FROM stock_dk;
+
+query TT
+SELECT subject, value::VARCHAR FROM main.measurements WHERE function = 'systems' ORDER BY subject;
+----
+fin.stock	{"systems":[{"system":"erp_ch","state":"missing"},{"system":"erp_dk","state":"current"}],"missing":1}
+fin.stock_dk	{"systems":[{"system":"erp_dk","state":"current"}],"missing":0}
+
+# a source's conventions annotated: the results that read them through the place are out of date, a
+# table of another source's are not
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'systems';
+----
+0
+
+statement ok
+GLOSS conventions ON erp_ch AS $${"units": "quantities in pieces"}$$;
+
+query TT
+SELECT subject, reason FROM glossql_outdated() WHERE function = 'systems' ORDER BY ALL;
+----
+fin.stock	changed

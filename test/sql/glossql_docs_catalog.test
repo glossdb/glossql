@@ -41,11 +41,13 @@ UNION ALL SELECT 'glossary' AS relation, column_name, column_type AS data_type F
 UNION ALL SELECT 'relationships' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_relationships)
 UNION ALL SELECT 'functions' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_functions)
 UNION ALL SELECT 'measurements' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_measurements)
-UNION ALL SELECT 'tests' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_tests);
+UNION ALL SELECT 'tests' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_tests)
+UNION ALL SELECT 'inputs' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_inputs);
 
 # one page per store table: the pages are the views PRAGMA glossql made in the lake's main schema, one per table
 query I
 SELECT table_name FROM information_schema.tables WHERE table_catalog = 'ws' AND table_schema = 'main'
+  AND NOT ends_with(table_name, '_history')
 EXCEPT SELECT DISTINCT relation FROM documented;
 ----
 
@@ -57,7 +59,7 @@ EXCEPT SELECT table_name FROM information_schema.tables WHERE table_catalog = 'w
 query I
 SELECT count(DISTINCT relation) FROM stored;
 ----
-11
+12
 
 # a stored column the pages do not name
 query III

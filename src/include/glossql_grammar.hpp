@@ -6,6 +6,10 @@
 #include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 
+#include <functional>
+#include <map>
+#include <set>
+
 namespace duckdb {
 
 //! The glossql grammar (glossql_grammar.cpp): activated per connection with
@@ -126,10 +130,41 @@ struct QueryLineage {
 	//! every lake table the plan scans, as schema.table, joins and filters included
 	std::set<std::pair<string, vector<string>>> scans;
 	//! the pairs of scanned columns the plan's joins and filters equate, as
-	//! schema.table.column, and per side whether the plan joins it one row per value
-	std::map<std::pair<string, string>, std::pair<bool, bool>> joins;
+	//! schema.table.column, the left side as the predicate writes it (a join's
+	//! left input), per side whether the plan joins it one row per value, and
+	//! the join or filter that equates them, numbered in the plan: the pairs of
+	//! one number are that join's key
+	struct JoinPair {
+		string left;
+		string right;
+		bool left_unique;
+		bool right_unique;
+		idx_t join;
+	};
+	vector<JoinPair> joins;
+	//! the mapping of a view: one row per output column, branch of its union and
+	//! scanned column, filled where the view's own SQL is given
+	struct Mapping {
+		string column;
+		idx_t branch;
+		string derivation;
+		//! schema.table and its column, empty where the derivation reads no lake table
+		string table;
+		string table_column;
+		//! the name the view's SQL gives the scan, where it reads the table more than once
+		string alias;
+		//! the conjuncts of the view's joins and filters that read this scan alone
+		string condition;
+		//! the equalities of the join that looks this scan up: its columns against
+		//! the columns of the side it is joined to
+		string lookup;
+		vector<string> literals;
+		bool complete;
+	};
+	vector<Mapping> mapping;
 };
-QueryLineage LineageOf(ClientContext &context, const string &sql);
+//! `view_sql`, the view's CREATE VIEW statement, asks for the mapping too
+QueryLineage LineageOf(ClientContext &context, const string &sql, const string *view_sql = nullptr);
 //! The lineage as one JSON object, column to derivation; a column the walk could
 //! not follow carries a digest of the SQL, so it reads moved whenever the SQL did
 string LineageJson(const QueryLineage &lineage, const string &sql);
@@ -140,7 +175,7 @@ string JsonSchemaValueEnumCheck(const string &schema, const string &literal);
 //! A top-level string field of a JSON object, empty when absent
 string JsonStringField(const string &document, const string &field);
 //! The metric definition contract: sql or stopped, assumptions disclosed; every other key is a kit's
-extern const char *const GROUNDING_CONTRACT;
+extern const char *const DEFINITION_CONTRACT;
 
 //! Parses plain SQL with the stock grammar into one SELECT
 unique_ptr<SelectStatement> ParseSelect(const string &sql);
@@ -148,6 +183,11 @@ unique_ptr<SelectStatement> ParseSelect(const string &sql);
 string ReplacePlaceholder(const string &sql, const string &name, const string &replacement);
 //! The first line of a text, trimmed
 string FirstLine(const string &text);
+//! Runs a kit's script under its name (glossql_kit): (statement, outcome) per statement it ran, or one
+//! row (name, current) where the kits relation holds the same text and it has no LOAD to run; in_lake
+//! runs it with the workspace's lake as the default catalog
+vector<pair<string, string>> RunKit(ClientContext &context, const string &name, const string &location,
+                                    const string &script, bool in_lake);
 
 //! The workspace: one attached DuckLake. Its schemas are the datasets, its
 //! metadata catalog holds the store relations as glossql_<relation> beside the
@@ -168,21 +208,45 @@ struct Workspace {
 	string Table(const string &dataset, const string &name) const;
 };
 
-//! The legs a measurement can read, each at its version now: (name, version, kind) —
-//! every live table of the lake as <schema>.<table> at the last snapshot that
-//! wrote, altered or dropped it, every live view but the store's own as
-//! <schema>.<view> at the snapshot that defined it, every store relation but
-//! measurements as glossql.<relation> at its highest seq ('-' while empty); kind is
-//! table, view or store. A measurement's pin is these parts joined, sorted,
-//! name:version; glossql_store.cpp
-string LegsSQL(const Workspace &ws);
-//! The store's legs by name, quoted and comma-separated: 'main.aspects', ... (measurements is none)
-string StoreLegNames();
-//! Whether the measurement row `row` (pin, reads, dataset, function, computed_at)
-//! still holds, as a SQL boolean over a CTE named legs (LegsSQL): the legs its
-//! reads name look the same now as in its pin, and its function has not been
-//! re-declared since
-string StandsSQL(const Workspace &ws, const string &row);
+class Inner;
+
+//! What a stored result reads, by kind of read, per dataset: which of the kits' relations the
+//! digests of those reads walk (ReadsNowSQL)
+struct ReadNeeds {
+	std::set<string> places;
+	std::set<string> tables;
+	std::set<string> definitions;
+	std::set<string> lineage;
+	std::set<string> annotations;
+	//! the macros the functions' bodies follow, each with a digest of its definition now (MacroDigests)
+	std::map<string, string> macros;
+
+	//! A read of this kind (annotations, results, definition, data, lineage) of a result in the dataset
+	void Add(const string &dataset, const string &read);
+};
+//! What a set of reads returns now, each as a digest (SPEC §6): CTE definitions to follow a WITH
+//! over the caller's `wanted` (id, dataset, subject, function, aspect, read, what, where), ending
+//! in now_versions (id, read, what, where, version) and now_results (id, read, what, where,
+//! result), the stored results each read of results returned. A result stores these digests when
+//! it is computed, and is current while its reads return the same (glossql_store.cpp)
+string ReadsNowSQL(const Workspace &ws, const ReadNeeds &needs);
+//! The macros the bodies of the current functions follow, or of one function's, as their reads name
+//! them (functions.reads), each with a digest of its definition as the catalog holds it now; `gone`
+//! where none does (glossql_runner.cpp)
+std::map<string, string> MacroDigests(Inner &inner, const string &function);
+//! An input's name, as the inputs relation stores it: read(what, where) for a read function's call
+//! and for data; function and property for the declarations
+string InputName(const string &read, const string &what, const string &where);
+//! The current stored results, each row with `current`: each of its reads returns now what it
+//! returned when it was computed, and no result it read is out of date (SPEC §6)
+string CurrentResultsSQL(Inner &inner);
+//! Why a stored result is out of date: (dataset, function, subject, input, reason), a read that
+//! returns other rows now (reason `changed`), or a read of results that returned one out of date
+//! (reason `outdated`)
+string OutdatedSQL(Inner &inner);
+//! The session variable that names the subject a function computes a result for: the
+//! engine sets it on the connection of the run, and the read functions walk from it
+constexpr const char *RUN_SUBJECT = "glossql_subject";
 
 //! A second connection to the same database, for SQL run while the calling
 //! connection's context lock is held (glossql_runner.cpp)
@@ -190,7 +254,8 @@ class Inner {
 public:
 	explicit Inner(ClientContext &context);
 
-	//! Runs one statement; throws its error as InvalidInputException
+	//! Runs one statement; throws its error as InvalidInputException, a transaction conflict, an
+	//! interrupt and the engine's own failures (fatal, internal, memory) as themselves
 	unique_ptr<QueryResult> Run(const string &sql);
 	//! The first column of the first row, or NULL for no rows
 	Value Scalar(const string &sql);
@@ -198,8 +263,18 @@ public:
 	vector<Value> Row(const string &sql);
 	//! The store relation, in the workspace's metadata catalog
 	string Store(const string &relation) const;
-	//! The next seq of a store relation, as SQL: rows are ordered by it
-	string Seq(const string &relation) const;
+	//! The store relation's current rows, as a subquery: those no write has ended
+	string Current(const string &relation) const;
+	//! One catalog write. `body` reads and writes the store through the write it
+	//! is handed; its rows, the lake snapshot whose id they carry and that
+	//! snapshot's change row commit as one transaction of the catalogue database.
+	//! A write that loses a race to another writer runs again, whole. Returns the
+	//! snapshot id, or 0 for a body that wrote nothing. A body touches the store
+	//! and the lake's metadata tables only: one transaction writes one database
+	int64_t Write(ClientContext &context, const std::function<void(class CatalogWrite &)> &body);
+	//! Whether a write that failed with `error`, having read the snapshot `head`, lost a
+	//! race; `taking_snapshot` while it writes its snapshot row and commits
+	bool Overtaken(const ErrorData &error, int64_t head, bool taking_snapshot);
 	//! "lake"."schema"."name"
 	string Table(const string &schema, const string &name) const;
 	//! The lake's current snapshot id
@@ -209,11 +284,40 @@ public:
 
 	Connection con;
 	Workspace ws;
+	//! whether a statement of the catalog write in progress failed (CatalogWrite::Run)
+	bool catalog_failed = false;
 };
 
-//! The store's version — the lake's snapshot and every store relation's
-//! highest seq, row count and newest stamp — that the reads and the kept views
-//! are kept under; any write or delete moves it (glossql_store.cpp)
+//! A catalog write in progress (Inner::Write): the snapshot id its rows carry,
+//! and the statements that write. A statement of these that fails raises the
+//! catalog database's error; Inner::Write runs the write again if it lost a race
+class CatalogWrite {
+public:
+	CatalogWrite(Inner &inner, int64_t snapshot, int64_t next_catalog_id)
+	    : inner(inner), snapshot(snapshot), next_catalog_id(next_catalog_id) {
+	}
+
+	//! Runs one writing statement; returns the rows it changed
+	int64_t Run(const string &sql);
+	//! Ends the relation's current rows that `where` selects; returns how many
+	int64_t End(const string &relation, const string &where);
+	//! Appends a row that begins at this write: `values` are the relation's columns after the markers
+	void Insert(const string &relation, const string &values);
+	//! An id for a lake object this write creates
+	int64_t NewCatalogId();
+	//! Names a lake change this write makes itself, in DuckLake's change text
+	void Changed(const string &entry);
+
+	Inner &inner;
+	int64_t snapshot;
+	int64_t next_catalog_id;
+	//! the lake changes this write makes itself: none for a write to the store alone
+	vector<string> changes;
+	bool wrote = false;
+};
+
+//! The store's version, that the reads and the kept views are kept under: the
+//! lake's snapshot, which every catalog write and every load moves (glossql_store.cpp)
 string StoreVersion(Inner &inner);
 
 } // namespace duckdb
