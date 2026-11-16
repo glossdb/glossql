@@ -67,6 +67,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/main/client_data.hpp"
+#include "duckdb/storage/object_cache.hpp"
 #include <chrono>
 #include <functional>
 #include <set>
@@ -107,7 +108,48 @@ string LakeName(ClientContext &context) {
 
 //! The lake, and the metadata catalog behind it: one the user named is visible
 //! to information_schema; the hidden default is reached by its name
+//! A lake's metadata catalog as found, kept per instance while that catalog stays attached: every
+//! connection a read opens finds it, and the lookup reads the information schema of every catalog
+struct FoundWorkspace : public ObjectCacheEntry {
+	Workspace ws;
+	weak_ptr<AttachedDatabase> meta;
+
+	static string ObjectType() {
+		return "glossql_workspace";
+	}
+	string GetObjectType() override {
+		return ObjectType();
+	}
+	optional_idx GetEstimatedCacheMemory() const override {
+		return optional_idx(0);
+	}
+};
+
+static Workspace LookUpWorkspace(ClientContext &context, Connection &con);
+
 static Workspace FindWorkspace(ClientContext &context, Connection &con) {
+	auto lake = LakeName(context);
+	auto &cache = ObjectCache::GetObjectCache(context);
+	auto key = "glossql_workspace|" + lake;
+	auto &databases = DatabaseManager::Get(context);
+	auto found = cache.Get<FoundWorkspace>(key);
+	if (found) {
+		auto meta = found->meta.lock();
+		if (meta && meta == databases.GetDatabase(Identifier(found->ws.meta))) {
+			return found->ws;
+		}
+	}
+	auto ws = LookUpWorkspace(context, con);
+	auto fill = make_shared_ptr<FoundWorkspace>();
+	fill->ws = ws;
+	fill->meta = databases.GetDatabase(Identifier(ws.meta));
+	if (fill->meta.lock()) {
+		cache.Put(key, fill);
+	}
+	return ws;
+}
+
+static Workspace LookUpWorkspace(ClientContext &context, Connection &con) {
 	Workspace ws;
 	ws.lake = LakeName(context);
 	auto visible = con.Query("SELECT table_catalog, table_schema FROM information_schema.tables"
@@ -197,7 +239,14 @@ string JsonList(const Value &list) {
 Inner::Inner(ClientContext &context) : con(*context.db), ws(FindWorkspace(context, con)) {
 	// a body resolves names and files as the caller's session does: the same search paths
 	auto &paths = ClientData::Get(context).catalog_search_path->GetSetPaths();
-	if (!paths.empty()) {
+	bool qualified = std::all_of(paths.begin(), paths.end(), [](const CatalogSearchEntry &path) {
+		return !path.GetCatalog().empty() && !path.GetSchema().empty();
+	});
+	if (!paths.empty() && qualified) {
+		// the caller's paths, set as they stand: each names its catalog and schema, which the caller's own
+		// SET verified
+		ClientData::Get(*con.context).catalog_search_path->Set(paths, CatalogSetPathType::SET_DIRECTLY);
+	} else if (!paths.empty()) {
 		Run("SET search_path = " + QuoteText(CatalogSearchEntry::ListToString(paths)));
 	}
 	Value files;
