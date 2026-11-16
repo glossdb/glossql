@@ -13,14 +13,14 @@ adds are in the kit's `SKILL.md` ([kits](kits.md)).
 | `MEASUREMENT` aspect | computed property | A value a function computes from the data |
 | `VIEW` aspect | view | SQL served as a view under the aspect's name: a metric, a single value or a table |
 | `GLOSS` | annotation | One actor's value for one aspect on one asset, validated and stored with the lake snapshot |
-| `DECLARE FUNCTION … RETURNS` | measurement | One SQL query over the data; its result is stored with the inputs it read, at the version read |
+| `DECLARE FUNCTION … RETURNS` | measurement | One SQL query over the data; its result is stored with the inputs it read and the lake snapshot it read at |
 | `DECLARE FUNCTION` without `RETURNS` (detector) | scoring function | A query that scores how far the values for an aspect agree |
 | `DECLARE TEST` | test | Declared on an aspect: who may annotate it, which detector scores it, and a threshold |
 | `TESTS()` | test results | One row per asset and test: `state`, `score`, whether it is current |
 | `GLOSSARY()` | business glossary | One row per asset and aspect, with its value and state |
 | `current` · `stale` · `conflict` · `missing` | valid · outdated · conflict · missing value | The state of a row in `GLOSSARY()` |
 | `state` in `TESTS()`, `test_state` in `GLOSSARY()` | test status | `green`, `yellow`, `orange`, `red` or `error` |
-| the `inputs` table | provenance | What a measurement read, and the version of each input |
+| the `inputs` table | provenance | What a measurement read: one row per asset and what was read of it |
 | `DECLARE SOURCE` | connection | A directory, a URL prefix, or an attached database |
 | `DECLARE RECIPE` | load query | The SQL that loads one table from a source |
 | `IMPORT` | load | Runs a load query again; every load is a DuckLake snapshot |

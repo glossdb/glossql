@@ -16,7 +16,7 @@ at. No digest of what a read returned is stored or compared.
 |---|---|---|
 | `begin_snapshot` | BIGINT | The lake snapshot the result took: `measurements.begin_snapshot`. |
 | `end_snapshot` | BIGINT | The snapshot of the write that replaced the result; NULL while the result is current. The view leaves this column out. |
-| `asset` | VARCHAR | The asset read, by its path; for a declaration the name of the property, function or macro; for a set of declarations the kind. |
+| `asset` | VARCHAR | The asset read, by its path; for a declaration the name of the property or function, or a macro's `schema.name`; for a set of declarations the kind. |
 | `what` | VARCHAR | What was read of it, one of the nodes below. |
 
 ## Nodes
@@ -24,11 +24,11 @@ at. No digest of what a read returned is stored or compared.
 | `what` | Asset | Changed at the latest begin or end of |
 |---|---|---|
 | `annotation <property>` | any | the `glossary` rows of the property on the asset, every actor's |
-| `value <property>` | any | the `measurements` rows other functions stored under the property on the asset: the current row's `changed_at`, else the last row's end |
-| `result <function>` | any | the function's `measurements` rows on the asset, the same way |
-| `definition` | a table | its table and column rows in the lake (created, altered, dropped) |
+| `value <property>` | any | the `measurements` rows functions other than the reader stored under the property on the asset, in the reader's dataset: the current row's `changed_at`, else the last row's end |
+| `result <function>` | any | the function's `measurements` rows on the asset, in the reader's dataset, the same way |
+| `definition` | a table | its table and column rows in the lake (created, altered, dropped), and each load whose recipe derived its columns otherwise than the load before (`imports.lineage`) |
 | `definition` | a view | the annotation that defines it, its view row in the lake, and its property's `aspects` row |
-| `data` | a table | its loads (`imports.snapshot_id`) and the lake's change log for it |
+| `data` | a table | its table rows in the lake (created, dropped), its loads (`imports.snapshot_id`) and the lake's change log for it |
 | `recipe` | a table | its `recipes` rows |
 | `declaration` | a property | its `aspects` and `tests` rows |
 | `declaration` | a function | its `functions` rows |
@@ -49,11 +49,12 @@ was walked over.
 
 | Read | Nodes |
 |---|---|
-| `annotations(p, where)` | per asset of the place `annotation p`, `value p` and the asset's `definition` (an annotation is stale once its asset's definition moved); `declaration` of `p` and of each detector its tests name |
+| `annotations(p, where)` | per asset of the place `annotation p`, `value p` and the `definition` of the asset's table or view (an annotation is stale once its asset's definition moved); `declaration` of `p` and of each detector its tests name |
 | `annotations('x-kind k', where)` | the same for each property of the kind, and `declarations` of `k` |
 | `results(f, where)` | per asset of the place `result f` |
 | `definition(where)` | per view of the place its `definition`, the `definition` of each table and view it reads, through views, and the `recipe` of each table |
 | the subject's data, or a table the body names | `data` of each table read, through views, and the `definition` of each view on the way |
+| the lineage, read by a primitive (`glossql_additivity_cells`) | the nodes its place's walk passes |
 | the function itself | `declaration` of the function, of each macro its body follows, and of the property it fills |
 
 | Place | Nodes its walk passes |
@@ -61,7 +62,7 @@ was walked over.
 | `itself`, `its dataset` | none |
 | `its columns` | a table's `definition`; a view's and those of what it reads; a dataset's `assets` and `relationships` |
 | `its sources`, `the columns it joins on` | the view's `definition` and those of what it reads |
-| `its relationships` | a view's `definition`, those of what it reads, and `relationships` of each table it reads; a table's or a column's: `relationships` of the table; a dataset's: its `relationships` |
+| `its relationships` | a view's `definition`, those of what it reads, and `relationships` of the view and of each table and view it reads; a table's or a column's: `relationships` of the table; a dataset's or a relationship's: the dataset's `relationships` |
 | `its metric` | the plan's `definition`; the metric's and those of what it reads |
 | `its source systems` | a table's `recipe`; a view's `definition`, those of what it reads, and each table's `recipe` |
 | `the dataset`, `the dataset's metrics` | the dataset's `assets` and `relationships` |
@@ -72,11 +73,13 @@ was walked over.
 with the node that changed:
 
 ```sql
-SELECT function, subject, asset, what, reason FROM glossql_outdated();
+SELECT dataset, function, subject, asset, what, reason FROM glossql_outdated();
 ```
 
 `reason` is `changed` (the node changed after the result read it) or
 `outdated` (a result it read is out of date). A result computed again
 with the value and error it had keeps its `changed_at`, so what read
 it stays current. A value changed and changed back is two snapshots:
-the results that read it are computed once more.
+the results that read it are computed once more. A node's name is
+matched as the lake matches names, whatever its case: a table a body
+read before the lake held it is the table created later.

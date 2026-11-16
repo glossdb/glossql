@@ -2,8 +2,8 @@
 
 A measurement is a value a function computes from the data: a profile,
 an outlier count, relationship candidates. You declare the function
-once. Running it stores the result with the versions of the tables it
-read. The next run returns the stored result while those are unchanged.
+once. Running it stores the result with what it read. The next run
+returns the stored result while nothing it read changed.
 
 ## Declare a function
 
@@ -45,20 +45,20 @@ The statement returns `(function, subject, aspect, value, computed)`
 and stores one row in
 [measurements](../specification/tables/measurements.md).
 
-- [inputs](../specification/tables/inputs.md) holds one row per read
-  of the body, with a digest of what the read returned at the run:
-  `annotations(role, its columns)`, `results(column_profile, the
-  columns it joins on)`, `definition(definition, itself)`, the data
-  the body read as `data(data, itself)` (each table at DuckLake's
-  version of it, a view at the definition it holds), and `function`
-  and `property` for the function's and the returned property's
-  declarations. Join it to a result on `begin_snapshot`.
-- The next run returns the stored row while each read returns the
-  same and no result it read is out of date, and computes again once
-  one differs. `computed` is true when the run computed the value.
-  `glossql_outdated()` names the read that differs. A body that reads
-  the catalog past the read functions (the lineage kit) is out of date
-  once stored, so a function reads through them.
+- [inputs](../specification/tables/inputs.md) holds one row per node
+  the result read, as an asset and what was read of it:
+  `fin.orders.amount` `annotation role`, `fin.orders` `data`,
+  `fin.revenue` `definition`, `min_max` `declaration`. Join it to a
+  result on `begin_snapshot`.
+- The lake's snapshot id is the version. A result stores the snapshot
+  it read at (`read_at`). The next run returns the stored row while no
+  node it read changed after that snapshot and no result it read is
+  out of date, and computes again otherwise. `computed` is true when
+  the run computed the value. `glossql_outdated()` names the node that
+  changed. A result computed again with the same value keeps the
+  snapshot its value changed at (`changed_at`), so what read it stays
+  current. A body that reads the catalog past the read functions (the
+  lineage kit) is refused at its declaration.
 - If the value has a top-level `summary` object, the statement returns
   the summary. The whole value is stored; read it with
   `GLOSSARY(subject::aspect)`.

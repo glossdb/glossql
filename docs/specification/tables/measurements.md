@@ -1,13 +1,13 @@
 # measurements
 
 A row is one result of a measurement on an asset. `SELECT f() FROM
-asset` writes it when the function's inputs changed since its last
-result; otherwise the stored row is served. A computation that fails
-is a row too, with its error and no value. It is current until an
-input changes; a call computes it again. Key: `dataset`,
-`function`, `subject`: the view serves the latest result, and
-`measurements_history` serves every result. What a result read is in
-[inputs](inputs.md).
+asset` writes it when no row is stored for the call or the stored row
+is out of date; otherwise the stored row is served. A computation that
+fails is a row too, with its error and no value; a call computes it
+again. A row is current while no node it read changed after the
+snapshot it read at. What a result read is in [inputs](inputs.md).
+Key: `dataset`, `function`, `subject`: the view serves the latest
+result, and `measurements_history` serves every result.
 
 | Column | Type | Description |
 |---|---|---|
@@ -20,3 +20,5 @@ input changes; a call computes it again. Key: `dataset`,
 | `value` | VARCHAR | The result, validated against the aspect's schema. The view serves it as JSON. NULL where the computation failed. |
 | `computed_at` | TIMESTAMP | When the row was written. |
 | `error` | VARCHAR | Why the computation failed: the function's error, or the schema check's. NULL for a value. |
+| `read_at` | BIGINT | The lake's newest snapshot when the computation began to read, before its body ran. A node that changed after it makes the row out of date. |
+| `changed_at` | BIGINT | The snapshot its value and error last changed at. A computation that returns the value and error of the row it replaces keeps that row's `changed_at`, so a result that read it stays current. |
