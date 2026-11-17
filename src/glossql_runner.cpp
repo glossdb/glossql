@@ -782,32 +782,74 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 		keys = KeyOnce(inner, key, recipe.sql);
 	}
 	if (replace || key.empty()) {
-		// a recipe that returns the table's columns again replaces its rows and leaves its definition as it is
-		auto shape = [&](const string &relation) {
+		// the table is altered in place to the recipe's columns and its rows replaced: a column the recipe
+		// returns again under its name and type keeps its rows in the lake, so what is written about it stays
+		// current (SPEC §5.2). A column retyped is dropped and added again, as the lake retypes by widening
+		// alone; a column added or retyped comes after the columns the table holds
+		using Column = std::pair<string, string>;
+		auto columns = [&](const string &relation) {
 			auto result = inner.Run("SELECT * FROM " + relation + " LIMIT 0");
-			string text;
+			vector<Column> named;
 			for (idx_t i = 0; i < result->ColumnCount(); i++) {
-				text += result->ColumnName(i).GetIdentifierName() + " " + result->GetTypes()[i].ToString() + ",";
+				named.emplace_back(result->ColumnName(i).GetIdentifierName(), result->GetTypes()[i].ToString());
 			}
-			return text;
+			return named;
 		};
-		bool held = false;
+		vector<Column> held;
+		vector<Column> wanted;
 		try {
-			held = shape(target) == shape("(" + recipe.sql + ")");
+			held = columns(target);
+			wanted = columns("(" + recipe.sql + ")");
 		} catch (std::exception &) {
+			held.clear();
 		}
-		if (held) {
+		auto find = [](const vector<Column> &list, const string &name) {
+			return std::find_if(list.begin(), list.end(),
+			                    [&](const Column &column) { return StringUtil::CIEquals(column.first, name); });
+		};
+		vector<string> added;
+		vector<string> dropped;
+		vector<string> retyped;
+		idx_t kept = 0;
+		for (auto &column : held) {
+			auto there = find(wanted, column.first);
+			if (there == wanted.end()) {
+				dropped.push_back(QuoteName(column.first));
+			} else if (*there == column) {
+				kept++;
+			} else {
+				dropped.push_back(QuoteName(column.first));
+				retyped.push_back(QuoteName(there->first) + " " + there->second);
+			}
+		}
+		for (auto &column : wanted) {
+			if (find(held, column.first) == held.end()) {
+				added.push_back(QuoteName(column.first) + " " + column.second);
+			}
+		}
+		// the lake keeps one column of a table at least (`Cannot drop column: table only has one column
+		// remaining`): a table none of whose columns is kept or added is made again, its every column changed
+		if (held.empty() || kept + added.size() == 0) {
+			inner.Run("CREATE OR REPLACE TABLE " + target + " AS " + recipe.sql);
+		} else {
 			inner.Run("BEGIN");
 			try {
+				for (auto &column : added) {
+					inner.Run("ALTER TABLE " + target + " ADD COLUMN " + column);
+				}
+				for (auto &column : dropped) {
+					inner.Run("ALTER TABLE " + target + " DROP COLUMN " + column);
+				}
+				for (auto &column : retyped) {
+					inner.Run("ALTER TABLE " + target + " ADD COLUMN " + column);
+				}
 				inner.Run("DELETE FROM " + target);
-				inner.Run("INSERT INTO " + target + " " + recipe.sql);
+				inner.Run("INSERT INTO " + target + " BY NAME SELECT * FROM (" + recipe.sql + ")");
 				inner.Run("COMMIT");
 			} catch (...) {
 				inner.con.Query("ROLLBACK");
 				throw;
 			}
-		} else {
-			inner.Run("CREATE OR REPLACE TABLE " + target + " AS " + recipe.sql);
 		}
 		loaded.mode = "replace";
 		loaded.how = "replaced";

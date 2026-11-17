@@ -388,13 +388,17 @@ DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';
   once the definition of its subject changed after that snapshot, the
   node a result reads for it (§6): a column's rows in the lake
   (retyped, dropped, made again with its table) or a load that
-  derived it otherwise than the load before; a table's rows and its
-  columns'; a view's row, the annotation that defines it and its
+  derived it otherwise than the load before; a table's rows, its
+  columns' rows ended (dropped, retyped) and a load that derived a
+  column it held otherwise: a column added is new and leaves the
+  table's gloss current; a view's row, the annotation that defines it and its
   aspect's row; for a column of a view, the view's row. The lake's
   snapshot id is the only version: a type changed and changed back
   reads stale until the gloss is written again. A subject none of
   whose catalog rows are left, after an expiry of the lake's
-  snapshots, reads as changed. Rows arriving under the same shape do
+  snapshots, reads as changed. A load whose columns differ alters
+  the table in place, so a column it returns again under its name and
+  type keeps its rows. Rows arriving under the same shape do
   not age it. Staleness is a join against the catalog's history,
   never a guess. The read shapes in §5.3 are unchanged; the column
   lives on the relation.

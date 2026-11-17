@@ -51,14 +51,16 @@ the snapshot it was written at:
 
 - on a column: the column was retyped or dropped, or a load derived
   it otherwise than the load before;
-- on a table: one of its columns changed so, or a column was added;
+- on a table: one of its columns changed so;
 - on a view: its definition was written again, or its SQL changed;
 - on a view's column: the view's SQL changed.
 
-A load whose columns differ from the table's makes the table again,
-so every annotation on the table and its columns reads stale. A load
-with the same columns, or a changed filter in the load query, leaves
-them current. A type changed and changed back still reads stale until
+A load whose columns differ from the table's alters the table: a
+column added is new, and a column with the same name and type keeps
+its annotations current, as does the table when a column was only
+added. A table of one column retyped is made again. A load with the
+same columns, or a changed filter in the load query, leaves them
+current. A type changed and changed back still reads stale until
 the annotation is written again. A computed value is stale once
 something it read changed after it was computed, or a computed value
 it read is stale.

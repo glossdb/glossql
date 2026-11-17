@@ -213,3 +213,28 @@ query I
 SELECT count(*) FROM fin.ledger;
 ----
 6
+
+# a table of one column retyped is made again: the lake keeps one column of a table at least, so no column
+# of it is kept, and what was written about its column ages
+
+statement ok
+COPY (SELECT i AS id FROM range(3) t(i)) TO '{TEST_DIR}/single.csv' (HEADER);
+
+statement ok
+DECLARE RECIPE single ON fin FROM files AS $$SELECT id::INTEGER AS id FROM read_csv('single.csv')$$;
+
+statement ok
+GLOSS note ON single.id AS $${"text": "a number"}$$;
+
+statement ok
+DECLARE RECIPE single ON fin FROM files AS $$SELECT id::VARCHAR AS id FROM read_csv('single.csv')$$;
+
+query TT
+SELECT subject, state FROM GLOSSARY(single) ORDER BY subject;
+----
+fin.single.id	stale
+
+query TI
+SELECT typeof(id), count(*) FROM fin.single GROUP BY 1;
+----
+VARCHAR	3

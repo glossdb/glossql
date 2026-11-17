@@ -27,7 +27,7 @@ at. No digest of what a read returned is stored or compared.
 | `annotation <property>` | any | the `glossary` rows of the property on the asset, every actor's |
 | `value <property>` | any | the `measurements` rows functions other than the reader stored under the property on the asset, in the reader's dataset: the current row's `changed_at`, else the last row's end |
 | `result <function>` | any | the function's `measurements` rows on the asset, in the reader's dataset, the same way |
-| `definition` | a table | its table and column rows in the lake (created, altered, dropped), and each load whose recipe derived its columns otherwise than the load before (`imports.lineage`) |
+| `definition` | a table | its table and column rows in the lake (created, altered, dropped), and each load whose recipe derived its columns otherwise than the load before (`imports.lineage`). An annotation's stale mark counts its column rows ended and a load that derived a column the load before held otherwise: a column added leaves it current |
 | `definition` | a view | the annotation that defines it, its view row in the lake, and its property's `aspects` row |
 | `data` | a table | its table rows in the lake (created, dropped), its loads (`imports.snapshot_id`) and the lake's change log for it |
 | `recipe` | a table | its `recipes` rows |

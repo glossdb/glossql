@@ -1208,14 +1208,14 @@ static constexpr const char *OTHER_BRANCHES =
 static constexpr const char *DEFINITION_BRANCHES =
     R"(  SELECT asset, 'definition' AS what, NULL AS dataset, NULL AS function,
          greatest(begin_snapshot, coalesce(end_snapshot, 0)) AS changed_at FROM nc_tables
-  UNION ALL SELECT t.asset, 'definition', NULL, NULL, greatest(c.begin_snapshot, coalesce(c.end_snapshot, 0))
+  UNION ALL SELECT t.asset, 'definition', NULL, NULL, $table_column
   FROM nc_tables t JOIN $column c ON c.table_id = t.table_id
   -- a load whose recipe derived the columns otherwise than the load before it
   UNION ALL SELECT asset, 'definition', NULL, NULL, snapshot_id FROM (
     SELECT lower(dataset || '.' || table_name) AS asset, snapshot_id, lineage,
            lag(lineage) OVER (PARTITION BY dataset, table_name ORDER BY begin_snapshot) AS before FROM $imports
     WHERE lower(dataset || '.' || table_name) IN (SELECT asset FROM nc_names))
-  WHERE before IS DISTINCT FROM lineage AND before IS NOT NULL
+  WHERE before IS NOT NULL AND $table_rederived
   UNION ALL SELECT asset, 'definition', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM nc_cols
   UNION ALL SELECT asset, 'definition', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM nc_vcols
   -- a load whose recipe derived the column otherwise than the load before it
@@ -1304,6 +1304,21 @@ WHERE (asset, what) IN (SELECT asset, what FROM nc_want) GROUP BY ALL)";
 	    StringUtil::Replace(sql, "$branches",
 		                    definitions ? string(DEFINITION_BRANCHES)
 		                                : string(OTHER_BRANCHES) + "  UNION ALL\n" + DEFINITION_BRANCHES + OTHER_TAIL);
+	// what is written about a table holds while its columns do: for the stale mark a table changed where one of
+	// its columns' rows ended (dropped, retyped) or a load derived a column the load before held otherwise, and a
+	// column added leaves it as it was (SPEC §5.2). A result reads the table's every column row, so a column
+	// added is a member added to what it read
+	auto derived = [](const string &lineage) {
+		return "json_extract_string(" + lineage + "::JSON, '$.\"' || k || '\"')";
+	};
+	sql =
+	    StringUtil::Replace(sql, "$table_column",
+		                    definitions ? "c.end_snapshot" : "greatest(c.begin_snapshot, coalesce(c.end_snapshot, 0))");
+	sql = StringUtil::Replace(
+	    sql, "$table_rederived",
+	    definitions ? "coalesce(list_bool_or(list_transform(json_keys(before::JSON), lambda k: " + derived("before") +
+	                      " IS DISTINCT FROM " + derived("lineage") + ")), false)"
+		            : string("before IS DISTINCT FROM lineage"));
 	for (auto &relation :
 	     {"glossary", "measurements", "imports", "recipes", "aspects", "tests", "functions", "relationships"}) {
 		sql = StringUtil::Replace(sql, "$" + string(relation), ws.Store(relation));
