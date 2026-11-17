@@ -2395,7 +2395,8 @@ static vector<Value> ExtractLineage(ClientContext &context, Inner &inner, const 
 	return {Value("lineage"), Value(subject), Value("lineage"), Value(lineage.value), Value::BOOLEAN(true)};
 }
 
-//! The rows an extraction serves, one per call, a test's one per subject it judges
+//! The rows an extraction serves, one per call; a test's one per subject it judges, and a column
+//! function's over a table or a view one per column
 static vector<vector<Value>> Extract(ClientContext &context, const vector<Value> &inputs) {
 	vector<vector<Value>> rows;
 	auto subject = ResolveSubject(context, inputs[0].ToString());
@@ -2436,80 +2437,126 @@ static vector<vector<Value>> Extract(ClientContext &context, const vector<Value>
 			throw InvalidInputException(
 			    "glossql: %s is a detector: it runs through its test, SELECT <test>() FROM <subject>", name);
 		}
-		// served while it is current: a repeat is a serve, not a rerun (SPEC §6). A stored failure is not
-		// served to a call: it may come from what is no input (a service down, a configuration), so a
-		// call computes again; it stays current for a read of what is due
-		auto served = Served(inner, dataset, name, subject);
-		if (!served.empty() && served[1].IsNull()) {
-			rows.push_back({Value(name), Value(subject), returns, Value(Summary(inner, served[0].ToString())),
-			                Value::BOOLEAN(false)});
-			continue;
-		}
 		// the aspect's schema is the one contract: the output is validated against it (SPEC §6)
-		auto contract = inner.Scalar("SELECT schema::VARCHAR FROM " + inner.Store("aspects") +
-		                             " WHERE name = " + returns.ToSQLString() + " AND end_snapshot IS NULL");
-		if (contract.IsNull()) {
+		auto contract =
+		    inner.Row("SELECT schema::VARCHAR, from_json(grains, '[\"VARCHAR\"]') = ['COLUMN'] FROM " +
+			          inner.Store("aspects") + " WHERE name = " + returns.ToSQLString() + " AND end_snapshot IS NULL");
+		if (contract.empty()) {
 			throw InvalidInputException("glossql: %s returns %s, which is not a declared aspect", name,
 			                            returns.ToString());
 		}
-		auto invocation = inner.Table(schema, name) + "(" + QuoteText(subject) + ")";
+		// a function whose property is declared on columns alone, called on a table or a view, computes
+		// each of its columns, in one write; a result stored on a column it no longer has retires (SPEC §6)
+		vector<string> subjects;
+		vector<string> retire;
+		auto parts = SubjectParts(subject);
+		if (parts.size() == 2 && !contract[1].IsNull() && contract[1].GetValue<bool>()) {
+			inner.con.context->RunFunctionInTransaction([&]() {
+				for (auto &column : DatasetColumns(*inner.con.context, parts[0], parts[1], true)) {
+					subjects.push_back(parts[0] + "." + column.table + "." + column.column);
+				}
+			});
+			if (subjects.empty()) {
+				throw InvalidInputException("glossql: %s names no table or view of %s with columns", subject, parts[0]);
+			}
+			std::set<string> held(subjects.begin(), subjects.end());
+			auto kept =
+			    inner.Run("SELECT subject FROM " + inner.Current("measurements") +
+				          " WHERE dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
+				          " AND lower(subject) LIKE lower(" + QuoteText(parts[0] + "." + parts[1] + ".%") + ")");
+			while (auto chunk = kept->Fetch()) {
+				for (idx_t r = 0; r < chunk->size(); r++) {
+					auto stored = chunk->GetValue(0, r).ToString();
+					auto stored_parts = SubjectParts(stored);
+					if (stored_parts.size() == 3 && StringUtil::CIEquals(stored_parts[1], parts[1]) &&
+					    !held.count(stored)) {
+						retire.push_back(stored);
+					}
+				}
+			}
+		} else {
+			subjects.push_back(subject);
+		}
+		// served while it is current: a repeat is a serve, not a rerun (SPEC §6). A stored failure is not
+		// served to a call: it may come from what is no input (a service down, a configuration), so a
+		// call computes again; it stays current for a read of what is due
+		vector<string> due;
+		for (auto &one : subjects) {
+			auto served = Served(inner, dataset, name, one);
+			if (!served.empty() && served[1].IsNull()) {
+				rows.push_back({Value(name), Value(one), returns, Value(Summary(inner, served[0].ToString())),
+				                Value::BOOLEAN(false)});
+			} else {
+				due.push_back(one);
+			}
+		}
+		if (due.empty() && retire.empty()) {
+			continue;
+		}
 		// what the body reads is taken again: a macro it follows may have changed, a table it names
 		// may exist now. The function's row follows where it moved. A macro that now reads past the
 		// read functions makes the computation fail, stored with the function's declaration as its
 		// input: a change to the macros it follows makes it out of date
 		auto untracked = RetakeReads(context, inner, name, scope, returns);
-		// the snapshot it reads at and the nodes it reads, taken before it runs: a change under it is a
-		// change after it
+		auto reads = untracked.empty() ? ReadsOfFunction(context, inner, name, scope, dataset) : vector<Read>();
+		// the snapshot it reads at, taken before it runs: a change under it is a change after it
 		auto read_at = inner.Scalar("SELECT max(snapshot_id) FROM " + inner.ws.Meta("snapshot"));
-		auto nodes =
-		    NodesRead(inner, dataset, subject, name, scope, returns.ToString(),
-			          untracked.empty() ? ReadsOfFunction(context, inner, name, scope, dataset) : vector<Read>());
-		// a computation that fails is a result too: stored with its error, which serves while it is current.
-		// An error the body did not raise (an interrupt, the engine's own) stores nothing
-		Value value;
-		string error;
-		try {
-			if (!untracked.empty()) {
-				throw InvalidInputException(UntrackedRefusal(name, untracked));
+		vector<ResultRow> results;
+		string failed;
+		for (auto &one : due) {
+			// the read functions walk from the subject this run computes for
+			ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(one));
+			auto nodes = NodesRead(inner, dataset, one, name, scope, returns.ToString(), reads);
+			// a computation that fails is a result too: stored with its error, which serves while it is
+			// current. An error the body did not raise (an interrupt, the engine's own) stores nothing
+			Value value;
+			string error;
+			try {
+				if (!untracked.empty()) {
+					throw InvalidInputException(UntrackedRefusal(name, untracked));
+				}
+				value = ValueOf(inner, inner.Table(schema, name) + "(" + QuoteText(one) + ")");
+				if (value.IsNull()) {
+					value = Value("null");
+				}
+				auto breach = JsonSchemaCheck(contract[0].ToString(), value.ToString());
+				if (!breach.empty()) {
+					error = StringUtil::Format("glossql: the output of %s does not conform to the schema of %s: %s",
+					                           name, returns.ToString(), breach);
+				}
+			} catch (std::exception &ex) {
+				ErrorData raised(ex);
+				if (!RaisedByBody(raised)) {
+					throw;
+				}
+				error = raised.RawMessage();
 			}
-			value = ValueOf(inner, invocation);
-			if (value.IsNull()) {
-				value = Value("null");
+			if (context.IsInterrupted()) {
+				throw InterruptException();
 			}
-			auto breach = JsonSchemaCheck(contract.ToString(), value.ToString());
-			if (!breach.empty()) {
-				error = StringUtil::Format("glossql: the output of %s does not conform to the schema of %s: %s", name,
-				                           returns.ToString(), breach);
+			// a body that refuses its subject (not_a_<kind>) computed nothing: the refusal stores no result
+			auto code = StringUtil::StartsWith(error, "glossql: ") ? error.substr(9) : error;
+			if (StringUtil::StartsWith(code, "not_a_")) {
+				throw InvalidInputException(error);
 			}
-		} catch (std::exception &ex) {
-			ErrorData raised(ex);
-			if (!RaisedByBody(raised)) {
-				throw;
+			if (!error.empty()) {
+				value = Value();
+				failed = failed.empty() ? error : failed;
+			} else {
+				rows.push_back(
+				    {Value(name), Value(one), returns, Value(Summary(inner, value.ToString())), Value::BOOLEAN(true)});
 			}
-			error = raised.RawMessage();
+			results.push_back({one, value, error.empty() ? Value() : Value(error), std::move(nodes), {}});
 		}
-		if (context.IsInterrupted()) {
-			throw InterruptException();
-		}
-		// a body that refuses its subject (not_a_<kind>) computed nothing: the refusal stores no result
-		auto code = StringUtil::StartsWith(error, "glossql: ") ? error.substr(9) : error;
-		if (StringUtil::StartsWith(code, "not_a_")) {
-			throw InvalidInputException(error);
-		}
-		if (!error.empty()) {
-			value = Value();
-		}
-		// stored with the nodes it read. The result it replaces ends, and its inputs with it; the same
+		ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(subject));
+		// stored with the nodes each read. The result one replaces ends, and its inputs with it; the same
 		// value and error keep the snapshot they changed at, so what read them stays current
 		inner.Write(context, [&](CatalogWrite &write) {
-			StoreResults(write, dataset, name, returns.ToString(), read_at.GetValue<int64_t>(),
-			             {{subject, value, error.empty() ? Value() : Value(error), nodes, {}}});
+			StoreResults(write, dataset, name, returns.ToString(), read_at.GetValue<int64_t>(), results, retire);
 		});
-		if (!error.empty()) {
-			throw InvalidInputException(error);
+		if (!failed.empty()) {
+			throw InvalidInputException(failed);
 		}
-		rows.push_back(
-		    {Value(name), Value(subject), returns, Value(Summary(inner, value.ToString())), Value::BOOLEAN(true)});
 	}
 	return rows;
 }

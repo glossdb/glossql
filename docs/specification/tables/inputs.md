@@ -65,7 +65,7 @@ was walked over.
 |---|---|
 | `itself`, `its dataset` | none |
 | `its columns` | a table's `definition`; a view's `result lineage`; a dataset's `assets` and `relationships` |
-| `its sources`, `the columns it joins on` | the view's `result lineage` |
+| `its sources`, `the columns it joins on` | the view's `result lineage`; a view column's: its view's `result lineage` |
 | `its relationships` | a view's `result lineage` and that of each view it reads, through views, and `relationships` of the view and of each table and view it reads; a table's or a column's: `relationships` of the table; a dataset's or a relationship's: the dataset's `relationships` |
 | a kit's own | the node that declares its subject (`lineage_assets_<kind>`), and of each relation among its assets a table's `definition`, a view's `result lineage` |
 | `its source systems` | a table's `recipe`; a view's `result lineage`, and the `recipe` of each table it reads, through views |

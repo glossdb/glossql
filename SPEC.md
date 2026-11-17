@@ -531,6 +531,10 @@ read_at, changed_at)`, and one row per node the result read in the
 declares the inputs: the body is SQL, and what it reads is taken from
 its text when the function is declared, macros followed, and stored
 with the function (`functions.reads`).
+A function whose property is declared on columns alone, called on a
+table or a view, computes each of its columns: one result per column,
+each with the nodes it read, in one write. A result it stored on a
+column the relation no longer has is retired.
 
 A body reads the catalog through three read functions. Each takes a
 what and a where, as constants:
@@ -557,7 +561,7 @@ table is loaded from, and the edges of each kind a kit declares, §4):
 |---|---|
 | `itself` | the subject |
 | `its columns` | what the subject contains |
-| `its sources` | the tables, columns and views a view reads |
+| `its sources` | the tables, columns and views a view reads; a view column's: the columns it is computed from |
 | `the columns it joins on` | the two columns of each join in a view |
 | `its relationships` | a view's: those between the tables it reads and those that touch the view; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
 | `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads |

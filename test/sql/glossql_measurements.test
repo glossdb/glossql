@@ -733,3 +733,54 @@ query TTTTT
 SELECT label() FROM flaky;
 ----
 label	fin.flaky	label	"one"	true
+
+# --- a function whose property is declared on columns alone, called on a table or a view, computes each of its
+# columns in one write, each result with the nodes it read; a repeat serves them; a column the relation no longer
+# has retires its result
+
+statement ok
+CREATE TABLE fin.wide AS SELECT 1 AS a, NULL::INTEGER AS b;
+
+query TTTTT
+SELECT min_max() FROM wide;
+----
+min_max	fin.wide.a	min_max	{"min":1,"max":2}	true
+min_max	fin.wide.b	min_max	{"min":null,"max":null}	true
+
+# one write: one snapshot for both
+query I
+SELECT count(DISTINCT begin_snapshot) FROM measurements WHERE function = 'min_max' AND subject LIKE 'fin.wide.%';
+----
+1
+
+query TT
+SELECT m.subject, string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i ON i.result = m.id
+WHERE m.function = 'min_max' AND m.subject LIKE 'fin.wide.%' GROUP BY m.subject ORDER BY m.subject;
+----
+fin.wide.a	fin.wide data,min_max function,min_max property
+fin.wide.b	fin.wide data,min_max function,min_max property
+
+query TTTTT
+SELECT min_max() FROM wide;
+----
+min_max	fin.wide.a	min_max	{"min":1,"max":2}	false
+min_max	fin.wide.b	min_max	{"min":null,"max":null}	false
+
+statement ok
+ALTER TABLE fin.wide DROP COLUMN b;
+
+query TTTTT
+SELECT min_max() FROM wide;
+----
+min_max	fin.wide.a	min_max	{"min":1,"max":2}	true
+
+query T
+SELECT subject FROM measurements WHERE function = 'min_max' AND subject LIKE 'fin.wide.%';
+----
+fin.wide.a
+
+# a property declared on tables is computed on the table itself
+query TTTTT
+SELECT rows_seen() FROM flaky;
+----
+rows_seen	fin.flaky	rows_seen	1	false

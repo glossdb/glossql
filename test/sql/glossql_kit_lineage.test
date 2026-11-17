@@ -234,6 +234,15 @@ SELECT view FROM definition('its sources');
 ----
 fin.sales
 
+# a view column's sources are the columns it is computed from
+statement ok
+SET VARIABLE glossql_subject = 'fin.sales.value';
+
+query T
+SELECT asset FROM place('its sources');
+----
+fin.orders.amount
+
 statement ok
 RESET VARIABLE glossql_subject;
 

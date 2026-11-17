@@ -161,7 +161,9 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 -- function's subject over the lineage, one row per asset.
 --   'itself'                   the subject
 --   'its columns'              what the subject contains
---   'its sources'              the tables, columns and views a view reads
+--   'its sources'              the tables, columns and views a view reads;
+--                              a view column's: the columns it is
+--                              computed from
 --   'the columns it joins on'  the two columns of each join in a view
 --   'its relationships'        a view's: those between the tables it reads
 --                              and those that touch the view; a table's or
@@ -202,7 +204,11 @@ CREATE OR REPLACE MACRO main.place_columns(dataset_name) AS TABLE
 SELECT "from" AS subject, "to" AS asset FROM main.contains_edges(dataset_name);
 
 CREATE OR REPLACE MACRO main.place_sources(dataset_name) AS TABLE
-SELECT "from" AS subject, "to" AS asset FROM main.view_edges(dataset_name) WHERE kind = 'reads';
+SELECT "from" AS subject, "to" AS asset FROM main.view_edges(dataset_name) WHERE kind = 'reads'
+UNION SELECT dataset_name || '.' || l.view || '.' || l."column", u.path
+FROM main.views_lineage(dataset_name) l,
+     unnest(regexp_extract_all(coalesce(l.derivation, ''), '([A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*):', 1)) u(path)
+WHERE l."column" IS NOT NULL;
 
 CREATE OR REPLACE MACRO main.place_joined(dataset_name) AS TABLE
 SELECT DISTINCT dataset_name || '.' || j.view AS subject, side AS asset
@@ -292,6 +298,8 @@ UNION ALL SELECT subject, 'its relationships', relation, 'relationships' FROM wa
 UNION ALL SELECT subject, 'its source systems', relation, 'recipe' FROM walked
 UNION ALL SELECT dataset_name || '.' || table_name || '.' || column_name, 'its relationships',
                  dataset_name || '.' || table_name, 'relationships' FROM cols
+UNION ALL SELECT dataset_name || '.' || table_name || '.' || column_name, 'its sources',
+                 dataset_name || '.' || table_name, 'result lineage' FROM cols WHERE table_type = 'VIEW'
 UNION ALL SELECT left_side || ' ' || op || ' ' || right_side, 'its relationships', dataset_name, 'relationships'
           FROM main.relationships WHERE dataset = dataset_name
 -- a kit's place: its subject's own node, and of each relation among its assets a table's definition, a
