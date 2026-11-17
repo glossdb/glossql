@@ -876,3 +876,63 @@ query TTTTT
 SELECT lapped() FROM other.laps;
 ----
 lapped	other.laps	lapped	1	true
+
+# --- a statement over several subjects stores the results, and the nodes each read, that one statement per subject stores
+
+statement ok
+DECLARE ASPECT spread_all WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION spread_all FOR GLOBAL AS $$ SELECT count(DISTINCT v) AS n, (SELECT count(*) FROM annotations('meaning', 'itself') WHERE state <> 'missing') AS described FROM subject_column($subject) $$ RETURNS spread_all;
+
+statement ok
+DECLARE ASPECT spread_one WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION spread_one FOR GLOBAL AS $$ SELECT count(DISTINCT v) AS n, (SELECT count(*) FROM annotations('meaning', 'itself') WHERE state <> 'missing') AS described FROM subject_column($subject) $$ RETURNS spread_one;
+
+statement ok
+USE f1;
+
+statement ok
+GLOSS meaning ON races.name AS $${"value": "the race's name"}$$;
+
+statement ok
+SELECT spread_all() FROM races;
+
+statement ok
+SELECT spread_one() FROM races.race_id;
+
+statement ok
+SELECT spread_one() FROM races.date;
+
+statement ok
+SELECT spread_one() FROM races.name;
+
+query I
+SELECT count(*) FROM (
+  (SELECT subject, value::VARCHAR, error FROM measurements WHERE function = 'spread_all'
+   EXCEPT ALL SELECT subject, value::VARCHAR, error FROM measurements WHERE function = 'spread_one')
+  UNION ALL
+  (SELECT subject, value::VARCHAR, error FROM measurements WHERE function = 'spread_one'
+   EXCEPT ALL SELECT subject, value::VARCHAR, error FROM measurements WHERE function = 'spread_all'));
+----
+0
+
+query I
+WITH nodes AS (SELECT m.function, m.subject, replace(i.asset, m.function, 'spread') AS asset, i.what
+               FROM measurements m JOIN inputs i ON i.result = m.id WHERE m.function IN ('spread_all', 'spread_one'))
+SELECT count(*) FROM (
+  (SELECT subject, asset, what FROM nodes WHERE function = 'spread_all'
+   EXCEPT ALL SELECT subject, asset, what FROM nodes WHERE function = 'spread_one')
+  UNION ALL
+  (SELECT subject, asset, what FROM nodes WHERE function = 'spread_one'
+   EXCEPT ALL SELECT subject, asset, what FROM nodes WHERE function = 'spread_all'));
+----
+0
+
+query I
+SELECT count(DISTINCT m.subject) = 3 AND count(*) > 3 * 4 FROM measurements m JOIN inputs i ON i.result = m.id
+WHERE m.function = 'spread_all';
+----
+true

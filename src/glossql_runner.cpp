@@ -2426,12 +2426,14 @@ static std::map<string, vector<Value>> Served(Inner &inner, const string &datase
 	for (auto &subject : subjects) {
 		quoted.push_back("(" + QuoteText(subject) + ")");
 	}
-	auto rows = inner.Run(
-	    "SELECT subject, value, error, CASE WHEN error IS NULL THEN " + SummarySQL("value::JSON") + " END FROM (" +
-	    CurrentResultsSQL(inner.ws, "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
-		                                " AND subject IN (SELECT s FROM (VALUES " + StringUtil::Join(quoted, ", ") +
-		                                ") v(s))") +
-	    ") WHERE current");
+	auto filter = "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
+	              " AND subject IN (SELECT s FROM (VALUES " + StringUtil::Join(quoted, ", ") + ") v(s))";
+	// the check walks only what is stored: a subject computed for the first time asks none
+	if (inner.Row("SELECT 1 FROM " + inner.Current("measurements") + " WHERE " + filter + " LIMIT 1").empty()) {
+		return served;
+	}
+	auto rows = inner.Run("SELECT subject, value, error, CASE WHEN error IS NULL THEN " + SummarySQL("value::JSON") +
+	                      " END FROM (" + CurrentResultsSQL(inner.ws, filter) + ") WHERE current");
 	while (auto chunk = rows->Fetch()) {
 		for (idx_t r = 0; r < chunk->size(); r++) {
 			served[chunk->GetValue(0, r).ToString()] = {chunk->GetValue(1, r), chunk->GetValue(2, r),
@@ -2736,6 +2738,8 @@ static unique_ptr<TableRef> SelectOrExtractBindReplace(ClientContext &context, T
 	bool declared = false;
 	try {
 		auto &inner = Inner::Of(context);
+		// the statement's read, held from its bind through the computation it may be
+		inner.Hold();
 		auto dataset = DatasetOf(context, ResolveSubject(context, input.inputs[0].ToString()));
 		for (auto &call : ListValue::GetChildren(input.inputs[1])) {
 			declared = declared || call.ToString() == "lineage" ||
