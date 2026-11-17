@@ -167,3 +167,32 @@ query I
 SELECT count(*) FROM measurements_history WHERE function = 'trial_only';
 ----
 0
+
+# a kit's place read inside a body, beside another kit's place: found by the declaration rows of the kit
+# that adds it, it reads that kit's rows alone; the result reads the node that declares its subject and the
+# definition of the table among the place's assets
+
+statement ok
+CREATE MACRO main.lineage_places_probe(dataset_name) AS TABLE
+SELECT NULL::VARCHAR AS subject, 'its probes' AS "where", NULL::VARCHAR AS asset
+UNION ALL SELECT dataset_name || '.boost', 'its probes', dataset_name || '.priced.period' WHERE dataset_name <> '';
+
+statement ok
+DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+
+statement ok
+DECLARE ASPECT remarks_set WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION remarks_set FOR GLOBAL AS $$ SELECT count(*) AS n FROM annotations('remark', 'its columns set') $$ RETURNS remarks_set;
+
+query TTTTT
+SELECT remarks_set() FROM fin.boost;
+----
+remarks_set	fin.boost	remarks_set	2	true
+
+query TT
+SELECT asset, what FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'remarks_set' AND (i.what = 'annotation boost' OR i.what = 'definition') ORDER BY ALL;
+----
+fin	annotation boost
+fin.priced	definition

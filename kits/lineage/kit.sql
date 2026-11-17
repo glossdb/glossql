@@ -320,8 +320,7 @@ FROM query(CASE where_
   WHEN 'its dataset' THEN 'SELECT split_part(main.read_subject(), ''.'', 1) AS asset'
   WHEN 'the dataset''s metrics' THEN 'SELECT asset FROM main.place_metrics(split_part(main.read_subject(), ''.'', 1))'
   ELSE 'SELECT asset FROM (SELECT *, bool_or(subject IS NULL AND "where" = ''' || replace(where_, '''', '''''')
-       || ''') OVER () AS known FROM glossql_kind_places(split_part(main.read_subject(), ''.'', 1), '''
-       || replace(where_, '''', '''''') || ''')) WHERE CASE WHEN known THEN "where" = '''
+       || ''') OVER () AS known FROM glossql_kind_places(split_part(main.read_subject(), ''.'', 1))) WHERE CASE WHEN known THEN "where" = '''
        || replace(where_, '''', '''''') || ''' AND subject = main.read_subject() ELSE error(''not_a_place: '
        || replace(replace(where_, '''', ''''''), '''', '''''') || ' names no place; place_list() lists them'') END' END);
 
@@ -412,34 +411,29 @@ LEFT JOIN main.measurements m
 -- the views the dataset defines, never a table of the same name.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.definitions(dataset_name) AS TABLE
-WITH cols AS (FROM glossql_columns(dataset_name)),
-lin AS (FROM main.views_lineage(dataset_name)),
-sc AS (SELECT s.*, l."to" AS source FROM main.views_scans(dataset_name) s
-       LEFT JOIN main.loaded_from_edges(dataset_name) l ON l."from" = s.table_name),
-jo AS (FROM main.views_joins(dataset_name)),
-ma AS (SELECT DISTINCT view, table_name, branch, alias, condition FROM main.views_mapping(dataset_name) WHERE table_name IS NOT NULL),
+WITH lv AS (SELECT split_part(subject, '.', 2) AS view, value FROM main.measurements
+            WHERE dataset = dataset_name AND function = 'lineage'),
+loaded AS (FROM main.loaded_from_edges(dataset_name)),
 bodies AS (FROM main.view_bodies(dataset_name))
 SELECT dataset_name || '.' || a.name AS view,
        json_extract_string(a.schema, '$.x-kind') AS kind,
        a.schema::JSON AS schema,
        json_extract_string(b.body, '$.sql') AS sql,
        json_extract_string(b.body, '$.stopped') AS stopped,
-       (SELECT list({'name': c.column_name, 'position': c.ordinal_position, 'derivation': l.derivation, 'shape': l.shape}
-                    ORDER BY c.ordinal_position)
-        FROM cols c LEFT JOIN lin l ON l.view = c.table_name AND l."column" = c.column_name
-        WHERE c.table_name = a.name) AS columns,
-       (SELECT list({'table_name': s.table_name, 'columns': s.columns, 'source': s.source} ORDER BY s.table_name)
-        FROM sc s WHERE s.view = a.name) AS reads,
-       (SELECT list({'left_column': j.left_column, 'right_column': j.right_column,
-                     'left_unique': j.left_unique, 'right_unique': j.right_unique, 'join_number': j.join_number}
-                    ORDER BY j.join_number, j.left_column, j.right_column)
-        FROM jo j WHERE j.view = a.name) AS joins,
-       (SELECT list({'table_name': m.table_name, 'branch': m.branch, 'alias': m.alias, 'condition': m.condition}
-                    ORDER BY m.table_name, m.branch, m.alias)
-        FROM ma m WHERE m.view = a.name) AS conditions
-FROM main.aspects a LEFT JOIN bodies b ON b.view = a.name
+       list_transform(from_json(l.value->'columns', '[{"name": "VARCHAR", "derivation": "VARCHAR", "shape": "VARCHAR"}]'),
+                      lambda c, i: {'name': c.name, 'position': i, 'derivation': c.derivation, 'shape': c.shape}) AS columns,
+       (SELECT list({'table_name': s.table_name, 'columns': s.columns, 'source': r."to"} ORDER BY s.table_name)
+        FROM unnest(from_json(l.value->'scans', '[{"table_name": "VARCHAR", "columns": ["VARCHAR"]}]')) u(s)
+        LEFT JOIN loaded r ON r."from" = s.table_name) AS reads,
+       CASE WHEN json_array_length(l.value->'joins') > 0
+            THEN from_json(l.value->'joins', '[{"left_column": "VARCHAR", "right_column": "VARCHAR", "left_unique": "BOOLEAN",
+                                              "right_unique": "BOOLEAN", "join_number": "INTEGER"}]') END AS joins,
+       CASE WHEN json_array_length(l.value->'conditions') > 0
+            THEN from_json(l.value->'conditions', '[{"table_name": "VARCHAR", "branch": "INTEGER", "alias": "VARCHAR",
+                                                   "condition": "VARCHAR"}]') END AS conditions
+FROM main.aspects a LEFT JOIN bodies b ON b.view = a.name LEFT JOIN lv l ON l.view = a.name
 WHERE a.kind = 'VIEW'
-  AND (b.view IS NOT NULL OR a.name IN (SELECT table_name FROM cols WHERE table_type = 'VIEW'));
+  AND (b.view IS NOT NULL OR a.name IN (SELECT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW'));
 
 CREATE OR REPLACE MACRO main.definition(where_) AS TABLE
 SELECT d.* FROM (SELECT DISTINCT asset FROM main.place(where_)) p

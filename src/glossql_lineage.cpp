@@ -1422,7 +1422,9 @@ static string JsonTexts(const vector<string> &texts) {
 }
 
 //! The value a view's lineage stores: complete, its columns with their derivation and shape, the tables
-//! it scans with the columns it reads of each, the column pairs its joins equate, and its mapping
+//! it scans with the columns it reads of each, the column pairs its joins equate, what its joins and
+//! filters require of each read of a table, and its mapping; each list in the order a definition read
+//! serves it, so that the read takes it as stored
 static string LineageValue(const QueryLineage &lineage) {
 	vector<string> columns;
 	for (idx_t i = 0; i < lineage.columns.size(); i++) {
@@ -1434,8 +1436,13 @@ static string LineageValue(const QueryLineage &lineage) {
 	for (auto &scan : lineage.scans) {
 		scans.push_back("{\"table_name\":" + JsonString(scan.first) + ",\"columns\":" + JsonTexts(scan.second) + "}");
 	}
+	// the pairs by join, the conditions by scan: in the order a definition read serves them
+	auto ordered = lineage.joins;
+	std::sort(ordered.begin(), ordered.end(), [](const QueryLineage::JoinPair &a, const QueryLineage::JoinPair &b) {
+		return std::tie(a.join, a.left, a.right) < std::tie(b.join, b.left, b.right);
+	});
 	vector<string> joins;
-	for (auto &join : lineage.joins) {
+	for (auto &join : ordered) {
 		joins.push_back("{\"left_column\":" + JsonString(join.left) + ",\"right_column\":" + JsonString(join.right) +
 		                ",\"left_unique\":" + (join.left_unique ? "true" : "false") + ",\"right_unique\":" +
 		                (join.right_unique ? "true" : "false") + ",\"join_number\":" + to_string(join.join) + "}");
@@ -1449,9 +1456,39 @@ static string LineageValue(const QueryLineage &lineage) {
 		                  ",\"literals\":" + JsonTexts(row.literals) +
 		                  ",\"complete\":" + (row.complete ? "true" : "false") + "}");
 	}
+	// what the view's joins and filters require of each read of a table, once per table, branch and alias;
+	// an empty alias or condition last
+	vector<std::tuple<string, idx_t, string, string>> reads;
+	for (auto &row : lineage.mapping) {
+		if (!row.table.empty()) {
+			reads.emplace_back(row.table, row.branch, row.alias, row.condition);
+		}
+	}
+	auto last = [](const string &a, const string &b) {
+		return a.empty() != b.empty() ? b.empty() : a < b;
+	};
+	std::sort(
+	    reads.begin(), reads.end(),
+	    [&](const std::tuple<string, idx_t, string, string> &a, const std::tuple<string, idx_t, string, string> &b) {
+		    if (std::get<0>(a) != std::get<0>(b) || std::get<1>(a) != std::get<1>(b)) {
+			    return std::tie(std::get<0>(a), std::get<1>(a)) < std::tie(std::get<0>(b), std::get<1>(b));
+		    }
+		    if (std::get<2>(a) != std::get<2>(b)) {
+			    return last(std::get<2>(a), std::get<2>(b));
+		    }
+		    return last(std::get<3>(a), std::get<3>(b));
+	    });
+	reads.erase(std::unique(reads.begin(), reads.end()), reads.end());
+	vector<string> conditions;
+	for (auto &read : reads) {
+		conditions.push_back(
+		    "{\"table_name\":" + JsonString(std::get<0>(read)) + ",\"branch\":" + to_string(std::get<1>(read)) +
+		    ",\"alias\":" + JsonText(std::get<2>(read)) + ",\"condition\":" + JsonText(std::get<3>(read)) + "}");
+	}
 	return "{\"complete\":" + string(lineage.complete ? "true" : "false") + ",\"columns\":[" +
 	       StringUtil::Join(columns, ",") + "],\"scans\":[" + StringUtil::Join(scans, ",") + "],\"joins\":[" +
-	       StringUtil::Join(joins, ",") + "],\"mapping\":[" + StringUtil::Join(mapping, ",") + "]}";
+	       StringUtil::Join(joins, ",") + "],\"conditions\":[" + StringUtil::Join(conditions, ",") + "],\"mapping\":[" +
+	       StringUtil::Join(mapping, ",") + "]}";
 }
 
 //! A relation or a macro of the lake by schema and name, as the catalog spells it, or null

@@ -1868,25 +1868,6 @@ static unique_ptr<TableRef> KindBindReplace(ClientContext &context, TableFunctio
 		});
 	}
 	std::sort(macros.begin(), macros.end());
-	// a read that names one place reads the macros that declare it alone: those with a row of no subject
-	// that names it
-	bool narrowed = string(kind->stem) == "lineage_places_" && input.inputs.size() > 1 && !input.inputs[1].IsNull();
-	if (narrowed) {
-		Inner inner(context);
-		vector<string> declaring;
-		for (auto &macro : macros) {
-			auto declared =
-			    inner.con.Query("SELECT count(*) FROM " + QuoteName(lake) + ".main." + QuoteName(macro) +
-				                "('') WHERE subject IS NULL AND \"where\" = " + QuoteText(input.inputs[1].ToString()));
-			if (!declared->HasError()) {
-				auto chunk = declared->Fetch();
-				if (chunk && chunk->size() == 1 && chunk->GetValue(0, 0).GetValue<int64_t>() > 0) {
-					declaring.push_back(macro);
-				}
-			}
-		}
-		macros = declaring;
-	}
 	vector<string> datasets;
 	if (!input.inputs[0].IsNull()) {
 		datasets.push_back(QuoteText(input.inputs[0].ToString()));
@@ -1916,10 +1897,6 @@ static unique_ptr<TableRef> KindBindReplace(ClientContext &context, TableFunctio
 		}
 		macros = owners;
 	}
-	// where no kit names the place, one empty row, so that the read can say the where names no place
-	if (narrowed && macros.empty()) {
-		return make_uniq<SubqueryRef>(ParseSelect(string(kind->empty)));
-	}
 	vector<string> parts;
 	for (auto &macro : macros) {
 		for (auto &dataset : datasets) {
@@ -1942,8 +1919,8 @@ static TableFunctionSet GlossKindFunction(idx_t stem, table_function_bind_replac
 	TableFunction function(KIND_STEMS[stem].function, {LogicalType::VARCHAR}, nullptr);
 	function.bind_replace = bind;
 	set.AddFunction(function);
-	// the places a kit adds, narrowed to the macros that add the where named; the assets of one kind
-	if (string(KIND_STEMS[stem].stem) != "lineage_edges_") {
+	// the assets of one kind: its own macro's
+	if (string(KIND_STEMS[stem].stem) == "lineage_assets_") {
 		TableFunction narrowed(KIND_STEMS[stem].function, {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr);
 		narrowed.bind_replace = bind;
 		set.AddFunction(narrowed);
