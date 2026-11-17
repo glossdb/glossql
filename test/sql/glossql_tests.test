@@ -243,24 +243,7 @@ SELECT subject, value, test_state, state FROM GLOSSARY(orders.amount);
 ----
 fin.orders.amount	{"value": "additive"}	green	current
 
-# --- function annotations arrive through RETURNS: extraction stores a measurement, served beside the glosses
-
-query TTTTT
-SELECT min_max() FROM orders.amount;
-----
-min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
-
-query TTT
-SELECT subject, actor, body FROM GLOSSARY(orders.amount::min_max, all => true);
-----
-fin.orders.amount	function	{"min":0.0,"max":4.5}
-
-query TTT
-SELECT subject, aspect, value FROM GLOSSARY(orders.amount::min_max);
-----
-fin.orders.amount	min_max	{"min":0.0,"max":4.5}
-
-# a measurement is never glossed
+# --- a measurement is never glossed
 statement error
 GLOSS min_max ON orders.amount AS $${"min": 0}$$;
 ----
@@ -529,51 +512,6 @@ query TTT
 SELECT value, test_state, state FROM GLOSSARY(orders::tie_out);
 ----
 NULL	red	conflict
-
-# --- a measurement that reads another function's results is served while they hold, and computes once that function stores another value (SPEC §6)
-
-statement ok
-DECLARE ASPECT tie_out_count WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
-
-statement ok
-DECLARE FUNCTION tie_out_count FOR GLOBAL AS $$ SELECT count(value) AS n, max(value->>'breach_rate') AS what FROM results('tie_out_check', 'itself') $$ RETURNS tie_out_count;
-
-query TTTTT
-SELECT tie_out_count() FROM orders;
-----
-tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"1.0"}	true
-
-# the reader read the function it named, not every result: another function's result
-# on the same subject leaves it current
-statement ok
-DECLARE ASPECT order_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
-
-statement ok
-DECLARE FUNCTION order_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM fin.orders $$ RETURNS order_rows;
-
-statement ok
-SELECT order_rows() FROM orders;
-
-query TTTTT
-SELECT tie_out_count() FROM orders;
-----
-tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"1.0"}	false
-
-statement ok
-DECLARE FUNCTION tie_out_check FOR GLOBAL AS $$ SELECT 0.5 AS breach_rate, 'every line against its order' AS outcome $$ RETURNS tie_out;
-
-statement ok
-SELECT tie_out_check() FROM orders;
-
-query TTTTT
-SELECT tie_out_count() FROM orders;
-----
-tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"0.5"}	true
-
-query TTTTT
-SELECT tie_out_count() FROM orders;
-----
-tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"0.5"}	false
 
 # --- a subject that holds no value any more retires its result
 

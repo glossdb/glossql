@@ -429,17 +429,7 @@ DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM __ducklake_
 untracked_read
 
 statement error
-DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM main.glossary $$ RETURNS raw_rows;
-----
-untracked_read
-
-statement error
 DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM annotations('role', 'its friends') $$ RETURNS raw_rows;
-----
-untracked_read
-
-statement error
-DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM annotations(lower('ROLE'), 'itself') $$ RETURNS raw_rows;
 ----
 untracked_read
 

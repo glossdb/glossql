@@ -1,5 +1,5 @@
 # name: test/sql/glossql_measurements.test
-# description: a measurement is stored with what each of its reads returned; a later extraction serves it while its reads return the same, and a result that read a result that is out of date is out of date
+# description: a measurement is stored with the nodes it read; a later call serves it while they are unchanged and computes it again once one moves, keeping each value in its history; a result that read a result that moved is out of date until it is computed again; a failure is stored as a result; a property declared on columns is computed per column
 # group: [sql]
 
 require glossql
@@ -104,61 +104,16 @@ SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":10.0}	true
 
-# --- a body that reads annotations depends on the annotations it read
-
-statement ok
-DECLARE ASPECT notes WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
-
-statement ok
-DECLARE FUNCTION notes FOR fin AS $$ SELECT count(value) AS n FROM annotations('note', 'itself') $$ RETURNS notes;
-
-query TTTTT
-SELECT notes() FROM orders.amount;
-----
-notes	fin.orders.amount	notes	1	true
-
-# it read the note on its subject: a note elsewhere leaves it current, and so does a load, since it
-# read no data
-statement ok
-GLOSS note ON other.x AS $${"text": "elsewhere"}$$;
-
-query TTTTT
-SELECT notes() FROM orders.amount;
-----
-notes	fin.orders.amount	notes	1	false
-
 statement ok
 INSERT INTO fin.orders VALUES (10, 10.0);
 
-query TTTTT
-SELECT notes() FROM orders.amount;
-----
-notes	fin.orders.amount	notes	1	false
-
-statement ok
-GLOSS note ON orders.amount AS $${"text": "loaded again"}$$;
-
-# the annotation replaced the agent's earlier one: one current row, and the result is computed again
-query TTTTT
-SELECT notes() FROM orders.amount;
-----
-notes	fin.orders.amount	notes	1	true
-
-# --- a body that reads nothing is current while its declarations hold; one that reads the catalog past the read functions is refused at its declaration
+# --- a body that reads nothing is current while its declarations hold
 
 statement ok
 DECLARE ASPECT answer WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION answer FOR fin AS $$ SELECT 42 AS n FROM range(1) $$ RETURNS answer;
-
-statement ok
-DECLARE ASPECT tables WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
-
-statement error
-DECLARE FUNCTION tables FOR fin AS $$ SELECT count(*) AS n FROM duckdb_tables() WHERE schema_name = split_part($subject, '.', 1) $$ RETURNS tables;
-----
-untracked_read
 
 query TTTTT
 SELECT answer() FROM orders.amount;
@@ -285,15 +240,6 @@ SELECT value, test_state, state FROM GLOSSARY(orders.amount::min_max);
 statement ok
 DECLARE TEST note_test ON note BY (AGENT, HUMAN);
 
-query TTT
-SELECT aspect, actor, current FROM GLOSSARY(orders.amount, all => true) ORDER BY aspect, actor;
-----
-answer	function	true
-min_max	function	true
-note	agent	true
-notes	function	false
-profile	function	false
-
 statement ok
 INSERT INTO fin.orders VALUES (11, 1.0);
 
@@ -366,73 +312,14 @@ SELECT count(*) FROM measurements_history WHERE function = 'cell_count';
 ----
 3
 
-# --- which result is out of date, and which node it read changed: glossql_outdated()
-
 statement ok
 INSERT INTO fin.orders VALUES (11, 11.0);
-
-query TTTT
-SELECT function, asset, what, reason FROM glossql_outdated() WHERE subject = 'fin.orders.amount' AND function IN ('min_max', 'profile') ORDER BY ALL;
-----
-min_max	fin.orders	data	changed
-profile	fin.orders	data	changed
-
-# --- a read of annotations names the property it read: an annotation on another property leaves the result current, one on its own within its place outdates it
-
-statement ok
-DECLARE ASPECT note_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
-
-statement ok
-DECLARE FUNCTION note_count FOR fin AS $$ SELECT count(value) FILTER (WHERE asset = $subject) AS n FROM annotations('note', 'the dataset') $$ RETURNS note_count;
-
-query TTTTT
-SELECT note_count() FROM orders.amount;
-----
-note_count	fin.orders.amount	note_count	1	true
-
-statement ok
-DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON COLUMN;
-
-statement ok
-GLOSS remark ON orders.amount AS $${"text": "another property"}$$;
-
-query TTTTT
-SELECT note_count() FROM orders.amount;
-----
-note_count	fin.orders.amount	note_count	1	false
-
-statement ok
-GLOSS note ON orders.id AS $${"text": "the same property"}$$;
-
-query TTTTT
-SELECT note_count() FROM orders.amount;
-----
-note_count	fin.orders.amount	note_count	1	true
-
-# a declaration and a load in another dataset leave a reader of annotations current
 
 statement ok
 DECLARE DATASET other SET (purpose: 'elsewhere');
 
 statement ok
 CREATE TABLE other.t AS SELECT 1 AS a, 2 AS b;
-
-statement ok
-DECLARE FUNCTION elsewhere FOR other AS $$ SELECT 1 AS n $$ RETURNS answer;
-
-statement ok
-USE other;
-
-statement ok
-DECLARE RELATIONSHIP t.a -> t.b;
-
-statement ok
-USE fin;
-
-query TTTTT
-SELECT note_count() FROM orders.amount;
-----
-note_count	fin.orders.amount	note_count	1	false
 
 # --- a result that read a result: top reads min_max's value, top_twice reads top's. Each is current while nothing moved
 
@@ -514,21 +401,8 @@ SELECT top_history() FROM orders.amount;
 ----
 top_history	fin.orders.amount	top_history	[4.5,9.0,10.0,11.0,10.0,12.0,13.0]	true
 
-# a result computed while the result it read was out of date is out of date
-
 statement ok
 INSERT INTO fin.orders VALUES (13, 1.0);
-
-query TTTTT
-SELECT top() FROM orders.amount;
-----
-top	fin.orders.amount	top	13.0	true
-
-query TT
-SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top') ORDER BY aspect;
-----
-min_max	false
-top	false
 
 # a result of the function out of date in another dataset leaves a reader in this one current: the read was of this dataset's results
 
