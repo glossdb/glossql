@@ -79,8 +79,8 @@ the view, its value what the view scans, joins and maps and what
 computes each column, its edges rows of [edges](edges.md). It reads the
 view's `definition`, and the `definition` of each table and view its
 SQL names, through the views it reads, and the `macro` of each macro it
-calls. Defining the view stores it in the same write, read at that
-write's snapshot; `SELECT lineage() FROM <view>` computes it again once
+calls, through the macros those call. Defining the view stores it in
+the same write, read at that write's snapshot; `SELECT lineage() FROM <view>` computes it again once
 a node it read changed. A place walked over a view records the view's
 `result lineage`, not the definitions behind it: a table it reads
 altered puts the lineage out of date, and computed again with the same

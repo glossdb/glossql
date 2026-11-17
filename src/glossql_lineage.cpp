@@ -33,6 +33,9 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/function/scalar_macro_function.hpp"
+#include "duckdb/function/table_macro_function.hpp"
 #include "duckdb/parser/result_modifier.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/main/connection.hpp"
@@ -1402,7 +1405,7 @@ static void LineageExec(ClientContext &context, TableFunctionInput &data, DataCh
 // and what computes each of its columns, planned for one view and stored as
 // the result of `lineage` on it. Its inputs are the nodes the planning read:
 // the view's definition, and that of every relation and macro its SQL names,
-// through the views it reads. The relations it reads are rows of `edges`, so
+// through the views it reads and the macros it calls. The relations it reads are rows of `edges`, so
 // that the lineage and the places are scans. Defining a view stores its
 // lineage in the same write; `SELECT lineage() FROM <view>` computes it again
 // once a node it read changed, as any result
@@ -1516,23 +1519,46 @@ ViewLineageResult PlanViewLineage(Inner &inner, const string &dataset, const str
 		}
 		result.view = PathOf(*entry);
 		nodes.insert({result.view, "definition"});
-		// the relations and macros its SQL names, through the views it reads: a name the SQL leaves
-		// unqualified is the view's own schema's
-		vector<pair<string, reference<ViewCatalogEntry>>> walk {{dataset, entry->Cast<ViewCatalogEntry>()}};
+		// the relations and macros its SQL names, through the views it reads and the macros it calls, to any
+		// depth, each once: a name the SQL leaves unqualified is its own schema's
+		struct Step {
+			string schema;
+			const QueryNode *query;
+			const ParsedExpression *expression;
+		};
+		vector<Step> walk {{dataset, entry->Cast<ViewCatalogEntry>().GetQuery().node.get(), nullptr}};
 		std::set<string> seen {StringUtil::Lower(result.view)};
 		for (idx_t i = 0; i < walk.size(); i++) {
-			auto schema = walk[i].first;
-			auto &query = walk[i].second.get().GetQuery();
+			auto schema = walk[i].schema;
 			vector<NamedRef> refs;
-			TableRefs(*query.node, CteScope(), refs);
+			if (walk[i].query) {
+				TableRefs(*walk[i].query, CteScope(), refs);
+			} else {
+				TableRefs(*walk[i].expression, CteScope(), refs);
+			}
 			for (auto &ref : refs) {
 				auto in = ref.schema.empty() ? schema : ref.schema;
 				if (ref.function) {
 					for (auto type : {CatalogType::TABLE_MACRO_ENTRY, CatalogType::MACRO_ENTRY}) {
 						for (auto &where : {in, string("main")}) {
 							auto macro = LakeEntry(context, lake, type, where, ref.table);
-							if (macro && macro->type == type) {
-								nodes.insert({PathOf(*macro), "macro"});
+							if (!macro || macro->type != type) {
+								continue;
+							}
+							auto path = PathOf(*macro);
+							nodes.insert({path, "macro"});
+							if (!seen.insert("macro " + StringUtil::Lower(path)).second) {
+								continue;
+							}
+							auto home = macro->ParentSchema().name.GetIdentifierName();
+							for (auto &function : macro->Cast<MacroCatalogEntry>().macros) {
+								if (function->type == MacroType::TABLE_MACRO) {
+									walk.push_back(
+									    {home, function->Cast<TableMacroFunction>().query_node.get(), nullptr});
+								} else if (function->type == MacroType::SCALAR_MACRO) {
+									walk.push_back(
+									    {home, nullptr, function->Cast<ScalarMacroFunction>().expression.get()});
+								}
 							}
 						}
 					}
@@ -1551,7 +1577,8 @@ ViewLineageResult PlanViewLineage(Inner &inner, const string &dataset, const str
 					reads.insert(path);
 				}
 				if (seen.insert(StringUtil::Lower(path)).second) {
-					walk.emplace_back(named->ParentSchema().name.GetIdentifierName(), named->Cast<ViewCatalogEntry>());
+					walk.push_back({named->ParentSchema().name.GetIdentifierName(),
+					                named->Cast<ViewCatalogEntry>().GetQuery().node.get(), nullptr});
 				}
 			}
 		}

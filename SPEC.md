@@ -580,7 +580,7 @@ lineage is a stored result of its own, `lineage` on the view
 (`SELECT lineage() FROM <view>`): what the view scans, joins and maps
 and what computes each column, with the nodes its planning read (its
 definition, and that of each relation and macro its SQL names, through
-the views it reads) and the relations it reads as rows of `edges`.
+the views it reads and the macros it calls) and the relations it reads as rows of `edges`.
 Defining the view stores it in the same write; a change to a relation
 it reads makes it out of date like any result, and computed again with
 the same value it leaves what walked it current. A node changed at the latest

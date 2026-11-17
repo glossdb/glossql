@@ -1,5 +1,5 @@
 # name: test/sql/glossql_lineage_stored.test
-# description: a view's lineage is a stored result (SPEC §6): defining the view stores it in the same write with the nodes it read and the relations it reads as edges; a write it did not read leaves it as stored; a column added to a table three views read puts the three out of date, and computed again with the same value they keep the snapshot they changed at, so a result that read a view's sources stays current; a view redefined to read another table stores its new lineage and puts what read the old one out of date; a view of a view reads the definition of the view it reads; a view ended takes its edges with it
+# description: a view's lineage is a stored result (SPEC §6): defining the view stores it in the same write with the nodes it read and the relations it reads as edges; a write it did not read leaves it as stored; a column added to a table three views read puts the three out of date, and computed again with the same value they keep the snapshot they changed at, so a result that read a view's sources stays current; a view redefined to read another table stores its new lineage and puts what read the old one out of date; a view of a view reads the definition of the view it reads; the macros a view calls are followed to any depth; a view ended takes its edges with it
 # group: [sql]
 
 require glossql
@@ -241,6 +241,61 @@ fin.big_orders	reads
 fin.refunds	reads
 fin.refunds.amount	reads
 fin.refunds.id	reads
+
+# --- the macros a view calls are followed to any depth: a macro a macro calls changed puts its lineage out of
+# --- date; a cycle of macros ends the walk, and the lineage stores the planner's refusal
+
+statement ok
+CREATE OR REPLACE MACRO main.ratio_inner(x) AS x * 2;
+
+statement ok
+CREATE OR REPLACE MACRO main.ratio_outer(x) AS ratio_inner(x) + 1;
+
+statement ok
+CREATE OR REPLACE MACRO main.scaled_ids() AS TABLE SELECT ratio_outer(id) AS v FROM fin.orders;
+
+statement ok
+DECLARE ASPECT scaled WITH $${"title": "Scaled ids", "x-kind": "relation"}$$ AS VIEW;
+
+statement ok
+GLOSS scaled ON fin AS $${"sql": "SELECT v FROM main.scaled_ids()"}$$;
+
+query T
+SELECT i.asset FROM main.inputs i JOIN main.measurements m ON m.id = i.result
+WHERE m.function = 'lineage' AND m.subject = 'fin.scaled' AND i.what = 'macro' ORDER BY ALL;
+----
+main.ratio_inner
+main.ratio_outer
+main.scaled_ids
+
+statement ok
+CREATE OR REPLACE MACRO main.ratio_inner(x) AS x * 3;
+
+query TTT
+SELECT asset, what, reason FROM glossql_outdated() WHERE function = 'lineage' AND subject = 'fin.scaled';
+----
+main.ratio_inner	macro	changed
+
+statement ok
+SELECT lineage() FROM fin.scaled;
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'lineage' AND subject = 'fin.scaled';
+----
+0
+
+statement ok
+CREATE OR REPLACE MACRO main.ratio_inner(x) AS ratio_outer(x);
+
+statement error
+SELECT lineage() FROM fin.scaled;
+----
+Invalid Input Error
+
+query II
+SELECT value IS NULL, error IS NOT NULL FROM main.measurements WHERE function = 'lineage' AND subject = 'fin.scaled';
+----
+true	true
 
 # --- a view ended: its lineage and its edges go with it
 

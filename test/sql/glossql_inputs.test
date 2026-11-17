@@ -678,6 +678,31 @@ SELECT asset, what FROM glossql_outdated() WHERE function = 'counted';
 ----
 f1.races	data
 
+# --- a macro a macro calls is read with the function too: replaced, it outdates the results
+
+statement ok
+CREATE OR REPLACE MACRO main.nested_inner() AS TABLE SELECT count(*) AS n FROM f1.circuits;
+
+statement ok
+CREATE OR REPLACE MACRO main.nested_outer() AS TABLE SELECT n FROM main.nested_inner();
+
+statement ok
+DECLARE ASPECT nested WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION nested FOR GLOBAL AS $$ SELECT n FROM nested_outer() $$ RETURNS nested;
+
+statement ok
+SELECT nested() FROM circuits;
+
+statement ok
+CREATE OR REPLACE MACRO main.nested_inner() AS TABLE SELECT count(*) + 1 AS n FROM f1.circuits;
+
+query TT
+SELECT asset, what FROM glossql_outdated() WHERE function = 'nested';
+----
+main.nested_inner	macro
+
 # --- a table the body names before the lake holds it refuses the declaration; once it exists, the body reads it
 
 statement ok
