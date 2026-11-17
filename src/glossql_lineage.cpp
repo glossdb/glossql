@@ -1557,7 +1557,7 @@ ViewLineageResult PlanViewLineage(Inner &inner, const string &dataset, const str
 		}
 		sql = entry->ToSQL();
 	});
-	// planned in a transaction of its own, the walk's closed: the context lock is not taken twice
+	// planned once the walk has returned: LineageOf takes the context lock itself
 	try {
 		auto lineage = LineageOf(
 		    context, "SELECT * FROM " + QuoteName(lake) + "." + QuoteName(dataset) + "." + QuoteName(view), &sql);
