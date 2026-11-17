@@ -2016,8 +2016,7 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 				 : declared[3].GetValue<double>() == threshold.GetValue<double>())) {
 			return;
 		}
-		auto current =
-		    inner.Row("SELECT kind FROM " + inner.Current("aspects") + " WHERE name = " + QuoteText(aspect));
+		auto current = inner.Row("SELECT kind FROM " + inner.Current("aspects") + " WHERE name = " + QuoteText(aspect));
 		if (current.empty()) {
 			throw InvalidInputException("glossql: aspect '%s' is not declared", aspect);
 		}

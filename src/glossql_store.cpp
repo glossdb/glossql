@@ -533,8 +533,8 @@ struct AspectRow {
 };
 
 static AspectRow LookupAspect(Inner &inner, const string &name) {
-	auto row = inner.Row("SELECT schema, kind, from_json(grains, '[\"VARCHAR\"]') FROM " +
-	                     inner.Store("aspects") + " WHERE name = " + QuoteText(name) + " AND end_snapshot IS NULL");
+	auto row = inner.Row("SELECT schema, kind, from_json(grains, '[\"VARCHAR\"]') FROM " + inner.Store("aspects") +
+	                     " WHERE name = " + QuoteText(name) + " AND end_snapshot IS NULL");
 	if (row.empty()) {
 		throw InvalidInputException("glossql: aspect '%s' is not declared", name);
 	}
