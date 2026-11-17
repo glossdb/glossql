@@ -162,7 +162,7 @@ A **subject** is what a gloss, a function SELECT, or a test attaches to:
 - `table.column -> table.column` — a declared relationship, addressed by its
   pair path (relationships have no names). An endpoint is a column or a
   column tuple: `table.(a, b)` — the tuple is the key.
-- `dataset.name` — an asset of a kind a kit declares (a plan, a scenario).
+- `dataset.name` — an asset of a kind a kit declares.
   A kit declares a kind by three table macros in `main`, each taking the
   dataset: `lineage_assets_<kind>` (`asset, kind, node_asset, node_what`:
   its assets and the node that declares each), `lineage_edges_<kind>`
@@ -171,7 +171,7 @@ A **subject** is what a gloss, a function SELECT, or a test attaches to:
   names a place). Such an asset is of its kind, which no grain names, so a
   property declared `ON TABLE` does not admit it; it and a relation of its
   dataset do not share a name (`asset_name_taken`). An asset that is a
-  relation itself, as a plan's view is, keeps the relation's grain.
+  relation itself keeps the relation's grain.
 
 A dataset's name and a table's name carry no dot; a column's may,
 spelled quoted, and the column is what follows the second dot.
@@ -562,8 +562,7 @@ table is loaded from, and the edges of each kind a kit declares, §4):
 | `the dataset's metrics` | the metrics of the subject's dataset and their columns |
 | `the dataset` | the subject's dataset and every asset in it |
 
-and each place a kit adds for its kind of asset (§4), such as the plan
-kit's `its metric`. On an asset a kit declares by an annotation,
+and each place a kit adds for its kind of asset (§4). On an asset a kit declares by an annotation,
 `annotations('x-kind <kind>', 'itself')` reads that annotation alone,
 and a result on such an asset reads the node that declares it.
 

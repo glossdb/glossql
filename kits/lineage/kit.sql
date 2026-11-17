@@ -174,8 +174,8 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --   'its dataset'              the subject's dataset itself
 --   'the dataset'              the subject's dataset and every asset in it
 --   'the dataset's metrics'    the views of the subject's dataset that are
---                              metrics (no plan, relation, single value or
---                              sample), and their columns
+--                              metrics (no relation or single value), and
+--                              their columns
 -- and the places of each kind of asset a kit declares
 -- (glossql_kind_places(): its lineage_places_<kind> macro; a row with no
 -- subject names a place it adds). Any other where is refused, not_a_place.
@@ -354,7 +354,7 @@ UNION ALL SELECT dataset_name, 'dataset', r FROM rels WHERE k = 'table';
 -- annotated the asset), threshold (the THRESHOLD of the test declared
 -- on the property, NULL where it has none). A property declared on
 -- tables returns no row for a column. A what of the form 'x-kind <kind>' names every property
--- declared with that x-kind, a scenario's among them: one row per
+-- declared with that x-kind: one row per
 -- property and asset, the value a person's newest annotation, else an
 -- agent's, state current, or missing; on an asset of a kind a kit declares
 -- by an annotation, that annotation alone.

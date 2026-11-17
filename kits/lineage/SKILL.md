@@ -24,7 +24,7 @@ An asset is named by its path: `fin`, `fin.orders`,
 | `reads` | a view | the tables and columns it scans and joins on, and each view it reads |
 | `relates` | a relationship | each of its columns |
 | `loaded from` | a loaded table | the source its recipe loads it from |
-| a kit's own | an asset of a kind a kit declares | what its `lineage_edges_<kind>` macro names, such as the plan kit's `plans` |
+| a kit's own | an asset of a kind a kit declares | what its `lineage_edges_<kind>` macro names |
 
 ```sql
 SELECT "to" FROM lineage('fin') WHERE "from" = 'fin.revenue' AND kind = 'reads';
@@ -62,7 +62,7 @@ says where. Both are constants.
 
 | Read | Returns, one row per asset of the place |
 |---|---|
-| `annotations(property, where)` | `asset`, `property`, `value`, `state`, `threshold`; state `missing` where nobody annotated the asset; `threshold` the THRESHOLD of the test on the property, NULL where it has none. A property declared on tables returns no row for a column. `'x-kind <kind>'` as the property reads every property declared with that `x-kind`, a scenario's among them: a person's newest annotation, else an agent's |
+| `annotations(property, where)` | `asset`, `property`, `value`, `state`, `threshold`; state `missing` where nobody annotated the asset; `threshold` the THRESHOLD of the test on the property, NULL where it has none. A property declared on tables returns no row for a column. `'x-kind <kind>'` as the property reads every property declared with that `x-kind`: a person's newest annotation, else an agent's |
 | `results(function, where)` | `asset`, `function`, `value`, `error`; both empty where no result is stored; `history`, each value the result held, oldest first, once per change, the newest last |
 | `definition(where)` | one row per view: `view`, `kind`, `schema` (the property's, where a kit reads its own keys), `sql`, `stopped`, `columns`, `reads`, `joins`, `conditions`. The view's SQL and what it reads, each loaded table with the `source` it is loaded from, and per read of a table (`branch`, `alias`) the `condition` the view's joins and filters require of it alone; not the rest of the annotation that defines it |
 
@@ -78,8 +78,8 @@ The places, walked from the function's subject:
 | `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads. `annotations()` of a property declared `ON SOURCE`, such as `conventions`, returns each source's annotation |
 | `its dataset` | the subject's dataset itself |
 | `the dataset` | the dataset and every asset in it |
-| `the dataset's metrics` | the views of the dataset that are metrics, not plans, and their columns |
-| a kit's own | what its `lineage_places_<kind>` macro names, such as the plan kit's `its metric` and the outlook kit's `its levers` |
+| `the dataset's metrics` | the views of the dataset that are metrics, and their columns |
+| a kit's own | what its `lineage_places_<kind>` macro names |
 
 ```sql
 DECLARE FUNCTION unlabelled_columns FOR GLOBAL AS $$
