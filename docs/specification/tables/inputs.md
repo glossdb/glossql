@@ -54,7 +54,7 @@ was walked over.
 |---|---|
 | `annotations(p, where)` | per asset of the place that `p`'s grains admit, `annotation p`, `value p` and the `definition` of the asset's table or view (an annotation is stale once its asset's definition moved); `property` `p`, and `function` of each detector its tests name |
 | `annotations('x-kind k', where)` | the same for each property of the kind, and `properties` of `k` |
-| `results(f, where)` | per asset of the place `result f` |
+| `results(f, where)` | per asset of the place `result f`, which its `history` changes with |
 | `definition(where)` | per view of the place its `definition` and `result lineage`, and the `recipe` of each table it reads, through views |
 | the subject's data, or a table the body names | `data` of each table read, through views, and the `definition` and `result lineage` of each view on the way |
 | the lineage, read by a primitive (`glossql_additivity_cells`) | the nodes its place's walk passes |

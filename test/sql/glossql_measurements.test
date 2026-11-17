@@ -501,6 +501,19 @@ min_max	true
 top	true
 top_twice	true
 
+# a body reads the values a result held, oldest first, once per change: min_max's max, back to 10 once and now 13
+
+statement ok
+DECLARE ASPECT top_history WITH $${"type": "array", "items": {"type": "number"}}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION top_history FOR fin AS $$ SELECT list_transform(history, lambda v: (v->>'max')::DOUBLE) AS v FROM results('min_max', 'itself') $$ RETURNS top_history;
+
+query TTTTT
+SELECT top_history() FROM orders.amount;
+----
+top_history	fin.orders.amount	top_history	[4.5,9.0,10.0,11.0,10.0,12.0,13.0]	true
+
 # a result computed while the result it read was out of date is out of date
 
 statement ok
@@ -538,6 +551,13 @@ SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN
 ----
 min_max	true
 top	true
+
+# min_max computed again with the value it held: its history holds no new value, and what read it stays current
+
+query TT
+SELECT body, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect = 'top_history';
+----
+[4.5,9.0,10.0,11.0,10.0,12.0,13.0]	true
 
 # --- a function that reads its own results: what it stored is no input of its own, on any subject
 

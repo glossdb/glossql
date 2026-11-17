@@ -383,13 +383,22 @@ FROM query(CASE WHEN starts_with(property, 'x-kind ')
 --===------------------------------------------------------------------===--
 -- results(function, where): one row per asset of the place, with the
 -- result of the function stored on it: asset, function, value (JSON),
--- error; no value and no error where none is stored.
+-- error; no value and no error where none is stored; history, each value
+-- the result held, oldest first, once per change of its value, the newest
+-- last (a failure holds none). The history changes when the result does,
+-- so it is the same node.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.results(function_, where_) AS TABLE
-SELECT p.asset, function_ AS function, m.value, m.error
+WITH held AS (
+  SELECT subject, list(value ORDER BY changed_at) AS history
+  FROM (SELECT DISTINCT subject, changed_at, value FROM main.measurements_history
+        WHERE dataset = split_part(main.read_subject(), '.', 1) AND function = function_ AND value IS NOT NULL)
+  GROUP BY subject)
+SELECT p.asset, function_ AS function, m.value, m.error, h.history
 FROM main.place(where_) p
 LEFT JOIN main.measurements m
-  ON m.dataset = split_part(main.read_subject(), '.', 1) AND m.function = function_ AND m.subject = p.asset;
+  ON m.dataset = split_part(main.read_subject(), '.', 1) AND m.function = function_ AND m.subject = p.asset
+LEFT JOIN held h ON h.subject = p.asset;
 
 --===------------------------------------------------------------------===--
 -- definition(where): one row per view of the place, its definition: view

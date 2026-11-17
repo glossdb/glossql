@@ -542,7 +542,8 @@ SELECT * FROM definition('itself');
 ```
 
 - `annotations(property, where)`: the annotations of one property;
-- `results(function, where)`: the stored results of one function;
+- `results(function, where)`: the stored results of one function,
+  each with the values it held, once per change (`history`);
 - `definition(where)`: a view's SQL and what it reads, each loaded
   table with the source it is loaded from, and what the view's joins
   and filters require of each read of a table.
