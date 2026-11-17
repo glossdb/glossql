@@ -92,14 +92,16 @@ static bool SchemaExists(ClientContext &context, const string &name) {
 //! Whether a name is a declared source, a workspace row (SPEC §5.1); read
 //! through the typed view, which holds once PRAGMA glossql ran
 static bool SourceExists(ClientContext &context, const string &name) {
-	Connection con(*context.db);
-	auto result = con.Query("SELECT count(*) FROM " + QuoteName(LakeName(context)) +
-	                        ".main.sources WHERE name = " + QuoteText(name));
-	if (result->HasError()) {
+	try {
+		auto &inner = Inner::Of(context);
+		return !inner
+		            .Row("SELECT 1 FROM " + QuoteName(inner.ws.lake) + ".main.sources WHERE name = " + QuoteText(name) +
+		                 " LIMIT 1")
+		            .empty();
+	} catch (std::exception &) {
+		// no store, no sources
 		return false;
 	}
-	auto chunk = result->Fetch();
-	return chunk && chunk->size() == 1 && chunk->GetValue(0, 0).GetValue<int64_t>() > 0;
 }
 
 //! A relation of the lake by name, a loaded table or a view — a metric definition's
@@ -1623,7 +1625,8 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
 	          ValuesSQL(ws, values + " AND " + in_due) + ") WHERE error IS NULL");
 	std::map<string, pair<string, string>> judged;
 	auto failure = due.empty() ? string() : RunDetector(context, inner, test, once, judged);
-	inner.Run("DROP TABLE " + once);
+	// a detector that failed ended the read it ran in, and the table with it
+	inner.Run("DROP TABLE IF EXISTS " + once);
 	if (context.IsInterrupted()) {
 		throw InterruptException();
 	}
@@ -1803,16 +1806,15 @@ static unique_ptr<TableRef> KindBindReplace(ClientContext &context, TableFunctio
 	} else if (string(kind->stem) == "lineage_places_") {
 		datasets.push_back("''");
 	} else {
-		Connection con(*context.db);
-		auto rows = con.Query("SELECT name FROM " + QuoteName(lake) + ".main.datasets ORDER BY name");
-		while (!rows->HasError()) {
-			auto chunk = rows->Fetch();
-			if (!chunk || chunk->size() == 0) {
-				break;
+		try {
+			auto rows = Inner::Of(context).Run("SELECT name FROM " + QuoteName(lake) + ".main.datasets ORDER BY name");
+			while (auto chunk = rows->Fetch()) {
+				for (idx_t r = 0; r < chunk->size(); r++) {
+					datasets.push_back(QuoteText(chunk->GetValue(0, r).ToString()));
+				}
 			}
-			for (idx_t r = 0; r < chunk->size(); r++) {
-				datasets.push_back(QuoteText(chunk->GetValue(0, r).ToString()));
-			}
+		} catch (std::exception &) {
+			// no store, no datasets
 		}
 	}
 	// the assets of one kind are its macro's alone
@@ -1933,41 +1935,35 @@ static unique_ptr<FunctionData> TestsBind(ClientContext &context, TableFunctionB
 	                return_types, names);
 }
 
-//! The reads one statement computed, by their SQL: a statement that composes the same read twice (a summary
-//! read by two of the reads it composes) computes it once. Cleared when the statement ends
-struct StatementReads : public ClientContextState {
-	std::mutex lock;
-	std::unordered_map<string, shared_ptr<ColumnDataCollection>> rows;
-
-	void QueryEnd(ClientContext &context) override {
-		std::lock_guard<std::mutex> guard(lock);
-		rows.clear();
-	}
-	static StatementReads &Of(ClientContext &context) {
-		return *context.registered_state->GetOrCreate<StatementReads>("glossql_statement_reads");
-	}
-};
-
+//! A read's rows, computed once per statement by their SQL (StatementState): a statement that composes the
+//! same read twice (a summary read by two of the reads it composes) computes it once, and so does a
+//! computation over many subjects, whose bodies read on the connection that holds its read
 static unique_ptr<GlobalTableFunctionState> ReadInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto &bind = input.bind_data->Cast<ReadBindData>();
 	auto state = make_uniq<ReadState>();
-	auto &reads = StatementReads::Of(context);
+	auto &reads = StatementState::Of(context);
 	{
 		std::lock_guard<std::mutex> guard(reads.lock);
-		auto found = reads.rows.find(bind.sql);
-		if (found != reads.rows.end()) {
+		auto found = reads.reads.find(bind.sql);
+		if (found != reads.reads.end()) {
 			state->rows = found->second;
 		}
 	}
 	if (!state->rows) {
-		Inner inner(context);
-		auto result = inner.Run(bind.sql);
+		// the pipelines that scan reads initialise on several threads: one runs on the statement's
+		// connection, another at the same time on a connection of its own
+		std::unique_lock<std::recursive_mutex> serial(reads.use, std::try_to_lock);
+		unique_ptr<Inner> own;
+		if (!serial.owns_lock()) {
+			own = make_uniq<Inner>(context);
+		}
+		auto result = (own ? *own : Inner::Of(context)).Run(bind.sql);
 		auto rows = make_shared_ptr<ColumnDataCollection>(Allocator::Get(context), result->GetTypes());
 		while (auto chunk = result->Fetch()) {
 			rows->Append(*chunk);
 		}
 		std::lock_guard<std::mutex> guard(reads.lock);
-		state->rows = reads.rows.emplace(bind.sql, rows).first->second;
+		state->rows = reads.reads.emplace(bind.sql, rows).first->second;
 	}
 	state->rows->InitializeScan(state->scan);
 	return std::move(state);

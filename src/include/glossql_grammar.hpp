@@ -1,13 +1,17 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb/main/client_context_state.hpp"
 #include "duckdb/main/connection.hpp"
+#include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/parser/grammar_extension.hpp"
 #include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 
 #include <functional>
 #include <map>
+#include <mutex>
+#include <unordered_map>
 #include <set>
 
 namespace duckdb {
@@ -256,9 +260,24 @@ class Inner {
 public:
 	explicit Inner(ClientContext &context);
 
+	//! The second connection of the statement `context` runs: made at its first use and kept for that
+	//! statement's length, so the lookups of one statement run on one connection. An inner connection's own
+	//! is kept for its life, which is the statement of the connection that made it
+	static Inner &Of(ClientContext &context);
+
 	//! Runs one statement; throws its error as InvalidInputException, a transaction conflict, an
-	//! interrupt and the engine's own failures (fatal, internal, memory) as themselves
+	//! interrupt and the engine's own failures (fatal, internal, memory) as themselves. A statement that
+	//! fails while a read is held ends that read
 	unique_ptr<QueryResult> Run(const string &sql);
+	//! Holds one read of the lake for the statement's length: the statements run from here share one
+	//! transaction, begun at the first and begun again after a write or a failure, and the reads
+	//! (GLOSSARY(), TESTS()) a body computes on this connection are computed once until the next write.
+	//! Everything one statement reads, it reads at one snapshot
+	void Hold();
+	//! Ends the read held, where one is open
+	void Settle();
+	//! The caller's search paths and run subject, taken over where they moved
+	void Follow(ClientContext &caller);
 	//! The first column of the first row, or NULL for no rows
 	Value Scalar(const string &sql);
 	//! The first row, or empty for no rows
@@ -288,6 +307,38 @@ public:
 	Workspace ws;
 	//! whether a statement of the catalog write in progress failed (CatalogWrite::Run)
 	bool catalog_failed = false;
+
+private:
+	//! Begins the held read where none is open, and again where a failure ended it
+	void Open();
+
+	//! whether a read is held (Hold), whether its transaction is open, whether a write runs
+	bool holding = false;
+	bool open = false;
+	bool writing = false;
+	//! the schema each function resolved to in this statement, by dataset and name, until a write
+	std::map<pair<string, string>, string> function_schemas;
+};
+
+//! What one statement keeps on a connection: the second connection its lookups run on (Inner::Of) and
+//! the rows of the reads it computed (GLOSSARY(), TESTS()), by their SQL. Dropped when the statement
+//! ends; on an inner connection, the second connection lives as long as it does, and the rows are kept
+//! while it holds a read, until a write (Inner::Hold)
+struct StatementState : public ClientContextState {
+	~StatementState() override;
+	void QueryEnd(ClientContext &context) override;
+	static StatementState &Of(ClientContext &context);
+
+	unique_ptr<Inner> inner;
+	//! the connection is an Inner's
+	bool nested = false;
+	//! the reads' rows are kept past each query
+	bool keep_reads = false;
+	std::mutex lock;
+	std::unordered_map<string, shared_ptr<ColumnDataCollection>> reads;
+	//! held while the second connection is made or runs for a caller that may run on several threads at
+	//! once (ReadInit, from each pipeline that scans a read)
+	std::recursive_mutex use;
 };
 
 //! A catalog write in progress (Inner::Write): the snapshot id its rows carry,

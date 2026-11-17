@@ -72,6 +72,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/main/client_data.hpp"
+#include "duckdb/main/valid_checker.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include <chrono>
 #include <functional>
@@ -255,18 +256,7 @@ string JsonList(const Value &list) {
 }
 
 Inner::Inner(ClientContext &context) : con(*context.db), ws(FindWorkspace(context, con)) {
-	// a body resolves names and files as the caller's session does: the same search paths
-	auto &paths = ClientData::Get(context).catalog_search_path->GetSetPaths();
-	bool qualified = std::all_of(paths.begin(), paths.end(), [](const CatalogSearchEntry &path) {
-		return !path.GetCatalog().empty() && !path.GetSchema().empty();
-	});
-	if (!paths.empty() && qualified) {
-		// the caller's paths, set as they stand: each names its catalog and schema, which the caller's own
-		// SET verified
-		ClientData::Get(*con.context).catalog_search_path->Set(paths, CatalogSetPathType::SET_DIRECTLY);
-	} else if (!paths.empty()) {
-		Run("SET search_path = " + QuoteText(CatalogSearchEntry::ListToString(paths)));
-	}
+	StatementState::Of(*con.context).nested = true;
 	Value files;
 	if (context.TryGetCurrentSetting(Identifier("file_search_path"), files) && !files.IsNull() &&
 	    !files.ToString().empty()) {
@@ -274,10 +264,94 @@ Inner::Inner(ClientContext &context) : con(*context.db), ws(FindWorkspace(contex
 	}
 	// a read the second connection runs reads the same lake, where several are attached
 	ClientConfig::GetConfig(*con.context).SetUserVariable("glossql_workspace", Value(ws.lake));
+	Follow(context);
+}
+
+void Inner::Follow(ClientContext &caller) {
+	// a body resolves names as the caller's session does: the same search paths
+	auto &paths = ClientData::Get(caller).catalog_search_path->GetSetPaths();
+	auto &own = *ClientData::Get(*con.context).catalog_search_path;
+	if (CatalogSearchEntry::ListToString(paths) != CatalogSearchEntry::ListToString(own.GetSetPaths())) {
+		bool qualified = std::all_of(paths.begin(), paths.end(), [](const CatalogSearchEntry &path) {
+			return !path.GetCatalog().empty() && !path.GetSchema().empty();
+		});
+		if (!paths.empty() && qualified) {
+			// the caller's paths, set as they stand: each names its catalog and schema, which the caller's own
+			// SET verified
+			own.Set(paths, CatalogSetPathType::SET_DIRECTLY);
+		} else if (!paths.empty()) {
+			Run("SET search_path = " + QuoteText(CatalogSearchEntry::ListToString(paths)));
+		}
+	}
 	// and the read functions walk from the caller's run's subject
 	Value subject;
-	if (ClientConfig::GetConfig(context).GetUserVariable(string(RUN_SUBJECT), subject)) {
-		ClientConfig::GetConfig(*con.context).SetUserVariable(RUN_SUBJECT, subject);
+	auto &variables = ClientConfig::GetConfig(*con.context);
+	if (ClientConfig::GetConfig(caller).GetUserVariable(string(RUN_SUBJECT), subject)) {
+		variables.SetUserVariable(RUN_SUBJECT, subject);
+	} else {
+		variables.ResetUserVariable(RUN_SUBJECT);
+	}
+}
+
+StatementState::~StatementState() = default;
+
+void StatementState::QueryEnd(ClientContext &context) {
+	if (!nested) {
+		inner.reset();
+	}
+	if (!keep_reads) {
+		std::lock_guard<std::mutex> guard(lock);
+		reads.clear();
+	}
+}
+
+StatementState &StatementState::Of(ClientContext &context) {
+	return *context.registered_state->GetOrCreate<StatementState>("glossql_statement");
+}
+
+Inner &Inner::Of(ClientContext &context) {
+	auto &state = StatementState::Of(context);
+	std::lock_guard<std::recursive_mutex> guard(state.use);
+	if (!state.inner) {
+		state.inner = make_uniq<Inner>(context);
+	} else if (state.nested) {
+		// an inner connection moves from subject to subject within its statement; a statement of the
+		// caller's own runs as its session stood when it began
+		state.inner->Follow(context);
+	}
+	return *state.inner;
+}
+
+void Inner::Hold() {
+	holding = true;
+	StatementState::Of(*con.context).keep_reads = true;
+}
+
+void Inner::Open() {
+	if (!holding || writing) {
+		return;
+	}
+	auto &transaction = con.context->transaction;
+	if (open && transaction.HasActiveTransaction() && !ValidChecker::IsInvalidated(con.context->ActiveTransaction())) {
+		return;
+	}
+	if (transaction.HasActiveTransaction()) {
+		con.Query("ROLLBACK");
+	}
+	auto begun = con.Query("BEGIN");
+	if (begun->HasError()) {
+		begun->ThrowError();
+	}
+	open = true;
+}
+
+void Inner::Settle() {
+	if (open) {
+		open = false;
+		auto done = con.Query("COMMIT");
+		if (done->HasError()) {
+			con.Query("ROLLBACK");
+		}
 	}
 }
 
@@ -429,6 +503,21 @@ int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWri
 	// the tries a write takes before it gives the caller the last reason
 	static constexpr idx_t TRIES = 60;
 	string lost;
+	// the read held ends before the write: what follows it reads what it wrote
+	Settle();
+	writing = true;
+	function_schemas.clear();
+	{
+		auto &state = StatementState::Of(*con.context);
+		std::lock_guard<std::mutex> guard(state.lock);
+		state.reads.clear();
+	}
+	struct Written {
+		bool &writing;
+		~Written() {
+			writing = false;
+		}
+	} written {writing};
 	for (idx_t attempt = 0; attempt < TRIES; attempt++) {
 		Run("BEGIN");
 		int64_t head_id = -1;
@@ -489,8 +578,14 @@ static string Reason(ErrorData &error) {
 }
 
 unique_ptr<QueryResult> Inner::Run(const string &sql) {
+	Open();
 	auto result = con.Query(sql);
 	if (result->HasError()) {
+		// a failure ends the read it fell in: the next statement begins it again
+		if (open) {
+			open = false;
+			con.Query("ROLLBACK");
+		}
 		switch (result->GetErrorObject().Type()) {
 		// a conflict, an interrupt and the engine's own failures keep their class: a write tells a lost race
 		// by it, and a computation stores no result for them
@@ -540,14 +635,22 @@ string Inner::Table(const string &schema, const string &name) const {
 }
 
 string Inner::FunctionSchema(const string &dataset, const string &name) {
-	for (auto &scope : {dataset, string("GLOBAL")}) {
-		auto found = Scalar("SELECT count(*) FROM " + Current("functions") + " WHERE name = " + QuoteText(name) +
-		                    " AND scope = " + QuoteText(scope));
-		if (found.GetValue<int64_t>() > 0) {
-			return scope == "GLOBAL" ? "main" : scope;
-		}
+	auto known = function_schemas.find({dataset, name});
+	if (known != function_schemas.end()) {
+		return known->second;
 	}
-	return "";
+	// its own, then GLOBAL, in one statement
+	auto found = Row("SELECT coalesce(bool_or(scope = " + QuoteText(dataset) +
+	                 "), false), coalesce(bool_or(scope = 'GLOBAL'), false) FROM " + Current("functions") +
+	                 " WHERE name = " + QuoteText(name));
+	string schema;
+	if (found[0].GetValue<bool>()) {
+		schema = dataset == "GLOBAL" ? "main" : dataset;
+	} else if (found[1].GetValue<bool>()) {
+		schema = "main";
+	}
+	function_schemas[{dataset, name}] = schema;
+	return schema;
 }
 
 //! A declared source, as its newest row holds
@@ -2154,10 +2257,9 @@ static Read DataRead(ClientContext &context, const std::set<string> &places, con
 
 //! The reads of a result of a function, from the reads its declaration stored (functions.reads), each
 //! one an input can follow (UntrackedRead). A function's own results are no input of its own
-static vector<Read> ReadsOfFunction(ClientContext &context, Inner &inner, const string &name, const string &scope,
-                                    const string &dataset) {
+static vector<Read> ReadsOfFunction(ClientContext &context, Inner &inner, const std::set<string> &places,
+                                    const string &name, const string &scope, const string &dataset) {
 	std::set<Read> reads {{"function", "", ""}, {"property", "", ""}};
-	auto places = PlaceNames(inner);
 	auto rows = inner.Run("SELECT r.kind, r.read, r.what, r.\"where\" FROM " + inner.Current("functions") +
 	                      " f, unnest(from_json(f.reads, '[{\"kind\": \"VARCHAR\", \"read\": \"VARCHAR\", \"what\":"
 	                      " \"VARCHAR\", \"where\": \"VARCHAR\"}]')) u(r) WHERE f.name = " +
@@ -2186,108 +2288,157 @@ static vector<Read> ReadsOfFunction(ClientContext &context, Inner &inner, const 
 	return vector<Read>(reads.begin(), reads.end());
 }
 
-//! The nodes a result of the function on the subject reads (docs/specification/tables/inputs.md),
-//! (asset, what), taken before the body runs: per read, the nodes of its place's assets and those its
-//! place's walk passes (main.place_nodes()); and the declarations of the function, of each macro its
-//! body follows and of the property it fills
-static vector<pair<string, string>> NodesRead(Inner &inner, const string &dataset, const string &subject,
-                                              const string &function, const string &scope, const string &returns,
-                                              const vector<Read> &reads) {
+//! The nodes each result of the function on the subjects reads (docs/specification/tables/inputs.md),
+//! (asset, what) by subject, taken before the bodies run, in one statement: per read, the nodes of its
+//! place's assets and those its place's walk passes (main.place_nodes()); and the declarations of the
+//! function, of each macro its body follows and of the property it fills. The statement names only the
+//! walks the reads take: a place other than the subject itself, the annotations, the data, a definition
+static std::map<string, vector<pair<string, string>>> NodesRead(Inner &inner, const std::set<string> &places,
+                                                                const string &dataset, const vector<string> &subjects,
+                                                                const string &function, const string &scope,
+                                                                const string &returns, const vector<Read> &reads) {
 	vector<string> wanted {"(NULL, NULL, NULL)"};
+	bool placed = false, annotations = false, data = false, definition = false;
 	for (auto &read : reads) {
-		if (read.read != "function" && read.read != "property") {
-			wanted.push_back("(" + QuoteText(read.read) + ", " + QuoteText(read.what) + ", " + QuoteText(read.where) +
-			                 ")");
+		if (read.read == "function" || read.read == "property") {
+			continue;
 		}
+		wanted.push_back("(" + QuoteText(read.read) + ", " + QuoteText(read.what) + ", " + QuoteText(read.where) + ")");
+		placed = placed || (read.where != "itself" && places.count(read.where));
+		annotations = annotations || read.read == "annotations";
+		data = data || read.read == "data";
+		definition = definition || read.read == "definition";
 	}
-	// $d the dataset, $s the subject, $f the function, $p the property it fills; a table a body names
+	vector<string> quoted;
+	for (auto &subject : subjects) {
+		quoted.push_back("(" + QuoteText(subject) + ")");
+	}
+	// $d the dataset, sj the subjects, $f the function, $p the property it fills; a table a body names
 	// is no place, and is its own asset
-	string sql = R"(WITH w("read", what, "where") AS (VALUES $wanted),
+	string ctes = R"(WITH sj(s) AS (VALUES $subjects),
+w("read", what, "where") AS (VALUES $wanted),
 pl AS (SELECT p."where", p.anchored FROM (SELECT unnest(main.place_list()) AS p)),
-wa AS (SELECT *, CASE WHEN "where" IN (SELECT "where" FROM pl WHERE anchored) THEN $d ELSE $s END AS anchor
-       FROM w WHERE "read" IS NOT NULL),
-a AS (SELECT "read", what, "where", anchor AS asset FROM wa WHERE "where" = 'itself'
-      UNION ALL SELECT wa."read", wa.what, wa."where", p.asset FROM wa
-                JOIN main.places($d) p ON p."where" = wa."where" AND p.subject = wa.anchor
-      UNION ALL SELECT "read", what, "where", "where" FROM wa WHERE "where" NOT IN (SELECT "where" FROM pl)),
-props AS (SELECT DISTINCT wa.what, x.name, from_json(x.grains, '["VARCHAR"]') AS grains FROM wa JOIN $aspects x
+wa AS (SELECT w.*, sj.s, CASE WHEN w."where" IN (SELECT "where" FROM pl WHERE anchored) THEN $d ELSE sj.s END AS anchor
+       FROM w, sj WHERE w."read" IS NOT NULL),
+a AS (SELECT s, "read", what, "where", anchor AS asset FROM wa WHERE "where" = 'itself'
+      UNION ALL SELECT s, "read", what, "where", "where" FROM wa WHERE "where" NOT IN (SELECT "where" FROM pl)$placed_assets),
+kind AS MATERIALIZED (FROM glossql_kind_assets($d)))";
+	string nodes = R"(
+  UNION ALL SELECT s, $f AS asset, 'function' AS what FROM sj UNION ALL SELECT s, $p, 'property' FROM sj
+  UNION ALL SELECT sj.s, substr(u.r.read, strpos(u.r.read, '.') + 1), 'macro'
+            FROM $functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) u(r), sj
+            WHERE f.name = $f AND f.scope = $scope AND u.r.kind = 'macro'
+  -- a result on an asset of a kind a kit declares reads the node that declares it
+  UNION ALL SELECT sj.s, node_asset, node_what FROM kind JOIN sj ON kind.asset = sj.s
+  UNION ALL SELECT s, asset, 'result ' || what FROM a WHERE "read" = 'results')";
+	string placed_assets;
+	if (placed) {
+		placed_assets = R"(
+      UNION ALL SELECT wa.s, wa."read", wa.what, wa."where", p.asset FROM wa
+                JOIN main.places($d) p ON p."where" = wa."where" AND p.subject = wa.anchor)";
+		nodes += R"(
+  UNION ALL SELECT wa.s, n.asset, n.what FROM wa JOIN main.place_nodes($d) n ON n."where" = wa."where" AND n.subject = wa.anchor)";
+	}
+	if (annotations) {
+		ctes += R"(,
+props AS (SELECT DISTINCT wa.s, wa.what, x.name, from_json(x.grains, '["VARCHAR"]') AS grains FROM wa JOIN $aspects x
           ON x.name = wa.what
           OR (starts_with(wa.what, 'x-kind ') AND json_extract_string(x.schema, '$.x-kind') = substr(wa.what, 8))
           WHERE wa."read" = 'annotations'),
 -- the assets an annotations read returns rows for: those of the property's grains
-ann AS (SELECT a.asset, p.name FROM a JOIN props p ON p.what = a.what
-        WHERE a."read" = 'annotations' AND (len(p.grains) = 0 OR list_contains(p.grains, main.asset_grain(a.asset)))),
+ann AS (SELECT a.s, a.asset, p.name FROM a JOIN props p ON p.s = a.s AND p.what = a.what
+        WHERE a."read" = 'annotations' AND (len(p.grains) = 0 OR list_contains(p.grains, main.asset_grain(a.asset)))))";
+		nodes += R"(
+  UNION ALL SELECT s, asset, u.k || ' ' || name FROM ann, unnest(['annotation', 'value']) u(k)
+  UNION ALL SELECT s, split_part(asset, '.', 1) || '.' || split_part(asset, '.', 2), 'definition' FROM ann
+            WHERE contains(asset, '.') AND main.asset_grain(asset) <> 'RELATIONSHIP'
+  UNION ALL SELECT s, name, 'property' FROM props
+  UNION ALL SELECT p.s, t.detector, 'function' FROM $tests t JOIN props p ON p.name = t.aspect WHERE t.detector IS NOT NULL
+  UNION ALL SELECT s, substr(what, 8), 'properties' FROM wa WHERE "read" = 'annotations' AND starts_with(what, 'x-kind ')
+            AND NOT ("where" = 'itself' AND s IN (SELECT asset FROM kind)))";
+	}
+	if (data || definition) {
+		ctes += R"(,
 vr AS MATERIALIZED (FROM main.view_reads($d)),
-kind AS MATERIALIZED (FROM glossql_kind_assets($d)),
-rd AS (SELECT t.table_name AS r FROM a JOIN main.tables_read($d) t ON t.asset = a.asset
+lv AS MATERIALIZED (SELECT schema_name || '.' || view_name AS v FROM duckdb_views() WHERE database_name = $lake))";
+	}
+	if (definition) {
+		// a definition read: each view's own definition and its stored lineage, and the recipe of what it reads
+		nodes += R"(
+  UNION ALL SELECT s, asset, 'definition' FROM a WHERE "read" = 'definition'
+  UNION ALL SELECT s, asset, 'result lineage' FROM a WHERE "read" = 'definition' AND asset IN (SELECT v FROM lv)
+  UNION ALL SELECT a.s, vr.relation, 'recipe' FROM a JOIN vr ON vr.view = a.asset WHERE a."read" = 'definition')";
+	}
+	if (data) {
+		ctes += R"(,
+rd AS (SELECT a.s, t.table_name AS r FROM a JOIN main.tables_read($d) t ON t.asset = a.asset
        WHERE a."read" = 'data' AND (a.what = 'data' OR (a.what = 'tables' AND t.asset_kind = 'table')
                                     OR (a.what = 'views' AND t.asset_kind = 'view'))
-       UNION SELECT asset FROM a WHERE "read" = 'data' AND "where" NOT IN (SELECT "where" FROM pl)),
-rv AS (SELECT r FROM rd UNION SELECT vr.relation FROM rd JOIN vr ON vr.view = rd.r)
-SELECT DISTINCT asset, what FROM (
-  SELECT n.asset, n.what FROM wa JOIN main.place_nodes($d) n ON n."where" = wa."where" AND n.subject = wa.anchor
-  UNION ALL SELECT asset, u.k || ' ' || name FROM ann, unnest(['annotation', 'value']) u(k)
-  UNION ALL SELECT split_part(asset, '.', 1) || '.' || split_part(asset, '.', 2), 'definition' FROM ann
-            WHERE contains(asset, '.') AND main.asset_grain(asset) <> 'RELATIONSHIP'
-  UNION ALL SELECT name, 'property' FROM props
-  UNION ALL SELECT t.detector, 'function' FROM $tests t JOIN props p ON p.name = t.aspect WHERE t.detector IS NOT NULL
-  UNION ALL SELECT substr(what, 8), 'properties' FROM wa WHERE "read" = 'annotations' AND starts_with(what, 'x-kind ')
-            AND NOT ("where" = 'itself' AND $s IN (SELECT asset FROM kind))
-  -- a result on an asset of a kind a kit declares reads the node that declares it
-  UNION ALL SELECT node_asset, node_what FROM kind WHERE asset = $s
-  UNION ALL SELECT asset, 'result ' || what FROM a WHERE "read" = 'results'
-  -- a definition read: each view's own definition and its stored lineage, and the recipe of what it reads
-  UNION ALL SELECT asset, 'definition' FROM a WHERE "read" = 'definition'
-  UNION ALL SELECT asset, 'result lineage' FROM a WHERE "read" = 'definition'
-            AND asset IN (SELECT schema_name || '.' || view_name FROM duckdb_views() WHERE database_name = $lake)
-  UNION ALL SELECT vr.relation, 'recipe' FROM a JOIN vr ON vr.view = a.asset WHERE a."read" = 'definition'
-  -- the data of each table read, through views: each view's definition, and its stored lineage, which the
-  -- walk went over
-  UNION ALL SELECT r, u.what FROM rv, unnest(CASE WHEN r IN (SELECT schema_name || '.' || view_name FROM duckdb_views()
-                                                             WHERE database_name = $lake)
-                                                  THEN ['definition', 'result lineage'] ELSE ['data'] END) u(what)
-  UNION ALL SELECT $f, 'function' UNION ALL SELECT $p, 'property'
-  UNION ALL SELECT substr(u.r.read, strpos(u.r.read, '.') + 1), 'macro'
-            FROM $functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) u(r)
-            WHERE f.name = $f AND f.scope = $scope AND u.r.kind = 'macro') ORDER BY ALL)";
-	for (auto &term : vector<pair<string, string>> {{"$wanted", StringUtil::Join(wanted, ", ")},
+       UNION SELECT s, asset FROM a WHERE "read" = 'data' AND "where" NOT IN (SELECT "where" FROM pl)),
+rv AS (SELECT s, r FROM rd UNION SELECT rd.s, vr.relation FROM rd JOIN vr ON vr.view = rd.r))";
+		// the data of each table read, through views: each view's definition, and its stored lineage, which
+		// the walk went over
+		nodes += R"(
+  UNION ALL SELECT s, r, u.what FROM rv, unnest(CASE WHEN r IN (SELECT v FROM lv)
+                                                  THEN ['definition', 'result lineage'] ELSE ['data'] END) u(what))";
+	}
+	auto sql = ctes + "\nSELECT DISTINCT s, asset, what FROM (" + nodes.substr(nodes.find("SELECT")) + ") ORDER BY ALL";
+	for (auto &term : vector<pair<string, string>> {{"$placed_assets", placed_assets},
+	                                                {"$subjects", StringUtil::Join(quoted, ", ")},
+	                                                {"$wanted", StringUtil::Join(wanted, ", ")},
 	                                                {"$aspects", inner.Current("aspects")},
 	                                                {"$tests", inner.Current("tests")},
 	                                                {"$functions", inner.Current("functions")},
 	                                                {"$lake", QuoteText(inner.ws.lake)},
 	                                                {"$scope", QuoteText(scope)},
 	                                                {"$d", QuoteText(dataset)},
-	                                                {"$s", QuoteText(subject)},
 	                                                {"$f", QuoteText(function)},
 	                                                {"$p", QuoteText(returns)}}) {
 		sql = StringUtil::Replace(sql, term.first, term.second);
 	}
-	vector<pair<string, string>> nodes;
+	std::map<string, vector<pair<string, string>>> found;
 	auto rows = inner.Run(sql);
 	while (auto chunk = rows->Fetch()) {
 		for (idx_t r = 0; r < chunk->size(); r++) {
-			nodes.emplace_back(chunk->GetValue(0, r).ToString(), chunk->GetValue(1, r).ToString());
+			found[chunk->GetValue(0, r).ToString()].emplace_back(chunk->GetValue(1, r).ToString(),
+			                                                     chunk->GetValue(2, r).ToString());
 		}
 	}
-	return nodes;
+	return found;
 }
 
-//! The stored row for the call while it is current, (value, error), else empty
-static vector<Value> Served(Inner &inner, const string &dataset, const string &name, const string &subject) {
-	return inner.Row("SELECT value, error FROM (" +
-	                 CurrentResultsSQL(inner.ws, "dataset = " + QuoteText(dataset) + " AND function = " +
-	                                                 QuoteText(name) + " AND subject = " + QuoteText(subject)) +
-	                 ") WHERE current");
+//! What extraction serves of a value, as SQL over the JSON value `v`: its top-level summary object when
+//! the body carries one, the whole value otherwise (SPEC §6)
+static string SummarySQL(const string &v) {
+	return "CASE WHEN json_type(" + v + ", '$.summary') = 'OBJECT' THEN json_extract(" + v +
+	       ", '$.summary')::VARCHAR ELSE " + v + "::VARCHAR END";
 }
 
-//! What extraction serves of a value: its top-level summary object when the body
-//! carries one, the whole value otherwise (SPEC §6)
-static string Summary(Inner &inner, const string &value) {
-	return inner
-	    .Scalar("SELECT CASE WHEN json_type(v, '$.summary') = 'OBJECT' THEN json_extract(v, '$.summary')::VARCHAR"
-	            " ELSE v::VARCHAR END FROM (SELECT " +
-	            QuoteText(value) + "::JSON AS v)")
-	    .ToString();
+//! The stored rows of the function on the subjects that are current, (value, error, what it serves of the
+//! value) by subject, in one statement
+static std::map<string, vector<Value>> Served(Inner &inner, const string &dataset, const string &name,
+                                              const vector<string> &subjects) {
+	std::map<string, vector<Value>> served;
+	if (subjects.empty()) {
+		return served;
+	}
+	vector<string> quoted;
+	for (auto &subject : subjects) {
+		quoted.push_back("(" + QuoteText(subject) + ")");
+	}
+	auto rows = inner.Run(
+	    "SELECT subject, value, error, CASE WHEN error IS NULL THEN " + SummarySQL("value::JSON") + " END FROM (" +
+	    CurrentResultsSQL(inner.ws, "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
+		                                " AND subject IN (SELECT s FROM (VALUES " + StringUtil::Join(quoted, ", ") +
+		                                ") v(s))") +
+	    ") WHERE current");
+	while (auto chunk = rows->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			served[chunk->GetValue(0, r).ToString()] = {chunk->GetValue(1, r), chunk->GetValue(2, r),
+			                                            chunk->GetValue(3, r)};
+		}
+	}
+	return served;
 }
 
 static unique_ptr<GlobalTableFunctionState> ExtractInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -2295,27 +2446,25 @@ static unique_ptr<GlobalTableFunctionState> ExtractInit(ClientContext &context, 
 }
 
 //! The value by result shape: one row and one column is the value, one row is an
-//! object of its columns, many rows are an array of row objects. The call runs
-//! once, into a table of the inner connection's own: a body may be costly or
-//! reach outside the process (glossql_service), and the shape, the count and the
-//! value are read off what that one run returned
-static Value ValueOf(Inner &inner, const string &call) {
-	const string once = "__gloss_value";
-	inner.Run("CREATE OR REPLACE TEMP TABLE " + once + " AS SELECT * FROM " + call);
+//! object of its columns, many rows are an array of row objects; and what extraction
+//! serves of it (SummarySQL). The call runs once, into a table of the inner
+//! connection's own: a body may be costly or reach outside the process
+//! (glossql_service), and the shape, the count and the value are read off what
+//! that one run returned. A body that returns nothing is the value null
+static pair<string, string> ValueOf(Inner &inner, const string &call) {
+	const string once = "temp.main.__gloss_value";
+	inner.Run("CREATE OR REPLACE TEMP TABLE __gloss_value AS SELECT * FROM " + call);
 	auto shape = inner.Run("SELECT * FROM " + once + " LIMIT 0");
-	auto columns = shape->ColumnCount();
-	auto rows = inner.Scalar("SELECT count(*) FROM " + once).GetValue<int64_t>();
-	string sql;
-	if (rows == 1 && columns == 1) {
-		sql = "SELECT to_json(" + QuoteName(shape->ColumnName(0).GetIdentifierName()) + ") FROM " + once;
-	} else if (rows == 1) {
-		sql = "SELECT to_json(t) FROM " + once + " AS t";
-	} else {
-		sql = "SELECT to_json(list(t)) FROM " + once + " AS t";
-	}
-	auto value = inner.Scalar(sql);
+	auto one = shape->ColumnCount() == 1 ? "to_json(" + QuoteName(shape->ColumnName(0).GetIdentifierName()) + ")"
+	                                     : string("to_json(t)");
+	auto row = inner.Row("SELECT v, " + SummarySQL("v") + " FROM (SELECT CASE WHEN (SELECT count(*) FROM " + once +
+	                     ") = 1 THEN (SELECT first(" + one + ") FROM " + once +
+	                     " AS t) ELSE (SELECT to_json(list(t)) FROM " + once + " AS t) END AS v)");
 	inner.Run("DROP TABLE " + once);
-	return value;
+	if (row.empty() || row[0].IsNull()) {
+		return {"null", "null"};
+	}
+	return {row[0].ToString(), row[1].ToString()};
 }
 
 //! Whether the body raised an error: one of the engine's own, an interrupt, a fatal or internal
@@ -2335,8 +2484,8 @@ static bool RaisedByBody(const ErrorData &error) {
 //! Takes a function's reads again from its body, and stores them where they moved (BodyReadSet).
 //! Returns the read no input can follow, where a macro the body calls now makes one, or empty: the
 //! reads are stored all the same, so a result reads the declarations of the macros they follow
-static string RetakeReads(ClientContext &context, Inner &inner, const string &name, const string &scope,
-                          const Value &returns) {
+static string RetakeReads(ClientContext &context, Inner &inner, const std::set<string> &places, const string &name,
+                          const string &scope, const Value &returns) {
 	auto current = inner.Row("SELECT script, reads, declared_at, declared_by FROM " + inner.Current("functions") +
 	                         " WHERE name = " + QuoteText(name) + " AND scope = " + QuoteText(scope));
 	if (current.empty()) {
@@ -2345,7 +2494,7 @@ static string RetakeReads(ClientContext &context, Inner &inner, const string &na
 	auto script = current[0].ToString();
 	auto dataset = scope == "GLOBAL" ? string() : scope;
 	auto body = BodyReadSet(inner, script, returns.IsNull(), dataset);
-	auto untracked = UntrackedRead(body, PlaceNames(inner), dataset);
+	auto untracked = UntrackedRead(body, places, dataset);
 	auto reads = ReadsJson(body);
 	if (SameValue(current[1], Value(reads))) {
 		return untracked;
@@ -2364,9 +2513,9 @@ static string RetakeReads(ClientContext &context, Inner &inner, const string &na
 //! it changed at. A subject that is no view retires the lineage stored on it, else is refused
 static vector<Value> ExtractLineage(ClientContext &context, Inner &inner, const string &dataset,
                                     const string &subject) {
-	auto served = Served(inner, dataset, "lineage", subject);
-	if (!served.empty() && served[1].IsNull()) {
-		return {Value("lineage"), Value(subject), Value("lineage"), served[0], Value::BOOLEAN(false)};
+	auto served = Served(inner, dataset, "lineage", {subject});
+	if (served.count(subject) && served[subject][1].IsNull()) {
+		return {Value("lineage"), Value(subject), Value("lineage"), served[subject][0], Value::BOOLEAN(false)};
 	}
 	auto parts = SubjectParts(subject);
 	optional_ptr<CatalogEntry> entry;
@@ -2397,7 +2546,9 @@ static vector<vector<Value>> Extract(ClientContext &context, const vector<Value>
 	auto subject = ResolveSubject(context, inputs[0].ToString());
 	auto dataset = DatasetOf(context, subject);
 
-	Inner inner(context);
+	auto &inner = Inner::Of(context);
+	// the statement reads at one snapshot, in one transaction of the lake
+	inner.Hold();
 	// a body runs in the subject's dataset, and the read functions it reads the catalog through walk
 	// from the subject this run computes for
 	inner.Run("USE " + QuoteName(inner.ws.lake) + "." + QuoteName(dataset));
@@ -2476,11 +2627,11 @@ static vector<vector<Value>> Extract(ClientContext &context, const vector<Value>
 		// served to a call: it may come from what is no input (a service down, a configuration), so a
 		// call computes again; it stays current for a read of what is due
 		vector<string> due;
+		auto served = Served(inner, dataset, name, subjects);
 		for (auto &one : subjects) {
-			auto served = Served(inner, dataset, name, one);
-			if (!served.empty() && served[1].IsNull()) {
-				rows.push_back({Value(name), Value(one), returns, Value(Summary(inner, served[0].ToString())),
-				                Value::BOOLEAN(false)});
+			auto found = served.find(one);
+			if (found != served.end() && found->second[1].IsNull()) {
+				rows.push_back({Value(name), Value(one), returns, found->second[2], Value::BOOLEAN(false)});
 			} else {
 				due.push_back(one);
 			}
@@ -2492,28 +2643,29 @@ static vector<vector<Value>> Extract(ClientContext &context, const vector<Value>
 		// may exist now. The function's row follows where it moved. A macro that now reads past the
 		// read functions makes the computation fail, stored with the function's declaration as its
 		// input: a change to the macros it follows makes it out of date
-		auto untracked = RetakeReads(context, inner, name, scope, returns);
-		auto reads = untracked.empty() ? ReadsOfFunction(context, inner, name, scope, dataset) : vector<Read>();
+		auto places = PlaceNames(inner);
+		auto untracked = RetakeReads(context, inner, places, name, scope, returns);
+		auto reads = untracked.empty() ? ReadsOfFunction(context, inner, places, name, scope, dataset) : vector<Read>();
 		// the snapshot it reads at, taken before it runs: a change under it is a change after it
 		auto read_at = inner.Scalar("SELECT max(snapshot_id) FROM " + inner.ws.Meta("snapshot"));
+		auto nodes = NodesRead(inner, places, dataset, due, name, scope, returns.ToString(), reads);
 		vector<ResultRow> results;
 		string failed;
 		for (auto &one : due) {
 			// the read functions walk from the subject this run computes for
 			ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(one));
-			auto nodes = NodesRead(inner, dataset, one, name, scope, returns.ToString(), reads);
 			// a computation that fails is a result too: stored with its error, which serves while it is
 			// current. An error the body did not raise (an interrupt, the engine's own) stores nothing
 			Value value;
+			string summary;
 			string error;
 			try {
 				if (!untracked.empty()) {
 					throw InvalidInputException(UntrackedRefusal(name, untracked));
 				}
-				value = ValueOf(inner, inner.Table(schema, name) + "(" + QuoteText(one) + ")");
-				if (value.IsNull()) {
-					value = Value("null");
-				}
+				auto computed = ValueOf(inner, inner.Table(schema, name) + "(" + QuoteText(one) + ")");
+				value = Value(computed.first);
+				summary = computed.second;
 				auto breach = JsonSchemaCheck(contract[0].ToString(), value.ToString());
 				if (!breach.empty()) {
 					error = StringUtil::Format("glossql: the output of %s does not conform to the schema of %s: %s",
@@ -2538,10 +2690,9 @@ static vector<vector<Value>> Extract(ClientContext &context, const vector<Value>
 				value = Value();
 				failed = failed.empty() ? error : failed;
 			} else {
-				rows.push_back(
-				    {Value(name), Value(one), returns, Value(Summary(inner, value.ToString())), Value::BOOLEAN(true)});
+				rows.push_back({Value(name), Value(one), returns, Value(summary), Value::BOOLEAN(true)});
 			}
-			results.push_back({one, value, error.empty() ? Value() : Value(error), std::move(nodes), {}});
+			results.push_back({one, value, error.empty() ? Value() : Value(error), nodes[one], {}});
 		}
 		ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(subject));
 		// stored with the nodes each read. The result one replaces ends, and its inputs with it; the same
@@ -2553,6 +2704,7 @@ static vector<vector<Value>> Extract(ClientContext &context, const vector<Value>
 			throw InvalidInputException(failed);
 		}
 	}
+	inner.Settle();
 	return rows;
 }
 
@@ -2583,7 +2735,7 @@ TableFunction GlossExtractFunction() {
 static unique_ptr<TableRef> SelectOrExtractBindReplace(ClientContext &context, TableFunctionBindInput &input) {
 	bool declared = false;
 	try {
-		Inner inner(context);
+		auto &inner = Inner::Of(context);
 		auto dataset = DatasetOf(context, ResolveSubject(context, input.inputs[0].ToString()));
 		for (auto &call : ListValue::GetChildren(input.inputs[1])) {
 			declared = declared || call.ToString() == "lineage" ||
