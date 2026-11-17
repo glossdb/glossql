@@ -1606,9 +1606,7 @@ private:
 			Add("read", "lineage", "relates", "the dataset", 1, via);
 			return;
 		}
-		if (table && main &&
-		    (fn == "subject_column" || fn == "dataset_cells" || fn == "glossql_relationship_checks" ||
-		     fn == "branch_rows")) {
+		if (table && main && (fn == "subject_column" || fn == "dataset_cells" || fn == "glossql_relationship_checks")) {
 			Add("data", fn, texts(), "", -1, via);
 			return;
 		}
@@ -2228,15 +2226,15 @@ struct Read {
 	}
 };
 
-//! The data a body reads, as a place: subject_column(), the relationship checks and branch_rows()
-//! the subject's own; dataset_cells() its dataset's tables, its views ('views'), both (true), the tables
+//! The data a body reads, as a place: subject_column() and the relationship checks the subject's
+//! own; dataset_cells() its dataset's tables, its views ('views'), both (true), the tables
 //! and views of a place, or the one table it names; a dataset it names is the subject's, since one
 //! that is not is refused at the declaration. A table the body names in FROM is that table: one
 //! named without its dataset is taken in the subject's, by the name the lake spells it with, or as
 //! written where the lake holds none yet, whose version is `gone` until it is loaded
 static Read DataRead(ClientContext &context, const std::set<string> &places, const string &read, const string &args,
                      const string &dataset) {
-	if (read == "subject_column" || read == "glossql_relationship_checks" || read == "branch_rows") {
+	if (read == "subject_column" || read == "glossql_relationship_checks") {
 		return {"data", "data", "itself"};
 	}
 	if (read == "dataset_cells") {

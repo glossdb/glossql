@@ -117,8 +117,6 @@ TableFunction GlossExtractFunction();
 
 //! Registers json_schema_check (glossql_schema.cpp)
 void RegisterGlossSchema(ExtensionLoader &loader);
-//! Registers glossql_lineage (glossql_lineage.cpp)
-void RegisterGlossLineage(ExtensionLoader &loader);
 // glossql_service(route, body): one call to the model service the instance names (glossql_service.cpp)
 void RegisterGlossService(ExtensionLoader &loader);
 

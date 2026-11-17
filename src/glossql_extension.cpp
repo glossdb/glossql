@@ -14,7 +14,6 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterGlossStore(loader);
 	RegisterGlossRunner(loader);
 	RegisterGlossSchema(loader);
-	RegisterGlossLineage(loader);
 	RegisterGlossService(loader);
 }
 
