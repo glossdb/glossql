@@ -1228,9 +1228,9 @@ nc AS (
          greatest(begin_snapshot, coalesce(end_snapshot, 0)) AS changed_at FROM $glossary
   WHERE lower(subject) IN (SELECT asset FROM nc_names)
   -- a stored result: the current row's changed_at, else the last row's end
-  UNION ALL SELECT lower(subject), w, dataset, function,
+  UNION ALL SELECT lower(subject), u.nc_read, dataset, function,
          coalesce(max(changed_at) FILTER (WHERE end_snapshot IS NULL), max(end_snapshot))
-  FROM $measurements, unnest(['result ' || function, 'value ' || aspect]) u(w)
+  FROM $measurements, unnest(['result ' || function, 'value ' || aspect]) u(nc_read)
   WHERE lower(subject) IN (SELECT asset FROM nc_names) GROUP BY ALL
   UNION ALL SELECT asset, 'definition', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM nc_tables
   UNION ALL SELECT t.asset, 'definition', NULL, NULL, greatest(c.begin_snapshot, coalesce(c.end_snapshot, 0))
@@ -1267,8 +1267,8 @@ nc AS (
   UNION ALL SELECT lower(name), 'function', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM $functions
   UNION ALL SELECT lower(s.schema_name || '.' || m.macro_name), 'macro', NULL, NULL,
          greatest(m.begin_snapshot, coalesce(m.end_snapshot, 0)) FROM $macro m JOIN nc_schema s USING (schema_id)
-  UNION ALL SELECT lower(split_part(side, '.', 1) || '.' || split_part(side, '.', 2)), 'relationships', NULL, NULL,
-         greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM $relationships, unnest([left_side, right_side]) u(side)
+  UNION ALL SELECT lower(split_part(u.nc_side, '.', 1) || '.' || split_part(u.nc_side, '.', 2)), 'relationships', NULL, NULL,
+         greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM $relationships, unnest([left_side, right_side]) u(nc_side)
   UNION ALL SELECT lower(dataset), 'relationships', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0))
   FROM $relationships
   UNION ALL SELECT split_part(asset, '.', 1), 'assets', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0))
@@ -1448,8 +1448,8 @@ static string MissingSQL(const Workspace &ws, const ReadScope &scope, const Valu
 	       " ORDER BY CASE actor_kind WHEN 'human' THEN 0 ELSE 1 END, begin_snapshot DESC) = 1)"
 	       " SELECT DISTINCT c.subject, t.aspect FROM ms_tests t JOIN ms_cand c"
 	       " ON len(t.grains) = 0 OR list_contains(t.grains, c.grain)"
-	       " WHERE (t.c_aspect IS NULL OR EXISTS (SELECT 1 FROM ms_sibling s WHERE s.subject = c.subject"
-	       " AND s.aspect = t.c_aspect AND s.body::JSON->>'value' = t.c_value))"
+	       " LEFT JOIN ms_sibling s ON s.subject = c.subject AND s.aspect = t.c_aspect"
+	       " WHERE (t.c_aspect IS NULL OR s.body::JSON->>'value' = t.c_value)"
 	       // required only on columns of the named types: the base type, DECIMAL for DECIMAL(18,2) (SPEC §5.1)
 	       " AND (t.c_types IS NULL OR (c.grain = 'COLUMN' AND list_contains(t.c_types, c.base)))" +
 	       (scope.whole ? string() : " AND " + StringUtil::Replace(scope.subjects, "subject", "c.subject"));
@@ -1464,35 +1464,35 @@ static string CollapsedSQL(const Workspace &ws, const ReadScope &scope, const Va
 	// a stale value is served and marked (SPEC §5.3)
 	return "WITH annotations_all AS MATERIALIZED (" + ValuesSQL(ws, RowsFilter(ws, scope, aspect)) +
 	       "), annotations AS (SELECT * FROM annotations_all WHERE error IS NULL),"
-	       " picked AS (SELECT subject, aspect, body AS value, stale, possibly FROM annotations QUALIFY row_number()"
-	       " OVER (PARTITION BY subject, aspect ORDER BY CASE actor WHEN 'human' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END,"
-	       " ord DESC) = 1), results AS (SELECT subject, aspect, test, state, score FROM (" +
-	       TestResultsSQL(ws, scope, aspect) +
-	       ")), judged AS (SELECT v.subject, v.aspect, v.state, v.score, w.threshold FROM results v LEFT JOIN " +
-	       Newest(ws, "tests") +
-	       " w ON w.name = v.test QUALIFY row_number() OVER (PARTITION BY v.subject, v.aspect"
-	       " ORDER BY v.state = 'error', v.score DESC) = 1), annotation_counts AS (SELECT subject, aspect,"
-	       " count(DISTINCT actor) AS n FROM annotations GROUP BY subject, aspect), missing AS (" +
+	       " picked AS (SELECT subject, aspect, body::JSON AS value, stale, possibly FROM annotations QUALIFY"
+	       " row_number() OVER (PARTITION BY subject, aspect ORDER BY CASE actor WHEN 'human' THEN 0 WHEN 'agent'"
+	       " THEN 1 ELSE 2 END, ord DESC) = 1), judged AS (SELECT gl_r.subject, gl_r.aspect, gl_r.state, gl_r.score,"
+	       " gl_t.threshold FROM " +
+	       "(" + TestResultsSQL(ws, scope, aspect) + ") gl_r LEFT JOIN " + Newest(ws, "tests") +
+	       " gl_t ON gl_t.name = gl_r.test QUALIFY row_number() OVER (PARTITION BY gl_r.subject, gl_r.aspect"
+	       " ORDER BY gl_r.state = 'error', gl_r.score DESC) = 1), annotation_counts AS (SELECT subject, aspect,"
+	       " count(DISTINCT actor) AS gl_actors FROM annotations GROUP BY subject, aspect), missing AS (" +
 	       MissingSQL(ws, scope, aspect) +
-	       ") SELECT * FROM (SELECT p.subject, p.aspect,"
-	       " CASE WHEN j.score > j.threshold AND v.n > 1 THEN NULL ELSE p.value END AS value,"
-	       " j.state AS test_state, j.score, CASE WHEN j.score > j.threshold AND v.n > 1 THEN 'conflict'"
-	       " WHEN p.stale THEN 'stale' WHEN p.possibly THEN 'possibly' ELSE 'current' END AS state"
-	       " FROM picked p LEFT JOIN judged j ON j.subject = p.subject AND j.aspect = p.aspect"
-	       " LEFT JOIN annotation_counts v ON v.subject = p.subject AND v.aspect = p.aspect"
-	       " UNION ALL SELECT o.subject, o.aspect, NULL::JSON AS value, NULL::VARCHAR AS test_state, NULL::DOUBLE AS "
-	       "score, 'missing' AS state FROM missing o WHERE NOT EXISTS"
-	       " (SELECT 1 FROM picked p WHERE p.subject = o.subject AND p.aspect = o.aspect)) ORDER BY subject, aspect";
+	       ") SELECT * FROM (SELECT gl_p.subject, gl_p.aspect,"
+	       " CASE WHEN gl_j.score > gl_j.threshold AND gl_c.gl_actors > 1 THEN NULL ELSE gl_p.value END AS value,"
+	       " gl_j.state AS test_state, gl_j.score, CASE WHEN gl_j.score > gl_j.threshold AND gl_c.gl_actors > 1"
+	       " THEN 'conflict' WHEN gl_p.stale THEN 'stale' WHEN gl_p.possibly THEN 'possibly' ELSE 'current' END AS"
+	       " state FROM picked gl_p LEFT JOIN judged gl_j ON gl_j.subject = gl_p.subject AND gl_j.aspect = gl_p.aspect"
+	       " LEFT JOIN annotation_counts gl_c ON gl_c.subject = gl_p.subject AND gl_c.aspect = gl_p.aspect"
+	       " UNION ALL SELECT gl_o.subject, gl_o.aspect, NULL::JSON AS value, NULL::VARCHAR AS test_state,"
+	       " NULL::DOUBLE AS score, 'missing' AS state FROM missing gl_o LEFT JOIN picked gl_q"
+	       " ON gl_q.subject = gl_o.subject AND gl_q.aspect = gl_o.aspect WHERE gl_q.subject IS NULL)"
+	       " ORDER BY subject, aspect";
 }
 
 //! The raw read: one row per value — (subject, aspect, kind, test, actor, body, written_at, current,
 //! error); a failed computation is a row with its error and no body
 static string RawSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect) {
-	return "SELECT s.subject, s.aspect, a.kind, w.name AS test, s.actor, s.body, s.written_at,"
-	       " NOT s.stale AND NOT s.possibly AS current, s.error FROM (" +
-	       ValuesSQL(ws, RowsFilter(ws, scope, aspect)) + ") s LEFT JOIN " + Newest(ws, "aspects") +
-	       " a ON a.name = s.aspect LEFT JOIN " + Newest(ws, "tests") +
-	       " w ON w.aspect = s.aspect ORDER BY s.subject, s.aspect, s.actor";
+	return "SELECT gl_s.subject, gl_s.aspect, gl_a.kind, gl_t.name AS test, gl_s.actor, gl_s.body::JSON AS body,"
+	       " gl_s.written_at, NOT gl_s.stale AND NOT gl_s.possibly AS current, gl_s.error FROM (" +
+	       ValuesSQL(ws, RowsFilter(ws, scope, aspect)) + ") gl_s LEFT JOIN " + Newest(ws, "aspects") +
+	       " gl_a ON gl_a.name = gl_s.aspect LEFT JOIN " + Newest(ws, "tests") +
+	       " gl_t ON gl_t.aspect = gl_s.aspect ORDER BY gl_s.subject, gl_s.aspect, gl_s.actor";
 }
 
 //===--------------------------------------------------------------------===//
@@ -1856,36 +1856,105 @@ static TableFunctionSet GlossKindFunction(idx_t stem, table_function_bind_replac
 
 //===--------------------------------------------------------------------===//
 // glossql_glossary(subject, aspect, all) and glossql_tests(subject, aspect):
-// GLOSSARY() and TESTS() as the grammar rewrites them, each bound to its read
-// over the stored rows, narrowed to its subject and aspect
+// GLOSSARY() and TESTS() as the grammar rewrites them. Each read's rows are
+// computed when the statement runs, on the second connection, and scanned:
+// planned there, apart from the statement that reads them, so a statement
+// that composes many reads plans each one's marks once. Nothing is kept past
+// the statement
 //===--------------------------------------------------------------------===//
 
-static unique_ptr<TableRef> GlossGlossaryBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+struct ReadBindData : public FunctionData {
+	string sql;
+
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<ReadBindData>();
+		result->sql = sql;
+		return result;
+	}
+	bool Equals(const FunctionData &other) const override {
+		return sql == other.Cast<ReadBindData>().sql;
+	}
+};
+
+struct ReadState : public GlobalTableFunctionState {
+	unique_ptr<ColumnDataCollection> rows;
+	ColumnDataScanState scan;
+};
+
+//! The columns of each read, `name TYPE` each
+static const char *const COLLAPSED_SHAPE =
+    "subject VARCHAR, aspect VARCHAR, value JSON, test_state VARCHAR, score DOUBLE, state VARCHAR";
+static const char *const RAW_SHAPE = "subject VARCHAR, aspect VARCHAR, kind VARCHAR, test VARCHAR, actor VARCHAR, "
+                                     "body JSON, written_at TIMESTAMP, current BOOLEAN, error VARCHAR";
+static const char *const TESTS_SHAPE = "subject VARCHAR, aspect VARCHAR, test VARCHAR, state VARCHAR, "
+                                       "score DOUBLE, computed_at TIMESTAMP, current BOOLEAN, error VARCHAR";
+
+//! A read's bind: its columns from the shape, and its SQL cast to them
+static unique_ptr<FunctionData> ReadBind(const string &shape, const string &sql, vector<LogicalType> &return_types,
+                                         vector<Identifier> &names) {
+	vector<string> casts;
+	for (auto &column : StringUtil::Split(shape, ", ")) {
+		auto space = column.find(' ');
+		auto name = column.substr(0, space);
+		auto type = column.substr(space + 1);
+		names.emplace_back(name);
+		return_types.push_back(type == "JSON"        ? LogicalType::JSON()
+		                       : type == "DOUBLE"    ? LogicalType::DOUBLE
+		                       : type == "TIMESTAMP" ? LogicalType::TIMESTAMP
+		                       : type == "BOOLEAN"   ? LogicalType::BOOLEAN
+		                                             : LogicalType::VARCHAR);
+		casts.push_back(QuoteName(name) + "::" + type);
+	}
+	auto result = make_uniq<ReadBindData>();
+	result->sql = "SELECT " + StringUtil::Join(casts, ", ") + " FROM (" + sql + ")";
+	return std::move(result);
+}
+
+static unique_ptr<FunctionData> GlossaryBind(ClientContext &context, TableFunctionBindInput &input,
+                                             vector<LogicalType> &return_types, vector<Identifier> &names) {
 	bool all = input.inputs[2].GetValue<bool>();
 	auto scope = ScopeOf(context, input.inputs[0]);
 	auto ws = WorkspaceOf(context);
-	return make_uniq<SubqueryRef>(
-	    ParseSelect(all ? RawSQL(ws, scope, input.inputs[1]) : CollapsedSQL(ws, scope, input.inputs[1])));
+	if (all) {
+		return ReadBind(RAW_SHAPE, RawSQL(ws, scope, input.inputs[1]), return_types, names);
+	}
+	return ReadBind(COLLAPSED_SHAPE, CollapsedSQL(ws, scope, input.inputs[1]), return_types, names);
+}
+
+static unique_ptr<FunctionData> TestsBind(ClientContext &context, TableFunctionBindInput &input,
+                                          vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto scope = ScopeOf(context, input.inputs[0]);
+	return ReadBind(TESTS_SHAPE,
+	                "SELECT * FROM (" + TestResultsSQL(WorkspaceOf(context), scope, input.inputs[1]) +
+	                    ") ORDER BY subject, aspect, test",
+	                return_types, names);
+}
+
+static unique_ptr<GlobalTableFunctionState> ReadInit(ClientContext &context, TableFunctionInitInput &input) {
+	auto &bind = input.bind_data->Cast<ReadBindData>();
+	auto state = make_uniq<ReadState>();
+	Inner inner(context);
+	auto result = inner.Run(bind.sql);
+	state->rows = make_uniq<ColumnDataCollection>(Allocator::Get(context), result->GetTypes());
+	while (auto chunk = result->Fetch()) {
+		state->rows->Append(*chunk);
+	}
+	state->rows->InitializeScan(state->scan);
+	return std::move(state);
+}
+
+static void ReadExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &state = data.global_state->Cast<ReadState>();
+	state.rows->Scan(state.scan, output);
 }
 
 static TableFunction GlossGlossaryFunction() {
-	TableFunction function("glossql_glossary", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN},
-	                       nullptr);
-	function.bind_replace = GlossGlossaryBindReplace;
-	return function;
-}
-
-static unique_ptr<TableRef> GlossTestsBindReplace(ClientContext &context, TableFunctionBindInput &input) {
-	auto scope = ScopeOf(context, input.inputs[0]);
-	return make_uniq<SubqueryRef>(ParseSelect("SELECT * FROM (" +
-	                                          TestResultsSQL(WorkspaceOf(context), scope, input.inputs[1]) +
-	                                          ") ORDER BY subject, aspect, test"));
+	return TableFunction("glossql_glossary", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN},
+	                     ReadExec, GlossaryBind, ReadInit);
 }
 
 static TableFunction GlossTestsFunction() {
-	TableFunction function("glossql_tests", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr);
-	function.bind_replace = GlossTestsBindReplace;
-	return function;
+	return TableFunction("glossql_tests", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ReadExec, TestsBind, ReadInit);
 }
 
 //===--------------------------------------------------------------------===//
