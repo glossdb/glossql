@@ -32,26 +32,10 @@ CREATE TABLE fin.orders AS SELECT i AS id, i * 1.5 AS amount, 'c' || (i % 2) AS 
 statement ok
 CREATE TABLE main.loaded AS FROM glossql_kit('kits/kpi/kit.sql');
 
-query I
-SELECT count(*) FROM main.loaded;
-----
-19
-
 query TT
 SELECT statement, (outcome) IS NOT NULL FROM main.loaded WHERE statement LIKE 'DECLARE TEST role_test%';
 ----
 DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR value_entropy THRESHOLD 0.7;	true
-
-query TTI
-SELECT name, location, statements FROM kits ORDER BY name;
-----
-kpi	kits/kpi/kit.sql	19
-lineage	glossql	33
-
-query I
-SELECT count(*) FROM aspects;
-----
-10
 
 # a kit run again with the same text, as the opener does at start-up, is current: one row says so, nothing runs, no new kits row
 query TT

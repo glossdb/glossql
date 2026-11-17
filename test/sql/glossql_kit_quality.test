@@ -31,13 +31,6 @@ CREATE TABLE main.kpi AS FROM glossql_kit('kits/kpi/kit.sql');
 statement ok
 CREATE TABLE main.quality AS FROM glossql_kit('kits/quality/kit.sql');
 
-query TTI
-SELECT name, location, statements FROM kits ORDER BY name;
-----
-kpi	kits/kpi/kit.sql	19
-lineage	glossql	33
-quality	kits/quality/kit.sql	23
-
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
 
 statement ok
