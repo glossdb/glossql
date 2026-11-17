@@ -519,11 +519,18 @@ int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWri
 		bool &writing;
 		CatalogSearchPath &paths;
 		vector<CatalogSearchEntry> before;
+		bool moved;
 		~Written() {
 			writing = false;
-			paths.Set(before, CatalogSetPathType::SET_DIRECTLY);
+			try {
+				if (moved) {
+					paths.Set(before, CatalogSetPathType::SET_DIRECTLY);
+				}
+			} catch (...) {
+				// the paths set before were set once already: setting them again allocates alone
+			}
 		}
-	} written {writing, paths, paths.GetSetPaths()};
+	} written {writing, paths, paths.GetSetPaths(), store_alone};
 	if (store_alone) {
 		paths.Set({CatalogSearchEntry(Identifier(ws.meta), Identifier(ws.meta_schema))},
 		          CatalogSetPathType::SET_DIRECTLY);
