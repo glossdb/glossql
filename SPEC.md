@@ -516,9 +516,9 @@ SELECT outliers() FROM orders.amount;
 ```
 
 Extraction writes one row in the `measurements` relation:
-`(dataset, function, subject, aspect, value, computed_at, error,
+`(id, dataset, function, subject, aspect, value, computed_at, error,
 read_at, changed_at)`, and one row per node the result read in the
-`inputs` relation, `(asset, what)`. Nobody
+`inputs` relation, `(result, asset, what)`, `result` the result's `id`. Nobody
 declares the inputs: the body is SQL, and what it reads is taken from
 its text when the function is declared, macros followed, and stored
 with the function (`functions.reads`).

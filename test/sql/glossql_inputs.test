@@ -717,7 +717,7 @@ statement ok
 SELECT spelled_upper(), spelled_bare() FROM circuits;
 
 query TT
-SELECT m.function, i.asset FROM measurements m JOIN inputs i USING (begin_snapshot)
+SELECT m.function, i.asset FROM measurements m JOIN inputs i ON i.result = m.id
 WHERE m.function IN ('spelled_upper', 'spelled_bare') AND i.what = 'data' ORDER BY ALL;
 ----
 spelled_bare	f1.circuits
@@ -795,7 +795,7 @@ SELECT circuit_rows() FROM other.laps;
 ----
 
 query T
-SELECT i.asset FROM measurements m JOIN inputs i USING (begin_snapshot)
+SELECT i.asset FROM measurements m JOIN inputs i ON i.result = m.id
 WHERE m.function = 'circuit_rows' AND i.what = 'data';
 ----
 other.circuits
@@ -839,7 +839,7 @@ SELECT lapped() FROM other.laps;
 untracked_read
 
 query TT
-SELECT m.error IS NOT NULL, string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset) FROM measurements m JOIN inputs i USING (begin_snapshot)
+SELECT m.error IS NOT NULL, string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset) FROM measurements m JOIN inputs i ON i.result = m.id
 WHERE m.function = 'lapped' GROUP BY ALL;
 ----
 true	lapped function,lapped property,main.lap_count macro

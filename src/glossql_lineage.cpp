@@ -1578,61 +1578,26 @@ ViewLineageResult PlanViewLineage(Inner &inner, const string &dataset, const str
 	return result;
 }
 
-//! The stored lineage's key in measurements
-static string LineageKey(const string &dataset, const string &view) {
-	return "dataset = " + QuoteText(dataset) + " AND function = 'lineage' AND subject = " + QuoteText(view);
-}
-
 void StoreViewLineage(CatalogWrite &write, const string &dataset, const ViewLineageResult &lineage, int64_t read_at) {
-	auto &inner = write.inner;
-	auto key = LineageKey(dataset, lineage.view);
-	auto replaced = inner.Row("SELECT begin_snapshot, value, error, changed_at FROM " + inner.Current("measurements") +
-	                          " WHERE " + key);
-	auto value = lineage.error.empty() ? Value(lineage.value) : Value();
-	auto error = lineage.error.empty() ? Value() : Value(lineage.error);
-	auto changed_at = Value::BIGINT(write.snapshot);
-	if (!replaced.empty()) {
-		auto same =
-		    replaced[1].IsNull() == value.IsNull() && (value.IsNull() || replaced[1].ToString() == value.ToString()) &&
-		    replaced[2].IsNull() == error.IsNull() && (error.IsNull() || replaced[2].ToString() == lineage.error);
-		if (same) {
-			changed_at = replaced[3];
-		}
-		for (auto &relation : {"inputs", "edges"}) {
-			write.End(relation, "begin_snapshot = " + replaced[0].ToString());
-		}
-		write.End("measurements", key);
+	ResultRow row;
+	row.subject = lineage.view;
+	row.value = lineage.error.empty() ? Value(lineage.value) : Value();
+	row.error = lineage.error.empty() ? Value() : Value(lineage.error);
+	row.nodes = lineage.nodes;
+	for (auto &read : lineage.reads) {
+		row.edges.emplace_back(read, "reads");
 	}
-	write.Insert("measurements", QuoteText(dataset) + ", 'lineage', " + QuoteText(lineage.view) + ", 'lineage', " +
-	                                 value.ToSQLString() + ", now(), " + error.ToSQLString() + ", " +
-	                                 to_string(read_at) + ", " + changed_at.ToString());
-	vector<string> rows;
-	for (auto &node : lineage.nodes) {
-		rows.push_back("(" + to_string(write.snapshot) + ", NULL, " + QuoteText(node.first) + ", " +
-		               QuoteText(node.second) + ")");
-	}
-	write.Run("INSERT INTO " + inner.Store("inputs") + " VALUES " + StringUtil::Join(rows, ", "));
-	if (!lineage.reads.empty()) {
-		rows.clear();
-		for (auto &read : lineage.reads) {
-			rows.push_back("(" + to_string(write.snapshot) + ", NULL, " + QuoteText(lineage.view) + ", " +
-			               QuoteText(read) + ", 'reads')");
-		}
-		write.Run("INSERT INTO " + inner.Store("edges") + " VALUES " + StringUtil::Join(rows, ", "));
-	}
+	StoreResults(write, dataset, "lineage", "lineage", read_at, {row});
 }
 
 bool RetireViewLineage(CatalogWrite &write, const string &dataset, const string &view) {
 	auto &inner = write.inner;
-	auto key = LineageKey(dataset, view);
-	auto stored = inner.Scalar("SELECT begin_snapshot FROM " + inner.Current("measurements") + " WHERE " + key);
-	if (stored.IsNull()) {
+	auto stored = inner.Scalar("SELECT count(*) FROM " + inner.Current("measurements") + " WHERE dataset = " +
+	                           QuoteText(dataset) + " AND function = 'lineage' AND subject = " + QuoteText(view));
+	if (stored.GetValue<int64_t>() == 0) {
 		return false;
 	}
-	for (auto &relation : {"inputs", "edges"}) {
-		write.End(relation, "begin_snapshot = " + stored.ToString());
-	}
-	write.End("measurements", key);
+	StoreResults(write, dataset, "lineage", "lineage", 0, {}, {view});
 	return true;
 }
 

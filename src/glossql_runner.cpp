@@ -297,6 +297,90 @@ int64_t CatalogWrite::NewCatalogId() {
 	return next_catalog_id++;
 }
 
+int64_t CatalogWrite::NewResultIds(idx_t count) {
+	if (next_result_id < 0) {
+		next_result_id =
+		    inner.Scalar("SELECT coalesce(max(id), 0) + 1 FROM " + inner.Store("measurements")).GetValue<int64_t>();
+	}
+	auto first = next_result_id;
+	next_result_id += NumericCast<int64_t>(count);
+	return first;
+}
+
+void StoreResults(CatalogWrite &write, const string &dataset, const string &function, const string &aspect,
+                  int64_t read_at, const vector<ResultRow> &rows, const vector<string> &retire) {
+	auto &inner = write.inner;
+	// the statements carry their rows as VALUES lists, a bounded number of rows each
+	static constexpr idx_t CHUNK = 2000;
+	auto in_chunks = [](const vector<string> &values, const std::function<void(const string &)> &run) {
+		for (idx_t i = 0; i < values.size(); i += CHUNK) {
+			auto end = MinValue<idx_t>(values.size(), i + CHUNK);
+			run(StringUtil::Join(
+			    vector<string>(values.begin() + NumericCast<int64_t>(i), values.begin() + NumericCast<int64_t>(end)),
+			    ", "));
+		}
+	};
+	auto stored = inner.Current("measurements") + " p WHERE p.dataset = " + QuoteText(dataset) +
+	              " AND p.function = " + QuoteText(function);
+	vector<string> subjects;
+	for (auto &row : rows) {
+		subjects.push_back("(" + QuoteText(row.subject) + ")");
+	}
+	for (auto &subject : retire) {
+		subjects.push_back("(" + QuoteText(subject) + ")");
+	}
+	// the results replaced or retired: their inputs and edges end with them
+	vector<string> ended;
+	in_chunks(subjects, [&](const string &list) {
+		auto found =
+		    inner.Run("SELECT p.id FROM " + stored + " AND p.subject IN (SELECT s FROM (VALUES " + list + ") v(s))");
+		while (auto chunk = found->Fetch()) {
+			for (idx_t r = 0; r < chunk->size(); r++) {
+				ended.push_back(chunk->GetValue(0, r).ToString());
+			}
+		}
+	});
+	auto first = rows.empty() ? 0 : write.NewResultIds(rows.size());
+	vector<string> results;
+	vector<string> inputs;
+	vector<string> edges;
+	auto snapshot = to_string(write.snapshot);
+	for (idx_t k = 0; k < rows.size(); k++) {
+		auto &row = rows[k];
+		auto id = to_string(first + NumericCast<int64_t>(k));
+		results.push_back("(" + id + ", " + QuoteText(row.subject) + ", " +
+		                  (row.value.IsNull() ? string("NULL") : QuoteText(row.value.ToString())) + "::VARCHAR, " +
+		                  (row.error.IsNull() ? string("NULL") : QuoteText(row.error.ToString())) + "::VARCHAR)");
+		for (auto &node : row.nodes) {
+			inputs.push_back("(" + snapshot + ", NULL, " + id + ", " + QuoteText(node.first) + ", " +
+			                 QuoteText(node.second) + ")");
+		}
+		for (auto &edge : row.edges) {
+			edges.push_back("(" + snapshot + ", NULL, " + id + ", " + QuoteText(row.subject) + ", " +
+			                QuoteText(edge.first) + ", " + QuoteText(edge.second) + ")");
+		}
+	}
+	// a result computed again with the value and error it had keeps the snapshot they changed at
+	in_chunks(results, [&](const string &list) {
+		write.Run("INSERT INTO " + inner.Store("measurements") + " SELECT " + snapshot + ", NULL, n.id, " +
+		          QuoteText(dataset) + ", " + QuoteText(function) + ", n.subject, " + QuoteText(aspect) +
+		          ", n.value, now(), n.error, " + to_string(read_at) + ", coalesce((SELECT p.changed_at FROM " +
+		          stored +
+		          " AND p.subject = n.subject AND p.value IS NOT DISTINCT FROM n.value AND p.error IS NOT DISTINCT "
+		          "FROM n.error), " +
+		          snapshot + ") FROM (VALUES " + list + ") n(id, subject, value, error)");
+	});
+	in_chunks(ended, [&](const string &list) {
+		for (auto relation : {"inputs", "edges"}) {
+			write.End(relation, "result IN (" + list + ")");
+		}
+		write.End("measurements", "id IN (" + list + ")");
+	});
+	in_chunks(inputs,
+	          [&](const string &list) { write.Run("INSERT INTO " + inner.Store("inputs") + " VALUES " + list); });
+	in_chunks(edges, [&](const string &list) { write.Run("INSERT INTO " + inner.Store("edges") + " VALUES " + list); });
+}
+
 void CatalogWrite::Changed(const string &entry) {
 	changes.push_back(entry);
 }
@@ -2099,33 +2183,9 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		}
 		// stored with the nodes it read. The result it replaces ends, and its inputs with it; the same
 		// value and error keep the snapshot they changed at, so what read them stays current
-		auto failure = error.empty() ? Value() : Value(error);
 		inner.Write(context, [&](CatalogWrite &write) {
-			auto key = "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
-			           " AND subject = " + QuoteText(subject);
-			auto replaced = inner.Row("SELECT begin_snapshot, value, error, changed_at FROM " +
-			                          inner.Current("measurements") + " WHERE " + key);
-			auto changed_at = Value::BIGINT(write.snapshot);
-			if (!replaced.empty()) {
-				if (SameValue(replaced[1], value) && SameValue(replaced[2], failure)) {
-					changed_at = replaced[3];
-				}
-				write.End("inputs", "begin_snapshot = " + replaced[0].ToString());
-				write.End("measurements", key);
-			}
-			write.Insert("measurements", QuoteText(dataset) + ", " + QuoteText(name) + ", " + QuoteText(subject) +
-			                                 ", " + returns.ToSQLString() + ", " +
-			                                 (value.IsNull() ? string("NULL") : QuoteText(value.ToString())) +
-			                                 ", now(), " + failure.ToSQLString() + ", " + read_at.ToString() + ", " +
-			                                 changed_at.ToString());
-			vector<string> rows;
-			for (auto &node : nodes) {
-				rows.push_back("(" + to_string(write.snapshot) + ", NULL, " + QuoteText(node.first) + ", " +
-				               QuoteText(node.second) + ")");
-			}
-			if (!rows.empty()) {
-				write.Run("INSERT INTO " + inner.Store("inputs") + " VALUES " + StringUtil::Join(rows, ", "));
-			}
+			StoreResults(write, dataset, name, returns.ToString(), read_at.GetValue<int64_t>(),
+			             {{subject, value, error.empty() ? Value() : Value(error), nodes, {}}});
 		});
 		if (!error.empty()) {
 			throw InvalidInputException(error);

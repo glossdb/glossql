@@ -282,16 +282,35 @@ public:
 	void Insert(const string &relation, const string &values);
 	//! An id for a lake object this write creates
 	int64_t NewCatalogId();
+	//! The first of `count` ids for the results this write stores: past every id the store holds
+	int64_t NewResultIds(idx_t count);
 	//! Names a lake change this write makes itself, in DuckLake's change text
 	void Changed(const string &entry);
 
 	Inner &inner;
 	int64_t snapshot;
 	int64_t next_catalog_id;
+	//! the next result id, read from the store at the first result this write stores
+	int64_t next_result_id = -1;
 	//! the lake changes this write makes itself: none for a write to the store alone
 	vector<string> changes;
 	bool wrote = false;
 };
+
+//! One result a write stores (StoreResults): its subject, its value as JSON text or its error, the nodes it
+//! read and the lineage edges it holds from its subject, (to, kind)
+struct ResultRow {
+	string subject;
+	Value value;
+	Value error;
+	vector<pair<string, string>> nodes;
+	vector<pair<string, string>> edges;
+};
+//! Stores results of one function in one write, each read at `read_at`, with its inputs and edges, and
+//! retires the stored results of the function on the subjects of `retire`. The result a row replaces
+//! ends, its inputs and edges with it; the same value and error keep the snapshot they changed at
+void StoreResults(CatalogWrite &write, const string &dataset, const string &function, const string &aspect,
+                  int64_t read_at, const vector<ResultRow> &rows, const vector<string> &retire = {});
 
 //! A view's lineage as its stored result holds it (glossql_lineage.cpp): the view's path as the catalog
 //! spells it; the value, or the error where the view does not plan; the relations and columns it reads,

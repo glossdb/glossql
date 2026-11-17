@@ -56,7 +56,7 @@ WHERE m.function = 'lineage' AND m.subject = 'fin.revenue';
 1	true
 
 query TT
-SELECT i.asset, i.what FROM main.inputs i JOIN main.measurements m ON m.begin_snapshot = i.begin_snapshot
+SELECT i.asset, i.what FROM main.inputs i JOIN main.measurements m ON m.id = i.result
 WHERE m.function = 'lineage' AND m.subject = 'fin.revenue' ORDER BY ALL;
 ----
 fin.orders	definition
@@ -87,7 +87,7 @@ statement ok
 GLOSS big_ids ON fin AS $${"sql": "SELECT id FROM fin.big_orders"}$$;
 
 query TT
-SELECT i.asset, i.what FROM main.inputs i JOIN main.measurements m ON m.begin_snapshot = i.begin_snapshot
+SELECT i.asset, i.what FROM main.inputs i JOIN main.measurements m ON m.id = i.result
 WHERE m.function = 'lineage' AND m.subject = 'fin.big_ids' ORDER BY ALL;
 ----
 fin.big_ids	definition
@@ -120,7 +120,7 @@ statement ok
 SELECT sources_read() FROM fin.revenue;
 
 query TT
-SELECT asset, what FROM main.inputs i JOIN main.measurements m ON m.begin_snapshot = i.begin_snapshot
+SELECT asset, what FROM main.inputs i JOIN main.measurements m ON m.id = i.result
 WHERE m.function = 'sources_read' AND i.what IN ('result lineage', 'definition') ORDER BY ALL;
 ----
 fin.revenue	result lineage

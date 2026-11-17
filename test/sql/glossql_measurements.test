@@ -46,7 +46,7 @@ min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
 
 # the data of its subject's table, and the declaration of the function and of the property it returns
 query T
-SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i USING (begin_snapshot);
+SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i ON i.result = m.id;
 ----
 fin.orders data,min_max function,min_max property
 
@@ -89,7 +89,7 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":9.0}	true
 
 query TT
-SELECT value, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs_history i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements_history m ORDER BY begin_snapshot;
+SELECT value, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs_history i WHERE i.result = m.id) FROM measurements_history m ORDER BY begin_snapshot;
 ----
 {"min":0.0,"max":4.5}	fin.orders data,min_max function,min_max property
 {"min":0.0,"max":9.0}	fin.orders data,min_max function,min_max property
@@ -166,7 +166,7 @@ SELECT answer() FROM orders.amount;
 answer	fin.orders.amount	answer	42	true
 
 query TT
-SELECT function, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function = 'answer';
+SELECT function, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.result = m.id) FROM measurements m WHERE function = 'answer';
 ----
 answer	answer function,answer property
 
@@ -324,7 +324,7 @@ statement ok
 SELECT cell_count() FROM fin;
 
 query IT
-SELECT count(*), bool_and(EXISTS (SELECT 1 FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot AND i.asset = 'fin.other' AND i.what = 'data')) FROM measurements m WHERE function = 'cell_count';
+SELECT count(*), bool_and(EXISTS (SELECT 1 FROM inputs i WHERE i.result = m.id AND i.asset = 'fin.other' AND i.what = 'data')) FROM measurements m WHERE function = 'cell_count';
 ----
 1	true
 

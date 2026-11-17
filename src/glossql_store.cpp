@@ -340,21 +340,23 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "name VARCHAR NOT NULL, scope VARCHAR NOT NULL, script VARCHAR NOT NULL, returns VARCHAR, reads VARCHAR, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "begin_snapshot, name, scope, script, returns, reads::JSON AS reads, declared_at, declared_by"},
-    // read_at: the lake's newest snapshot when the computation began to read; changed_at: the
-    // snapshot its value and error last changed at, kept by a computation that returns the same
+    // id: the result's own, as one write may store many; read_at: the lake's newest snapshot when the
+    // computation began to read; changed_at: the snapshot its value and error last changed at, kept by a
+    // computation that returns the same
     {"measurements",
-	 "dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, "
-	 "value VARCHAR, computed_at TIMESTAMP NOT NULL, error VARCHAR, read_at BIGINT NOT NULL, changed_at BIGINT NOT "
-	 "NULL",
-	 "begin_snapshot, dataset, function, subject, aspect, value::JSON AS value, computed_at, error, read_at, "
+	 "id BIGINT NOT NULL, dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect "
+	 "VARCHAR NOT NULL, value VARCHAR, computed_at TIMESTAMP NOT NULL, error VARCHAR, read_at BIGINT NOT NULL, "
+	 "changed_at BIGINT NOT NULL",
+	 "begin_snapshot, id, dataset, function, subject, aspect, value::JSON AS value, computed_at, error, read_at, "
 	 "changed_at"},
-    // one row per node a stored result read (SPEC §6): the rows begin with their result, whose
-    // begin_snapshot they share, and end with it
-    {"inputs", "asset VARCHAR NOT NULL, what VARCHAR NOT NULL", "begin_snapshot, asset, what"},
+    // one row per node a stored result read (SPEC §6), by the result's id: the rows begin with their
+    // result and end with it
+    {"inputs", "result BIGINT NOT NULL, asset VARCHAR NOT NULL, what VARCHAR NOT NULL",
+	 "begin_snapshot, result, asset, what"},
     // one row per lineage edge a stored result holds, a view's lineage the relations and columns it
-    // reads: the rows begin and end with their result, whose begin_snapshot they share
-    {"edges", "\"from\" VARCHAR NOT NULL, \"to\" VARCHAR NOT NULL, kind VARCHAR NOT NULL",
-	 "begin_snapshot, \"from\", \"to\", kind"},
+    // reads, by the result's id: the rows begin and end with their result
+    {"edges", "result BIGINT NOT NULL, \"from\" VARCHAR NOT NULL, \"to\" VARCHAR NOT NULL, kind VARCHAR NOT NULL",
+	 "begin_snapshot, result, \"from\", \"to\", kind"},
     {"tests",
 	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
@@ -1297,15 +1299,15 @@ WHERE (asset, what) IN (SELECT asset, what FROM nc_want) GROUP BY ALL)";
 }
 
 //! The current results that are out of date, with why: (id, dataset, function, subject, asset, what,
-//! reason), id the snapshot that stored it. A node it read changed after the snapshot it read at
+//! reason), id the result's. A node it read changed after the snapshot it read at
 //! (changed), or a result it read is out of date or possibly so (possibly): it reads as it read until that
 //! result is computed again, which keeps its changed_at when its value is the same. Asked on demand: `roots` empty asks
 //! about every current result; else it is a condition on the measurements relation, and the check walks only the
 //! results it selects and those they read, through their inputs
 static string CheckRowsSQL(const Workspace &ws, const string &roots) {
-	string sql = R"(WITH RECURSIVE ck_all AS (SELECT begin_snapshot AS id, dataset, function, subject, aspect, read_at
+	string sql = R"(WITH RECURSIVE ck_all AS (SELECT id, dataset, function, subject, aspect, read_at
                                 FROM $measurements WHERE end_snapshot IS NULL),
-ck_edge AS (SELECT begin_snapshot AS id, asset, what FROM $inputs WHERE end_snapshot IS NULL),
+ck_edge AS (SELECT result AS id, asset, what FROM $inputs WHERE end_snapshot IS NULL),
 ck_scope(id) AS ($scope),
 ck_cur AS (SELECT * FROM ck_all WHERE id IN (SELECT id FROM ck_scope)),
 ck_in AS (SELECT * FROM ck_edge WHERE id IN (SELECT id FROM ck_scope)),
@@ -1322,7 +1324,7 @@ SELECT c.id, c.dataset, c.function, c.subject, x.asset, x.what, 'changed' AS rea
 UNION SELECT c.id, c.dataset, c.function, c.subject, r.asset, r.what, 'possibly' FROM ck_reads r
 JOIN ck_out o ON o.id = r.read JOIN ck_cur c ON c.id = r.reader)";
 	auto scope = roots.empty() ? string("SELECT id FROM ck_all")
-	                           : "SELECT begin_snapshot FROM $measurements WHERE end_snapshot IS NULL AND (" + roots +
+	                           : "SELECT id FROM $measurements WHERE end_snapshot IS NULL AND (" + roots +
 	                                 ") UNION SELECT q.id FROM ck_scope s JOIN ck_edge i ON i.id = s.id JOIN ck_all r "
 	                                 "ON r.id = s.id JOIN ck_all q"
 	                                 " ON q.dataset = r.dataset AND q.subject = i.asset AND (i.what = 'result ' ||"
@@ -1336,8 +1338,8 @@ JOIN ck_out o ON o.id = r.read JOIN ck_cur c ON c.id = r.reader)";
 string CurrentResultsSQL(Inner &inner, const string &filter) {
 	return "SELECT m.*, k.id IS NULL AS current, coalesce(NOT k.changed, false) AS possibly FROM " +
 	       inner.ws.Store("measurements") + " m LEFT JOIN (SELECT id, bool_or(reason = 'changed') AS changed FROM (" +
-	       CheckRowsSQL(inner.ws, filter) +
-	       ") GROUP BY id) k ON k.id = m.begin_snapshot WHERE m.end_snapshot IS NULL AND (" + filter + ")";
+	       CheckRowsSQL(inner.ws, filter) + ") GROUP BY id) k ON k.id = m.id WHERE m.end_snapshot IS NULL AND (" +
+	       filter + ")";
 }
 
 string OutdatedSQL(Inner &inner) {

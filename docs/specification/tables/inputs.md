@@ -2,8 +2,8 @@
 
 A row is one node a stored result read: an asset and what was read of
 it. `SELECT f() FROM asset` writes the rows with the result, in the
-same transaction. Key: `begin_snapshot`, `asset` and `what`. A row
-carries its result's `begin_snapshot` and ends when its result does.
+same transaction. Key: `result`, `asset` and `what`. A row carries
+its result's id and `begin_snapshot` and ends when its result does.
 
 The lake's snapshot id is the only version. A result stores the
 snapshot it read at (`measurements.read_at`) and the snapshot its
@@ -15,6 +15,7 @@ at. No digest of what a read returned is stored or compared.
 | Column | Type | Description |
 |---|---|---|
 | `begin_snapshot` | BIGINT | The lake snapshot the result took: `measurements.begin_snapshot`. |
+| `result` | BIGINT | The result that read the node: `measurements.id`. |
 | `end_snapshot` | BIGINT | The snapshot of the write that replaced the result; NULL while the result is current. The view leaves this column out. |
 | `asset` | VARCHAR | The asset read, by its path; the name of a property or a function; a macro's `schema.name`; an x-kind for the set of its properties. |
 | `what` | VARCHAR | What was read of it, one of the nodes below. |

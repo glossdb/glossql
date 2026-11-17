@@ -11,8 +11,9 @@ result, and `measurements_history` serves every result.
 
 | Column | Type | Description |
 |---|---|---|
-| `begin_snapshot` | BIGINT | The lake snapshot the write that made the row took. |
+| `begin_snapshot` | BIGINT | The lake snapshot the write that made the row took. One write may store several results. |
 | `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
+| `id` | BIGINT | The result's own id, which its `inputs` and `edges` rows carry. |
 | `dataset` | VARCHAR | The dataset the asset belongs to. |
 | `function` | VARCHAR | The measurement that computed it. |
 | `subject` | VARCHAR | The asset it measured. |
