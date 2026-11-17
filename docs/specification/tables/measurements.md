@@ -15,9 +15,9 @@ result, and `measurements_history` serves every result.
 | `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
 | `id` | BIGINT | The result's own id, which its `inputs` and `edges` rows carry. |
 | `dataset` | VARCHAR | The dataset the asset belongs to. |
-| `function` | VARCHAR | The measurement that computed it. |
+| `function` | VARCHAR | The measurement that computed it; a test's name for a test's result, `lineage` for a view's lineage. |
 | `subject` | VARCHAR | The asset it measured. |
-| `aspect` | VARCHAR | The aspect the function returns. |
+| `aspect` | VARCHAR | The aspect the function returns; `test` for a test's result, whose value is its `state` and `score` (SPEC §7.2), and `lineage` for a view's lineage. |
 | `value` | VARCHAR | The result, validated against the aspect's schema. The view serves it as JSON. NULL where the computation failed. |
 | `computed_at` | TIMESTAMP | When the row was written. |
 | `error` | VARCHAR | Why the computation failed: the function's error, or the schema check's. NULL for a value. |

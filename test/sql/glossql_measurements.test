@@ -217,6 +217,9 @@ SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":11.0}	true
 
+statement ok
+SELECT min_max_test() FROM fin;
+
 query TTTT
 SELECT subject, state, current, error FROM TESTS(orders.amount::min_max);
 ----
@@ -235,7 +238,17 @@ SELECT value, test_state, state FROM GLOSSARY(orders.amount::min_max);
 statement ok
 DELETE FROM fin.orders WHERE id = 10;
 
-# the detector sees the value's current; the result's current is every function annotation it read
+# the stored test result read a value that is out of date now: it is possibly out of date, and served marked
+query TTTT
+SELECT subject, state, current, error FROM TESTS(orders.amount::min_max);
+----
+fin.orders.amount	green	false	NULL
+
+# computed again, the detector sees the value's current; the result read a result out of date, so it is not
+# current either
+
+statement ok
+SELECT min_max_test() FROM fin;
 
 query TTTT
 SELECT subject, state, current, error FROM TESTS(orders.amount::min_max);
@@ -258,6 +271,9 @@ query TTTTT
 SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":10.0}	true
+
+statement ok
+SELECT min_max_test() FROM fin;
 
 query TTT
 SELECT value, test_state, state FROM GLOSSARY(orders.amount::min_max);

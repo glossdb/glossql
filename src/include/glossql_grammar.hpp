@@ -213,7 +213,32 @@ class Inner;
 //! The current stored results `filter` selects, a condition on the measurements relation, each row with
 //! `current`: no node it read changed after the snapshot it read at, and no result it read is out of
 //! date (SPEC §6). The check walks only those results and what they read
-string CurrentResultsSQL(Inner &inner, const string &filter);
+string CurrentResultsSQL(const Workspace &ws, const string &filter);
+//! The node an annotation's staleness reads for its subject, as SQL over the subject expression: the
+//! `definition` of a table or a view, and of a column, whose rows are a table column's own or a view's SQL;
+//! a column no relation holds now reads its relation's; NULL for a dataset, a source and a relationship
+//! (SPEC §5.2)
+string DefinitionNodeSQL(const Workspace &ws, const string &subject);
+//! The workspace of the context's lake, as found once per instance
+Workspace WorkspaceOf(ClientContext &context);
+//! Why a detector's body compares the subjects it runs over (SPEC §7.1), in words, or empty where it
+//! judges each subject's values alone
+string CrossSubject(ClientContext &context, const string &script);
+//! A declared test: its aspect, its detector with that function's current script, its threshold; the
+//! name empty where no test of that name is declared
+struct TestDeclaration {
+	string name;
+	string aspect;
+	string detector;
+	Value threshold;
+	Value script;
+};
+TestDeclaration DeclaredTest(Inner &inner, const string &name);
+//! SELECT <test>() FROM <subject> (SPEC §7.2): the test on each subject at or under `subject` holding a
+//! value of its aspect, computed and stored where no current result is, and retired on a subject that
+//! holds none; (test, subject, aspect, value, computed) per subject that holds a value
+vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const TestDeclaration &test,
+                                  const string &subject);
 //! Why a stored result is out of date: (dataset, function, subject, asset, what, reason), a node it
 //! read that changed after it read (reason `changed`), or a result it read that is out of date (reason
 //! `outdated`)

@@ -499,6 +499,9 @@ DECLARE TEST ids_test ON ids_present BY (AGENT, HUMAN) DETECTOR rate_tolerance T
 statement ok
 GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "tolerance": 0.2}$$;
 
+statement ok
+SELECT ids_test() FROM fin;
+
 # no check has annotated: yellow, never green
 query TTR
 SELECT subject, state, score FROM TESTS(orders::ids_present);
@@ -515,6 +518,9 @@ $$ RETURNS ids_present;
 statement ok
 SELECT ids_present_check() FROM orders;
 
+statement ok
+SELECT ids_test() FROM fin;
+
 # one order in five names no customer: at the tolerance, green, and nothing to score
 query TTR
 SELECT subject, state, score FROM TESTS(orders::ids_present);
@@ -530,6 +536,9 @@ GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "to
 
 statement ok
 RESET VARIABLE glossql_actor;
+
+statement ok
+SELECT ids_test() FROM fin;
 
 query TTR
 SELECT subject, state, score FROM TESTS(orders::ids_present);

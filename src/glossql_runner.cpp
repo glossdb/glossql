@@ -48,6 +48,9 @@
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/comparison_expression.hpp"
+#include "duckdb/parser/expression/conjunction_expression.hpp"
+#include "duckdb/parser/expression/window_expression.hpp"
 #include "duckdb/parser/expression/parameter_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
@@ -149,6 +152,19 @@ static Workspace FindWorkspace(ClientContext &context, Connection &con) {
 		cache.Put(key, fill);
 	}
 	return ws;
+}
+
+Workspace WorkspaceOf(ClientContext &context) {
+	auto &cache = ObjectCache::GetObjectCache(context);
+	auto found = cache.Get<FoundWorkspace>("glossql_workspace|" + LakeName(context));
+	if (found) {
+		auto meta = found->meta.lock();
+		if (meta && meta == DatabaseManager::Get(context).GetDatabase(Identifier(found->ws.meta))) {
+			return found->ws;
+		}
+	}
+	Connection con(*context.db);
+	return FindWorkspace(context, con);
 }
 
 static Workspace LookUpWorkspace(ClientContext &context, Connection &con) {
@@ -1519,6 +1535,258 @@ private:
 	}
 };
 
+//===--------------------------------------------------------------------===//
+// Whether a detector judges each subject alone (SPEC §7.1). A test's result is
+// stored per subject and reads that subject's values, so a detector that
+// compares the subjects it runs over would leave a result current while
+// another subject's value moved under it. Taken from the body's text: a window
+// that does not partition by subject, an aggregate over the values that does
+// not group by subject or match it to an outer row's, and a join of two reads
+// of the values that does not match them on subject each compare subjects
+//===--------------------------------------------------------------------===//
+
+class SubjectWalker {
+public:
+	explicit SubjectWalker(ClientContext &context) : context(context) {
+	}
+
+	string why;
+
+	void Node(const QueryNode &node, std::set<string> reading) {
+		if (!why.empty()) {
+			return;
+		}
+		// a CTE that reads the values reads them under its own name, inside the query that defines it
+		for (auto &cte : node.cte_map.map) {
+			if (cte.second->query_node && NodeReads(*cte.second->query_node, reading)) {
+				reading.insert(StringUtil::Lower(cte.first.GetIdentifierName()));
+			}
+		}
+		for (auto &cte : node.cte_map.map) {
+			if (cte.second->query_node) {
+				Node(*cte.second->query_node, reading);
+			}
+		}
+		switch (node.type) {
+		case QueryNodeType::SELECT_NODE:
+			Select(node.Cast<SelectNode>(), reading);
+			break;
+		case QueryNodeType::SET_OPERATION_NODE:
+			for (auto &child : node.Cast<SetOperationNode>().children) {
+				Node(*child, reading);
+			}
+			break;
+		case QueryNodeType::RECURSIVE_CTE_NODE:
+			Node(*node.Cast<RecursiveCTENode>().left, reading);
+			Node(*node.Cast<RecursiveCTENode>().right, reading);
+			break;
+		default:
+			break;
+		}
+	}
+
+private:
+	ClientContext &context;
+
+	static bool IsSubject(const ParsedExpression &expr) {
+		return expr.GetExpressionClass() == ExpressionClass::COLUMN_REF &&
+		       StringUtil::Lower(expr.Cast<ColumnRefExpression>().GetColumnName().GetIdentifierName()) == "subject";
+	}
+
+	//! Whether an expression holds `a.subject = b.subject`, at its top or under AND
+	static bool MatchesSubject(const ParsedExpression &expr) {
+		if (expr.GetExpressionType() == ExpressionType::COMPARE_EQUAL) {
+			auto &compare = expr.Cast<ComparisonExpression>();
+			return IsSubject(compare.Left()) && IsSubject(compare.Right());
+		}
+		if (expr.GetExpressionType() == ExpressionType::CONJUNCTION_AND) {
+			for (auto &child : expr.Cast<ConjunctionExpression>().GetChildren()) {
+				if (MatchesSubject(*child)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	//! Whether a table reference reads the values: a name among `reading`, or a query over one
+	bool RefReads(const TableRef &ref, const std::set<string> &reading) {
+		switch (ref.type) {
+		case TableReferenceType::BASE_TABLE: {
+			auto &name = ref.Cast<BaseTableRef>().GetQualifiedName();
+			return name.Schema().empty() && reading.count(StringUtil::Lower(name.Name().GetIdentifierName()));
+		}
+		case TableReferenceType::JOIN:
+			return RefReads(*ref.Cast<JoinRef>().left, reading) || RefReads(*ref.Cast<JoinRef>().right, reading);
+		case TableReferenceType::SUBQUERY:
+			return NodeReads(*ref.Cast<SubqueryRef>().subquery->node, reading);
+		default:
+			return false;
+		}
+	}
+
+	bool NodeReads(const QueryNode &node, const std::set<string> &reading) {
+		switch (node.type) {
+		case QueryNodeType::SELECT_NODE: {
+			auto &select = node.Cast<SelectNode>();
+			return select.from_table && RefReads(*select.from_table, reading);
+		}
+		case QueryNodeType::SET_OPERATION_NODE:
+			for (auto &child : node.Cast<SetOperationNode>().children) {
+				if (NodeReads(*child, reading)) {
+					return true;
+				}
+			}
+			return false;
+		case QueryNodeType::RECURSIVE_CTE_NODE:
+			return NodeReads(*node.Cast<RecursiveCTENode>().left, reading) ||
+			       NodeReads(*node.Cast<RecursiveCTENode>().right, reading);
+		default:
+			return false;
+		}
+	}
+
+	bool IsAggregate(const FunctionExpression &function) {
+		try {
+			// functions of every kind share a name space: the entry found is an aggregate's only by its type
+			auto entry = Catalog::GetEntry(
+			    context, EntryLookupInfo(CatalogType::AGGREGATE_FUNCTION_ENTRY, function.GetQualifiedName()),
+			    OnEntryNotFound::RETURN_NULL);
+			return entry && entry->type == CatalogType::AGGREGATE_FUNCTION_ENTRY;
+		} catch (std::exception &) {
+			return false;
+		}
+	}
+
+	//! The expressions of one query level: a window that does not partition by subject compares the
+	//! subjects; whether an aggregate is computed at this level; a subquery is a level of its own
+	void Expr(const ParsedExpression &expr, const std::set<string> &reading, bool &aggregates) {
+		if (!why.empty()) {
+			return;
+		}
+		switch (expr.GetExpressionClass()) {
+		case ExpressionClass::SUBQUERY:
+			Node(*expr.Cast<SubqueryExpression>().Subquery()->node, reading);
+			return;
+		case ExpressionClass::WINDOW: {
+			auto &window = expr.Cast<WindowExpression>();
+			bool partitioned = false;
+			for (auto &partition : window.Partitions()) {
+				partitioned = partitioned || IsSubject(*partition);
+			}
+			if (!partitioned) {
+				why = "ranks or totals rows across subjects: a window that does not partition by subject";
+				return;
+			}
+			break;
+		}
+		case ExpressionClass::FUNCTION:
+			aggregates = aggregates || IsAggregate(expr.Cast<FunctionExpression>());
+			break;
+		default:
+			break;
+		}
+		ParsedExpressionIterator::EnumerateChildren(
+		    expr, [&](const ParsedExpression &child) { Expr(child, reading, aggregates); });
+	}
+
+	//! A FROM clause: a join of two reads of the values matches them on subject, in its condition, its USING
+	//! or the WHERE of its query (`where_matches`)
+	void Ref(const TableRef &ref, const std::set<string> &reading, bool where_matches) {
+		switch (ref.type) {
+		case TableReferenceType::JOIN: {
+			auto &join = ref.Cast<JoinRef>();
+			Ref(*join.left, reading, where_matches);
+			Ref(*join.right, reading, where_matches);
+			if (RefReads(*join.left, reading) && RefReads(*join.right, reading)) {
+				bool matched = where_matches || (join.condition && MatchesSubject(*join.condition));
+				for (auto &column : join.using_columns) {
+					matched = matched || StringUtil::Lower(column.GetIdentifierName()) == "subject";
+				}
+				if (!matched) {
+					why = "joins the values of one subject to another's: a join of two reads of the values that does "
+					      "not match them on subject";
+				}
+			}
+			if (join.condition) {
+				bool aggregates = false;
+				Expr(*join.condition, reading, aggregates);
+			}
+			break;
+		}
+		case TableReferenceType::SUBQUERY:
+			Node(*ref.Cast<SubqueryRef>().subquery->node, reading);
+			break;
+		default:
+			break;
+		}
+	}
+
+	void Select(const SelectNode &select, const std::set<string> &reading) {
+		if (select.from_table) {
+			Ref(*select.from_table, reading, select.where_clause && MatchesSubject(*select.where_clause));
+		}
+		bool aggregates = false;
+		for (auto &expr : select.select_list) {
+			Expr(*expr, reading, aggregates);
+		}
+		for (auto expr : {select.having.get(), select.qualify.get()}) {
+			if (expr) {
+				Expr(*expr, reading, aggregates);
+			}
+		}
+		bool filtering = false;
+		if (select.where_clause) {
+			Expr(*select.where_clause, reading, filtering);
+		}
+		for (auto &group : select.groups.group_expressions) {
+			bool grouping = false;
+			Expr(*group, reading, grouping);
+		}
+		if (!why.empty() || !aggregates || !select.from_table || !RefReads(*select.from_table, reading)) {
+			return;
+		}
+		bool grouped = false;
+		for (auto &group : select.groups.group_expressions) {
+			grouped = grouped || IsSubject(*group);
+		}
+		if (select.aggregate_handling == AggregateHandling::FORCE_AGGREGATES) {
+			for (auto &expr : select.select_list) {
+				grouped = grouped || IsSubject(*expr);
+			}
+		}
+		// a subquery matched to the outer row's subject aggregates that subject's values alone
+		grouped = grouped || (select.where_clause && MatchesSubject(*select.where_clause));
+		if (!grouped) {
+			why = "aggregates the values of every subject together: an aggregate over the values that does not group "
+			      "by subject";
+		}
+	}
+};
+
+string CrossSubject(ClientContext &context, const string &script) {
+	auto text = ReplacePlaceholder(script, "threshold", "NULL");
+	StringUtil::RTrim(text);
+	while (!text.empty() && (text.back() == ';' || StringUtil::CharacterIsSpace(text.back()))) {
+		text.pop_back();
+	}
+	auto options = ParserOptions::Builtin();
+	options.compiled_grammar = CompiledGrammar::DefaultGrammar();
+	Parser parser(options);
+	try {
+		parser.ParseQuery(text);
+	} catch (std::exception &) {
+		// a body that does not parse fails when it runs, as its test's result
+		return string();
+	}
+	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::SELECT_STATEMENT) {
+		return string();
+	}
+	SubjectWalker walker(context);
+	walker.Node(*parser.statements[0]->Cast<SelectStatement>().node, {"annotations"});
+	return walker.why;
+}
+
 //! The places a where names, as the lineage kit lists them (place_list())
 static std::set<string> PlaceNames(Inner &inner) {
 	std::set<string> places;
@@ -1730,6 +1998,16 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 				throw InvalidInputException("glossql: '%s' returns %s: a measurement, not a detector",
 				                            detector.ToString(), row[0].ToString());
 			}
+			// a test's result is stored per subject and reads that subject's values alone (SPEC §7.1)
+			auto script = inner.Scalar("SELECT script FROM " + inner.Current("functions") + " WHERE name = " +
+			                           QuoteText(detector.ToString()) + " ORDER BY begin_snapshot DESC LIMIT 1");
+			auto across = script.IsNull() ? string() : CrossSubject(context, script.ToString());
+			if (!across.empty()) {
+				throw InvalidInputException(
+				    "glossql: cross_subject: detector %s %s. A test judges each subject alone: declare it on the asset "
+				    "that holds the subjects it compares, the table for its columns, the dataset for its tables",
+				    detector.ToString(), across);
+			}
 		}
 		write.End("tests", "aspect = " + QuoteText(aspect));
 		write.Insert("tests", QuoteText(name) + ", " + QuoteText(aspect) + ", " + QuoteText(JsonList(inputs[2])) +
@@ -1759,6 +2037,9 @@ TableFunction GlossFunctionFunction() {
 
 struct ExtractState : public GlobalTableFunctionState {
 	bool done = false;
+	//! the rows to serve, (function, subject, aspect, value, computed), and the next one
+	vector<vector<Value>> rows;
+	idx_t next = 0;
 };
 
 static unique_ptr<FunctionData> ExtractBind(ClientContext &context, TableFunctionBindInput &input,
@@ -1957,8 +2238,8 @@ SELECT DISTINCT asset, what FROM (
 //! The stored row for the call while it is current, (value, error), else empty
 static vector<Value> Served(Inner &inner, const string &dataset, const string &name, const string &subject) {
 	return inner.Row("SELECT value, error FROM (" +
-	                 CurrentResultsSQL(inner, "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
-	                                              " AND subject = " + QuoteText(subject)) +
+	                 CurrentResultsSQL(inner.ws, "dataset = " + QuoteText(dataset) + " AND function = " +
+	                                                 QuoteText(name) + " AND subject = " + QuoteText(subject)) +
 	                 ") WHERE current");
 }
 
@@ -2044,16 +2325,11 @@ static string RetakeReads(ClientContext &context, Inner &inner, const string &na
 //! SELECT lineage() FROM <view>: the view's lineage (SPEC §6), served while the stored one is current,
 //! else planned again and stored with the nodes the planning read, where the same value keeps the snapshot
 //! it changed at. A subject that is no view retires the lineage stored on it, else is refused
-static void ExtractLineage(ClientContext &context, Inner &inner, const string &dataset, const string &subject,
-                           DataChunk &output) {
-	output.data[0].Append(Value("lineage"));
-	output.data[1].Append(Value(subject));
-	output.data[2].Append(Value("lineage"));
+static vector<Value> ExtractLineage(ClientContext &context, Inner &inner, const string &dataset,
+                                    const string &subject) {
 	auto served = Served(inner, dataset, "lineage", subject);
 	if (!served.empty() && served[1].IsNull()) {
-		output.data[3].Append(served[0]);
-		output.data[4].Append(Value::BOOLEAN(false));
-		return;
+		return {Value("lineage"), Value(subject), Value("lineage"), served[0], Value::BOOLEAN(false)};
 	}
 	auto parts = SubjectParts(subject);
 	optional_ptr<CatalogEntry> entry;
@@ -2065,9 +2341,7 @@ static void ExtractLineage(ClientContext &context, Inner &inner, const string &d
 		if (!retired) {
 			throw InvalidInputException("glossql: not_a_view: %s is no view; its lineage is its own", subject);
 		}
-		output.data[3].Append(Value());
-		output.data[4].Append(Value::BOOLEAN(true));
-		return;
+		return {Value("lineage"), Value(subject), Value("lineage"), Value(), Value::BOOLEAN(true)};
 	}
 	auto read_at = inner.Scalar("SELECT max(snapshot_id) FROM " + inner.ws.Meta("snapshot"));
 	auto lineage = PlanViewLineage(inner, parts[0], parts[1]);
@@ -2076,17 +2350,12 @@ static void ExtractLineage(ClientContext &context, Inner &inner, const string &d
 	if (!lineage.error.empty()) {
 		throw InvalidInputException(lineage.error);
 	}
-	output.data[3].Append(Value(lineage.value));
-	output.data[4].Append(Value::BOOLEAN(true));
+	return {Value("lineage"), Value(subject), Value("lineage"), Value(lineage.value), Value::BOOLEAN(true)};
 }
 
-static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &state = data.global_state->Cast<ExtractState>();
-	if (state.done) {
-		return;
-	}
-	state.done = true;
-	auto &inputs = data.bind_data->Cast<RunnerBindData>().inputs;
+//! The rows an extraction serves, one per call, a test's one per subject it judges
+static vector<vector<Value>> Extract(ClientContext &context, const vector<Value> &inputs) {
+	vector<vector<Value>> rows;
 	auto subject = ResolveSubject(context, inputs[0].ToString());
 	auto dataset = DatasetOf(context, subject);
 
@@ -2095,36 +2364,43 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 	// from the subject this run computes for
 	inner.Run("USE " + QuoteName(inner.ws.lake) + "." + QuoteName(dataset));
 	ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(subject));
-	idx_t row = 0;
 	for (auto &call : ListValue::GetChildren(inputs[1])) {
 		auto name = call.ToString();
 		if (name == "lineage") {
-			ExtractLineage(context, inner, dataset, subject, output);
-			row++;
+			rows.push_back(ExtractLineage(context, inner, dataset, subject));
 			continue;
 		}
 		auto schema = inner.FunctionSchema(dataset, name);
 		if (schema.empty()) {
-			throw InvalidInputException("glossql: %s is not a declared function for %s", name, dataset);
+			auto test = DeclaredTest(inner, name);
+			if (test.name.empty()) {
+				throw InvalidInputException("glossql: %s is not a declared function for %s", name, dataset);
+			}
+			if (test.detector.empty()) {
+				throw InvalidInputException("glossql: no_detector: test %s names no detector; it judges nothing and "
+				                            "stores no result",
+				                            name);
+			}
+			for (auto &judged : ComputeTest(context, inner, test, subject)) {
+				rows.push_back(std::move(judged));
+			}
+			continue;
 		}
 		auto scope = schema == "main" ? "GLOBAL" : schema;
 		auto returns =
 		    inner.Scalar("SELECT returns FROM " + inner.Store("functions") + " WHERE name = " + QuoteText(name) +
 			             " AND scope = " + QuoteText(scope) + " AND end_snapshot IS NULL");
 		if (returns.IsNull()) {
-			throw InvalidInputException("glossql: %s is a detector: it runs at read, through TESTS()", name);
+			throw InvalidInputException(
+			    "glossql: %s is a detector: it runs through its test, SELECT <test>() FROM <subject>", name);
 		}
-		output.data[0].Append(Value(name));
-		output.data[1].Append(Value(subject));
-		output.data[2].Append(returns);
 		// served while it is current: a repeat is a serve, not a rerun (SPEC §6). A stored failure is not
 		// served to a call: it may come from what is no input (a service down, a configuration), so a
 		// call computes again; it stays current for a read of what is due
 		auto served = Served(inner, dataset, name, subject);
 		if (!served.empty() && served[1].IsNull()) {
-			output.data[3].Append(Value(Summary(inner, served[0].ToString())));
-			output.data[4].Append(Value::BOOLEAN(false));
-			row++;
+			rows.push_back({Value(name), Value(subject), returns, Value(Summary(inner, served[0].ToString())),
+			                Value::BOOLEAN(false)});
 			continue;
 		}
 		// the aspect's schema is the one contract: the output is validated against it (SPEC §6)
@@ -2190,11 +2466,25 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		if (!error.empty()) {
 			throw InvalidInputException(error);
 		}
-		output.data[3].Append(Value(Summary(inner, value.ToString())));
-		output.data[4].Append(Value::BOOLEAN(true));
-		row++;
+		rows.push_back(
+		    {Value(name), Value(subject), returns, Value(Summary(inner, value.ToString())), Value::BOOLEAN(true)});
 	}
-	output.CheckCardinality(row);
+	return rows;
+}
+
+static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &state = data.global_state->Cast<ExtractState>();
+	if (!state.done) {
+		state.done = true;
+		state.rows = Extract(context, data.bind_data->Cast<RunnerBindData>().inputs);
+	}
+	idx_t count = 0;
+	for (; state.next < state.rows.size() && count < STANDARD_VECTOR_SIZE; state.next++, count++) {
+		for (idx_t c = 0; c < 5; c++) {
+			output.data[c].Append(state.rows[state.next][c]);
+		}
+	}
+	output.CheckCardinality(count);
 }
 
 TableFunction GlossExtractFunction() {
@@ -2212,8 +2502,9 @@ static unique_ptr<TableRef> SelectOrExtractBindReplace(ClientContext &context, T
 		Inner inner(context);
 		auto dataset = DatasetOf(context, ResolveSubject(context, input.inputs[0].ToString()));
 		for (auto &call : ListValue::GetChildren(input.inputs[1])) {
-			declared =
-			    declared || call.ToString() == "lineage" || !inner.FunctionSchema(dataset, call.ToString()).empty();
+			declared = declared || call.ToString() == "lineage" ||
+			           !inner.FunctionSchema(dataset, call.ToString()).empty() ||
+			           !DeclaredTest(inner, call.ToString()).name.empty();
 		}
 	} catch (std::exception &) {
 		// no store, no functions

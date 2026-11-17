@@ -385,14 +385,19 @@ DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';
   took. A removed or replaced row leaves the relation's reads and stays
   in the store with the snapshot that ended it: `<name>` serves the
   current rows, `<name>_history` every row. A gloss reads `stale`
-  once its subject changed after that snapshot: a column re-derived,
-  retyped or dropped, a table one of whose columns did, a view whose
-  definition was replaced or dropped, and each column of that view. A
-  subject with none of its catalog rows from the write left, after an
-  expiry of the lake's snapshots, reads as changed. Rows arriving
-  under the same shape do not age it. Provenance and staleness are a
-  join against the catalog's column history, never a guess. The read
-  shapes in §5.3 are unchanged; the column lives on the relation.
+  once the definition of its subject changed after that snapshot, the
+  node a result reads for it (§6): a column's rows in the lake
+  (retyped, dropped, made again with its table) or a load that
+  derived it otherwise than the load before; a table's rows and its
+  columns'; a view's row, the annotation that defines it and its
+  aspect's row; for a column of a view, the view's row. The lake's
+  snapshot id is the only version: a type changed and changed back
+  reads stale until the gloss is written again. A subject none of
+  whose catalog rows are left, after an expiry of the lake's
+  snapshots, reads as changed. Rows arriving under the same shape do
+  not age it. Staleness is a join against the catalog's history,
+  never a guess. The read shapes in §5.3 are unchanged; the column
+  lives on the relation.
 
 ### 5.3 Reading
 
@@ -634,8 +639,8 @@ are stored in `measurements`.
 
 ## 7. Tests
 
-A test is declared per aspect, dataset-wide. Per (subject, aspect) it
-holds one value per actor kind: each function value (the newest measurement
+A test is declared per aspect, dataset-wide, and judges each subject
+alone. Per (subject, aspect) it holds one value per actor kind: each function value (the newest measurement
 of a function whose `RETURNS` names the aspect, §6 — served whether
 current or not, and marked), the agent's
 gloss, the human's gloss — one value each.
@@ -664,6 +669,14 @@ DECLARE TEST reconciliation_test ON reconciliation
   example.
 - `THRESHOLD` (0..1) is the entropy cutoff used by the collapsed
   `GLOSSARY()` read (§5.3).
+- A detector that compares the subjects it runs over is refused
+  (`cross_subject`): a window that does not partition by `subject`,
+  an aggregate over the values that does not group by `subject` or
+  match it to an outer row's, a join of two reads of the values that
+  does not match them on `subject`. A test's result reads its own
+  subject's values alone (§7.2). A judgment across subjects is a test
+  on the asset that holds them: the table for its columns, the
+  dataset for its tables.
 
 ### 7.2 Test results
 
@@ -675,21 +688,37 @@ SELECT subject, state FROM TESTS(fin.trial_balance) WHERE state = 'red';
 The **standard test-results schema** is fixed:
 `(subject, aspect, test, state, score, computed_at, current, error)` —
 `state` in `green | yellow | orange | red | error`, `score` the
-disagreement/entropy in 0..1, `current` whether every function value
-the result read is current (§6), `error` null except where
+disagreement/entropy in 0..1, `current` whether the stored result is
+current (§6), `error` null except where
 `state` is `error`.
 A detector's query returns the authored third of it — one
 `(subject, state, score)` row per subject — and the engine completes
 each row with the test, its aspect, and its own clock.
 A detector that cannot answer — unresolved from the reading dataset,
 a body that is not one SQL query, a plan or run the engine refuses —
-refuses nothing: the failure is served as that test's result, one
-row per subject holding values, `state` `error` with `score` 0 and the
+refuses nothing: the failure is stored as that test's result, one
+per subject holding values, `state` `error` with `score` 0 and the
 failure text in `error`. An error is not a judgment: the §5.3
 collapse never withholds on it, and every other test still returns its result.
-Detectors run **at read**. A result belongs to its **test**, not to
-its detector: one detector serving three tests holds three results,
-computed from each test's own values against its own threshold.
+A result belongs to its **test**, not to its detector: one detector
+serving three tests holds three results, computed from each test's
+own values against its own threshold.
+
+A test's result is a stored result like a function's (§6), one per
+(subject, test), in `measurements` under the test's name with aspect
+`test`: its value `{"state", "score"}`, or its error. `SELECT
+additivity_test() FROM fin` computes the test on each subject at or
+under the one named that holds a value of its aspect, where no result
+is stored or the stored one is not current, in one write; a stored
+result on a subject that holds no value any more is retired. A subject
+the detector returns no row for holds the JSON `null`, no judgment. A
+result reads its subject's `annotation` and `value` of the aspect, the
+subject's `definition` (§5.2), and the declarations of the aspect, the
+test and the detector (`property`, `function`): it is out of date
+once one of them changed after it read, and possibly so while a
+function value it read is. `TESTS()` and `GLOSSARY()` read the stored
+results and compute none; `current` marks a result out of date or
+possibly so as false, its state served as stored.
 Detail lives in the value function's own output, reachable by
 SELECT. Sweeps ("all conflict
 additivity columns") are WHERE clauses over the test-results relation, never a

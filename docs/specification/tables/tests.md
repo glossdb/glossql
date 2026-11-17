@@ -2,7 +2,7 @@
 
 A row is a declared test on an aspect.
 `DECLARE TEST` writes it. Key: `aspect`; one test per aspect.
-`TESTS()` runs the test's detector when it is read.
+`SELECT <test>() FROM <subject>` stores its results in [measurements](measurements.md), one per subject, and `TESTS()` reads them.
 
 | Column | Type | Description |
 |---|---|---|

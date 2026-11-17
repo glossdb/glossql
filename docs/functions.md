@@ -33,7 +33,8 @@ SELECT * FROM TESTS(orders.amount::unit);
 Test results: `subject VARCHAR`, `aspect VARCHAR`, `test VARCHAR`,
 `state VARCHAR`, `score DOUBLE`, `computed_at TIMESTAMP`, `current
 BOOLEAN`, `error VARCHAR`. `state` is `green`, `yellow`, `orange`,
-`red` or `error`. Without an argument, the dataset in use. See
+`red` or `error`. Without an argument, the dataset in use. It reads
+the stored results; `SELECT <test>() FROM <asset>` computes them. See
 [tests](usage/tests.md).
 
 ## glossql_kit

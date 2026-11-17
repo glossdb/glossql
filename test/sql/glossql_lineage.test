@@ -153,9 +153,9 @@ fin.sales	current
 fin.sales.amount	current
 fin.sales.id	current
 
-# a column added, or a filter changed, re-derives nothing
+# a filter changed re-derives nothing
 statement ok
-DECLARE RECIPE sales ON fin FROM erp AS $$SELECT id::INTEGER AS id, (amount * 0.8)::DOUBLE AS amount, customer, 1 AS extra FROM read_csv('sales.csv') WHERE id >= 0$$;
+DECLARE RECIPE sales ON fin FROM erp AS $$SELECT id::INTEGER AS id, (amount * 0.8)::DOUBLE AS amount, customer FROM read_csv('sales.csv') WHERE id >= 0$$;
 
 query TT
 SELECT subject, state FROM GLOSSARY(sales) ORDER BY subject;
@@ -163,6 +163,17 @@ SELECT subject, state FROM GLOSSARY(sales) ORDER BY subject;
 fin.sales	current
 fin.sales.amount	current
 fin.sales.id	current
+
+# a column added makes the table again: every gloss written at the shape before ages (SPEC §5.2)
+statement ok
+DECLARE RECIPE sales ON fin FROM erp AS $$SELECT id::INTEGER AS id, (amount * 0.8)::DOUBLE AS amount, customer, 1 AS extra FROM read_csv('sales.csv') WHERE id >= 0$$;
+
+query TT
+SELECT subject, state FROM GLOSSARY(sales) ORDER BY subject;
+----
+fin.sales	stale
+fin.sales.amount	stale
+fin.sales.id	stale
 
 # a table made by hand has no load and never re-derives
 statement ok

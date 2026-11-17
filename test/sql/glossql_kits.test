@@ -107,6 +107,9 @@ GLOSS role ON orders.amount AS $${"value": "dimension"}$$;
 statement ok
 RESET VARIABLE glossql_actor;
 
+statement ok
+SELECT role_test() FROM fin;
+
 query TTR
 SELECT aspect, state, score FROM TESTS(orders.amount::role);
 ----

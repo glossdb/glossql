@@ -105,7 +105,8 @@ Where a test scores a disagreement as `red`, annotate again with a
 | `SELECT … FROM TESTS(subject \| subject::aspect);` | the test results |
 | `DECLARE FUNCTION f FOR staff\|GLOBAL AS $$sql$$ [RETURNS aspect];` | with `RETURNS`, a measurement: a query that reads its asset as `$subject`, or its column as `subject_column($subject)`. Without, a detector: a query over a test's `annotations` with `$threshold` |
 | `SELECT f() FROM employees.salary;` | runs a measurement and stores the result, or returns the stored result while the tables it read are unchanged (`computed` says which) |
-| `DECLARE TEST t ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | says who may annotate a property and which detector scores its values |
+| `DECLARE TEST t ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | says who may annotate a property and which detector scores its values. A detector that compares assets with each other is refused (`cross_subject`) |
+| `SELECT t() FROM staff;` | runs a test on each asset at or under the one named that holds a value of its property, and stores one result per asset; a stored result that is current is returned as it is |
 | `FROM glossql_kit('path-or-url');` | runs a kit's statements, one row each |
 | `FROM glossql_lineage($$sql$$);` | what computes each output column of a `SELECT`: `(column, derivation, complete, shape)` |
 

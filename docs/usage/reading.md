@@ -46,17 +46,22 @@ or `function`. `current` is false for a stale value.
 
 ## When a value is stale
 
-An annotation on a table or a column reads `stale` once:
+An annotation reads `stale` once its asset's definition changed after
+the snapshot it was written at:
 
-- the column was retyped or dropped, or its table lost a column; or
-- the column's lineage differs between the load that was newest when
-  the annotation was written and the newest load now.
+- on a column: the column was retyped or dropped, or a load derived
+  it otherwise than the load before;
+- on a table: one of its columns changed so, or a column was added;
+- on a view: its definition was written again, or its SQL changed;
+- on a view's column: the view's SQL changed.
 
-A new column, or a changed filter in the load query, leaves
-annotations current. An annotation on a view or its column is stale
-once the view's SQL changed. A computed value is stale once one of its
-reads returns other rows than it did, or a computed value it read is
-stale.
+A load whose columns differ from the table's makes the table again,
+so every annotation on the table and its columns reads stale. A load
+with the same columns, or a changed filter in the load query, leaves
+them current. A type changed and changed back still reads stale until
+the annotation is written again. A computed value is stale once
+something it read changed after it was computed, or a computed value
+it read is stale.
 A computation that failed shows its `error` in the raw read and no
 value.
 
@@ -96,18 +101,15 @@ Every load stores its load query's lineage on its
 shows what changed in what the source sends, for example a column
 that now arrives under another type.
 
-## How reads are cached
+## What a read computes
 
-`GLOSSARY()` and `TESTS()` are computed once per version of the
-catalog and the lake and kept in DuckDB's object cache. A write, a
-load or a delete changes the version, and the next read computes
-again. Which stored results are out of date is asked when it is read:
-`glossql_outdated()` checks every result, and the `current` mark of a
-result checks that result and the results it read.
-
-A kit keeps a read of its own the same way: `glossql_kept('<macro>')`
-serves the rows of the table macro `main.<macro>()`, which takes no
-arguments, over the dataset in use, computed once per version. A read
-that several reads compose is then planned and run once per write.
+`GLOSSARY()` and `TESTS()` read stored rows: the annotations, the
+measurements and each test's stored result. A read marks each row
+once per statement. An annotation is stale once the definition of its
+asset changed after it was written. A stored result is out of date
+once something it read changed after it was computed:
+`glossql_outdated()` lists each one with the change. A read computes
+no test and stores nothing; a test's statement does
+([tests](tests.md)).
 
 Normative text: [SPEC.md §5.3](../../SPEC.md#53-reading).

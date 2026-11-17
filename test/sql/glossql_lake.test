@@ -148,7 +148,8 @@ fin.segments	current
 fin.segments.id	current
 fin.segments.segment	current
 
-# --- a reload that retypes a column ages the gloss on it, and the gloss on its table; the other column stays current
+# --- a reload that retypes a column ages the gloss on it and on its table: the lake makes the table again, so
+# the rows of its other column begin at that load too, and the gloss on it ages as well (SPEC §5.2)
 
 statement ok
 DECLARE RECIPE segments ON fin FROM files AS $$SELECT id::VARCHAR AS id, segment FROM read_csv('segments.csv')$$;
@@ -158,7 +159,7 @@ SELECT subject, state FROM GLOSSARY(segments) ORDER BY subject;
 ----
 fin.segments	stale
 fin.segments.id	stale
-fin.segments.segment	current
+fin.segments.segment	stale
 
 # served and marked: the value is still there
 query TTT
@@ -171,7 +172,7 @@ SELECT subject, actor, current FROM GLOSSARY(segments, all => true) ORDER BY sub
 ----
 fin.segments	agent	false
 fin.segments.id	agent	false
-fin.segments.segment	agent	true
+fin.segments.segment	agent	false
 
 # a new gloss is current at the new shape
 statement ok
@@ -182,7 +183,7 @@ SELECT subject, state FROM GLOSSARY(segments.id);
 ----
 fin.segments.id	current
 
-# --- a dropped column ages its gloss for good
+# --- a dropped column ages its gloss for good; the table made again ages the gloss written at the shape before
 
 statement ok
 DECLARE RECIPE segments ON fin FROM files AS $$SELECT id::VARCHAR AS id FROM read_csv('segments.csv')$$;
@@ -191,7 +192,7 @@ query TT
 SELECT subject, state FROM GLOSSARY(segments) ORDER BY subject;
 ----
 fin.segments	stale
-fin.segments.id	current
+fin.segments.id	stale
 fin.segments.segment	stale
 
 # --- the lake keeps every load: time travel is DuckLake's
@@ -240,7 +241,7 @@ query TT
 SELECT subject, state FROM GLOSSARY(segments) ORDER BY subject;
 ----
 fin.segments	stale
-fin.segments.id	current
+fin.segments.id	stale
 fin.segments.segment	stale
 
 # --- two lakes: the workspace must be named

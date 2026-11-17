@@ -58,7 +58,8 @@ the asset reads `conflict` and its value is withheld. `meaning`,
    balance"}$$;`. You write as `agent`. A person's review decision is
    written as `human`, on the person's own connection. Do not set
    `human` yourself.
-5. Read the results: `SELECT * FROM TESTS(orders.amount::role);`. A
+5. Run the test and read its results: `SELECT role_test() FROM
+   orders.amount;`, then `SELECT * FROM TESTS(orders.amount::role);`. A
    `red` state is a disagreement. Resolve it with the person; do not
    overwrite it.
 
