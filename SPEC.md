@@ -312,8 +312,7 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   aspect takes the dataset.
 - The **metric definition contract** is fixed, like the test-results schema (§7.2): what
   the engine reads of a metric definition, and nothing a reader of its rows needs.
-  It is open: a key it does not name passes, and a kit's metric definition schema
-  is what closes the body.
+  It is open: a key it does not name passes.
 
 ```json
 {
@@ -348,11 +347,6 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   the view and its columns under the aspects a kit declares, never
   keyed in the body. A reader that needs a claim nobody made refuses
   and names the gloss; it defaults nothing.
-- A kit may declare a schema for a body key its readers need, an
-  aspect flavored `x-kind: definition`: the engine validates every
-  VIEW gloss against each such schema after the contract. The aspect
-  is never glossed, no test names it, and re-declaring it is
-  refused while a current VIEW value would stop matching.
 - `stopped` in place of `sql` records that the author serves no number,
   and why: what is missing, where, how much, what closes it. The read
   interface refuses with that text, a reader of the view's rows abstains

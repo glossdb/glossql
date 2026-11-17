@@ -48,10 +48,6 @@ the tests that name both. See the usage pages for each statement:
 
 - A property's `WITH` schema is a JSON Schema. Keywords such as `title`
   or `x-kind` are stored with it.
-- A kit that needs its own keys in a view's body declares a schema for
-  them: a property whose schema carries `"x-kind": "definition"`. Every
-  `VIEW` value is validated against it. It cannot be annotated or
-  tested.
 - A measurement that reads a file, a table function or another
   database is computed again after any change in the dataset. Read
   tables where you can.

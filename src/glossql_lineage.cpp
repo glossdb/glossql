@@ -6,8 +6,6 @@
 // shaped, so two plans that derive a column the same way read the same and a
 // source whose column arrives under another type reads different.
 //
-//   glossql_lineage(sql) -> (column, derivation, complete)
-//
 // A load records its recipe's lineage per column on its imports row; a
 // gloss on a column reads stale once the derivation behind it moved, which
 // is SPEC §3's re-derivation, and the row-to-row diff of the imports is the
@@ -1341,66 +1339,6 @@ string LineageJson(const QueryLineage &lineage, const string &sql) {
 }
 
 //===--------------------------------------------------------------------===//
-// glossql_lineage(sql): the derivation of each column of a SELECT, as the
-// session would plan it
-//===--------------------------------------------------------------------===//
-
-struct LineageBindData : public FunctionData {
-	string sql;
-
-	unique_ptr<FunctionData> Copy() const override {
-		auto result = make_uniq<LineageBindData>();
-		result->sql = sql;
-		return result;
-	}
-	bool Equals(const FunctionData &other) const override {
-		return sql == other.Cast<LineageBindData>().sql;
-	}
-};
-
-struct LineageState : public GlobalTableFunctionState {
-	bool done = false;
-};
-
-static unique_ptr<FunctionData> LineageBind(ClientContext &context, TableFunctionBindInput &input,
-                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
-	auto result = make_uniq<LineageBindData>();
-	result->sql = input.inputs[0].ToString();
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::VARCHAR};
-	names = {Identifier("column"), Identifier("derivation"), Identifier("complete"), Identifier("shape")};
-	return result;
-}
-
-static unique_ptr<GlobalTableFunctionState> LineageInit(ClientContext &context, TableFunctionInitInput &input) {
-	return make_uniq<LineageState>();
-}
-
-static void LineageExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &state = data.global_state->Cast<LineageState>();
-	if (state.done) {
-		return;
-	}
-	state.done = true;
-	auto &sql = data.bind_data->Cast<LineageBindData>().sql;
-	Inner inner(context);
-	auto lineage = LineageOf(*inner.con.context, sql);
-	if (lineage.columns.empty()) {
-		throw InvalidInputException("glossql_lineage takes one SELECT: %s", sql);
-	}
-	idx_t row = 0;
-	for (auto &column : lineage.columns) {
-		output.data[0].Append(Value(column.first));
-		output.data[1].Append(Value(column.second));
-		output.data[2].Append(Value::BOOLEAN(lineage.complete));
-		output.data[3].Append(row < lineage.shapes.size() && !lineage.shapes[row].empty()
-		                          ? Value(lineage.shapes[row])
-								  : Value(LogicalType::VARCHAR));
-		row++;
-	}
-	output.CheckCardinality(row);
-}
-
-//===--------------------------------------------------------------------===//
 // A view's lineage, a stored result (SPEC §6): what it scans, joins and maps
 // and what computes each of its columns, planned for one view and stored as
 // the result of `lineage` on it. Its inputs are the nodes the planning read:
@@ -2659,8 +2597,6 @@ void RegisterGlossLineage(ExtensionLoader &loader) {
 	TableFunction branch_rows("branch_rows", {LogicalType::VARCHAR}, nullptr);
 	branch_rows.bind_replace = BranchRowsBindReplace;
 	loader.RegisterFunction(branch_rows);
-	loader.RegisterFunction(
-	    TableFunction("glossql_lineage", {LogicalType::VARCHAR}, LineageExec, LineageBind, LineageInit));
 }
 
 } // namespace duckdb

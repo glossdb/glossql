@@ -31,59 +31,6 @@ CREATE TABLE fin.orders AS SELECT i AS id, i * 1.5 AS amount, 'c' || (i % 2) AS 
 statement ok
 CREATE TABLE fin.customers AS SELECT 'c' || i AS customer, 'seg' || i AS segment FROM range(2) t(i);
 
-# --- glossql_lineage(sql): each output column resolved to what computes it; a leaf is scan.column:type
-
-query TTT
-SELECT "column", derivation, complete FROM glossql_lineage($$SELECT id, amount * 2 AS twice, id::VARCHAR AS id_text, 'x' AS tag FROM fin.orders WHERE id > 1$$);
-----
-id	fin.orders.id:BIGINT	true
-twice	*(fin.orders.amount:DECIMAL(21,1), cast(2 as DECIMAL(31,0)))	true
-id_text	cast(fin.orders.id:BIGINT as VARCHAR)	true
-tag	'x'	true
-
-query TTT
-SELECT "column", derivation, complete FROM glossql_lineage($$SELECT customer, sum(amount) AS total, count(*) AS n, count(DISTINCT id) AS ids FROM fin.orders GROUP BY customer$$);
-----
-customer	fin.orders.customer:VARCHAR	true
-total	sum(fin.orders.amount:DECIMAL(21,1))	true
-n	count_star()	true
-ids	count(distinct fin.orders.id:BIGINT)	true
-
-query TTT
-SELECT "column", derivation, complete FROM glossql_lineage($$SELECT o.id, c.segment FROM fin.orders o JOIN fin.customers c USING (customer)$$);
-----
-id	fin.orders.id:BIGINT	true
-segment	fin.customers.segment:VARCHAR	true
-
-# a subquery, a CTE, a union and a window resolve through; a correlated subquery is a mark
-query TTT
-SELECT "column", derivation, complete FROM glossql_lineage($$SELECT s.id, s.net FROM (SELECT id, amount * 0.8 AS net FROM fin.orders) s$$);
-----
-id	fin.orders.id:BIGINT	true
-net	*(fin.orders.amount:DECIMAL(21,1), cast(0.8 as DECIMAL(23,1)))	true
-
-query TI
-SELECT bool_and(complete), count(*) FROM glossql_lineage($$WITH big AS (SELECT id, amount FROM fin.orders WHERE amount > 2) SELECT b.id, b.amount * 10 AS scaled, row_number() OVER (ORDER BY b.id) AS rn FROM big b UNION ALL SELECT 0, 0.0, 0$$);
-----
-true	3
-
-query TT
-SELECT "column", derivation FROM glossql_lineage($$SELECT o.id, EXISTS (SELECT 1 FROM fin.customers c WHERE c.customer = o.customer) AS known FROM fin.orders o$$);
-----
-id	fin.orders.id:BIGINT
-known	mark
-
-# a filter, an order or a limit changes the rows, not what a column is
-query I
-SELECT count(DISTINCT derivation) FROM (SELECT derivation FROM glossql_lineage($$SELECT amount * 2 AS twice FROM fin.orders$$) UNION ALL SELECT derivation FROM glossql_lineage($$SELECT amount * 2 AS twice FROM fin.orders WHERE id > 2 ORDER BY id LIMIT 1$$));
-----
-1
-
-statement error
-SELECT "column", derivation, complete FROM glossql_lineage($$CREATE TABLE x AS SELECT 1$$);
-----
-Invalid Input Error
-
 # --- a load records its recipe's lineage per column
 
 statement ok
@@ -392,17 +339,6 @@ join_twice	fin.orders.customer	fin.customers.segment	2
 
 # --- shape: how a column was computed, where that decides how it adds up. A division by an aggregate is a ratio, an average an average, a distinct count distinct; a sum over one keeps it, a division by a constant has none
 
-query TT
-SELECT "column", shape FROM glossql_lineage($$SELECT customer, sum(amount) AS total, sum(amount) / 60.0 AS hours, sum(amount) / count(*) AS per_order, avg(amount) AS mean, count(DISTINCT id) AS buyers, amount / id AS row_ratio FROM fin.orders GROUP BY customer, amount, id$$) ORDER BY 1;
-----
-buyers	distinct
-customer	NULL
-hours	NULL
-mean	average
-per_order	ratio
-row_ratio	NULL
-total	NULL
-
 statement ok
 CREATE VIEW fin.daily_rate AS SELECT customer, sum(amount)::DOUBLE / count(*) AS value FROM fin.orders GROUP BY customer;
 
@@ -467,30 +403,6 @@ is_root	[fin.products.id]
 known	[fin.products.status]
 middle	[fin.products.id]
 unbranded	[fin.products.global_brand]
-
-query TT
-SELECT "column", derivation FROM glossql_lineage($$SELECT NOT p.id > 1 AS low, p.status NOT IN ('X') AS not_x, p.global_brand IS NOT NULL AS branded, (p.id + 1) BETWEEN 1 AND 3 AS shifted, p.id IS DISTINCT FROM p.parent AS moved, CASE p.status WHEN 'D' THEN 1 ELSE 0 END AS flag, row_number() OVER (PARTITION BY p.status ORDER BY p.id DESC) AS rn, sum(p.id) OVER () AS all_ids FROM fin.products p$$);
-----
-low	not(>(fin.products.id:BIGINT, cast(1 as BIGINT)))
-not_x	not(in(fin.products.status:VARCHAR, 'X'))
-branded	is_not_null(fin.products.global_brand:VARCHAR)
-shifted	and(>=(+(fin.products.id:BIGINT, cast(1 as BIGINT)), cast(1 as BIGINT)), <=(+(fin.products.id:BIGINT, cast(1 as BIGINT)), cast(3 as BIGINT)))
-moved	is_distinct_from(fin.products.id:BIGINT, fin.products.parent:BIGINT)
-flag	case(when =(fin.products.status:VARCHAR, 'D') then 1, else 0)
-rn	row_number() over(partition by fin.products.status:VARCHAR order by fin.products.id:BIGINT desc)
-all_ids	sum(fin.products.id:BIGINT) over()
-
-# a real UNNEST reads unnest; a union of three branches reads each branch
-query TT
-SELECT "column", derivation FROM glossql_lineage($$SELECT unnest([id, parent]) AS member, unnest(string_split(global_brand, 'd')) AS part FROM fin.products$$);
-----
-member	unnest(list_value(fin.products.id:BIGINT, fin.products.parent:BIGINT))
-part	unnest(string_split(fin.products.global_brand:VARCHAR, 'd'))
-
-query TTT
-SELECT "column", derivation, complete FROM glossql_lineage($$SELECT status AS code FROM fin.products UNION SELECT global_brand FROM fin.products UNION ALL SELECT coalesce(status, 'none') FROM fin.products$$);
-----
-code	union(union(fin.products.status:VARCHAR, fin.products.global_brand:VARCHAR), coalesce(fin.products.status:VARCHAR, 'none'))	true
 
 # --- views_mapping(dataset): per output column, per branch of the union the rows come from and per
 # scanned column, the branch's derivation, the table, the column, the alias of a table read more than once,

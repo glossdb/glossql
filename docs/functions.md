@@ -47,15 +47,13 @@ FROM glossql_kit('kits/kpi/kit.sql');
 Runs a kit's statements in order and adds a row to the `kits` table.
 See [kits](kits.md).
 
-## glossql_lineage
+## lineage
 
-```sql
-FROM glossql_lineage($$SELECT id, amount * 2 AS twice FROM shop.orders$$);
-```
-
-`glossql_lineage(sql VARCHAR)` → `(column VARCHAR, derivation VARCHAR,
-complete BOOLEAN, shape VARCHAR)`. What computes each output column of
-a `SELECT`, read from its plan. A leaf is `dataset.table.column:TYPE`.
+A view's lineage is a stored result: the result of `lineage` on the
+view (`SELECT lineage() FROM <view>`), stored when the view is defined
+and computed again once a node it read changed. It holds what
+computes each of the view's columns (`derivation`, `complete`,
+`shape`), read from its plan. A leaf is `dataset.table.column:TYPE`.
 A function, an operator and a `CASE` read as their name over their
 operands, a literal as written: `coalesce(a, b)`, `=(a, 'D')`,
 `and(a, b)`, `in(a, 'D', 'A')`, `is_null(a)`,
@@ -66,10 +64,7 @@ part reads `<?>`, or `<?class>` with the expression's class.
 adds up: `ratio` (a division by an aggregate), `average`, `distinct` (a
 distinct count), else NULL. A sum over one of them keeps the shape.
 
-A view's lineage is the same, stored: the result of `lineage` on the
-view (`SELECT lineage() FROM <view>`), stored when the view is defined
-and computed again once a node it read changed. The lineage kit reads
-it per dataset (`views_lineage`, `views_scans`, `views_joins`,
+The lineage kit reads it per dataset (`views_lineage`, `views_scans`, `views_joins`,
 `views_mapping`; its SKILL.md).
 
 ## glossql_columns
@@ -100,10 +95,10 @@ scalar cell of a dataset's tables, or of one table, as one relation.
 - `val` is the value as text. `column_type` is the stored type. `ci`
   numbers the columns, `rn` the rows of each table. Nested columns are
   left out.
-- The second argument is `'tables'` (the default), `'views'`,
-  `'all'`, or a place (`'itself'`, `'its columns'`,
-  `'the dataset''s metrics'`): the tables and views of that place,
-  walked from the running function's subject; `true` means `'all'`.
+- With no second argument it reads the tables. The second argument is
+  `true` (the tables and the views), `'views'`, or a place (`'itself'`,
+  `'its columns'`, `'the dataset''s metrics'`): the tables and views
+  of that place, walked from the running function's subject.
 - `cells => n` bounds what is read. A table with more scalar cells
   than `n` is read as a sample of its rows. The sample is chosen by a
   hash of each row, so the same rows come back on every run. A result

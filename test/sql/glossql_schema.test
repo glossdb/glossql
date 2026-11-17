@@ -89,8 +89,7 @@ GLOSS unit ON nothing.amount AS $${"value": "EUR"}$$;
 ----
 Invalid Input Error
 
-# --- a VIEW body meets the definition contract (sql or stopped, assumptions disclosed),
-# then every definition schema a kit declared; a definition is a view
+# --- a VIEW body meets the definition contract (sql or stopped, assumptions disclosed); a definition is a view
 
 statement ok
 DECLARE ASPECT revenue WITH $${"title": "revenue", "description": "income from sales", "x-kind": "measure"}$$ AS VIEW;
@@ -120,32 +119,12 @@ GLOSS revenue ON orders AS $${"sql": "SELECT 1"}$$;
 ----
 Invalid Input Error
 
-# no kit declared a definition schema yet: a key beside the contract's is admitted
+# a key beside the contract's is admitted
 statement ok
 GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders", "window": "7 days"}$$;
 
-# a kit's definition schema is an aspect flavored x-kind definition: the engine validates every
-# VIEW body against it after the contract, and refuses a schema that would strand a current value
-statement error
-DECLARE ASPECT definition WITH $${"x-kind": "definition", "type": "object", "additionalProperties": false, "properties": {"sql": {}, "stopped": {}, "assumptions": {}, "additivity": {"enum": ["semi-additive", "additive"]}}}$$ AS FACT ON DATASET;
-----
-Invalid Input Error
-
 statement ok
 GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders", "additivity": "additive", "assumptions": [{"assumption": "amounts are net", "basis": "column_stats", "confidence": 0.9}]}$$;
-
-statement ok
-DECLARE ASPECT definition WITH $${"x-kind": "definition", "type": "object", "additionalProperties": false, "properties": {"sql": {}, "stopped": {}, "assumptions": {}, "additivity": {"enum": ["semi-additive", "additive"]}}}$$ AS FACT ON DATASET;
-
-statement error
-GLOSS revenue ON fin AS $${"sql": "SELECT 1", "additivity": "stok"}$$;
-----
-Invalid Input Error
-
-statement error
-GLOSS revenue ON fin AS $${"sql": "SELECT 1", "window": "7 days"}$$;
-----
-Invalid Input Error
 
 query R
 SELECT revenue FROM fin.revenue;

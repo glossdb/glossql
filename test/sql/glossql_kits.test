@@ -1,5 +1,5 @@
 # name: test/sql/glossql_kits.test
-# description: a kit is a script of declarations glossql_kit() loads; the KPI kit's vocabulary, definition schema, detector, measurements and tests
+# description: a kit is a script of declarations glossql_kit() loads; the KPI kit's vocabulary, detector, measurements and tests
 # group: [sql]
 
 require glossql
@@ -108,7 +108,7 @@ meaning	NULL	missing
 role	NULL	conflict
 
 # --- a metric's body is the definition contract; what a reader needs is glossed on the view's
-# columns, under the kit's words — the kit declares no definition schema
+# columns, under the kit's words
 
 statement ok
 DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS VIEW;

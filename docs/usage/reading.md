@@ -85,18 +85,12 @@ removed stays readable in `<name>_history`. One page per table:
 
 ## Lineage
 
-`glossql_lineage(sql)` returns what computes each output column of a
-`SELECT`, read from its plan down to the source columns and their
-types.
-
-```sql
-FROM glossql_lineage($$SELECT sensor_id, temperature * 1.8 + 32 AS fahrenheit FROM plant.readings WHERE sensor_id > 1$$);
-```
-
-Here `sensor_id` derives from `plant.readings.sensor_id:INTEGER`, and
-`fahrenheit` from an expression over
-`plant.readings.temperature:DOUBLE`. The columns, and the same for the
-views of a dataset: [functions](../functions.md#glossql_lineage).
+A view's lineage is stored when the view is defined: what computes
+each of its columns, read from its plan down to the source columns and
+their types. A view column `fahrenheit` computed as
+`temperature * 1.8 + 32` derives from an expression over
+`plant.readings.temperature:DOUBLE`. The columns, and how the lineage
+kit reads it per dataset: [functions](../functions.md#lineage).
 
 Every load stores its load query's lineage on its
 [imports](../specification/tables/imports.md) row. Comparing two rows

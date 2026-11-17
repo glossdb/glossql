@@ -530,12 +530,10 @@ struct AspectRow {
 	string schema;
 	string kind;
 	vector<string> grains;
-	//! the x-kind the schema carries: 'definition' marks a kit's metric definition schema
-	string flavor;
 };
 
 static AspectRow LookupAspect(Inner &inner, const string &name) {
-	auto row = inner.Row("SELECT schema, kind, from_json(grains, '[\"VARCHAR\"]'), schema::JSON->>'x-kind' FROM " +
+	auto row = inner.Row("SELECT schema, kind, from_json(grains, '[\"VARCHAR\"]') FROM " +
 	                     inner.Store("aspects") + " WHERE name = " + QuoteText(name) + " AND end_snapshot IS NULL");
 	if (row.empty()) {
 		throw InvalidInputException("glossql: aspect '%s' is not declared", name);
@@ -547,22 +545,6 @@ static AspectRow LookupAspect(Inner &inner, const string &name) {
 	for (auto &grain : ListValue::GetChildren(row[2])) {
 		result.grains.push_back(grain.ToString());
 	}
-	result.flavor = row[3].IsNull() ? "" : row[3].ToString();
-	return result;
-}
-
-//! The metric definition schemas a kit declared: every aspect flavored `x-kind:
-//! metric definition`, newest declaration per name. A VIEW body meets each of them
-//! after the metric definition contract; a workspace without one runs on the contract
-static vector<pair<string, string>> DefinitionSchemas(Inner &inner) {
-	vector<pair<string, string>> result;
-	auto rows = inner.Run("SELECT name, schema FROM " + inner.Current("aspects") +
-	                      " WHERE schema::JSON->>'x-kind' = 'definition' ORDER BY name");
-	while (auto chunk = rows->Fetch()) {
-		for (idx_t i = 0; i < chunk->size(); i++) {
-			result.emplace_back(chunk->GetValue(0, i).ToString(), chunk->GetValue(1, i).ToString());
-		}
-	}
 	return result;
 }
 
@@ -572,7 +554,7 @@ static bool HasGrain(const AspectRow &aspect, const string &grain) {
 
 //! Admission of a gloss (SPEC §5.2, §7.1): the aspect is declared and not a
 //! MEASUREMENT; the body conforms to the aspect's schema (FACT) or the
-//! metric definition contract and the kit's metric definition schemas (VIEW); a TABLE or COLUMN grain takes stored
+//! metric definition contract (VIEW); a TABLE or COLUMN grain takes stored
 //! subjects only; a test's BY admits the actor's kind
 static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &aspect_name, const string &subject,
                             const string &body, const string &actor) {
@@ -581,25 +563,13 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 		throw InvalidInputException("glossql: aspect '%s' is a MEASUREMENT: never glossed, its value is its function's",
 		                            aspect_name);
 	}
-	if (aspect.flavor == "definition") {
-		throw InvalidInputException(
-		    "glossql: aspect '%s' is a definition schema: never glossed, it validates every VIEW gloss", aspect_name);
-	}
 	// A VIEW body meets the metric definition contract (sql or stopped, assumptions
-	// disclosed), then every metric definition schema a kit declared; a FACT body meets
-	// the aspect's own WITH schema
+	// disclosed); a FACT body meets the aspect's own WITH schema
 	if (aspect.kind == "VIEW") {
 		auto error = JsonSchemaCheck(DEFINITION_CONTRACT, body);
 		if (!error.empty()) {
 			throw InvalidInputException("glossql: the body of %s does not meet the definition contract: %s",
 			                            aspect_name, error);
-		}
-		for (auto &schema : DefinitionSchemas(inner)) {
-			error = JsonSchemaCheck(schema.second, body);
-			if (!error.empty()) {
-				throw InvalidInputException("glossql: the body of %s does not conform to the definition schema %s: %s",
-				                            aspect_name, schema.first, error);
-			}
 		}
 	} else {
 		auto error = JsonSchemaCheck(aspect.schema, body);
@@ -817,23 +787,6 @@ static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 		    inner.Scalar("SELECT count(*) FROM " + inner.Current("glossary") + " WHERE aspect = " + QuoteText(name));
 		if (glossed.GetValue<int64_t>() > 0) {
 			throw InvalidInputException("glossql: aspect '%s' has glosses: delete them before changing it", name);
-		}
-	}
-	if (JsonStringField(row[1].ToString(), "x-kind") == "definition") {
-		// existing bodies never silently stop matching their schema (SPEC §5.1):
-		// every current VIEW value meets the schema before it is declared
-		auto rows = inner.Run("SELECT aspect, subject, body FROM " + inner.Current("glossary") +
-		                      " WHERE aspect IN (SELECT name FROM " + inner.Current("aspects") +
-		                      " WHERE kind = 'VIEW') ORDER BY begin_snapshot");
-		while (auto chunk = rows->Fetch()) {
-			for (idx_t i = 0; i < chunk->size(); i++) {
-				auto error = JsonSchemaCheck(row[1].ToString(), chunk->GetValue(2, i).ToString());
-				if (!error.empty()) {
-					throw InvalidInputException("glossql: definition schema '%s' would strand the %s gloss on %s: %s",
-					                            name, chunk->GetValue(0, i).ToString(),
-					                            chunk->GetValue(1, i).ToString(), error);
-				}
-			}
 		}
 	}
 	if (!row[4].IsNull()) {

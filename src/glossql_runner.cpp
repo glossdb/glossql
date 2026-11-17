@@ -2016,16 +2016,12 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 				 : declared[3].GetValue<double>() == threshold.GetValue<double>())) {
 			return;
 		}
-		auto current = inner.Row("SELECT kind, schema::JSON->>'x-kind' FROM " + inner.Current("aspects") +
-		                         " WHERE name = " + QuoteText(aspect));
+		auto current =
+		    inner.Row("SELECT kind FROM " + inner.Current("aspects") + " WHERE name = " + QuoteText(aspect));
 		if (current.empty()) {
 			throw InvalidInputException("glossql: aspect '%s' is not declared", aspect);
 		}
 		auto &kind = current[0];
-		if (!current[1].IsNull() && current[1].ToString() == "definition") {
-			throw InvalidInputException("glossql: a test on definition schema '%s' is refused: it judges nothing",
-			                            aspect);
-		}
 		if (kind.ToString() == "MEASUREMENT" && !actor_kinds.empty()) {
 			throw InvalidInputException(
 			    "glossql: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
@@ -2114,7 +2110,7 @@ struct Read {
 };
 
 //! The data a body reads, as a place: subject_column(), the relationship checks and branch_rows()
-//! the subject's own; dataset_cells() its dataset's tables, its views ('views'), both ('all', true), the tables
+//! the subject's own; dataset_cells() its dataset's tables, its views ('views'), both (true), the tables
 //! and views of a place, or the one table it names; a dataset it names is the subject's, since one
 //! that is not is refused at the declaration. A table the body names in FROM is that table: one
 //! named without its dataset is taken in the subject's, by the name the lake spells it with, or as
@@ -2133,7 +2129,7 @@ static Read DataRead(ClientContext &context, const std::set<string> &places, con
 			}
 			if (list[i] == "views") {
 				what = "views";
-			} else if (list[i] == "all" || list[i] == "true") {
+			} else if (list[i] == "true") {
 				what = "data";
 			}
 		}
@@ -2701,7 +2697,7 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	if (parts.empty() || parts.size() > 2) {
 		throw InvalidInputException("glossql: dataset_cells takes a dataset or dataset.table, got '%s'", subject);
 	}
-	// a second argument true (or 'all') takes the dataset's views too — a metric definition
+	// a second argument true takes the dataset's views too — a metric definition
 	// is one — each bound at bind and skipped when it does not, as a screen skips a
 	// metric definition that fails; 'views' takes the views alone, so that a read over the
 	// metric definitions — a metric's series, a plan's rows — binds no table; a place (the
@@ -2716,8 +2712,6 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 			auto mode = input.inputs[1].ToString();
 			if (mode == "views") {
 				views = only_views = true;
-			} else if (mode == "all") {
-				views = true;
 			} else if (PlaceNames(inner).count(mode)) {
 				views = placed = true;
 				Value subject;
@@ -2732,9 +2726,8 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 						place.insert(chunk->GetValue(0, r).ToString());
 					}
 				}
-			} else if (mode != "tables") {
-				throw InvalidInputException("glossql: dataset_cells takes tables, views, all or a place, got '%s'",
-				                            mode);
+			} else {
+				throw InvalidInputException("glossql: dataset_cells takes true, views or a place, got '%s'", mode);
 			}
 		} else {
 			views = input.inputs[1].GetValue<bool>();
