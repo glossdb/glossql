@@ -79,6 +79,14 @@ the asset's definition, and the declarations of the test and the
 detector. It is out of date once one of them changed after it was
 computed. `glossql_outdated()` lists it with the change.
 
+- A test or a detector declared again puts its results out of date in
+  every dataset. Each dataset computes them when its test runs next.
+- Data written by another tool changes no result until a statement
+  computes it: `TESTS()` serves the stored result, marked not
+  current.
+- A column retyped and typed back reads as changed: the results that
+  read its definition are out of date until they are computed again.
+
 ## Read the results
 
 ```sql
