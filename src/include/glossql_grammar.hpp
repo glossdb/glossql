@@ -291,8 +291,10 @@ public:
 	//! snapshot's change row commit as one transaction of the catalogue database.
 	//! A write that loses a race to another writer runs again, whole. Returns the
 	//! snapshot id, or 0 for a body that wrote nothing. A body touches the store
-	//! and the lake's metadata tables only: one transaction writes one database
-	int64_t Write(ClientContext &context, const std::function<void(class CatalogWrite &)> &body);
+	//! and the lake's metadata tables only: one transaction writes one database.
+	//! `store_alone`: the body names nothing but the store, and resolves names in the catalog database
+	int64_t Write(ClientContext &context, const std::function<void(class CatalogWrite &)> &body,
+	              bool store_alone = false);
 	//! Whether a write that failed with `error`, having read the snapshot `head`, lost a
 	//! race; `taking_snapshot` while it writes its snapshot row and commits
 	bool Overtaken(const ErrorData &error, int64_t head, bool taking_snapshot);

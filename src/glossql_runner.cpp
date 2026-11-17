@@ -499,7 +499,7 @@ bool Inner::Overtaken(const ErrorData &error, int64_t head, bool taking_snapshot
 	return chunk && chunk->size() > 0 && chunk->GetValue(0, 0) == Value::BOOLEAN(true);
 }
 
-int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWrite &)> &body) {
+int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWrite &)> &body, bool store_alone) {
 	// the tries a write takes before it gives the caller the last reason
 	static constexpr idx_t TRIES = 60;
 	string lost;
@@ -512,12 +512,22 @@ int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWri
 		std::lock_guard<std::mutex> guard(state.lock);
 		state.reads.clear();
 	}
+	// a write whose body names the store alone resolves names in the catalog database, so it opens no
+	// transaction of the lake
+	auto &paths = *ClientData::Get(*con.context).catalog_search_path;
 	struct Written {
 		bool &writing;
+		CatalogSearchPath &paths;
+		vector<CatalogSearchEntry> before;
 		~Written() {
 			writing = false;
+			paths.Set(before, CatalogSetPathType::SET_DIRECTLY);
 		}
-	} written {writing};
+	} written {writing, paths, paths.GetSetPaths()};
+	if (store_alone) {
+		paths.Set({CatalogSearchEntry(Identifier(ws.meta), Identifier(ws.meta_schema))},
+		          CatalogSetPathType::SET_DIRECTLY);
+	}
 	for (idx_t attempt = 0; attempt < TRIES; attempt++) {
 		Run("BEGIN");
 		int64_t head_id = -1;
@@ -2699,9 +2709,12 @@ static vector<vector<Value>> Extract(ClientContext &context, const vector<Value>
 		ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(subject));
 		// stored with the nodes each read. The result one replaces ends, and its inputs with it; the same
 		// value and error keep the snapshot they changed at, so what read them stays current
-		inner.Write(context, [&](CatalogWrite &write) {
-			StoreResults(write, dataset, name, returns.ToString(), read_at.GetValue<int64_t>(), results, retire);
-		});
+		inner.Write(
+		    context,
+		    [&](CatalogWrite &write) {
+			    StoreResults(write, dataset, name, returns.ToString(), read_at.GetValue<int64_t>(), results, retire);
+		    },
+		    true);
 		if (!failed.empty()) {
 			throw InvalidInputException(failed);
 		}

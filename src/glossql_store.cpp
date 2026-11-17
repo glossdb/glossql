@@ -1671,9 +1671,10 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
 		               Value::BOOLEAN(true)});
 		results.push_back(std::move(row));
 	}
-	inner.Write(context, [&](CatalogWrite &write) {
-		StoreResults(write, scope.dataset, test.name, "test", read_at, results, retire);
-	});
+	inner.Write(
+	    context,
+	    [&](CatalogWrite &write) { StoreResults(write, scope.dataset, test.name, "test", read_at, results, retire); },
+	    true);
 	out.insert(out.end(), served.begin(), served.end());
 	std::sort(out.begin(), out.end(),
 	          [](const vector<Value> &a, const vector<Value> &b) { return a[1].ToString() < b[1].ToString(); });
