@@ -1,5 +1,5 @@
 # name: test/sql/glossql_kinds.test
-# description: a kind of asset a kit declares through its lineage_assets_, lineage_edges_ and lineage_places_ macros: its assets are subjects of that kind, its edges join the lineage, its places are places; a property's grains do not admit it; it and a relation of its dataset do not share a name; a result on it reads its own declaration, so declaring another leaves it current (SPEC §4, §6)
+# description: a kind of asset a kit declares through its lineage_assets_, lineage_edges_ and lineage_places_ macros: its assets are subjects of that kind, its edges join the lineage, its places are places; a property's grains do not admit it; it and a relation of its dataset do not share a name; a result on it reads its own declaration, so declaring another leaves it current; a body that refuses its subject stores nothing (SPEC §4, §6)
 # group: [sql]
 
 require glossql
@@ -69,11 +69,6 @@ query T
 SELECT list_contains(list_transform(main.place_list(), lambda p: p."where"), 'its columns set');
 ----
 true
-
-query T
-SELECT main.asset_grain('fin.boost');
-----
-TRIAL
 
 statement ok
 SET VARIABLE glossql_subject = 'fin.boost';
@@ -157,3 +152,18 @@ query TTTTT
 SELECT columns_set() FROM fin.boost;
 ----
 columns_set	fin.boost	columns_set	2	true
+
+# a body that refuses its subject (not_a_<kind>) stores no result: a refusal is no failed computation
+
+statement ok
+DECLARE FUNCTION trial_only FOR GLOBAL AS $$ SELECT CASE WHEN $subject = 'fin.boost' THEN 1 ELSE error('not_a_trial: ' || $subject || ' is no trial') END AS n $$ RETURNS columns_set;
+
+statement error
+SELECT trial_only() FROM fin.priced;
+----
+not_a_trial
+
+query I
+SELECT count(*) FROM measurements_history WHERE function = 'trial_only';
+----
+0

@@ -2040,6 +2040,11 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 		if (context.IsInterrupted()) {
 			throw InterruptException();
 		}
+		// a body that refuses its subject (not_a_<kind>) computed nothing: the refusal stores no result
+		auto code = StringUtil::StartsWith(error, "glossql: ") ? error.substr(9) : error;
+		if (StringUtil::StartsWith(code, "not_a_")) {
+			throw InvalidInputException(error);
+		}
 		if (!error.empty()) {
 			value = Value();
 		}

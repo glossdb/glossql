@@ -1822,12 +1822,16 @@ static unique_ptr<TableRef> KindBindReplace(ClientContext &context, TableFunctio
                                             const KindStem *kind) {
 	auto lake = LakeName(context);
 	vector<string> macros;
+	// a read that names one place plans the macros that add it alone: those whose text names it
+	bool narrowed = string(kind->stem) == "lineage_places_" && input.inputs.size() > 1 && !input.inputs[1].IsNull();
+	auto place = narrowed ? QuoteText(input.inputs[1].ToString()) : string();
 	auto &catalog = Catalog::GetCatalog(context, Identifier(lake));
 	auto schema = catalog.GetSchema(context, Identifier("main"), OnEntryNotFound::RETURN_NULL);
 	if (schema) {
 		schema->Scan(context, CatalogType::TABLE_MACRO_ENTRY, [&](CatalogEntry &entry) {
 			auto macro = entry.name.GetIdentifierName();
-			if (StringUtil::StartsWith(macro, kind->stem)) {
+			if (StringUtil::StartsWith(macro, kind->stem) &&
+			    (!narrowed || StringUtil::Contains(entry.ToSQL(), place))) {
 				macros.push_back(macro);
 			}
 		});
@@ -1851,6 +1855,21 @@ static unique_ptr<TableRef> KindBindReplace(ClientContext &context, TableFunctio
 			}
 		}
 	}
+	// the assets of one kind are its macro's alone
+	if (string(kind->stem) == "lineage_assets_" && input.inputs.size() > 1 && !input.inputs[1].IsNull()) {
+		auto named = string(kind->stem) + input.inputs[1].ToString();
+		vector<string> owners;
+		for (auto &macro : macros) {
+			if (StringUtil::CIEquals(macro, named)) {
+				owners.push_back(macro);
+			}
+		}
+		macros = owners;
+	}
+	// where no kit names the place, one empty row, so that the read can say the where names no place
+	if (narrowed && macros.empty()) {
+		return make_uniq<SubqueryRef>(ParseSelect(string(kind->empty)));
+	}
 	vector<string> parts;
 	for (auto &macro : macros) {
 		for (auto &dataset : datasets) {
@@ -1868,10 +1887,18 @@ static unique_ptr<TableRef> KindBind(ClientContext &context, TableFunctionBindIn
 	return KindBindReplace(context, input, &KIND_STEMS[STEM]);
 }
 
-static TableFunction GlossKindFunction(idx_t stem, table_function_bind_replace_t bind) {
+static TableFunctionSet GlossKindFunction(idx_t stem, table_function_bind_replace_t bind) {
+	TableFunctionSet set(KIND_STEMS[stem].function);
 	TableFunction function(KIND_STEMS[stem].function, {LogicalType::VARCHAR}, nullptr);
 	function.bind_replace = bind;
-	return function;
+	set.AddFunction(function);
+	// the places a kit adds, narrowed to the macros that add the where named; the assets of one kind
+	if (string(KIND_STEMS[stem].stem) != "lineage_edges_") {
+		TableFunction narrowed(KIND_STEMS[stem].function, {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr);
+		narrowed.bind_replace = bind;
+		set.AddFunction(narrowed);
+	}
+	return set;
 }
 
 //! The fill mark on the second connection (ClientContextState) while it

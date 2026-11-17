@@ -603,7 +603,8 @@ function declared again, or the property it fills declared again,
 makes its results out of date. A later extraction serves a current
 row; an out-of-date one makes the next extraction compute. Old rows
 stay in `measurements_history`. A function's own results are never
-its input. A computation that
+its input. A body that refuses its subject
+raises `not_a_<kind>` and stores nothing: a refusal is no computation. A computation that
 fails, in the body or in the schema check, is stored too, with its
 inputs and its `error` and no value. It is current while its inputs
 are, so nothing computes it again on its own; a call computes it

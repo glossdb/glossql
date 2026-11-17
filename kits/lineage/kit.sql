@@ -88,13 +88,11 @@ UNION ALL SELECT * FROM main.loaded_from_edges(dataset_name)
 UNION ALL SELECT "from", "to", kind FROM glossql_kind_edges(dataset_name);
 
 -- The class of an asset by its path: what a property's grains name. A bare
--- name is a dataset, or a source where no dataset carries it; an asset of a
--- kind a kit declares is of that kind, unless it is the relation itself
+-- name is a dataset, or a source where no dataset carries it. An asset of a
+-- kind a kit declares reads by its path; the store admits an annotation on
+-- it by its kind
 CREATE OR REPLACE MACRO main.asset_grain(asset) AS
   CASE WHEN contains(asset, ' -> ') OR contains(asset, ' <-> ') THEN 'RELATIONSHIP'
-       WHEN len(string_split(asset, '.')) = 2 AND asset IN (SELECT k.asset FROM glossql_kind_assets(NULL) k
-                                                            WHERE k.node_what <> 'definition')
-         THEN (SELECT upper(max(k.kind)) FROM glossql_kind_assets(NULL) k WHERE k.asset = asset)
        WHEN NOT contains(asset, '.') AND asset IN (SELECT name FROM main.sources)
             AND asset NOT IN (SELECT name FROM main.datasets) THEN 'SOURCE'
        WHEN NOT contains(asset, '.') THEN 'DATASET'
@@ -258,7 +256,8 @@ FROM query(CASE where_
   WHEN 'its dataset' THEN 'SELECT split_part(main.read_subject(), ''.'', 1) AS asset'
   WHEN 'the dataset''s metrics' THEN 'SELECT asset FROM main.place_metrics(split_part(main.read_subject(), ''.'', 1))'
   ELSE 'SELECT asset FROM (SELECT *, bool_or(subject IS NULL AND "where" = ''' || replace(where_, '''', '''''')
-       || ''') OVER () AS known FROM glossql_kind_places(split_part(main.read_subject(), ''.'', 1))) WHERE CASE WHEN known THEN "where" = '''
+       || ''') OVER () AS known FROM glossql_kind_places(split_part(main.read_subject(), ''.'', 1), '''
+       || replace(where_, '''', '''''') || ''')) WHERE CASE WHEN known THEN "where" = '''
        || replace(where_, '''', '''''') || ''' AND subject = main.read_subject() ELSE error(''not_a_place: '
        || replace(replace(where_, '''', ''''''), '''', '''''') || ' names no place; place_list() lists them'') END' END);
 
@@ -307,7 +306,7 @@ SELECT p.asset, pr.name AS property, h.body AS value, CASE WHEN h.body IS NULL T
        (SELECT max(t.threshold) FROM main.tests t WHERE t.aspect = pr.name) AS threshold
 FROM main.place(where_) p
 -- an asset of a kind a kit declares by an annotation: that annotation is its own
-LEFT JOIN glossql_kind_assets(split_part(main.read_subject(), '.', 1)) k
+LEFT JOIN glossql_kind_assets(split_part(main.read_subject(), '.', 1), kind) k
   ON k.asset = p.asset AND starts_with(k.node_what, 'annotation ')
 JOIN props pr ON CASE WHEN k.asset IS NOT NULL THEN pr.name = substr(k.node_what, 12)
                       ELSE len(pr.grains) = 0 OR list_contains(pr.grains, main.asset_grain(p.asset)) END
