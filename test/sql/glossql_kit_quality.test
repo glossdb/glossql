@@ -442,6 +442,20 @@ FROM GLOSSARY(fin.monthly.d::temporal_profile);
 ----
 month	true	4/4	0
 
+# one month missing between two months: the grain is still the month, the missing month counted
+statement ok
+CREATE TABLE fin.month_missing AS SELECT * FROM (VALUES (DATE '2025-01-01'), (DATE '2025-02-01'), (DATE '2025-04-01')) t(d);
+
+statement ok
+SELECT temporal() FROM fin.month_missing.d;
+
+query TT
+SELECT json_extract_string(value, '$.granularity'),
+       json_extract_string(value, '$.completeness.actual') || '/' || json_extract_string(value, '$.completeness.expected')
+FROM GLOSSARY(fin.month_missing.d::temporal_profile);
+----
+month	3/4
+
 statement ok
 CREATE TABLE fin.irregular AS SELECT * FROM (VALUES (DATE '2024-01-01'), (DATE '2024-01-02'), (DATE '2024-01-12'), (DATE '2024-02-26')) t(d);
 

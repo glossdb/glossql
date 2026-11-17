@@ -827,7 +827,9 @@ $$ RETURNS additivity_evidence;
 --===------------------------------------------------------------------===--
 -- The temporal profile: a date column's window, cadence, completeness and
 -- gaps, as a reader that windows a series needs them. Cadence is the nearest
--- named grain to the median gap between distinct instants; completeness
+-- named grain to the median gap between distinct instants, a gap the data
+-- holds (the lower of the middle two), so that one missing period among
+-- two gaps leaves the grain as it is; completeness
 -- counts calendar buckets over the column's own window; a gap is a stretch
 -- beyond twice the median, the twenty largest sampled. A point in time
 -- bounds a window; a number or a text does not, and says so.
@@ -856,7 +858,7 @@ DECLARE FUNCTION temporal FOR GLOBAL AS $$
     SELECT t AS gap_start, lead(t) OVER (ORDER BY t) AS gap_end,
            (epoch(lead(t) OVER (ORDER BY t)) - epoch(t))::DOUBLE AS gap_seconds
     FROM ordered_ts),
-  g AS (SELECT median(gap_seconds) AS med, min(gap_seconds) AS lo, max(gap_seconds) AS hi
+  g AS (SELECT quantile_disc(gap_seconds, 0.5) AS med, min(gap_seconds) AS lo, max(gap_seconds) AS hi
         FROM gap WHERE gap_seconds IS NOT NULL),
   grain AS (
     SELECT med, lo, hi,
