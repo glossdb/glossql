@@ -564,9 +564,17 @@ The lake's snapshot id is the only version. An input is a node: an
 asset and what was read of it, such as `fin.orders.amount`
 `annotation role`, `fin.orders` `data` or `min_max` `function`.
 A read records the nodes of each asset of its place and those its
-place's walk passed (a view's definition and those of what it reads,
-a table's relationships, which views of a dataset are metrics), so a
-member added to the place later changes a node it read. A node changed at the latest
+place's walk passed (a view's lineage, a table's relationships, which
+views of a dataset are metrics), so a
+member added to the place later changes a node it read. A view's
+lineage is a stored result of its own, `lineage` on the view
+(`SELECT lineage() FROM <view>`): what the view scans, joins and maps
+and what computes each column, with the nodes its planning read (its
+definition, and that of each relation and macro its SQL names, through
+the views it reads) and the relations it reads as rows of `edges`.
+Defining the view stores it in the same write; a change to a relation
+it reads makes it out of date like any result, and computed again with
+the same value it leaves what walked it current. A node changed at the latest
 snapshot one of its catalog rows begins or ends at; rows are ended,
 never deleted. The nodes, and what each read records, are listed in
 `docs/specification/tables/inputs.md`.

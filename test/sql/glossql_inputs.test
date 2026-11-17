@@ -226,9 +226,10 @@ checked	f1.race_count	checked	1	false
 statement ok
 SELECT role_check() FROM points;
 
-# --- the definition is the view's annotation and what it reads: any write to the annotation outdates a
-# reader of the view's definition and a reader of its sources. A view redefined to read another table
-# outdates them too; computed again, they read that table
+# --- the definition is the view's annotation: any write to it outdates a reader of the view's definition.
+# The view's lineage is stored again in the same write; with the same SQL it has the same value, so a
+# reader of its sources stays current. A view redefined to read another table outdates both, through its
+# lineage; computed again, they read that table
 
 statement ok
 GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1", "assumptions": [{"assumption": "a race counts once"}]}$$;
@@ -236,12 +237,10 @@ GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FR
 query TTTT
 SELECT function, asset, what, reason FROM glossql_outdated() WHERE subject = 'f1.race_count' ORDER BY ALL;
 ----
-checked	f1.race_count	result role_check	possibly
-role_check	f1.race_count	definition	changed
 scans	f1.race_count	definition	changed
 
 statement ok
-SELECT role_check(), scans() FROM race_count;
+SELECT scans() FROM race_count;
 
 statement ok
 GLOSS race_count ON f1 AS $${"sql": "SELECT r.date AS period, count(*) AS value FROM f1.races r JOIN f1.circuits c ON c.circuit_id = r.race_id GROUP BY 1"}$$;
@@ -249,8 +248,9 @@ GLOSS race_count ON f1 AS $${"sql": "SELECT r.date AS period, count(*) AS value 
 query TTT
 SELECT function, asset, what FROM glossql_outdated() WHERE subject = 'f1.race_count' AND reason = 'changed' ORDER BY ALL;
 ----
-role_check	f1.race_count	definition
+role_check	f1.race_count	result lineage
 scans	f1.race_count	definition
+scans	f1.race_count	result lineage
 
 query TTTTT
 SELECT role_check(), scans() FROM race_count;
@@ -352,6 +352,11 @@ true
 
 statement ok
 ALTER TABLE f1.results ALTER COLUMN points TYPE BIGINT;
+
+# the lineage of the view over it is out of date, and brought current as any result
+
+statement ok
+SELECT lineage() FROM points;
 
 query TT
 SELECT subject, state FROM GLOSSARY(results.points) WHERE aspect = 'role';

@@ -25,12 +25,16 @@ CREATE OR REPLACE MACRO main.read_subject() AS coalesce(getvariable('glossql_sub
 --   contains  dataset -> table, view, relationship; table or view -> column
 --   reads     view -> the tables and columns it scans and joins on, as the
 --             view's SQL resolves to the loaded tables; view -> each view
---             its SQL names
+--             its SQL names. The edges of each view's stored lineage
+--             (view_edges())
 --   relates   relationship -> each of its columns
 --   loaded from  table -> the source its recipe loads it from, a source
 --             named as it is declared
 --   and the edges of each kind of asset a kit declares
 --             (glossql_kind_edges(): its lineage_edges_<kind> macro)
+-- Each part is a read over the catalog's rows: a view's lineage is the
+-- result of `lineage` on the view, stored when the view is defined and
+-- computed again, as any result, once a node it read changed.
 --===------------------------------------------------------------------===--
 -- contains_edges(dataset): the lineage's contains edges alone
 CREATE OR REPLACE MACRO main.contains_edges(dataset_name) AS TABLE
@@ -38,6 +42,23 @@ WITH cols AS (SELECT table_name, column_name FROM glossql_columns(dataset_name))
 SELECT DISTINCT dataset_name AS "from", dataset_name || '.' || table_name AS "to", 'contains' AS kind FROM cols
 UNION ALL SELECT dataset_name || '.' || table_name, dataset_name || '.' || table_name || '.' || column_name, 'contains' FROM cols
 UNION ALL SELECT dataset_name, left_side || ' ' || op || ' ' || right_side, 'contains' FROM main.relationships WHERE dataset = dataset_name;
+
+-- relates_edges(dataset): the lineage's relates edges alone; a side is
+-- table.column or table.(a, b): one edge per column
+CREATE OR REPLACE MACRO main.relates_edges(dataset_name) AS TABLE
+WITH rels AS (
+  SELECT left_side, right_side, left_side || ' ' || op || ' ' || right_side AS rel
+  FROM main.relationships WHERE dataset = dataset_name),
+sides AS (
+  SELECT rel, regexp_extract(side, '^([^.]+\.[^.]+)\.', 1) AS tbl,
+         unnest(string_split(regexp_replace(regexp_replace(side, '^[^.]+\.[^.]+\.', ''), '^\((.*)\)$', '\1'), ', ')) AS col
+  FROM (SELECT rel, left_side AS side FROM rels UNION ALL SELECT rel, right_side FROM rels))
+SELECT DISTINCT rel AS "from", tbl || '.' || col AS "to", 'relates' AS kind FROM sides;
+
+-- view_edges(dataset): the edges the stored lineage of each view of a
+-- dataset holds, view -> each table, column and view it reads
+CREATE OR REPLACE MACRO main.view_edges(dataset_name) AS TABLE
+SELECT "from", "to", kind FROM main.edges WHERE split_part("from", '.', 1) = dataset_name;
 
 -- view_bodies(dataset): the annotation that defines each view of a
 -- dataset, (view, body), the newest on the dataset
@@ -55,37 +76,73 @@ WHERE r.dataset = dataset_name
   AND r.table_name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'BASE TABLE');
 
 CREATE OR REPLACE MACRO main.lineage(dataset_name) AS TABLE
-WITH cols AS (SELECT table_name, column_name, table_type FROM glossql_columns(dataset_name)),
-views AS (SELECT DISTINCT table_name AS name FROM cols WHERE table_type = 'VIEW'),
-rels AS (
-  SELECT left_side, right_side, left_side || ' ' || op || ' ' || right_side AS rel
-  FROM main.relationships WHERE dataset = dataset_name),
--- a side is table.column or table.(a, b): one edge per column
-sides AS (
-  SELECT rel, regexp_extract(side, '^([^.]+\.[^.]+)\.', 1) AS tbl,
-         unnest(string_split(regexp_replace(regexp_replace(side, '^[^.]+\.[^.]+\.', ''), '^\((.*)\)$', '\1'), ', ')) AS col
-  FROM (SELECT rel, left_side AS side FROM rels UNION ALL SELECT rel, right_side FROM rels)),
-definitions AS (
-  SELECT view AS name, json_extract_string(body, '$.sql') AS sql
-  FROM main.view_bodies(dataset_name) WHERE view IN (SELECT name FROM views)),
-named AS (
-  SELECT d.name, unnest(json_extract_string(json_serialize_sql(d.sql), '$..table_name')) AS other
-  FROM definitions d WHERE d.sql IS NOT NULL),
-sc AS MATERIALIZED (FROM glossql_views_scans(dataset_name)),
-jo AS MATERIALIZED (FROM glossql_views_joins(dataset_name))
 SELECT * FROM main.contains_edges(dataset_name)
-UNION ALL SELECT DISTINCT rel, tbl || '.' || col, 'relates' FROM sides
-UNION ALL SELECT DISTINCT * FROM (
-  SELECT dataset_name || '.' || s.view, s.table_name, 'reads' FROM sc s
-  UNION SELECT dataset_name || '.' || s.view, s.table_name || '.' || c, 'reads' FROM sc s, unnest(s.columns) u(c)
-  UNION SELECT dataset_name || '.' || j.view, j.left_column, 'reads' FROM jo j
-  UNION SELECT dataset_name || '.' || j.view, j.right_column, 'reads' FROM jo j
-  UNION SELECT dataset_name || '.' || j.view, dataset_name || '.' || c.table_name, 'reads' FROM jo j
-        JOIN cols c ON dataset_name || '.' || c.table_name || '.' || c.column_name IN (j.left_column, j.right_column)
-  UNION SELECT dataset_name || '.' || n.name, dataset_name || '.' || n.other, 'reads' FROM named n
-        WHERE n.other <> n.name AND n.other IN (SELECT name FROM views))
+UNION ALL SELECT * FROM main.relates_edges(dataset_name)
+UNION ALL SELECT * FROM main.view_edges(dataset_name)
 UNION ALL SELECT * FROM main.loaded_from_edges(dataset_name)
 UNION ALL SELECT "from", "to", kind FROM glossql_kind_edges(dataset_name);
+
+--===------------------------------------------------------------------===--
+-- A view's stored lineage, read whole for a dataset (NULL: every dataset),
+-- one row per view, view the view's name:
+--   views_lineage   per output column: column, derivation (what computes
+--                   it, each scanned column as scan.column:type), complete
+--                   (false where the walk could not follow a step), shape
+--                   (ratio, average or distinct, where that decides how it
+--                   adds up); a view that does not plan has one row, no
+--                   column, complete false
+--   views_scans     per table it scans, joins and filters included:
+--                   table_name, columns (what it reads of it)
+--   views_joins     per pair of scanned columns a join or a WHERE equates,
+--                   as schema.table.column: left_column (the predicate's
+--                   left input), right_column, left_unique and right_unique
+--                   (that side joined one row per value: grouped by the
+--                   join columns, DISTINCT on them, or filtered to
+--                   row_number() = 1 over them), join_number (the pairs of
+--                   one join, its key, share it)
+--   views_mapping   per output column, branch of the union its rows come
+--                   from (1 where it has none) and scanned column: the
+--                   branch's derivation, where a table read more than once
+--                   carries each scan's alias as scan[alias].column;
+--                   table_name and table_column; alias; condition (what
+--                   the view's joins and filters require of that scan
+--                   alone); lookup (the equalities of the join that joins
+--                   that scan to the rows before it); literals (what the
+--                   derivation tests or returns, as written); complete; a
+--                   view that does not plan has one row, complete false
+--===------------------------------------------------------------------===--
+CREATE OR REPLACE MACRO main.lineage_values(dataset_name) AS TABLE
+SELECT dataset, split_part(subject, '.', 2) AS view, value, error FROM main.measurements
+WHERE function = 'lineage' AND (dataset_name IS NULL OR dataset = dataset_name);
+
+CREATE OR REPLACE MACRO main.views_lineage(dataset_name) AS TABLE
+WITH l AS (FROM main.lineage_values(dataset_name))
+SELECT l.dataset, l.view, u.c.name AS "column", u.c.derivation, (l.value->>'complete')::BOOLEAN AS complete, u.c.shape
+FROM l, unnest(from_json(l.value->'columns', '[{"name": "VARCHAR", "derivation": "VARCHAR", "shape": "VARCHAR"}]')) u(c)
+UNION ALL SELECT dataset, view, NULL, NULL, false, NULL FROM l
+WHERE value IS NULL OR json_array_length(value->'columns') = 0;
+
+CREATE OR REPLACE MACRO main.views_scans(dataset_name) AS TABLE
+SELECT l.dataset, l.view, u.s.table_name, u.s.columns
+FROM main.lineage_values(dataset_name) l,
+     unnest(from_json(l.value->'scans', '[{"table_name": "VARCHAR", "columns": ["VARCHAR"]}]')) u(s);
+
+CREATE OR REPLACE MACRO main.views_joins(dataset_name) AS TABLE
+SELECT l.dataset, l.view, u.j.left_column, u.j.right_column, u.j.left_unique, u.j.right_unique, u.j.join_number
+FROM main.lineage_values(dataset_name) l,
+     unnest(from_json(l.value->'joins', '[{"left_column": "VARCHAR", "right_column": "VARCHAR", "left_unique": "BOOLEAN",
+                                         "right_unique": "BOOLEAN", "join_number": "INTEGER"}]')) u(j);
+
+CREATE OR REPLACE MACRO main.views_mapping(dataset_name) AS TABLE
+WITH l AS (FROM main.lineage_values(dataset_name))
+SELECT l.dataset, l.view, u.m."column", u.m.branch, u.m.derivation, u.m.table_name, u.m.table_column, u.m.alias,
+       u.m.condition, u.m.lookup, u.m.literals, u.m.complete
+FROM l, unnest(from_json(l.value->'mapping', '[{"column": "VARCHAR", "branch": "INTEGER", "derivation": "VARCHAR",
+                                              "table_name": "VARCHAR", "table_column": "VARCHAR", "alias": "VARCHAR",
+                                              "condition": "VARCHAR", "lookup": "VARCHAR", "literals": ["VARCHAR"],
+                                              "complete": "BOOLEAN"}]')) u(m)
+UNION ALL SELECT dataset, view, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false FROM l
+WHERE value IS NULL OR json_array_length(value->'mapping') = 0;
 
 -- The class of an asset by its path: what a property's grains name. A bare
 -- name is a dataset, or a source where no dataset carries it. An asset of a
@@ -145,14 +202,16 @@ CREATE OR REPLACE MACRO main.place_columns(dataset_name) AS TABLE
 SELECT "from" AS subject, "to" AS asset FROM main.contains_edges(dataset_name);
 
 CREATE OR REPLACE MACRO main.place_sources(dataset_name) AS TABLE
-SELECT "from" AS subject, "to" AS asset FROM main.lineage(dataset_name) WHERE kind = 'reads';
+SELECT "from" AS subject, "to" AS asset FROM main.view_edges(dataset_name) WHERE kind = 'reads';
 
 CREATE OR REPLACE MACRO main.place_joined(dataset_name) AS TABLE
 SELECT DISTINCT dataset_name || '.' || j.view AS subject, side AS asset
-FROM glossql_views_joins(dataset_name) j, unnest([j.left_column, j.right_column]) u(side);
+FROM main.views_joins(dataset_name) j, unnest([j.left_column, j.right_column]) u(side);
 
 CREATE OR REPLACE MACRO main.place_relationships(dataset_name) AS TABLE
-WITH walked AS MATERIALIZED (SELECT * FROM main.lineage(dataset_name) WHERE kind IN ('reads', 'relates', 'contains')),
+WITH walked AS MATERIALIZED (
+  SELECT * FROM main.contains_edges(dataset_name) UNION ALL SELECT * FROM main.relates_edges(dataset_name)
+  UNION ALL SELECT * FROM main.view_edges(dataset_name) WHERE kind = 'reads'),
 endpoints AS (SELECT w."from" AS rel, w."to" AS endpoint, c."from" AS t FROM walked w
               JOIN walked c ON c.kind = 'contains' AND c."to" = w."to" WHERE w.kind = 'relates'),
 sources AS (SELECT "from" AS subject, "to" AS t FROM walked WHERE kind = 'reads' AND main.asset_grain("to") = 'TABLE'),
@@ -168,7 +227,7 @@ CREATE OR REPLACE MACRO main.place_systems(dataset_name) AS TABLE
 WITH loaded AS (SELECT "from" AS t, "to" AS source FROM main.loaded_from_edges(dataset_name))
 SELECT t AS subject, source AS asset FROM loaded
 UNION SELECT dataset_name || '.' || s.view, l.source
-      FROM glossql_views_scans(dataset_name) s JOIN loaded l ON l.t = s.table_name;
+      FROM main.views_scans(dataset_name) s JOIN loaded l ON l.t = s.table_name;
 
 CREATE OR REPLACE MACRO main.place_its_dataset(dataset_name) AS TABLE
 SELECT dataset_name AS subject, dataset_name AS asset;
@@ -199,43 +258,48 @@ UNION ALL SELECT subject, 'its dataset', asset FROM main.place_its_dataset(datas
 UNION ALL SELECT subject, "where", asset FROM glossql_kind_places(dataset_name) WHERE subject IS NOT NULL;
 
 -- view_reads(dataset): the tables and views each view of a dataset
--- reads, through the views it reads, (view, relation)
+-- reads, through the views it reads, (view, relation): a walk over the
+-- stored lineage of each view on the way
 CREATE OR REPLACE MACRO main.view_reads(dataset_name) AS TABLE
-WITH RECURSIVE direct AS (SELECT DISTINCT "from" AS view, "to" AS relation FROM main.lineage(dataset_name)
+WITH RECURSIVE direct AS (SELECT DISTINCT "from" AS view, "to" AS relation FROM main.view_edges(dataset_name)
                           WHERE kind = 'reads' AND len(string_split("to", '.')) = 2),
 walk(view, relation) AS (SELECT view, relation FROM direct
   UNION SELECT w.view, d.relation FROM walk w JOIN direct d ON d.view = w.relation)
 SELECT view, relation FROM walk;
 
 -- place_nodes(dataset): the nodes each place's walk passes, (subject,
--- where, asset, what), beside the assets places() lists: a relation's
--- definition, a view's and those of what it reads; the relationships of a
--- table, a view and what it reads, or a dataset; a table's recipe; a
--- dataset's assets; which of a dataset's views are metrics. A result that
--- read a place read these too, so a member added to the place later
--- changes a node it read.
+-- where, asset, what), beside the assets places() lists: a table's
+-- definition; a view's stored lineage, and that of each view its walk
+-- reads through; the relationships of a table, a view and what it reads,
+-- or a dataset; a table's recipe; a dataset's assets; which of a
+-- dataset's views are metrics. A result that read a place read these too,
+-- so a member added to the place later changes a node it read. A view's
+-- lineage computed again with the same value leaves the result current.
 CREATE OR REPLACE MACRO main.place_nodes(dataset_name) AS TABLE
 WITH cols AS MATERIALIZED (SELECT table_name, column_name, table_type FROM glossql_columns(dataset_name)),
-walked AS MATERIALIZED (
-  SELECT DISTINCT dataset_name || '.' || table_name AS subject, table_type = 'VIEW' AS is_view,
-         dataset_name || '.' || table_name AS relation FROM cols
-  UNION SELECT view, true, relation FROM main.view_reads(dataset_name)),
-SELECT w.subject, u.place AS "where", w.relation AS asset, 'definition' AS what
-FROM walked w, unnest(['its columns', 'its sources', 'the columns it joins on', 'its relationships',
-                       'its source systems']) u(place)
-WHERE w.is_view OR u.place = 'its columns'
+rels AS MATERIALIZED (
+  SELECT DISTINCT dataset_name || '.' || table_name AS relation,
+         CASE table_type WHEN 'VIEW' THEN 'result lineage' ELSE 'definition' END AS what FROM cols),
+vr AS MATERIALIZED (FROM main.view_reads(dataset_name)),
+walked AS MATERIALIZED (SELECT relation AS subject, relation FROM rels UNION SELECT view, relation FROM vr)
+SELECT r.relation AS subject, u.place AS "where", r.relation AS asset, r.what
+FROM rels r, unnest(['its columns', 'its sources', 'the columns it joins on', 'its relationships',
+                     'its source systems']) u(place)
+WHERE r.what = 'result lineage' OR u.place = 'its columns'
+UNION ALL SELECT v.view, 'its relationships', v.relation, 'result lineage' FROM vr v
+          JOIN rels r ON r.relation = v.relation AND r.what = 'result lineage'
 UNION ALL SELECT subject, 'its relationships', relation, 'relationships' FROM walked
 UNION ALL SELECT subject, 'its source systems', relation, 'recipe' FROM walked
 UNION ALL SELECT dataset_name || '.' || table_name || '.' || column_name, 'its relationships',
                  dataset_name || '.' || table_name, 'relationships' FROM cols
 UNION ALL SELECT left_side || ' ' || op || ' ' || right_side, 'its relationships', dataset_name, 'relationships'
           FROM main.relationships WHERE dataset = dataset_name
--- a kit's place: its subject's own node, and the definition of each relation among its assets and of
--- what that relation reads
+-- a kit's place: its subject's own node, and of each relation among its assets a table's definition, a
+-- view's stored lineage
 UNION ALL SELECT k.subject, k."where", a.node_asset, a.node_what FROM glossql_kind_places(dataset_name) k
           JOIN glossql_kind_assets(dataset_name) a ON a.asset = k.subject
-UNION ALL SELECT k.subject, k."where", w.relation, 'definition' FROM glossql_kind_places(dataset_name) k
-          JOIN walked w ON w.subject = split_part(k.asset, '.', 1) || '.' || split_part(k.asset, '.', 2)
+UNION ALL SELECT DISTINCT k.subject, k."where", r.relation, r.what FROM glossql_kind_places(dataset_name) k
+          JOIN rels r ON r.relation = split_part(k.asset, '.', 1) || '.' || split_part(k.asset, '.', 2)
 UNION ALL SELECT dataset_name, u.place, dataset_name, s.what
           FROM unnest(['its columns', 'the dataset']) u(place), unnest(['assets', 'relationships']) s(what)
 -- the dataset's metrics: which views are metrics, and the definition of each
@@ -349,11 +413,11 @@ LEFT JOIN main.measurements m
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.definitions(dataset_name) AS TABLE
 WITH cols AS (FROM glossql_columns(dataset_name)),
-lin AS (FROM glossql_views_lineage(dataset_name)),
-sc AS (SELECT s.*, l."to" AS source FROM glossql_views_scans(dataset_name) s
+lin AS (FROM main.views_lineage(dataset_name)),
+sc AS (SELECT s.*, l."to" AS source FROM main.views_scans(dataset_name) s
        LEFT JOIN main.loaded_from_edges(dataset_name) l ON l."from" = s.table_name),
-jo AS (FROM glossql_views_joins(dataset_name)),
-ma AS (SELECT DISTINCT view, table_name, branch, alias, condition FROM glossql_views_mapping(dataset_name) WHERE table_name IS NOT NULL),
+jo AS (FROM main.views_joins(dataset_name)),
+ma AS (SELECT DISTINCT view, table_name, branch, alias, condition FROM main.views_mapping(dataset_name) WHERE table_name IS NOT NULL),
 bodies AS (FROM main.view_bodies(dataset_name))
 SELECT dataset_name || '.' || a.name AS view,
        json_extract_string(a.schema, '$.x-kind') AS kind,

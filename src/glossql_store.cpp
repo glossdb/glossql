@@ -351,6 +351,10 @@ static const StoreRelation STORE_RELATIONS[] = {
     // one row per node a stored result read (SPEC §6): the rows begin with their result, whose
     // begin_snapshot they share, and end with it
     {"inputs", "asset VARCHAR NOT NULL, what VARCHAR NOT NULL", "begin_snapshot, asset, what"},
+    // one row per lineage edge a stored result holds, a view's lineage the relations and columns it
+    // reads: the rows begin and end with their result, whose begin_snapshot they share
+    {"edges", "\"from\" VARCHAR NOT NULL, \"to\" VARCHAR NOT NULL, kind VARCHAR NOT NULL",
+	 "begin_snapshot, \"from\", \"to\", kind"},
     {"tests",
 	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
@@ -701,8 +705,10 @@ static void AdmitEndpoint(ClientContext &context, const string &endpoint) {
 //! A metric definition is a view in the catalog (SPEC §5.2): the dataset's schema holds
 //! a view under the metric's name carrying the serving definition's sql. A
 //! definition is refused before anything is written when its sql does not bind
-//! or its name is a loaded table's
-static void AdmitDefinition(Inner &inner, const string &dataset, const string &metric, const string &body) {
+//! or its name is a loaded table's. The view's lineage is planned there, as the
+//! write will leave the lake, and stored with it (DefineView)
+static ViewLineageResult AdmitDefinition(Inner &inner, const string &dataset, const string &metric,
+                                         const string &body) {
 	auto loaded =
 	    inner.Scalar("SELECT count(*) FROM duckdb_tables() WHERE database_name = " + QuoteText(inner.ws.lake) +
 		             " AND schema_name = " + QuoteText(dataset) + " AND table_name = " + QuoteText(metric));
@@ -710,26 +716,40 @@ static void AdmitDefinition(Inner &inner, const string &dataset, const string &m
 		throw InvalidInputException("glossql: a definition on a loaded table's name is refused: %s.%s", dataset,
 		                            metric);
 	}
+	ViewLineageResult lineage;
 	auto sql = JsonStringField(body, "sql");
 	if (sql.empty()) {
-		return;
+		return lineage;
 	}
 	// bound as the lake binds a view, in a transaction of the lake that is rolled back
 	inner.Run("BEGIN");
 	auto bound = inner.con.Query("CREATE OR REPLACE VIEW " + inner.Table(dataset, metric) + " AS " + sql);
+	if (!bound->HasError()) {
+		try {
+			lineage = PlanViewLineage(inner, dataset, metric);
+		} catch (std::exception &) {
+			inner.con.Query("ROLLBACK");
+			throw;
+		}
+	}
 	inner.con.Query("ROLLBACK");
 	if (bound->HasError()) {
 		ErrorData error(bound->GetErrorObject());
 		throw InvalidInputException("glossql: %s", error.Message());
 	}
+	return lineage;
 }
 
 //! The view of a metric follows the serving definition, a person's over an
 //! agent's, a stop ending it: its DuckLake row is written in the catalog write
 //! that wrote the definition, as DuckLake writes one, so the view and the
 //! glossary are one commit. The same sql again keeps the view and its version:
-//! the annotations and measurements on its columns stay current
-static void DefineView(CatalogWrite &write, const string &dataset, const string &metric) {
+//! the annotations and measurements on its columns stay current. The view's
+//! lineage is stored in the same write where it was planned for the sql that
+//! now serves (`admitted`), read at this write; a view ended takes its lineage
+//! with it
+static void DefineView(CatalogWrite &write, const string &dataset, const string &metric,
+                       const ViewLineageResult &admitted, const string &admitted_sql) {
 	auto &inner = write.inner;
 	auto &ws = inner.ws;
 	auto serving =
@@ -745,7 +765,13 @@ static void DefineView(CatalogWrite &write, const string &dataset, const string 
 	}
 	auto view = inner.Row("SELECT view_id, sql FROM " + ws.Meta("view") + " WHERE schema_id = " + schema_id.ToString() +
 	                      " AND view_name = " + QuoteText(metric) + " AND end_snapshot IS NULL");
+	// the lineage read the annotation that defines the view: written again, it is stored again, and the same
+	// value keeps the snapshot it changed at
+	auto lineage = !admitted.view.empty() && sql == admitted_sql;
 	if (!view.empty() && view[1].ToString() == sql) {
+		if (lineage) {
+			StoreViewLineage(write, dataset, admitted, write.snapshot);
+		}
 		return;
 	}
 	if (!view.empty()) {
@@ -754,12 +780,16 @@ static void DefineView(CatalogWrite &write, const string &dataset, const string 
 		write.Changed("dropped_view:" + view[0].ToString());
 	}
 	if (sql.empty()) {
+		RetireViewLineage(write, dataset, dataset + "." + metric);
 		return;
 	}
 	write.Run("INSERT INTO " + ws.Meta("view") + " VALUES (" + to_string(write.NewCatalogId()) + ", uuid(), " +
 	          to_string(write.snapshot) + ", NULL, " + schema_id.ToString() + ", " + QuoteText(metric) +
 	          ", 'duckdb', " + QuoteText(sql) + ", '')");
 	write.Changed("created_view:" + QuoteName(dataset) + "." + QuoteName(metric));
+	if (lineage) {
+		StoreViewLineage(write, dataset, admitted, write.snapshot);
+	}
 }
 
 //! Admission of an aspect (SPEC §5.1): identical content is a no-op, a change
@@ -861,13 +891,17 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 	};
 
 	Inner inner(context);
-	// a definition is bound before the write: the lake binds it, and the write touches the catalogue alone
+	// a definition is bound before the write, and its lineage planned: the lake binds it, and the write
+	// touches the catalogue alone
+	ViewLineageResult admitted;
+	string admitted_sql;
 	if (bind.table == "glossary") {
 		auto resolved = subject(bind.row[0]);
 		auto kind =
 		    inner.Scalar("SELECT kind FROM " + inner.Current("aspects") + " WHERE name = " + bind.row[1].ToSQLString());
 		if (!kind.IsNull() && kind.ToString() == "VIEW" && resolved.find('.') == string::npos) {
-			AdmitDefinition(inner, resolved, bind.row[1].ToString(), json(bind.row[2]));
+			admitted = AdmitDefinition(inner, resolved, bind.row[1].ToString(), json(bind.row[2]));
+			admitted_sql = JsonStringField(json(bind.row[2]), "sql");
 		}
 	}
 	string outcome;
@@ -943,7 +977,7 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 			                             ", " + QuoteText(actor) + ", " + ActorIdOf(context).ToSQLString() + ", " +
 			                             QuoteText(body) + ", now()");
 			if (aspect.kind == "VIEW") {
-				DefineView(write, resolved, aspect.name);
+				DefineView(write, resolved, aspect.name, admitted, admitted_sql);
 			}
 			// an asset of a kind a kit declares and a relation of its dataset do not share a name
 			auto taken = KindNameTaken(inner, dataset, "");
@@ -1391,14 +1425,15 @@ static string AnnotationsSQL(const ReadScope &scope, const string &aspect_filter
 }
 
 //! Every value in scope, the current one per actor kind: the glossary's agent
-//! and human rows, and the function values the measurements hold; each with
+//! and human rows, and the function values the measurements hold, a view's
+//! lineage none of them, which no property declares; each with
 //! its staleness, `ord`, the snapshot it was written at, and the error of a
 //! computation that failed, whose row holds no value
 static string ValuesSQL(Inner &inner, const ReadScope &scope, const string &aspect_filter) {
 	return "(" + AnnotationsSQL(scope, aspect_filter) +
 	       ") UNION ALL SELECT subject, aspect, 'function' AS actor, value::JSON AS body, computed_at AS written_at,"
 	       " NOT current AND NOT possibly AS stale, begin_snapshot AS ord, error, dataset, possibly FROM (" +
-	       CurrentResultsSQL(inner, scope.filter + aspect_filter) + ")";
+	       CurrentResultsSQL(inner, scope.filter + aspect_filter + " AND function <> 'lineage'") + ")";
 }
 
 struct TestRow {
@@ -1822,21 +1857,36 @@ static unique_ptr<TableRef> KindBindReplace(ClientContext &context, TableFunctio
                                             const KindStem *kind) {
 	auto lake = LakeName(context);
 	vector<string> macros;
-	// a read that names one place plans the macros that add it alone: those whose text names it
-	bool narrowed = string(kind->stem) == "lineage_places_" && input.inputs.size() > 1 && !input.inputs[1].IsNull();
-	auto place = narrowed ? QuoteText(input.inputs[1].ToString()) : string();
 	auto &catalog = Catalog::GetCatalog(context, Identifier(lake));
 	auto schema = catalog.GetSchema(context, Identifier("main"), OnEntryNotFound::RETURN_NULL);
 	if (schema) {
 		schema->Scan(context, CatalogType::TABLE_MACRO_ENTRY, [&](CatalogEntry &entry) {
 			auto macro = entry.name.GetIdentifierName();
-			if (StringUtil::StartsWith(macro, kind->stem) &&
-			    (!narrowed || StringUtil::Contains(entry.ToSQL(), place))) {
+			if (StringUtil::StartsWith(macro, kind->stem)) {
 				macros.push_back(macro);
 			}
 		});
 	}
 	std::sort(macros.begin(), macros.end());
+	// a read that names one place reads the macros that declare it alone: those with a row of no subject
+	// that names it
+	bool narrowed = string(kind->stem) == "lineage_places_" && input.inputs.size() > 1 && !input.inputs[1].IsNull();
+	if (narrowed) {
+		Inner inner(context);
+		vector<string> declaring;
+		for (auto &macro : macros) {
+			auto declared =
+			    inner.con.Query("SELECT count(*) FROM " + QuoteName(lake) + ".main." + QuoteName(macro) +
+				                "('') WHERE subject IS NULL AND \"where\" = " + QuoteText(input.inputs[1].ToString()));
+			if (!declared->HasError()) {
+				auto chunk = declared->Fetch();
+				if (chunk && chunk->size() == 1 && chunk->GetValue(0, 0).GetValue<int64_t>() > 0) {
+					declaring.push_back(macro);
+				}
+			}
+		}
+		macros = declaring;
+	}
 	vector<string> datasets;
 	if (!input.inputs[0].IsNull()) {
 		datasets.push_back(QuoteText(input.inputs[0].ToString()));
@@ -2077,48 +2127,8 @@ static TableFunction GlossCachedFunction() {
 	                     CachedExec, CachedBind, CachedInit);
 }
 
-string StoreVersion(Inner &inner) {
+static string StoreVersion(Inner &inner) {
 	return inner.Scalar(StoreVersionSQL(inner.ws)).ToString();
-}
-
-//===--------------------------------------------------------------------===//
-// A view kept: a dataset's view, its rows computed once per store version and
-// kept in the object cache beside the reads, so that a cells read over the
-// dataset's views — a metric's series, a plan's rows — scans what holds
-// instead of computing every view from its tables on each call.
-// The version is the reads' own: any write or delete moves it. A view's rows are a
-// fraction of its tables' (a metric's series), so the entry is small, and
-// the buffer pool counts and evicts it like a read's
-//===--------------------------------------------------------------------===//
-
-static string ViewKey(const string &lake, const string &dataset, const string &view) {
-	return "glossql_view|" + lake + "|" + dataset + "|" + view;
-}
-
-//! glossql_kept_view(dataset, view, version): the view's rows as kept at that
-//! version, else computed on the inner connection and kept. The version is
-//! the caller's, read once for every view a cells read binds
-static unique_ptr<FunctionData> KeptViewBind(ClientContext &context, TableFunctionBindInput &input,
-                                             vector<LogicalType> &return_types, vector<Identifier> &names) {
-	auto dataset = input.inputs[0].ToString();
-	auto view = input.inputs[1].ToString();
-	auto version = input.inputs[2].ToString();
-	auto key = ViewKey(LakeName(context), dataset, view);
-	auto kept = ObjectCache::GetObjectCache(context).Get<CachedRead>(key);
-	if (!kept || kept->version != version) {
-		Inner inner(context);
-		kept = Keep(context, inner, key, version, "SELECT * FROM " + inner.Table(dataset, view));
-	}
-	auto result = make_uniq<CachedBindData>();
-	result->read = kept;
-	return_types = kept->types;
-	names = kept->names;
-	return result;
-}
-
-static TableFunction GlossKeptViewFunction() {
-	return TableFunction("glossql_kept_view", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
-	                     CachedExec, KeptViewBind, CachedInit);
 }
 
 //===--------------------------------------------------------------------===//
@@ -2276,7 +2286,6 @@ void RegisterGlossStore(ExtensionLoader &loader) {
 	loader.RegisterFunction(GlossGlossaryFunction());
 	loader.RegisterFunction(GlossTestsFunction());
 	loader.RegisterFunction(GlossCachedFunction());
-	loader.RegisterFunction(GlossKeptViewFunction());
 	loader.RegisterFunction(GlossKeptReadFunction());
 	loader.RegisterFunction(GlossColumnsFunctions());
 	loader.RegisterFunction(GlossKindFunction(0, KindBind<0>));

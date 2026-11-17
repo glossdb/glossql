@@ -30,6 +30,30 @@ An asset is named by its path: `fin`, `fin.orders`,
 SELECT "to" FROM lineage('fin') WHERE "from" = 'fin.revenue' AND kind = 'reads';
 ```
 
+A view's lineage is a stored result: the result of `lineage` on the
+view, stored when the view is defined, with the nodes its planning read
+(the view's definition, and that of each table, view and macro its SQL
+names, through the views it reads) and its `reads` edges as rows of
+`edges`. Once a table it reads is altered or a view it reads is defined
+again, it is out of date like any result, and computed again by
+`SELECT lineage() FROM <view>`; the server does it after each write,
+before the checks that read it. Computed again with the same value, it
+keeps the snapshot it changed at, so what read it stays current.
+
+Four reads serve the stored lineage of a dataset's views, one row per
+view and part; NULL reads every dataset's:
+
+| Read | Columns | A row is |
+|---|---|---|
+| `views_lineage(dataset)` | `dataset`, `view`, `column`, `derivation`, `complete`, `shape` | one output column of a view; a view that does not plan has one row, no column, `complete` false |
+| `views_scans(dataset)` | `dataset`, `view`, `table_name`, `columns` | one table a view scans, joins and filters included, with the columns it reads |
+| `views_joins(dataset)` | `dataset`, `view`, `left_column`, `right_column`, `left_unique`, `right_unique`, `join_number` | one pair of columns a join of a view equates, as `schema.table.column`, the left side as the predicate's left input; `left_unique` where that side is joined one row per value, `join_number` shared by the pairs of one join |
+| `views_mapping(dataset)` | `dataset`, `view`, `column`, `branch`, `derivation`, `table_name`, `table_column`, `alias`, `condition`, `lookup`, `literals`, `complete` | one output column of a view per branch of its union and per lake column it is computed from: what the view's joins and filters require of that scan (`condition`), the equalities that look it up (`lookup`), the literals the derivation tests or returns |
+
+```sql
+SELECT "column", derivation FROM views_lineage('fin') WHERE view = 'revenue';
+```
+
 ## The read functions
 
 A function's body reads annotations, results and view definitions

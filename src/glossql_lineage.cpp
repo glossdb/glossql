@@ -17,15 +17,11 @@
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/common/crypto/md5.hpp"
 #include "duckdb/common/enums/expression_type.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/table_function.hpp"
-#include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/main/client_data.hpp"
-#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
@@ -75,7 +71,6 @@
 #include "duckdb/planner/operator/logical_unnest.hpp"
 #include "duckdb/planner/operator/logical_window.hpp"
 #include "duckdb/planner/planner.hpp"
-#include "duckdb/storage/object_cache.hpp"
 
 namespace duckdb {
 
@@ -1084,18 +1079,32 @@ static void TableScans(LogicalOperator &op, std::map<string, vector<idx_t>> &sca
 
 typedef std::map<string, const QueryNode *> CteScope;
 
-static void TableRefs(const QueryNode &node, CteScope scope, vector<pair<string, string>> &into);
+//! A relation a query's text names: its schema as written (empty where it names none), its name and
+//! the alias it gives it; or a function it calls, scalar or table, by schema and name
+struct NamedRef {
+	string schema;
+	string table;
+	string alias;
+	bool function = false;
+};
 
-static void TableRefs(const ParsedExpression &expr, const CteScope &scope, vector<pair<string, string>> &into) {
+static void TableRefs(const QueryNode &node, CteScope scope, vector<NamedRef> &into);
+
+static void TableRefs(const ParsedExpression &expr, const CteScope &scope, vector<NamedRef> &into) {
 	if (expr.GetExpressionClass() == ExpressionClass::SUBQUERY) {
 		TableRefs(*expr.Cast<SubqueryExpression>().Subquery()->node, scope, into);
 		return;
+	}
+	if (expr.GetExpressionClass() == ExpressionClass::FUNCTION && !expr.Cast<FunctionExpression>().IsOperator()) {
+		auto &name = expr.Cast<FunctionExpression>().GetQualifiedName();
+		into.push_back({StringUtil::Lower(name.Schema().GetIdentifierName()),
+		                StringUtil::Lower(name.Name().GetIdentifierName()), string(), true});
 	}
 	ParsedExpressionIterator::EnumerateChildren(expr,
 	                                            [&](const ParsedExpression &child) { TableRefs(child, scope, into); });
 }
 
-static void TableRefs(const TableRef &ref, const CteScope &scope, vector<pair<string, string>> &into) {
+static void TableRefs(const TableRef &ref, const CteScope &scope, vector<NamedRef> &into) {
 	switch (ref.type) {
 	case TableReferenceType::BASE_TABLE: {
 		auto &name = ref.Cast<BaseTableRef>().GetQualifiedName();
@@ -1104,7 +1113,8 @@ static void TableRefs(const TableRef &ref, const CteScope &scope, vector<pair<st
 		if (cte != scope.end() && name.Schema().empty()) {
 			TableRefs(*cte->second, scope, into);
 		} else {
-			into.emplace_back(table, ref.alias.GetIdentifierName());
+			into.push_back(
+			    {StringUtil::Lower(name.Schema().GetIdentifierName()), table, ref.alias.GetIdentifierName(), false});
 		}
 		break;
 	}
@@ -1120,14 +1130,18 @@ static void TableRefs(const TableRef &ref, const CteScope &scope, vector<pair<st
 	case TableReferenceType::SUBQUERY:
 		TableRefs(*ref.Cast<SubqueryRef>().subquery->node, scope, into);
 		break;
+	case TableReferenceType::TABLE_FUNCTION:
+		TableRefs(*ref.Cast<TableFunctionRef>().function, scope, into);
+		break;
 	default:
 		break;
 	}
 }
 
 //! The lake tables a query's text names, each with the alias it gives it, in
-//! the order the binder binds them: a CTE's at each place it is read
-static void TableRefs(const QueryNode &node, CteScope scope, vector<pair<string, string>> &into) {
+//! the order the binder binds them: a CTE's at each place it is read; and the
+//! functions it calls
+static void TableRefs(const QueryNode &node, CteScope scope, vector<NamedRef> &into) {
 	for (auto &cte : node.cte_map.map) {
 		scope[StringUtil::Lower(cte.first.GetIdentifierName())] = cte.second->query_node.get();
 	}
@@ -1185,7 +1199,7 @@ static std::map<idx_t, string> Aliases(LogicalOperator &plan, const string &view
 	if (info.type != CatalogType::VIEW_ENTRY || !info.Cast<CreateViewInfo>().query) {
 		return aliases;
 	}
-	vector<pair<string, string>> refs;
+	vector<NamedRef> refs;
 	TableRefs(*info.Cast<CreateViewInfo>().query->node, CteScope(), refs);
 	for (auto &table : scans) {
 		std::sort(table.second.begin(), table.second.end());
@@ -1194,8 +1208,8 @@ static std::map<idx_t, string> Aliases(LogicalOperator &plan, const string &view
 		}
 		vector<string> named;
 		for (auto &ref : refs) {
-			if (ref.first == table.first) {
-				named.push_back(ref.second.empty() ? ref.first : ref.second);
+			if (!ref.function && ref.table == table.first) {
+				named.push_back(ref.alias.empty() ? ref.table : ref.alias);
 			}
 		}
 		// one name for every scan, as each branch of a union may give, tells none apart
@@ -1384,416 +1398,205 @@ static void LineageExec(ClientContext &context, TableFunctionInput &data, DataCh
 }
 
 //===--------------------------------------------------------------------===//
-// glossql_views_lineage(dataset): the derivation of each column of every view
-// of a dataset — a metric definition's view among them — as glossql_lineage gives one
-// view's; NULL reads every dataset's views. A view that does not plan serves
-// one row naming it, complete false and no column
+// A view's lineage, a stored result (SPEC §6): what it scans, joins and maps
+// and what computes each of its columns, planned for one view and stored as
+// the result of `lineage` on it. Its inputs are the nodes the planning read:
+// the view's definition, and that of every relation and macro its SQL names,
+// through the views it reads. The relations it reads are rows of `edges`, so
+// that the lineage and the places are scans. Defining a view stores its
+// lineage in the same write; `SELECT lineage() FROM <view>` computes it again
+// once a node it read changed, as any result
 //===--------------------------------------------------------------------===//
 
-struct ViewsLineageBindData : public FunctionData {
-	// empty when the argument is NULL: every dataset
-	string dataset;
-	bool every = false;
-	//! glossql_views_scans: the tables each view scans instead of its columns' lineage
-	bool scans = false;
-	//! glossql_views_joins: the column pairs each view's joins equate
-	bool joins = false;
-
-	unique_ptr<FunctionData> Copy() const override {
-		auto result = make_uniq<ViewsLineageBindData>();
-		result->dataset = dataset;
-		result->every = every;
-		result->scans = scans;
-		result->joins = joins;
-		return result;
-	}
-	bool Equals(const FunctionData &other) const override {
-		auto &that = other.Cast<ViewsLineageBindData>();
-		return dataset == that.dataset && every == that.every && scans == that.scans && joins == that.joins;
-	}
-};
-
-struct ViewsLineageRow {
-	string dataset;
-	string view;
-	Value column;
-	Value derivation;
-	bool complete;
-	Value shape = Value(LogicalType::VARCHAR);
-	//! glossql_views_joins: the number of the join or filter that equates the pair
-	Value join = Value(LogicalType::INTEGER);
-};
-
-struct ViewsLineageState : public GlobalTableFunctionState {
-	bool read = false;
-	vector<ViewsLineageRow> rows;
-	idx_t offset = 0;
-};
-
-static unique_ptr<FunctionData> ViewsLineageBind(ClientContext &context, TableFunctionBindInput &input,
-                                                 vector<LogicalType> &return_types, vector<Identifier> &names) {
-	auto result = make_uniq<ViewsLineageBindData>();
-	result->every = input.inputs[0].IsNull();
-	if (!result->every) {
-		result->dataset = input.inputs[0].ToString();
-	}
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::VARCHAR};
-	names = {Identifier("dataset"),    Identifier("view"),     Identifier("column"),
-	         Identifier("derivation"), Identifier("complete"), Identifier("shape")};
-	return result;
+//! JSON text of a string, null where it is empty
+static string JsonText(const string &text) {
+	return text.empty() ? string("null") : JsonString(text);
 }
 
-//! glossql_views_scans(dataset): every lake table each view of a dataset scans,
-//! one row per view and scan with the columns the view reads of it; NULL reads
-//! every dataset's views. A view that does not plan serves no row
-static unique_ptr<FunctionData> ViewsScansBind(ClientContext &context, TableFunctionBindInput &input,
-                                               vector<LogicalType> &return_types, vector<Identifier> &names) {
-	auto result = make_uniq<ViewsLineageBindData>();
-	result->every = input.inputs[0].IsNull();
-	if (!result->every) {
-		result->dataset = input.inputs[0].ToString();
+static string JsonTexts(const vector<string> &texts) {
+	vector<string> items;
+	for (auto &text : texts) {
+		items.push_back(JsonString(text));
 	}
-	result->scans = true;
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::LIST(LogicalType::VARCHAR)};
-	names = {Identifier("dataset"), Identifier("view"), Identifier("table_name"), Identifier("columns")};
-	return result;
+	return "[" + StringUtil::Join(items, ",") + "]";
 }
 
-//! glossql_views_joins(dataset): the pairs of scanned columns each view of a
-//! dataset equates, in a join's condition or in its WHERE clause, one row per
-//! view and pair as schema.table.column; NULL reads every dataset's views.
-//! left_unique and right_unique say the view joins that side reduced to one
-//! row per value: grouped by the join columns, DISTINCT on them, or filtered to
-//! row_number() = 1 over them. The left side is the one the predicate writes
-//! first, a join's left input. join_number numbers the join or filter that
-//! equates the pair, in the plan's order: the pairs of one join, its key, share
-//! it
-static unique_ptr<FunctionData> ViewsJoinsBind(ClientContext &context, TableFunctionBindInput &input,
-                                               vector<LogicalType> &return_types, vector<Identifier> &names) {
-	auto result = make_uniq<ViewsLineageBindData>();
-	result->every = input.inputs[0].IsNull();
-	if (!result->every) {
-		result->dataset = input.inputs[0].ToString();
+//! The value a view's lineage stores: complete, its columns with their derivation and shape, the tables
+//! it scans with the columns it reads of each, the column pairs its joins equate, and its mapping
+static string LineageValue(const QueryLineage &lineage) {
+	vector<string> columns;
+	for (idx_t i = 0; i < lineage.columns.size(); i++) {
+		auto shape = i < lineage.shapes.size() ? lineage.shapes[i] : string();
+		columns.push_back("{\"name\":" + JsonString(lineage.columns[i].first) + ",\"derivation\":" +
+		                  JsonString(lineage.columns[i].second) + ",\"shape\":" + JsonText(shape) + "}");
 	}
-	result->joins = true;
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::INTEGER};
-	names = {Identifier("dataset"),      Identifier("view"),        Identifier("left_column"),
-	         Identifier("right_column"), Identifier("left_unique"), Identifier("right_unique"),
-	         Identifier("join_number")};
-	return result;
+	vector<string> scans;
+	for (auto &scan : lineage.scans) {
+		scans.push_back("{\"table_name\":" + JsonString(scan.first) + ",\"columns\":" + JsonTexts(scan.second) + "}");
+	}
+	vector<string> joins;
+	for (auto &join : lineage.joins) {
+		joins.push_back("{\"left_column\":" + JsonString(join.left) + ",\"right_column\":" + JsonString(join.right) +
+		                ",\"left_unique\":" + (join.left_unique ? "true" : "false") + ",\"right_unique\":" +
+		                (join.right_unique ? "true" : "false") + ",\"join_number\":" + to_string(join.join) + "}");
+	}
+	vector<string> mapping;
+	for (auto &row : lineage.mapping) {
+		mapping.push_back("{\"column\":" + JsonString(row.column) + ",\"branch\":" + to_string(row.branch) +
+		                  ",\"derivation\":" + JsonText(row.derivation) + ",\"table_name\":" + JsonText(row.table) +
+		                  ",\"table_column\":" + JsonText(row.table_column) + ",\"alias\":" + JsonText(row.alias) +
+		                  ",\"condition\":" + JsonText(row.condition) + ",\"lookup\":" + JsonText(row.lookup) +
+		                  ",\"literals\":" + JsonTexts(row.literals) +
+		                  ",\"complete\":" + (row.complete ? "true" : "false") + "}");
+	}
+	return "{\"complete\":" + string(lineage.complete ? "true" : "false") + ",\"columns\":[" +
+	       StringUtil::Join(columns, ",") + "],\"scans\":[" + StringUtil::Join(scans, ",") + "],\"joins\":[" +
+	       StringUtil::Join(joins, ",") + "],\"mapping\":[" + StringUtil::Join(mapping, ",") + "]}";
 }
 
-static unique_ptr<GlobalTableFunctionState> ViewsLineageInit(ClientContext &context, TableFunctionInitInput &input) {
-	return make_uniq<ViewsLineageState>();
+//! A relation or a macro of the lake by schema and name, as the catalog spells it, or null
+static optional_ptr<CatalogEntry> LakeEntry(ClientContext &context, const string &lake, CatalogType type,
+                                            const string &schema, const string &name) {
+	EntryLookupInfo lookup(type, QualifiedName(Identifier(lake), Identifier(schema), Identifier(name)));
+	return Catalog::GetEntry(context, lookup, OnEntryNotFound::RETURN_NULL);
 }
 
-//===--------------------------------------------------------------------===//
-// A dataset's lineage kept: each view's lineage planned once per state of the
-// catalogs a view binds against and kept in the object cache, so that every
-// connection of the process reads the same, and a read that walks the lineage
-// ten times plans each view once. The state is the catalog version of each
-// attached database and the search path a view's names fall back to after its
-// own schema. DuckLake's version is its schema version: a view defined or
-// redefined, a table's columns changed, a table, a view or a macro created or
-// dropped move it; a write to the store and a load of rows do not, and the
-// lineage does not depend on them. A catalog that keeps no version (a remote
-// one) is no part of the state
-//===--------------------------------------------------------------------===//
-
-struct ViewLineage {
-	string dataset;
-	string view;
-	//! the view's CREATE VIEW statement, whose text names its scans' aliases
-	string sql;
-	//! false where the view does not plan
-	bool planned = true;
-	QueryLineage lineage;
-};
-
-struct KeptLineage : public ObjectCacheEntry {
-	string state;
-	vector<ViewLineage> views;
-
-	static string ObjectType() {
-		return "glossql_lineage";
-	}
-	string GetObjectType() override {
-		return ObjectType();
-	}
-	optional_idx GetEstimatedCacheMemory() const override {
-		idx_t bytes = 0;
-		for (auto &view : views) {
-			bytes += view.view.size() + 64;
-			for (auto &column : view.lineage.columns) {
-				bytes += column.first.size() + column.second.size() + 32;
-			}
-			for (auto &scan : view.lineage.scans) {
-				bytes += scan.first.size() + 32;
-				for (auto &column : scan.second) {
-					bytes += column.size() + 32;
-				}
-			}
-			bytes += view.lineage.joins.size() * 128 + view.sql.size();
-			for (auto &row : view.lineage.mapping) {
-				bytes +=
-				    row.derivation.size() + row.condition.size() + row.lookup.size() + 64 * (row.literals.size() + 3);
-			}
-		}
-		return optional_idx(bytes);
-	}
-};
-
-//! The state of the catalogs a view binds against, as the connection's transaction sees them
-static string CatalogState(ClientContext &context) {
-	string state;
-	context.RunFunctionInTransaction([&]() {
-		for (auto &db : DatabaseManager::Get(context).GetDatabases(context)) {
-			if (db->IsSystem() || db->IsTemporary()) {
-				continue;
-			}
-			auto version = db->GetCatalog().GetCatalogVersion(context);
-			state += db->GetName().GetIdentifierName() + "=" +
-			         (version.IsValid() ? to_string(version.GetIndex()) : string("-")) + ";";
-		}
-	});
-	return state + "|" + CatalogSearchEntry::ListToString(ClientData::Get(context).catalog_search_path->GetSetPaths());
+static string PathOf(CatalogEntry &entry) {
+	return entry.ParentSchema().name.GetIdentifierName() + "." + entry.name.GetIdentifierName();
 }
 
-//! Every view of a dataset with its lineage: as kept while the state holds, else
-//! planned on the inner connection and kept when the state held over the planning
-static shared_ptr<KeptLineage> DatasetLineage(Inner &inner, const string &dataset, const string &state) {
+ViewLineageResult PlanViewLineage(Inner &inner, const string &dataset, const string &view) {
+	ViewLineageResult result;
 	auto &context = *inner.con.context;
-	auto &cache = ObjectCache::GetObjectCache(context);
-	auto key = "glossql_lineage|" + inner.ws.lake + "|" + dataset;
-	auto kept = cache.Get<KeptLineage>(key);
-	if (kept && kept->state == state) {
-		return kept;
-	}
-	auto fill = make_shared_ptr<KeptLineage>();
-	auto listed =
-	    inner.con.Query("SELECT view_name, sql FROM duckdb_views() WHERE database_name = " + QuoteText(inner.ws.lake) +
-		                " AND schema_name = " + QuoteText(dataset) + " AND NOT internal ORDER BY view_name");
-	if (listed->HasError()) {
-		throw InvalidInputException("glossql_views_lineage: %s", listed->GetError());
-	}
-	while (auto chunk = listed->Fetch()) {
-		for (idx_t i = 0; i < chunk->size(); i++) {
-			ViewLineage view;
-			view.dataset = dataset;
-			view.view = chunk->GetValue(0, i).ToString();
-			view.sql = chunk->GetValue(1, i).IsNull() ? string() : chunk->GetValue(1, i).ToString();
-			fill->views.push_back(std::move(view));
+	auto &lake = inner.ws.lake;
+	std::set<string> reads;
+	std::set<pair<string, string>> nodes;
+	string sql;
+	context.RunFunctionInTransaction([&]() {
+		auto entry = LakeEntry(context, lake, CatalogType::VIEW_ENTRY, dataset, view);
+		if (!entry || entry->type != CatalogType::VIEW_ENTRY) {
+			throw InvalidInputException("glossql: not_a_view: %s.%s is no view", dataset, view);
 		}
-	}
-	for (auto &view : fill->views) {
-		try {
-			view.lineage = LineageOf(context,
-			                         "SELECT * FROM " + QuoteName(inner.ws.lake) + "." + QuoteName(view.dataset) + "." +
-			                             QuoteName(view.view),
-			                         &view.sql);
-		} catch (std::exception &) {
-			view.lineage = QueryLineage();
-			view.planned = false;
-		}
-	}
-	if (CatalogState(context) == state) {
-		fill->state = state;
-		cache.Put(key, fill);
-	}
-	return fill;
-}
-
-static void ViewsLineageExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &state = data.global_state->Cast<ViewsLineageState>();
-	if (!state.read) {
-		state.read = true;
-		auto &bind = data.bind_data->Cast<ViewsLineageBindData>();
-		Inner inner(context);
-		auto catalogs = CatalogState(*inner.con.context);
-		vector<string> datasets;
-		if (bind.every) {
-			auto listed = inner.con.Query("SELECT DISTINCT name FROM " + inner.Store("datasets") + " ORDER BY name");
-			if (listed->HasError()) {
-				throw InvalidInputException("glossql_views_lineage: %s", listed->GetError());
-			}
-			while (auto chunk = listed->Fetch()) {
-				for (idx_t i = 0; i < chunk->size(); i++) {
-					datasets.push_back(chunk->GetValue(0, i).ToString());
-				}
-			}
-		} else {
-			datasets.push_back(bind.dataset);
-		}
-		for (auto &dataset : datasets) {
-			auto kept = DatasetLineage(inner, dataset, catalogs);
-			for (auto &view : kept->views) {
-				auto &lineage = view.lineage;
-				if (bind.joins) {
-					for (auto &join : lineage.joins) {
-						state.rows.push_back({view.dataset, view.view, Value(join.left), Value(join.right),
-						                      join.left_unique, Value::BOOLEAN(join.right_unique),
-						                      Value::INTEGER(NumericCast<int32_t>(join.join))});
-					}
-					continue;
-				}
-				if (bind.scans) {
-					for (auto &scan : lineage.scans) {
-						vector<Value> columns;
-						for (auto &column : scan.second) {
-							columns.emplace_back(column);
+		result.view = PathOf(*entry);
+		nodes.insert({result.view, "definition"});
+		// the relations and macros its SQL names, through the views it reads: a name the SQL leaves
+		// unqualified is the view's own schema's
+		vector<pair<string, reference<ViewCatalogEntry>>> walk {{dataset, entry->Cast<ViewCatalogEntry>()}};
+		std::set<string> seen {StringUtil::Lower(result.view)};
+		for (idx_t i = 0; i < walk.size(); i++) {
+			auto schema = walk[i].first;
+			auto &query = walk[i].second.get().GetQuery();
+			vector<NamedRef> refs;
+			TableRefs(*query.node, CteScope(), refs);
+			for (auto &ref : refs) {
+				auto in = ref.schema.empty() ? schema : ref.schema;
+				if (ref.function) {
+					for (auto type : {CatalogType::TABLE_MACRO_ENTRY, CatalogType::MACRO_ENTRY}) {
+						for (auto &where : {in, string("main")}) {
+							auto macro = LakeEntry(context, lake, type, where, ref.table);
+							if (macro && macro->type == type) {
+								nodes.insert({PathOf(*macro), "macro"});
+							}
 						}
-						state.rows.push_back({view.dataset, view.view, Value(scan.first),
-						                      Value::LIST(LogicalType::VARCHAR, std::move(columns)), true});
 					}
 					continue;
 				}
-				if (!view.planned || lineage.columns.empty()) {
-					state.rows.push_back({view.dataset, view.view, Value(), Value(), false});
+				auto named = LakeEntry(context, lake, CatalogType::TABLE_ENTRY, in, ref.table);
+				if (!named) {
 					continue;
 				}
-				for (idx_t i = 0; i < lineage.columns.size(); i++) {
-					auto &column = lineage.columns[i];
-					auto shape = i < lineage.shapes.size() && !lineage.shapes[i].empty() ? Value(lineage.shapes[i])
-					                                                                     : Value(LogicalType::VARCHAR);
-					state.rows.push_back(
-					    {view.dataset, view.view, Value(column.first), Value(column.second), lineage.complete, shape});
+				auto path = PathOf(*named);
+				nodes.insert({path, "definition"});
+				if (named->type != CatalogType::VIEW_ENTRY) {
+					continue;
+				}
+				if (i == 0) {
+					reads.insert(path);
+				}
+				if (seen.insert(StringUtil::Lower(path)).second) {
+					walk.emplace_back(named->ParentSchema().name.GetIdentifierName(), named->Cast<ViewCatalogEntry>());
 				}
 			}
 		}
-	}
-	bool scans = data.bind_data->Cast<ViewsLineageBindData>().scans;
-	bool joins = data.bind_data->Cast<ViewsLineageBindData>().joins;
-	idx_t count = 0;
-	while (state.offset < state.rows.size() && count < STANDARD_VECTOR_SIZE) {
-		auto &row = state.rows[state.offset];
-		output.data[0].Append(Value(row.dataset));
-		output.data[1].Append(Value(row.view));
-		output.data[2].Append(row.column);
-		output.data[3].Append(row.derivation);
-		if (!scans) {
-			output.data[4].Append(Value::BOOLEAN(row.complete));
-			output.data[5].Append(row.shape);
+		sql = entry->ToSQL();
+	});
+	// planned in a transaction of its own, the walk's closed: the context lock is not taken twice
+	try {
+		auto lineage = LineageOf(
+		    context, "SELECT * FROM " + QuoteName(lake) + "." + QuoteName(dataset) + "." + QuoteName(view), &sql);
+		result.value = LineageValue(lineage);
+		for (auto &scan : lineage.scans) {
+			nodes.insert({scan.first, "definition"});
+			reads.insert(scan.first);
+			for (auto &column : scan.second) {
+				reads.insert(scan.first + "." + column);
+			}
 		}
-		if (joins) {
-			output.data[6].Append(row.join);
-		}
-		state.offset++;
-		count++;
+	} catch (std::exception &ex) {
+		ErrorData error(ex);
+		result.error = "glossql: " + result.view + " does not plan: " + error.RawMessage();
 	}
-	output.CheckCardinality(count);
-}
-
-//===--------------------------------------------------------------------===//
-// glossql_views_mapping(dataset): the mapping of every view of a dataset, one
-// row per output column, branch of the union its rows come from (1 where it
-// has none) and scanned column of a lake table: the branch's derivation, where
-// a table the view reads more than once carries the alias of each scan as
-// scan[alias].column; the table and its column; the alias; the conditions the
-// view's joins and filters put on that scan alone; the lookup, the equalities
-// of the join that joins that scan to the rows before it (a join's right input,
-// a right join's left), its columns against the other input's; the literals the
-// derivation tests or returns; and complete, false where the walk could not
-// follow a step or two scans of one table read alike. A column computed from
-// no lake column has one row with no table. NULL reads every dataset's views;
-// a view that does not plan serves one row naming it, complete false
-//===--------------------------------------------------------------------===//
-
-struct ViewsMappingState : public GlobalTableFunctionState {
-	bool read = false;
-	vector<vector<Value>> rows;
-	idx_t offset = 0;
-};
-
-static unique_ptr<FunctionData> ViewsMappingBind(ClientContext &context, TableFunctionBindInput &input,
-                                                 vector<LogicalType> &return_types, vector<Identifier> &names) {
-	auto result = make_uniq<ViewsLineageBindData>();
-	result->every = input.inputs[0].IsNull();
-	if (!result->every) {
-		result->dataset = input.inputs[0].ToString();
-	}
-	return_types = {LogicalType::VARCHAR,
-	                LogicalType::VARCHAR,
-	                LogicalType::VARCHAR,
-	                LogicalType::INTEGER,
-	                LogicalType::VARCHAR,
-	                LogicalType::VARCHAR,
-	                LogicalType::VARCHAR,
-	                LogicalType::VARCHAR,
-	                LogicalType::VARCHAR,
-	                LogicalType::VARCHAR,
-	                LogicalType::LIST(LogicalType::VARCHAR),
-	                LogicalType::BOOLEAN};
-	for (auto name : {"dataset", "view", "column", "branch", "derivation", "table_name", "table_column", "alias",
-	                  "condition", "lookup", "literals", "complete"}) {
-		names.emplace_back(name);
-	}
+	result.reads.assign(reads.begin(), reads.end());
+	result.nodes.assign(nodes.begin(), nodes.end());
 	return result;
 }
 
-static unique_ptr<GlobalTableFunctionState> ViewsMappingInit(ClientContext &context, TableFunctionInitInput &input) {
-	return make_uniq<ViewsMappingState>();
+//! The stored lineage's key in measurements
+static string LineageKey(const string &dataset, const string &view) {
+	return "dataset = " + QuoteText(dataset) + " AND function = 'lineage' AND subject = " + QuoteText(view);
 }
 
-static void ViewsMappingExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &state = data.global_state->Cast<ViewsMappingState>();
-	if (!state.read) {
-		state.read = true;
-		auto &bind = data.bind_data->Cast<ViewsLineageBindData>();
-		Inner inner(context);
-		auto catalogs = CatalogState(*inner.con.context);
-		vector<string> datasets;
-		if (bind.every) {
-			auto listed = inner.con.Query("SELECT DISTINCT name FROM " + inner.Store("datasets") + " ORDER BY name");
-			if (listed->HasError()) {
-				throw InvalidInputException("glossql_views_mapping: %s", listed->GetError());
-			}
-			while (auto chunk = listed->Fetch()) {
-				for (idx_t i = 0; i < chunk->size(); i++) {
-					datasets.push_back(chunk->GetValue(0, i).ToString());
-				}
-			}
-		} else {
-			datasets.push_back(bind.dataset);
+void StoreViewLineage(CatalogWrite &write, const string &dataset, const ViewLineageResult &lineage, int64_t read_at) {
+	auto &inner = write.inner;
+	auto key = LineageKey(dataset, lineage.view);
+	auto replaced = inner.Row("SELECT begin_snapshot, value, error, changed_at FROM " + inner.Current("measurements") +
+	                          " WHERE " + key);
+	auto value = lineage.error.empty() ? Value(lineage.value) : Value();
+	auto error = lineage.error.empty() ? Value() : Value(lineage.error);
+	auto changed_at = Value::BIGINT(write.snapshot);
+	if (!replaced.empty()) {
+		auto same =
+		    replaced[1].IsNull() == value.IsNull() && (value.IsNull() || replaced[1].ToString() == value.ToString()) &&
+		    replaced[2].IsNull() == error.IsNull() && (error.IsNull() || replaced[2].ToString() == lineage.error);
+		if (same) {
+			changed_at = replaced[3];
 		}
-		auto text = [](const string &value) {
-			return value.empty() ? Value(LogicalType::VARCHAR) : Value(value);
-		};
-		for (auto &dataset : datasets) {
-			auto kept = DatasetLineage(inner, dataset, catalogs);
-			for (auto &view : kept->views) {
-				if (!view.planned || view.lineage.mapping.empty()) {
-					state.rows.push_back({Value(view.dataset), Value(view.view), Value(), Value(), Value(), Value(),
-					                      Value(), Value(), Value(), Value(),
-					                      Value(LogicalType::LIST(LogicalType::VARCHAR)), Value::BOOLEAN(false)});
-					continue;
-				}
-				for (auto &row : view.lineage.mapping) {
-					vector<Value> literals;
-					for (auto &literal : row.literals) {
-						literals.emplace_back(literal);
-					}
-					state.rows.push_back({Value(view.dataset), Value(view.view), Value(row.column),
-					                      Value::INTEGER(NumericCast<int32_t>(row.branch)), Value(row.derivation),
-					                      text(row.table), text(row.table_column), text(row.alias), text(row.condition),
-					                      text(row.lookup), Value::LIST(LogicalType::VARCHAR, std::move(literals)),
-					                      Value::BOOLEAN(row.complete)});
-				}
-			}
+		for (auto &relation : {"inputs", "edges"}) {
+			write.End(relation, "begin_snapshot = " + replaced[0].ToString());
 		}
+		write.End("measurements", key);
 	}
-	idx_t count = 0;
-	while (state.offset < state.rows.size() && count < STANDARD_VECTOR_SIZE) {
-		auto &row = state.rows[state.offset];
-		for (idx_t c = 0; c < row.size(); c++) {
-			output.data[c].Append(row[c]);
-		}
-		state.offset++;
-		count++;
+	write.Insert("measurements", QuoteText(dataset) + ", 'lineage', " + QuoteText(lineage.view) + ", 'lineage', " +
+	                                 value.ToSQLString() + ", now(), " + error.ToSQLString() + ", " +
+	                                 to_string(read_at) + ", " + changed_at.ToString());
+	vector<string> rows;
+	for (auto &node : lineage.nodes) {
+		rows.push_back("(" + to_string(write.snapshot) + ", NULL, " + QuoteText(node.first) + ", " +
+		               QuoteText(node.second) + ")");
 	}
-	output.CheckCardinality(count);
+	write.Run("INSERT INTO " + inner.Store("inputs") + " VALUES " + StringUtil::Join(rows, ", "));
+	if (!lineage.reads.empty()) {
+		rows.clear();
+		for (auto &read : lineage.reads) {
+			rows.push_back("(" + to_string(write.snapshot) + ", NULL, " + QuoteText(lineage.view) + ", " +
+			               QuoteText(read) + ", 'reads')");
+		}
+		write.Run("INSERT INTO " + inner.Store("edges") + " VALUES " + StringUtil::Join(rows, ", "));
+	}
+}
+
+bool RetireViewLineage(CatalogWrite &write, const string &dataset, const string &view) {
+	auto &inner = write.inner;
+	auto key = LineageKey(dataset, view);
+	auto stored = inner.Scalar("SELECT begin_snapshot FROM " + inner.Current("measurements") + " WHERE " + key);
+	if (stored.IsNull()) {
+		return false;
+	}
+	for (auto &relation : {"inputs", "edges"}) {
+		write.End(relation, "begin_snapshot = " + stored.ToString());
+	}
+	write.End("measurements", key);
+	return true;
 }
 
 //===--------------------------------------------------------------------===//
@@ -2827,16 +2630,8 @@ void RegisterGlossLineage(ExtensionLoader &loader) {
 	TableFunction branch_rows("branch_rows", {LogicalType::VARCHAR}, nullptr);
 	branch_rows.bind_replace = BranchRowsBindReplace;
 	loader.RegisterFunction(branch_rows);
-	loader.RegisterFunction(TableFunction("glossql_views_mapping", {LogicalType::VARCHAR}, ViewsMappingExec,
-	                                      ViewsMappingBind, ViewsMappingInit));
 	loader.RegisterFunction(
 	    TableFunction("glossql_lineage", {LogicalType::VARCHAR}, LineageExec, LineageBind, LineageInit));
-	loader.RegisterFunction(TableFunction("glossql_views_lineage", {LogicalType::VARCHAR}, ViewsLineageExec,
-	                                      ViewsLineageBind, ViewsLineageInit));
-	loader.RegisterFunction(TableFunction("glossql_views_scans", {LogicalType::VARCHAR}, ViewsLineageExec,
-	                                      ViewsScansBind, ViewsLineageInit));
-	loader.RegisterFunction(TableFunction("glossql_views_joins", {LogicalType::VARCHAR}, ViewsLineageExec,
-	                                      ViewsJoinsBind, ViewsLineageInit));
 }
 
 } // namespace duckdb

@@ -1834,11 +1834,16 @@ SELECT DISTINCT asset, what FROM (
   -- a result on an asset of a kind a kit declares reads the node that declares it
   UNION ALL SELECT node_asset, node_what FROM kind WHERE asset = $s
   UNION ALL SELECT asset, 'result ' || what FROM a WHERE "read" = 'results'
+  -- a definition read: each view's own definition and its stored lineage, and the recipe of what it reads
   UNION ALL SELECT asset, 'definition' FROM a WHERE "read" = 'definition'
-  UNION ALL SELECT vr.relation, u.k FROM a JOIN vr ON vr.view = a.asset, unnest(['definition', 'recipe']) u(k)
-            WHERE a."read" = 'definition'
-  UNION ALL SELECT r, CASE WHEN r IN (SELECT schema_name || '.' || view_name FROM duckdb_views()
-                                      WHERE database_name = $lake) THEN 'definition' ELSE 'data' END FROM rv
+  UNION ALL SELECT asset, 'result lineage' FROM a WHERE "read" = 'definition'
+            AND asset IN (SELECT schema_name || '.' || view_name FROM duckdb_views() WHERE database_name = $lake)
+  UNION ALL SELECT vr.relation, 'recipe' FROM a JOIN vr ON vr.view = a.asset WHERE a."read" = 'definition'
+  -- the data of each table read, through views: each view's definition, and its stored lineage, which the
+  -- walk went over
+  UNION ALL SELECT r, u.what FROM rv, unnest(CASE WHEN r IN (SELECT schema_name || '.' || view_name FROM duckdb_views()
+                                                             WHERE database_name = $lake)
+                                                  THEN ['definition', 'result lineage'] ELSE ['data'] END) u(what)
   UNION ALL SELECT $f, 'function' UNION ALL SELECT $p, 'property'
   UNION ALL SELECT substr(u.r.read, strpos(u.r.read, '.') + 1), 'macro'
             FROM $functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR"}]')) u(r)
@@ -1952,6 +1957,45 @@ static string RetakeReads(ClientContext &context, Inner &inner, const string &na
 	return untracked;
 }
 
+//! SELECT lineage() FROM <view>: the view's lineage (SPEC §6), served while the stored one is current,
+//! else planned again and stored with the nodes the planning read, where the same value keeps the snapshot
+//! it changed at. A subject that is no view retires the lineage stored on it, else is refused
+static void ExtractLineage(ClientContext &context, Inner &inner, const string &dataset, const string &subject,
+                           DataChunk &output) {
+	output.data[0].Append(Value("lineage"));
+	output.data[1].Append(Value(subject));
+	output.data[2].Append(Value("lineage"));
+	auto served = Served(inner, dataset, "lineage", subject);
+	if (!served.empty() && served[1].IsNull()) {
+		output.data[3].Append(served[0]);
+		output.data[4].Append(Value::BOOLEAN(false));
+		return;
+	}
+	auto parts = SubjectParts(subject);
+	optional_ptr<CatalogEntry> entry;
+	inner.con.context->RunFunctionInTransaction(
+	    [&]() { entry = parts.size() == 2 ? RelationEntry(*inner.con.context, parts[0], parts[1]) : nullptr; });
+	if (!entry || entry->type != CatalogType::VIEW_ENTRY) {
+		bool retired = false;
+		inner.Write(context, [&](CatalogWrite &write) { retired = RetireViewLineage(write, dataset, subject); });
+		if (!retired) {
+			throw InvalidInputException("glossql: not_a_view: %s is no view; its lineage is its own", subject);
+		}
+		output.data[3].Append(Value());
+		output.data[4].Append(Value::BOOLEAN(true));
+		return;
+	}
+	auto read_at = inner.Scalar("SELECT max(snapshot_id) FROM " + inner.ws.Meta("snapshot"));
+	auto lineage = PlanViewLineage(inner, parts[0], parts[1]);
+	inner.Write(context,
+	            [&](CatalogWrite &write) { StoreViewLineage(write, dataset, lineage, read_at.GetValue<int64_t>()); });
+	if (!lineage.error.empty()) {
+		throw InvalidInputException(lineage.error);
+	}
+	output.data[3].Append(Value(lineage.value));
+	output.data[4].Append(Value::BOOLEAN(true));
+}
+
 static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<ExtractState>();
 	if (state.done) {
@@ -1970,6 +2014,11 @@ static void ExtractExec(ClientContext &context, TableFunctionInput &data, DataCh
 	idx_t row = 0;
 	for (auto &call : ListValue::GetChildren(inputs[1])) {
 		auto name = call.ToString();
+		if (name == "lineage") {
+			ExtractLineage(context, inner, dataset, subject, output);
+			row++;
+			continue;
+		}
 		auto schema = inner.FunctionSchema(dataset, name);
 		if (schema.empty()) {
 			throw InvalidInputException("glossql: %s is not a declared function for %s", name, dataset);
@@ -2103,7 +2152,8 @@ static unique_ptr<TableRef> SelectOrExtractBindReplace(ClientContext &context, T
 		Inner inner(context);
 		auto dataset = DatasetOf(context, ResolveSubject(context, input.inputs[0].ToString()));
 		for (auto &call : ListValue::GetChildren(input.inputs[1])) {
-			declared = declared || !inner.FunctionSchema(dataset, call.ToString()).empty();
+			declared =
+			    declared || call.ToString() == "lineage" || !inner.FunctionSchema(dataset, call.ToString()).empty();
 		}
 	} catch (std::exception &) {
 		// no store, no functions
@@ -2194,8 +2244,8 @@ static TableFunction OutdatedFunction() {
 // val is text; column_type carries the stored type, so a screen matches values
 // within one type only; ci numbers the columns in table order, rn the rows of
 // each table. Nested columns stay out. Generated at bind, like subject_column,
-// over the dataset's own relations (DatasetColumns); a view's rows come from
-// glossql_kept_view, kept once per store version, a table's from the table
+// over the dataset's own relations (DatasetColumns); a view's rows are the
+// view's, read as any relation
 //===------------------------------------------------------------------===//
 
 static bool IsScalarType(const string &type) {
@@ -2255,7 +2305,6 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 	// the columns per table, in the order listed
 	vector<string> tables;
 	std::map<string, vector<pair<string, string>>> columns;
-	std::set<string> kept;
 	for (auto &column : DatasetColumns(context, parts[0], parts.size() == 2 ? parts[1] : string(), views)) {
 		if ((only_views && !column.view) || (placed && !place.count(column.table))) {
 			continue;
@@ -2264,9 +2313,6 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 			tables.push_back(column.table);
 		}
 		columns[column.table].emplace_back(column.column, column.type);
-		if (column.view) {
-			kept.insert(column.table);
-		}
 	}
 	if (tables.empty()) {
 		return make_uniq<SubqueryRef>(ParseSelect(empty));
@@ -2286,14 +2332,10 @@ static unique_ptr<TableRef> DatasetCellsBindReplace(ClientContext &context, Tabl
 			throw InvalidInputException("glossql: dataset_cells takes a positive cells bound, got %d", cells);
 		}
 	}
-	// the version every kept view is read under, once for the bind
-	string version = kept.empty() ? string() : StoreVersion(inner);
 	string sql;
 	idx_t ci = 0;
 	for (auto &table : tables) {
-		string from = kept.count(table) ? "glossql_kept_view(" + QuoteText(parts[0]) + ", " + QuoteText(table) + ", " +
-		                                      QuoteText(version) + ")"
-		                                : inner.Table(parts[0], table);
+		string from = inner.Table(parts[0], table);
 		// the row number under a name no table's column takes, served as rn
 		string select = "SELECT row_number() OVER () AS __gloss_rn";
 		string names;

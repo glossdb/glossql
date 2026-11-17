@@ -42,7 +42,8 @@ UNION ALL SELECT 'relationships' AS relation, column_name, column_type AS data_t
 UNION ALL SELECT 'functions' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_functions)
 UNION ALL SELECT 'measurements' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_measurements)
 UNION ALL SELECT 'tests' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_tests)
-UNION ALL SELECT 'inputs' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_inputs);
+UNION ALL SELECT 'inputs' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_inputs)
+UNION ALL SELECT 'edges' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_edges);
 
 # one page per store table: the pages are the views PRAGMA glossql made in the lake's main schema, one per table
 query I
@@ -59,7 +60,7 @@ EXCEPT SELECT table_name FROM information_schema.tables WHERE table_catalog = 'w
 query I
 SELECT count(DISTINCT relation) FROM stored;
 ----
-12
+13
 
 # a stored column the pages do not name
 query III

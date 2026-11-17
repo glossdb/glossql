@@ -293,8 +293,23 @@ public:
 	bool wrote = false;
 };
 
-//! The store's version, that the reads and the kept views are kept under: the
-//! lake's snapshot, which every catalog write and every load moves (glossql_store.cpp)
-string StoreVersion(Inner &inner);
+//! A view's lineage as its stored result holds it (glossql_lineage.cpp): the view's path as the catalog
+//! spells it; the value, or the error where the view does not plan; the relations and columns it reads,
+//! its edges; and the nodes the planning read, the view's definition and that of every relation and
+//! macro its SQL names, through the views it reads
+struct ViewLineageResult {
+	string view;
+	string value;
+	string error;
+	vector<string> reads;
+	vector<pair<string, string>> nodes;
+};
+//! Plans one view of the lake as the inner connection's transaction sees it; not_a_view where none is
+ViewLineageResult PlanViewLineage(Inner &inner, const string &dataset, const string &view);
+//! Stores a view's lineage as the result of `lineage` on the view, read at `read_at`, with its inputs and
+//! edges; the result it replaces ends, and the same value and error keep the snapshot they changed at
+void StoreViewLineage(CatalogWrite &write, const string &dataset, const ViewLineageResult &lineage, int64_t read_at);
+//! Ends the stored lineage of a view, its inputs and its edges; false where none is stored
+bool RetireViewLineage(CatalogWrite &write, const string &dataset, const string &view);
 
 } // namespace duckdb

@@ -54,8 +54,8 @@ was walked over.
 | `annotations(p, where)` | per asset of the place that `p`'s grains admit, `annotation p`, `value p` and the `definition` of the asset's table or view (an annotation is stale once its asset's definition moved); `property` `p`, and `function` of each detector its tests name |
 | `annotations('x-kind k', where)` | the same for each property of the kind, and `properties` of `k` |
 | `results(f, where)` | per asset of the place `result f` |
-| `definition(where)` | per view of the place its `definition`, the `definition` of each table and view it reads, through views, and the `recipe` of each table |
-| the subject's data, or a table the body names | `data` of each table read, through views, and the `definition` of each view on the way |
+| `definition(where)` | per view of the place its `definition` and `result lineage`, and the `recipe` of each table it reads, through views |
+| the subject's data, or a table the body names | `data` of each table read, through views, and the `definition` and `result lineage` of each view on the way |
 | the lineage, read by a primitive (`glossql_additivity_cells`) | the nodes its place's walk passes |
 | the function itself | `function` of the function, `macro` of each macro its body follows, and `property` of the property it fills |
 | a subject of a kind a kit declares | the node that declares it (`node_asset`, `node_what` of `lineage_assets_<kind>`); `annotations('x-kind k', 'itself')` on it records that node and no `properties k` |
@@ -63,13 +63,28 @@ was walked over.
 | Place | Nodes its walk passes |
 |---|---|
 | `itself`, `its dataset` | none |
-| `its columns` | a table's `definition`; a view's and those of what it reads; a dataset's `assets` and `relationships` |
-| `its sources`, `the columns it joins on` | the view's `definition` and those of what it reads |
-| `its relationships` | a view's `definition`, those of what it reads, and `relationships` of the view and of each table and view it reads; a table's or a column's: `relationships` of the table; a dataset's or a relationship's: the dataset's `relationships` |
-| a kit's own | the node that declares its subject (`lineage_assets_<kind>`), and the `definition` of each relation among its assets and of what that relation reads |
-| `its source systems` | a table's `recipe`; a view's `definition`, those of what it reads, and each table's `recipe` |
+| `its columns` | a table's `definition`; a view's `result lineage`; a dataset's `assets` and `relationships` |
+| `its sources`, `the columns it joins on` | the view's `result lineage` |
+| `its relationships` | a view's `result lineage` and that of each view it reads, through views, and `relationships` of the view and of each table and view it reads; a table's or a column's: `relationships` of the table; a dataset's or a relationship's: the dataset's `relationships` |
+| a kit's own | the node that declares its subject (`lineage_assets_<kind>`), and of each relation among its assets a table's `definition`, a view's `result lineage` |
+| `its source systems` | a table's `recipe`; a view's `result lineage`, and the `recipe` of each table it reads, through views |
 | `the dataset` | the dataset's `assets` and `relationships` |
 | `the dataset's metrics` | the dataset's `views metric`, and each metric's `definition` |
+
+## A view's lineage
+
+A view's lineage is a stored result of its own: function `lineage` on
+the view, its value what the view scans, joins and maps and what
+computes each column, its edges rows of [edges](edges.md). It reads the
+view's `definition`, and the `definition` of each table and view its
+SQL names, through the views it reads, and the `macro` of each macro it
+calls. Defining the view stores it in the same write, read at that
+write's snapshot; `SELECT lineage() FROM <view>` computes it again once
+a node it read changed. A place walked over a view records the view's
+`result lineage`, not the definitions behind it: a table it reads
+altered puts the lineage out of date, and computed again with the same
+value it keeps the snapshot it changed at, so what read the place
+stays current.
 
 ## The check
 

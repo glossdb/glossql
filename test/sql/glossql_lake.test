@@ -36,6 +36,8 @@ aspects
 aspects_history
 datasets
 datasets_history
+edges
+edges_history
 functions
 functions_history
 glossary
