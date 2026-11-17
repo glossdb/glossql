@@ -20,10 +20,9 @@ Ground rules:
   context — is a JSON document validated by a [JSON Schema](https://json-schema.org).
   Rendering conventions ride the schema. Authored prose is opaque.
 - **The actor rides the transport.** Every connection carries an actor
-  (agent_id or human_id). An answer the interface elicits from
-  the human mid-call is recorded through the interface and is stored with the actor kind human —
-  the same rule; the transport is just not always a connection (fixture
-  22). There is no BY clause anywhere; the engine
+  (agent_id or human_id). A person's answer to a review question is
+  stored with the actor kind human — the same rule (fixture 22). There
+  is no BY clause anywhere; the engine
   stamps writer and actor kind on every statement.
 - **The grammar fixes keys, not mechanics.** History, replay, and supersession
   mechanics are implementation. The grammar fixes what supersedes what: the
