@@ -443,6 +443,96 @@ SELECT count(*) FROM functions_history WHERE name = 'raw_rows';
 ----
 0
 
+# --- a metric's series, series_aggregate() over the dataset's metrics: the views that are metrics, not plans,
+# their columns named by a macro at bind. Its walk passes which views are metrics, so a plan defined in the
+# dataset leaves its reader current; a role the macro reads on a metric's column, a metric defined and a load
+# of a table a metric reads outdate it
+
+statement ok
+CREATE OR REPLACE MACRO main.points_axes(grain) AS TABLE
+SELECT split_part(d.view, '.', 2) AS view, 'period' AS period_column, 'value' AS value_column,
+       NULL::VARCHAR AS numerator, NULL::VARCHAR AS denominator, []::VARCHAR[] AS dims,
+       CASE WHEN count(a.value) > 0 THEN coalesce(any_value(grain), 'day') END AS at_grain, false AS by_instant
+FROM definition('the dataset''s metrics') d
+LEFT JOIN annotations('role', 'the dataset''s metrics') a ON a.asset = d.view || '.value' AND a.value IS NOT NULL
+GROUP BY d.view;
+
+statement ok
+DECLARE ASPECT metric_sums WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET;
+
+statement ok
+DECLARE FUNCTION metric_sums FOR GLOBAL AS $$ SELECT count(*) AS n, sum(value) FILTER (WHERE dimension = '') AS total FROM series_aggregate('f1', 'the dataset''s metrics', 'points_axes', 'month') $$ RETURNS metric_sums;
+
+query TTT
+SELECT r.read, r."where", r.what FROM functions f, unnest(from_json(f.reads, '[{"kind": "VARCHAR", "read": "VARCHAR", "what": "VARCHAR", "where": "VARCHAR"}]')) u(r)
+WHERE f.name = 'metric_sums' AND r.kind = 'data';
+----
+series_aggregate	NULL	f1, the dataset's metrics, points_axes, month
+
+statement ok
+SELECT metric_sums() FROM f1;
+
+query II
+SELECT value->>'n', value->>'total' FROM measurements WHERE aspect = 'metric_sums';
+----
+0	NULL
+
+statement ok
+DECLARE ASPECT points_target WITH $${"title": "Points target", "x-kind": "plan", "x-plan-of": "points"}$$ AS VIEW;
+
+statement ok
+GLOSS points_target ON f1 AS $${"sql": "SELECT period, value * 1.1 AS value FROM f1.points"}$$;
+
+statement ok
+GLOSS role ON points_target.value AS $${"value": "measure"}$$;
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'metric_sums';
+----
+0
+
+statement ok
+GLOSS role ON points.value AS $${"value": "measure"}$$;
+
+query TT
+SELECT asset, what FROM glossql_outdated() WHERE function = 'metric_sums';
+----
+f1.points.value	annotation role
+
+statement ok
+SELECT metric_sums() FROM f1;
+
+query II
+SELECT value->>'n', value->>'total' FROM measurements WHERE aspect = 'metric_sums';
+----
+2	146.0
+
+# a metric defined in the dataset is a member added
+
+statement ok
+DECLARE ASPECT race_points WITH $${"title": "Points per race"}$$ AS VIEW;
+
+statement ok
+GLOSS race_points ON f1 AS $${"sql": "SELECT race_id, sum(points) AS value FROM f1.results GROUP BY 1"}$$;
+
+query TT
+SELECT asset, what FROM glossql_outdated() WHERE function = 'metric_sums';
+----
+f1	views metric
+
+statement ok
+SELECT metric_sums() FROM f1;
+
+# a row loaded into a table a metric reads changes the data the series read
+
+statement ok
+INSERT INTO f1.results VALUES (0, 0, 0);
+
+query TT
+SELECT asset, what FROM glossql_outdated() WHERE function = 'metric_sums';
+----
+f1.results	data
+
 # --- the dataset's single values: the views that are single values alone. A metric defined leaves their reader
 # current; a single value defined outdates it
 
