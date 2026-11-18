@@ -504,6 +504,51 @@ SELECT asset, what FROM glossql_outdated() WHERE function = 'metric_cells';
 ----
 f1	views metric
 
+# --- the dataset's single values: the views that are single values alone. A metric defined leaves their reader
+# current; a single value defined outdates it
+
+statement ok
+DECLARE ASPECT single_cells WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET;
+
+statement ok
+DECLARE FUNCTION single_cells FOR GLOBAL AS $$ SELECT count(*) AS n, count(DISTINCT "table") AS views FROM dataset_cells('f1', 'the dataset''s single values') $$ RETURNS single_cells;
+
+statement ok
+DECLARE ASPECT races_run WITH $${"title": "Races run", "x-kind": "scalar"}$$ AS VIEW;
+
+statement ok
+GLOSS races_run ON f1 AS $${"sql": "SELECT count(*) AS value FROM f1.results"}$$;
+
+statement ok
+SELECT single_cells() FROM f1;
+
+query II
+SELECT value->>'n', value->>'views' FROM measurements WHERE aspect = 'single_cells';
+----
+1	1
+
+statement ok
+DECLARE ASPECT race_wins WITH $${"title": "Wins per race"}$$ AS VIEW;
+
+statement ok
+GLOSS race_wins ON f1 AS $${"sql": "SELECT race_id, count(*) AS value FROM f1.results GROUP BY 1"}$$;
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'single_cells';
+----
+0
+
+statement ok
+DECLARE ASPECT drivers_seen WITH $${"title": "Drivers seen", "x-kind": "scalar"}$$ AS VIEW;
+
+statement ok
+GLOSS drivers_seen ON f1 AS $${"sql": "SELECT count(DISTINCT driver_id) AS value FROM f1.results"}$$;
+
+query TT
+SELECT asset, what FROM glossql_outdated() WHERE function = 'single_cells';
+----
+f1	views scalar
+
 # --- a function's value read through annotations() is a result read: once it is out of date, so is its reader
 
 statement ok

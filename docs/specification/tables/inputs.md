@@ -71,6 +71,7 @@ was walked over.
 | `its source systems` | a table's `recipe`; a view's `result lineage`, and the `recipe` of each table it reads, through views |
 | `the dataset` | the dataset's `assets` and `relationships` |
 | `the dataset's metrics` | the dataset's `views metric`, and each metric's `definition` |
+| `the dataset's single values` | the dataset's `views scalar`, and each single value's `definition` |
 
 ## A view's lineage
 

@@ -79,6 +79,7 @@ The places, walked from the function's subject:
 | `its dataset` | the subject's dataset itself |
 | `the dataset` | the dataset and every asset in it |
 | `the dataset's metrics` | the views of the dataset that are metrics, and their columns |
+| `the dataset's single values` | the views of the dataset that are single values, and their columns |
 | a kit's own | what its `lineage_places_<kind>` macro names |
 
 ```sql

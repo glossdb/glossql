@@ -560,6 +560,7 @@ table is loaded from, and the edges of each kind a kit declares, §4):
 | `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads |
 | `its dataset` | the subject's dataset itself |
 | `the dataset's metrics` | the metrics of the subject's dataset and their columns |
+| `the dataset's single values` | the single values of the subject's dataset (`x-kind: scalar`) and their columns |
 | `the dataset` | the subject's dataset and every asset in it |
 
 and each place a kit adds for its kind of asset (§4). On an asset a kit declares by an annotation,

@@ -421,7 +421,7 @@ data	fin.sources
 query T
 SELECT string_agg(p."where", '|' ORDER BY p."where") FROM (SELECT unnest(main.place_list()) AS p);
 ----
-its columns|its dataset|its metric|its relationships|its source systems|its sources|itself|the columns it joins on|the dataset|the dataset's metrics
+its columns|its dataset|its metric|its relationships|its source systems|its sources|itself|the columns it joins on|the dataset|the dataset's metrics|the dataset's single values
 
 statement ok
 SET VARIABLE glossql_subject = 'fin';

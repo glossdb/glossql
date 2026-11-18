@@ -176,6 +176,9 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --   'the dataset's metrics'    the views of the subject's dataset that are
 --                              metrics (no relation or single value), and
 --                              their columns
+--   'the dataset's single values'  the views of the subject's dataset that
+--                              are single values (x-kind scalar), and their
+--                              columns
 -- and the places of each kind of asset a kit declares
 -- (glossql_kind_places(): its lineage_places_<kind> macro; a row with no
 -- subject names a place it adds). Any other where is refused, not_a_place.
@@ -192,6 +195,7 @@ CREATE OR REPLACE MACRO main.place_list() AS list_concat([
   {'where': 'its source systems', 'anchored': false},
   {'where': 'its dataset', 'anchored': true},
   {'where': 'the dataset''s metrics', 'anchored': true},
+  {'where': 'the dataset''s single values', 'anchored': true},
   {'where': 'the dataset', 'anchored': true}],
   coalesce((SELECT list(DISTINCT {'where': "where", 'anchored': false}) FROM glossql_kind_places(NULL) WHERE subject IS NULL), []));
 
@@ -242,13 +246,19 @@ CREATE OR REPLACE MACRO main.place_dataset(dataset_name) AS TABLE
 SELECT dataset_name AS subject, dataset_name AS asset
 UNION SELECT dataset_name, "to" FROM main.contains_edges(dataset_name);
 
-CREATE OR REPLACE MACRO main.place_metrics(dataset_name) AS TABLE
-WITH metrics AS (
+-- place_views_of(dataset, kind): the dataset's views of one x-kind ('metric' where the property names
+-- none) and their columns
+CREATE OR REPLACE MACRO main.place_views_of(dataset_name, x_kind) AS TABLE
+WITH members AS (
   SELECT dataset_name || '.' || name AS m FROM main.aspects
-  WHERE kind = 'VIEW' AND coalesce(json_extract_string(schema, '$.x-kind'), 'metric') = 'metric'
+  WHERE kind = 'VIEW' AND coalesce(json_extract_string(schema, '$.x-kind'), 'metric') = x_kind
     AND name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW'))
 SELECT DISTINCT dataset_name AS subject, "to" AS asset FROM main.contains_edges(dataset_name)
-WHERE "to" IN (SELECT m FROM metrics) OR "from" IN (SELECT m FROM metrics);
+WHERE "to" IN (SELECT m FROM members) OR "from" IN (SELECT m FROM members);
+
+CREATE OR REPLACE MACRO main.place_metrics(dataset_name) AS TABLE FROM main.place_views_of(dataset_name, 'metric');
+
+CREATE OR REPLACE MACRO main.place_single_values(dataset_name) AS TABLE FROM main.place_views_of(dataset_name, 'scalar');
 
 -- places(dataset): every place of every subject of a dataset, (subject,
 -- where, asset); 'itself' is the subject and has no row here
@@ -260,6 +270,7 @@ UNION ALL SELECT subject, 'its relationships', asset FROM main.place_relationshi
 UNION ALL SELECT subject, 'its source systems', asset FROM main.place_systems(dataset_name)
 UNION ALL SELECT subject, 'the dataset', asset FROM main.place_dataset(dataset_name)
 UNION ALL SELECT subject, 'the dataset''s metrics', asset FROM main.place_metrics(dataset_name)
+UNION ALL SELECT subject, 'the dataset''s single values', asset FROM main.place_single_values(dataset_name)
 UNION ALL SELECT subject, 'its dataset', asset FROM main.place_its_dataset(dataset_name)
 UNION ALL SELECT subject, "where", asset FROM glossql_kind_places(dataset_name) WHERE subject IS NOT NULL;
 
@@ -278,7 +289,7 @@ SELECT view, relation FROM walk;
 -- definition; a view's stored lineage, and that of each view its walk
 -- reads through; the relationships of a table, a view and what it reads,
 -- or a dataset; a table's recipe; a dataset's assets; which of a
--- dataset's views are metrics. A result that read a place read these too,
+-- dataset's views are metrics, and which are single values. A result that read a place read these too,
 -- so a member added to the place later changes a node it read. A view's
 -- lineage computed again with the same value leaves the result current.
 CREATE OR REPLACE MACRO main.place_nodes(dataset_name) AS TABLE
@@ -314,6 +325,10 @@ UNION ALL SELECT dataset_name, u.place, dataset_name, s.what
 UNION ALL SELECT dataset_name, 'the dataset''s metrics', dataset_name, 'views metric'
 UNION ALL SELECT dataset_name, 'the dataset''s metrics', asset, 'definition' FROM main.place_metrics(dataset_name)
           WHERE len(string_split(asset, '.')) = 2
+-- the dataset's single values: which views are single values, and the definition of each
+UNION ALL SELECT dataset_name, 'the dataset''s single values', dataset_name, 'views scalar'
+UNION ALL SELECT dataset_name, 'the dataset''s single values', asset, 'definition' FROM main.place_single_values(dataset_name)
+          WHERE len(string_split(asset, '.')) = 2
 UNION ALL SELECT dataset_name, 'its relationships', dataset_name, 'relationships';
 
 CREATE OR REPLACE MACRO main.place(where_) AS TABLE
@@ -327,6 +342,7 @@ FROM query(CASE where_
   WHEN 'the dataset' THEN 'SELECT asset FROM main.place_dataset(split_part(main.read_subject(), ''.'', 1))'
   WHEN 'its dataset' THEN 'SELECT split_part(main.read_subject(), ''.'', 1) AS asset'
   WHEN 'the dataset''s metrics' THEN 'SELECT asset FROM main.place_metrics(split_part(main.read_subject(), ''.'', 1))'
+  WHEN 'the dataset''s single values' THEN 'SELECT asset FROM main.place_single_values(split_part(main.read_subject(), ''.'', 1))'
   ELSE 'SELECT asset FROM (SELECT *, bool_or(subject IS NULL AND "where" = ''' || replace(where_, '''', '''''')
        || ''') OVER () AS known FROM glossql_kind_places(split_part(main.read_subject(), ''.'', 1))) WHERE CASE WHEN known THEN "where" = '''
        || replace(where_, '''', '''''') || ''' AND subject = main.read_subject() ELSE error(''not_a_place: '
