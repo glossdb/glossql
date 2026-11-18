@@ -332,6 +332,11 @@ struct StatementState : public ClientContextState {
 	unique_ptr<Inner> inner;
 	//! the connection is an Inner's
 	bool nested = false;
+	//! the statement's state, where the connection is the statement's Inner (Inner::Of): a read computed
+	//! on it, at bind or in a body, is the statement's read
+	StatementState *parent = nullptr;
+	//! where this statement's reads are kept: the outermost state of its Inners
+	StatementState &Root();
 	//! the reads' rows are kept past each query
 	bool keep_reads = false;
 	std::mutex lock;

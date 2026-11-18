@@ -57,6 +57,7 @@ was walked over.
 | `results(f, where)` | per asset of the place `result f`, which its `history` changes with |
 | `definition(where)` | per view of the place its `definition` and `result lineage`, and the `recipe` of each table it reads, through views |
 | the subject's data, or a table the body names | `data` of each table read, through views, and the `definition` and `result lineage` of each view on the way |
+| a series of a place's views (`series_aggregate(subject, where, axes, grain)`) | `data` of each table the views of the place read, through views, the nodes the place's walk passes, and what the `axes` macro reads |
 | the lineage, read by a primitive (`glossql_additivity_cells`) | the nodes its place's walk passes |
 | the function itself | `function` of the function, `macro` of each macro its body follows, and `property` of the property it fills |
 | a subject of a kind a kit declares | the node that declares it (`node_asset`, `node_what` of `lineage_assets_<kind>`); `annotations('x-kind k', 'itself')` on it records that node and no `properties k` |

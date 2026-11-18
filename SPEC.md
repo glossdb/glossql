@@ -482,7 +482,10 @@ $$;
   engine — read-only. A measurement runs over the data as the statement
   reads it, composing everything a read can; `$subject` arrives as a string
   literal, and `subject_column($subject)` is the subject's column as a
-  relation named `v`. The result is stored by shape: one row and one column
+  relation named `v`. `series_aggregate(subject, where, axes, grain)`
+  sums the views of a place over their own typed columns, per period
+  and per member of each dimension; a kit's macro `axes` names the
+  columns, and the read records the data of the place. The result is stored by shape: one row and one column
   is the value, one row is an object of its columns, many rows are an
   array of row objects. Settings are context, never call arguments —
   calls are always bare `f()`. A body composes its context inline: a

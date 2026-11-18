@@ -1942,7 +1942,9 @@ static unique_ptr<FunctionData> TestsBind(ClientContext &context, TableFunctionB
 static unique_ptr<GlobalTableFunctionState> ReadInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto &bind = input.bind_data->Cast<ReadBindData>();
 	auto state = make_uniq<ReadState>();
-	auto &reads = StatementState::Of(context);
+	auto &statement = StatementState::Of(context);
+	// a read the statement computed already, at its bind or in another read, on any of its connections
+	auto &reads = statement.Root();
 	{
 		std::lock_guard<std::mutex> guard(reads.lock);
 		auto found = reads.reads.find(bind.sql);
@@ -1953,7 +1955,7 @@ static unique_ptr<GlobalTableFunctionState> ReadInit(ClientContext &context, Tab
 	if (!state->rows) {
 		// the pipelines that scan reads initialise on several threads: one runs on the statement's
 		// connection, another at the same time on a connection of its own
-		std::unique_lock<std::recursive_mutex> serial(reads.use, std::try_to_lock);
+		std::unique_lock<std::recursive_mutex> serial(statement.use, std::try_to_lock);
 		unique_ptr<Inner> own;
 		if (!serial.owns_lock()) {
 			own = make_uniq<Inner>(context);

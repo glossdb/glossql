@@ -309,11 +309,16 @@ StatementState &StatementState::Of(ClientContext &context) {
 	return *context.registered_state->GetOrCreate<StatementState>("glossql_statement");
 }
 
+StatementState &StatementState::Root() {
+	return parent ? parent->Root() : *this;
+}
+
 Inner &Inner::Of(ClientContext &context) {
 	auto &state = StatementState::Of(context);
 	std::lock_guard<std::recursive_mutex> guard(state.use);
 	if (!state.inner) {
 		state.inner = make_uniq<Inner>(context);
+		StatementState::Of(*state.inner->con.context).parent = &state.Root();
 	} else if (state.nested) {
 		// an inner connection moves from subject to subject within its statement; a statement of the
 		// caller's own runs as its session stood when it began
@@ -508,7 +513,7 @@ int64_t Inner::Write(ClientContext &context, const std::function<void(CatalogWri
 	writing = true;
 	function_schemas.clear();
 	{
-		auto &state = StatementState::Of(*con.context);
+		auto &state = StatementState::Of(*con.context).Root();
 		std::lock_guard<std::mutex> guard(state.lock);
 		state.reads.clear();
 	}
@@ -1610,6 +1615,20 @@ private:
 			Add("data", fn, texts(), "", -1, via);
 			return;
 		}
+		// the series of the views of a place, and what the macro that names their columns reads at bind
+		if (table && main && fn == "series_aggregate") {
+			Add("data", fn, texts(), "", -1, via);
+			auto axes = args.size() > 2 && args[2].constant
+			                ? Lookup(CatalogType::TABLE_MACRO_ENTRY,
+			                         QualifiedName(Identifier(lake), Identifier("main"), Identifier(args[2].text)))
+			                : nullptr;
+			if (!axes) {
+				Add("untracked", "series_aggregate(" + texts() + ")", "", "", -1, via);
+				return;
+			}
+			Follow(axes->Cast<MacroCatalogEntry>(), vector<FunctionArgument>(), env, via, depth);
+			return;
+		}
 		if (function.IsOperator()) {
 			return;
 		}
@@ -1969,7 +1988,8 @@ static std::set<BodyRead> BodyReadSet(Inner &inner, const string &script, bool d
 
 //! The first read of a body no input can follow, as the refusal names it, or empty: the catalog
 //! reached past the read functions, a read function's what or where that is not a constant, a where
-//! that is no place, dataset_cells() over a dataset that is not the subject's, and what the walk
+//! that is no place, dataset_cells() over a dataset that is not the subject's, series_aggregate() with no
+//! place, and what the walk
 //! cannot follow (SPEC §6). `dataset` is the function's own, empty for a GLOBAL one
 static string UntrackedRead(const std::set<BodyRead> &reads, const std::set<string> &places, const string &dataset) {
 	for (auto &read : reads) {
@@ -1978,6 +1998,12 @@ static string UntrackedRead(const std::set<BodyRead> &reads, const std::set<stri
 			named = read.what.empty() ? read.read : read.read + "(" + read.what + ")";
 		} else if (read.kind == "read" && (read.constant != 1 || !places.count(read.where))) {
 			named = read.read + "(" + read.what + ", " + read.where + ")";
+		} else if (read.kind == "data" && read.read == "series_aggregate" && read.where.empty()) {
+			// a series is read through a place alone
+			auto args = StringUtil::Split(read.what, ", ");
+			if (args.size() < 2 || !places.count(args[1])) {
+				named = "series_aggregate(" + read.what + ")";
+			}
 		} else if (read.kind == "data" && read.read == "dataset_cells" && read.where.empty()) {
 			auto args = StringUtil::Split(read.what, ", ");
 			bool place = false;
@@ -2227,7 +2253,8 @@ struct Read {
 };
 
 //! The data a body reads, as a place: subject_column() and the relationship checks the subject's
-//! own; dataset_cells() its dataset's tables, its views ('views'), both (true), the tables
+//! own; series_aggregate() the views of its place; dataset_cells() its dataset's tables, its views ('views'),
+//! both (true), the tables
 //! and views of a place, or the one table it names; a dataset it names is the subject's, since one
 //! that is not is refused at the declaration. A table the body names in FROM is that table: one
 //! named without its dataset is taken in the subject's, by the name the lake spells it with, or as
@@ -2236,6 +2263,13 @@ static Read DataRead(ClientContext &context, const std::set<string> &places, con
                      const string &dataset) {
 	if (read == "subject_column" || read == "glossql_relationship_checks") {
 		return {"data", "data", "itself"};
+	}
+	if (read == "series_aggregate") {
+		auto list = StringUtil::Split(args, ", ");
+		if (list.size() < 2 || !places.count(list[1])) {
+			throw InternalException("glossql: series_aggregate(%s) passed the declaration", args);
+		}
+		return {"data", "data", list[1]};
 	}
 	if (read == "dataset_cells") {
 		auto list = StringUtil::Split(args, ", ");
@@ -2999,6 +3033,163 @@ static TableFunctionSet DatasetCellsFunctions() {
 	                                     [](TypedKwargs &options) { options.Add("cells", LogicalType::BIGINT); });
 	set.AddFunction(which);
 	return set;
+}
+
+//===--------------------------------------------------------------------===//
+// series_aggregate(subject, place, axes, grain): a metric's series as sums of
+// the view's own typed columns, aggregated as the rows stream — (view,
+// dimension, member, period, instant, value, num, den, weight, rows): per
+// view of the place, or the one the subject names, one row per period and,
+// within it, per member of each dimension ('' the total). period is the
+// period column at the view's grain; instant the period column's own value
+// where the view keeps instants apart (a stock's level, a check that rows
+// share one), else NULL; value, num and den the sums of the value column and
+// of a ratio's halves, weight the sum of the value's magnitude, rows the rows
+// summed. A member is the dimension's value as text, 'NULL' where it has none.
+// Which column plays which part is the kit's to say: the bind runs the table
+// macro `axes` with the grain, one row per view — view, period_column,
+// value_column, numerator, denominator, dims, at_grain (the grain its periods
+// start at; NULL leaves the view unread), by_instant — and generates the
+// aggregation over those columns, so the rules stay one SQL definition in
+// the kit. A column the view does not hold reads as NULL; a view that does
+// not bind is skipped, as dataset_cells skips it (SPEC §6)
+//===--------------------------------------------------------------------===//
+
+//! A column read as a number: its own value where the type converts exactly, else through its text, as
+//! the dataset's cells read it (a FLOAT's 0.1 stays 0.1)
+static string AsDouble(const string &column, const string &type) {
+	static const std::set<string> exact {"DOUBLE",  "BIGINT",   "INTEGER",   "SMALLINT", "TINYINT", "HUGEINT",
+	                                     "UBIGINT", "UINTEGER", "USMALLINT", "UTINYINT", "UHUGEINT"};
+	bool direct = exact.count(type) > 0;
+	if (StringUtil::StartsWith(type, "DECIMAL(")) {
+		// a width a double holds exactly converts as its text does
+		direct = std::stoi(type.substr(8)) <= 15;
+	}
+	return direct ? "TRY_CAST(" + column + " AS DOUBLE)" : "TRY_CAST(" + column + "::VARCHAR AS DOUBLE)";
+}
+
+//! A column read as an instant: a date or a timestamp as itself, anything else through its text
+static string AsInstant(const string &column, const string &type) {
+	return (type == "TIMESTAMP" || type == "DATE") ? "TRY_CAST(" + column + " AS TIMESTAMP)"
+	                                               : "TRY_CAST(" + column + "::VARCHAR AS TIMESTAMP)";
+}
+
+static unique_ptr<TableRef> SeriesAggregateBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	// the statement's own connection, so the reads the axes macro makes here serve the statement too
+	auto &inner = Inner::Of(context);
+	for (idx_t i = 0; i < 3; i++) {
+		if (input.inputs[i].IsNull()) {
+			throw InvalidInputException("glossql: series_aggregate takes a subject, a place and an axes macro");
+		}
+	}
+	auto subject = ResolveSubject(context, input.inputs[0].ToString());
+	auto parts = StringUtil::Split(subject, '.');
+	if (parts.empty() || parts.size() > 2) {
+		throw InvalidInputException("glossql: series_aggregate takes a dataset or dataset.view, got '%s'", subject);
+	}
+	auto mode = input.inputs[1].ToString();
+	if (!PlaceNames(inner).count(mode)) {
+		throw InvalidInputException("glossql: series_aggregate takes a place, got '%s'", mode);
+	}
+	Value walked;
+	if (!ClientConfig::GetConfig(context).GetUserVariable(string(RUN_SUBJECT), walked)) {
+		ClientConfig::GetConfig(*inner.con.context).SetUserVariable(RUN_SUBJECT, Value(parts[0]));
+	}
+	std::set<string> place;
+	auto members =
+	    inner.Run("SELECT DISTINCT split_part(asset, '.', 2) FROM main.place(" + QuoteText(mode) +
+		          ") WHERE main.asset_grain(asset) = 'TABLE' AND split_part(asset, '.', 1) = " + QuoteText(parts[0]));
+	while (auto chunk = members->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			place.insert(chunk->GetValue(0, r).ToString());
+		}
+	}
+	auto grain = input.inputs.size() > 3 && !input.inputs[3].IsNull() ? QuoteText(input.inputs[3].ToString())
+	                                                                  : string("NULL::VARCHAR");
+	auto axes = inner.Run("SELECT view, period_column, value_column, numerator, denominator, dims, at_grain, "
+	                      "by_instant FROM main." +
+	                      QuoteName(input.inputs[2].ToString()) + "(" + grain + ")");
+	auto text = [](const Value &value) {
+		return value.IsNull() ? string() : value.ToString();
+	};
+	string sql;
+	while (auto chunk = axes->Fetch()) {
+		for (idx_t r = 0; r < chunk->size(); r++) {
+			auto view = text(chunk->GetValue(0, r));
+			auto at_grain = text(chunk->GetValue(6, r));
+			if (view.empty() || at_grain.empty() || !place.count(view) ||
+			    (parts.size() == 2 && !StringUtil::CIEquals(view, parts[1]))) {
+				continue;
+			}
+			// the view's columns as it binds now, by the name the catalog spells; none where it does not bind
+			std::map<string, string> types;
+			for (auto &column : DatasetColumns(context, parts[0], view, true)) {
+				if (column.view) {
+					types[column.column] = column.type;
+				}
+			}
+			if (types.empty()) {
+				continue;
+			}
+			auto read = [&](const Value &name, bool instant) {
+				auto found = types.find(text(name));
+				if (name.IsNull() || found == types.end()) {
+					return string(instant ? "NULL::TIMESTAMP" : "NULL::DOUBLE");
+				}
+				auto quoted = QuoteName(found->first);
+				return instant ? AsInstant(quoted, found->second) : AsDouble(quoted, found->second);
+			};
+			string select = "SELECT " + read(chunk->GetValue(1, r), true) + " AS __at, " +
+			                read(chunk->GetValue(2, r), false) + " AS __v, " + read(chunk->GetValue(3, r), false) +
+			                " AS __n, " + read(chunk->GetValue(4, r), false) + " AS __d";
+			// the dimensions in the kit's order; a nested column has no member, as it has no cell
+			vector<string> dims;
+			auto listed = chunk->GetValue(5, r);
+			if (!listed.IsNull()) {
+				for (auto &dim : ListValue::GetChildren(listed)) {
+					auto found = types.find(text(dim));
+					if (!dim.IsNull() && found != types.end() && IsScalarType(found->second)) {
+						select += ", " + QuoteName(found->first) + " AS __m" + to_string(dims.size());
+						dims.push_back(found->first);
+					}
+				}
+			}
+			bool by_instant = !chunk->GetValue(7, r).IsNull() && chunk->GetValue(7, r).GetValue<bool>();
+			// a ratio's halves are summed where the view has them
+			auto num = read(chunk->GetValue(3, r), false) == "NULL::DOUBLE" ? string("NULL::DOUBLE") : "sum(__n)";
+			auto den = read(chunk->GetValue(4, r), false) == "NULL::DOUBLE" ? string("NULL::DOUBLE") : "sum(__d)";
+			string from = " FROM (SELECT date_trunc(" + QuoteText(at_grain) + ", __at) AS period, " +
+			              (by_instant ? "__at" : "NULL::TIMESTAMP") + " AS instant, * FROM (" + select + " FROM " +
+			              inner.Table(parts[0], view) + "))";
+			// one aggregate per dimension, each over the rows as they stream: one at a time holds its groups
+			auto branch = [&](const string &dimension, const string &member, const string &key, bool total) {
+				sql += (sql.empty() ? "" : " UNION ALL ") + string("SELECT ") + QuoteText(view) + " AS \"view\", " +
+				       dimension + " AS dimension, " + member + " AS member, period, instant, sum(__v) AS value, " +
+				       num + " AS num, " + den + " AS den, " + (total ? "NULL::DOUBLE" : "sum(abs(__v))") +
+				       " AS weight, count(*) AS \"rows\"" + from + " GROUP BY period, instant" + key;
+			};
+			branch("''", "''", "", true);
+			for (idx_t d = 0; d < dims.size(); d++) {
+				auto m = "__m" + to_string(d);
+				branch(QuoteText(dims[d]), "coalesce(" + m + "::VARCHAR, 'NULL')", ", " + m, false);
+			}
+		}
+	}
+	if (sql.empty()) {
+		sql =
+		    "SELECT NULL::VARCHAR AS \"view\", NULL::VARCHAR AS dimension, NULL::VARCHAR AS member, NULL::TIMESTAMP AS "
+		    "period, NULL::TIMESTAMP AS instant, NULL::DOUBLE AS value, NULL::DOUBLE AS num, NULL::DOUBLE AS den, "
+		    "NULL::DOUBLE AS weight, NULL::BIGINT AS \"rows\" WHERE false";
+	}
+	return make_uniq<SubqueryRef>(ParseSelect(sql));
+}
+
+static TableFunction SeriesAggregateFunction() {
+	TableFunction function("series_aggregate",
+	                       {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                       nullptr);
+	function.bind_replace = SeriesAggregateBindReplace;
+	return function;
 }
 
 //===--------------------------------------------------------------------===//
@@ -4012,6 +4203,7 @@ void RegisterGlossRunner(ExtensionLoader &loader) {
 	loader.RegisterFunction(SubjectColumnFunction());
 	loader.RegisterFunction(OutdatedFunction());
 	loader.RegisterFunction(DatasetCellsFunctions());
+	loader.RegisterFunction(SeriesAggregateFunction());
 	loader.RegisterFunction(RelationshipChecksFunction());
 	loader.RegisterFunction(AdditivityCellsFunction());
 }

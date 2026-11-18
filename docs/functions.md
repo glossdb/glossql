@@ -97,12 +97,44 @@ scalar cell of a dataset's tables, or of one table, as one relation.
   left out.
 - With no second argument it reads the tables. The second argument is
   `true` (the tables and the views), `'views'`, or a place (`'itself'`,
-  `'its columns'`, `'the dataset''s metrics'`): the tables and views
+  `'its columns'`, `'its sources'`): the tables and views
   of that place, walked from the running function's subject.
 - `cells => n` bounds what is read. A table with more scalar cells
   than `n` is read as a sample of its rows. The sample is chosen by a
   hash of each row, so the same rows come back on every run. A result
   over a sample is an estimate.
+
+## series_aggregate
+
+```sql
+FROM series_aggregate('shop', 'the dataset''s metrics', 'series_axes', 'month');
+FROM series_aggregate('shop.revenue', 'the dataset''s metrics', 'series_axes', NULL);
+```
+
+`series_aggregate(subject VARCHAR, where VARCHAR, axes VARCHAR, grain
+VARCHAR)` → `(view, dimension, member, period, instant, value, num, den,
+weight, rows)`. A metric's series, summed over the view's own typed
+columns as the rows are read. No row of the view is kept.
+
+- `subject` is a dataset, or one view of it. `where` is a place
+  (`'the dataset''s metrics'`). The views read are the views of the
+  place, or the one view the subject names.
+- `axes` names a table macro that takes the grain and returns one row
+  per view: `view`, `period_column`, `value_column`, `numerator`,
+  `denominator`, `dims` (the dimension columns, in order), `at_grain`
+  and `by_instant`. The kit decides which column plays which part.
+  A view whose `at_grain` is NULL is not read.
+- One row per period, and per member of each dimension within it.
+  `dimension` is `''` for the total. `member` is the value as text,
+  `'NULL'` where it has none. `period` is the period column truncated
+  to `at_grain`. `instant` is the period column's own value where
+  `by_instant` is true, else NULL.
+- `value`, `num` and `den` are the sums of the value column and of a
+  ratio's two halves. `weight` is the sum of the value's magnitude per
+  member. `rows` counts the rows summed.
+- A number is read as itself where its type converts exactly, else
+  through its text. A column the view does not have reads as NULL. A
+  view that does not bind is skipped. A nested column has no member.
 
 ## subject_column
 
