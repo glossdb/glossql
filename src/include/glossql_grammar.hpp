@@ -216,11 +216,6 @@ class Inner;
 //! `current`: no node it read changed after the snapshot it read at, and no result it read is out of
 //! date (SPEC §6). The check walks only those results and what they read
 string CurrentResultsSQL(const Workspace &ws, const string &filter);
-//! The node an annotation's staleness reads for its subject, as SQL over the subject expression: the
-//! `definition` of a table or a view, and of a column, whose rows are a table column's own or a view's SQL;
-//! a column no relation holds now reads its relation's; NULL for a dataset, a source and a relationship
-//! (SPEC §5.2)
-string DefinitionNodeSQL(const Workspace &ws, const string &subject);
 //! The workspace of the context's lake, as found once per instance
 Workspace WorkspaceOf(ClientContext &context);
 //! Why a detector's body compares the subjects it runs over (SPEC §7.1), in words, or empty where it

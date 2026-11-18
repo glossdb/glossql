@@ -822,12 +822,21 @@ string KindNameTaken(Inner &inner, const string &dataset, const string &relation
 	return taken.IsNull() ? string() : taken.ToString();
 }
 
+//! The sources and aspects the reads look names up in, one row of lists: every source declared (names),
+//! the aspects that declare ON SOURCE now (props), every aspect ever declared of kind VIEW (views)
+static string SourcesSQL(const Workspace &ws) {
+	return "gl_src AS MATERIALIZED (SELECT coalesce((SELECT list(name) FROM " + ws.Store("sources") +
+	       "), []) AS names, coalesce((SELECT list(name) FROM " + ws.Store("aspects") +
+	       " WHERE end_snapshot IS NULL AND list_contains(from_json(grains, '[\"VARCHAR\"]'), 'SOURCE')), []) AS "
+	       "props, coalesce((SELECT list(name) FROM " +
+	       ws.Store("aspects") + " WHERE kind = 'VIEW'), []) AS views)";
+}
+
 //! A source-grain row: its subject names a declared source and its aspect
 //! declares ON SOURCE. Such a row reads and supersedes workspace-wide (SPEC
-//! §5.1); a grainless aspect on a source name stays dataset-scoped
-static string SourceGrainSQL(const Workspace &ws) {
-	return "(subject IN (SELECT name FROM " + ws.Store("sources") + ") AND aspect IN (SELECT name FROM " +
-	       Newest(ws, "aspects") + " WHERE list_contains(from_json(grains, '[\"VARCHAR\"]'), 'SOURCE')))";
+//! §5.1); a grainless aspect on a source name stays dataset-scoped. Over gl_src (SourcesSQL)
+static string SourceGrainSQL() {
+	return "(list_contains((SELECT names FROM gl_src), subject) AND list_contains((SELECT props FROM gl_src), aspect))";
 }
 
 static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -914,8 +923,8 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 			// a value is superseded per (subject, aspect, actor kind) (SPEC §5.2), within its dataset;
 			// a source-grain row is superseded workspace-wide (SPEC §5.1)
 			auto source_grain =
-			    inner.Scalar("SELECT " + SourceGrainSQL(inner.ws) + " FROM (SELECT " + QuoteText(resolved) +
-				             " AS subject, " + QuoteText(aspect.name) + " AS aspect)");
+			    inner.Scalar("WITH " + SourcesSQL(inner.ws) + " SELECT " + SourceGrainSQL() + " FROM (SELECT " +
+				             QuoteText(resolved) + " AS subject, " + QuoteText(aspect.name) + " AS aspect)");
 			auto held = "subject = " + QuoteText(resolved) + " AND aspect = " + QuoteText(aspect.name) +
 			            " AND actor_kind = " + QuoteText(actor) +
 			            (source_grain.GetValue<bool>() ? string() : " AND dataset = " + QuoteText(dataset));
@@ -1130,9 +1139,10 @@ static string AspectFilter(const Value &aspect) {
 }
 
 //! The rows a read of a scope serves, over columns dataset, subject and aspect: the dataset's own and the
-//! source-grain rows every dataset reads, narrowed to the scope's subjects and to an aspect
-static string RowsFilter(const Workspace &ws, const ReadScope &scope, const Value &aspect) {
-	return "(dataset = " + QuoteText(scope.dataset) + " OR " + SourceGrainSQL(ws) + ")" +
+//! source-grain rows every dataset reads, narrowed to the scope's subjects and to an aspect; over gl_src
+//! (SourcesSQL)
+static string RowsFilter(const ReadScope &scope, const Value &aspect) {
+	return "(dataset = " + QuoteText(scope.dataset) + " OR " + SourceGrainSQL() + ")" +
 	       (scope.whole ? string() : " AND " + scope.subjects) + AspectFilter(aspect);
 }
 
@@ -1143,137 +1153,138 @@ static string RowsFilter(const Workspace &ws, const ReadScope &scope, const Valu
 // it read changed after the snapshot it read at
 //===--------------------------------------------------------------------===//
 
-//! When each node a check asks about changed, (asset, what, dataset, function, changed_at), as
-//! docs/specification/tables/inputs.md names the nodes. `wanted` names a relation (asset, what) in
-//! scope: only those nodes are read, each from the rows of its own. dataset and function are NULL but for
-//! a stored result: a result read is the reader's dataset's, and a function's own results are no input
-//! of its own. A name is matched as the lake matches names, whatever its case
-//! The rows each node changed at, by what was read of it: an annotation's and a stored result's, an asset's
-//! definition, and the rest (NodeChangesSQL)
-static constexpr const char *OTHER_BRANCHES =
-    R"(  SELECT lower(subject) AS asset, 'annotation ' || aspect AS what, NULL AS dataset, NULL AS function,
-         greatest(begin_snapshot, coalesce(end_snapshot, 0)) AS changed_at FROM $glossary
-  WHERE lower(subject) IN (SELECT asset FROM nc_names)
-  -- a stored result: the current row's changed_at, else the last row's end
-  UNION ALL SELECT lower(subject), u.nc_read, dataset, function,
-         coalesce(max(changed_at) FILTER (WHERE end_snapshot IS NULL), max(end_snapshot))
-  FROM $measurements, unnest(['result ' || function, 'value ' || aspect]) u(nc_read)
-  WHERE lower(subject) IN (SELECT asset FROM nc_names) GROUP BY ALL
-)";
-static constexpr const char *DEFINITION_BRANCHES =
-    R"(  SELECT asset, 'definition' AS what, NULL AS dataset, NULL AS function,
-         greatest(begin_snapshot, coalesce(end_snapshot, 0)) AS changed_at FROM nc_tables
-  UNION ALL SELECT t.asset, 'definition', NULL, NULL, $table_column
-  FROM nc_tables t JOIN $column c ON c.table_id = t.table_id
-  -- a load whose recipe derived the columns otherwise than the load before it
-  UNION ALL SELECT asset, 'definition', NULL, NULL, snapshot_id FROM (
-    SELECT lower(dataset || '.' || table_name) AS asset, snapshot_id, lineage,
-           lag(lineage) OVER (PARTITION BY dataset, table_name ORDER BY begin_snapshot) AS before FROM $imports
-    WHERE lower(dataset || '.' || table_name) IN (SELECT asset FROM nc_names))
-  WHERE before IS NOT NULL AND $table_rederived
-  UNION ALL SELECT asset, 'definition', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM nc_cols
-  UNION ALL SELECT asset, 'definition', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM nc_vcols
-  -- a load whose recipe derived the column otherwise than the load before it
-  UNION ALL SELECT asset, 'definition', NULL, NULL, snapshot_id FROM (
-    SELECT k.asset, i.snapshot_id, json_extract_string(i.lineage::JSON, '$."' || k.column_name || '"') AS derived,
-           lag(json_extract_string(i.lineage::JSON, '$."' || k.column_name || '"'))
-             OVER (PARTITION BY k.asset ORDER BY i.begin_snapshot) AS before
-    FROM (SELECT DISTINCT asset, rel, column_name FROM nc_cols) k
-    JOIN $imports i ON lower(i.dataset || '.' || i.table_name) = k.rel)
-  WHERE before IS DISTINCT FROM derived AND before IS NOT NULL
-  UNION ALL SELECT asset, 'definition', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0))
-  FROM (SELECT asset, begin_snapshot, end_snapshot FROM nc_views UNION ALL FROM nc_defined)
-  UNION ALL SELECT v.asset, 'definition', NULL, NULL, greatest(a.begin_snapshot, coalesce(a.end_snapshot, 0))
-  FROM (SELECT asset FROM nc_views UNION SELECT asset FROM nc_defined) v
-  JOIN $aspects a ON lower(a.name) = substr(v.asset, strpos(v.asset, '.') + 1)
-)";
-static constexpr const char *OTHER_TAIL =
-    R"(  UNION ALL SELECT lower(dataset || '.' || table_name), 'data', NULL, NULL, snapshot_id FROM $imports
-  WHERE lower(dataset || '.' || table_name) IN (SELECT asset FROM nc_names)
-  UNION ALL SELECT asset, 'data', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM nc_tables
-  UNION ALL SELECT t.asset, 'data', NULL, NULL, l.snapshot_id FROM nc_tables t JOIN nc_log l USING (table_id)
-  UNION ALL SELECT lower(dataset || '.' || table_name), 'recipe', NULL, NULL,
-         greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM $recipes
-  UNION ALL SELECT lower(name), 'property', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM $aspects
-  UNION ALL SELECT lower(aspect), 'property', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM $tests
-  UNION ALL SELECT lower(name), 'function', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM $functions
-  UNION ALL SELECT lower(s.schema_name || '.' || m.macro_name), 'macro', NULL, NULL,
-         greatest(m.begin_snapshot, coalesce(m.end_snapshot, 0)) FROM $macro m JOIN nc_schema s USING (schema_id)
-  UNION ALL SELECT lower(split_part(u.nc_side, '.', 1) || '.' || split_part(u.nc_side, '.', 2)), 'relationships', NULL, NULL,
-         greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM $relationships, unnest([left_side, right_side]) u(nc_side)
-  UNION ALL SELECT lower(dataset), 'relationships', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0))
-  FROM $relationships
-  UNION ALL SELECT split_part(asset, '.', 1), 'assets', NULL, NULL, greatest(begin_snapshot, coalesce(end_snapshot, 0))
-  FROM (SELECT asset, begin_snapshot, end_snapshot FROM nc_tables UNION ALL SELECT asset, begin_snapshot, end_snapshot FROM nc_views)
-  UNION ALL SELECT split_part(t.asset, '.', 1), 'assets', NULL, NULL, greatest(c.begin_snapshot, coalesce(c.end_snapshot, 0))
-  FROM nc_tables t JOIN $column c ON c.table_id = t.table_id
-  -- a view of a kind added to or removed from a dataset; a view defined again is the same member
-  UNION ALL SELECT e.dataset, 'views ' || coalesce(json_extract_string(a.schema, '$.x-kind'), 'metric'), NULL, NULL, e.at
-  FROM (SELECT dataset, view_name, begin_snapshot AS at FROM nc_views v WHERE NOT EXISTS
-          (SELECT 1 FROM nc_views w WHERE w.asset = v.asset AND w.end_snapshot = v.begin_snapshot)
-        UNION ALL SELECT dataset, view_name, end_snapshot FROM nc_views v WHERE end_snapshot IS NOT NULL AND NOT EXISTS
-          (SELECT 1 FROM nc_views w WHERE w.asset = v.asset AND w.begin_snapshot = v.end_snapshot)) e
-  JOIN $aspects a ON a.kind = 'VIEW' AND a.name = e.view_name AND a.begin_snapshot <= e.at
-   AND (a.end_snapshot IS NULL OR a.end_snapshot >= e.at)
-  UNION ALL SELECT lower(json_extract_string(schema, '$.x-kind')), 'properties', NULL, NULL,
-         greatest(begin_snapshot, coalesce(end_snapshot, 0)) FROM $aspects WHERE json_extract_string(schema, '$.x-kind') IS NOT NULL)";
+//! One arm of the relation of changes (ChangesSQL): over the rows `from`, the key of the node a row
+//! changed, what of the node changed and the snapshot it changed at; read by the check, by the stale mark
+//! of annotations, or by both. A key or a snapshot that is NULL is no change
+struct ChangeArm {
+	const char *from;
+	const char *key;
+	const char *what;
+	const char *at;
+	bool checked;
+	bool marked;
+};
 
-static string NodeChangesSQL(const Workspace &ws, const string &wanted, bool definitions = false) {
-	string sql = R"(WITH nc_want AS (SELECT DISTINCT lower(asset) AS asset, what FROM $wanted),
-nc_names AS (SELECT DISTINCT asset FROM nc_want),
-nc_schema AS (SELECT DISTINCT schema_id, schema_name FROM $schema),
-nc_tables AS (SELECT lower(s.schema_name || '.' || t.table_name) AS asset, t.table_id, t.begin_snapshot, t.end_snapshot
-              FROM $table t JOIN nc_schema s USING (schema_id)
-              WHERE lower(s.schema_name || '.' || t.table_name) IN (SELECT asset FROM nc_names)
-                 OR lower(s.schema_name) IN (SELECT asset FROM nc_want WHERE what = 'assets')),
-nc_views AS (SELECT lower(s.schema_name || '.' || v.view_name) AS asset, lower(s.schema_name) AS dataset, v.view_name,
-                    v.begin_snapshot, v.end_snapshot
-             FROM $view v JOIN nc_schema s USING (schema_id)
-             WHERE lower(s.schema_name || '.' || v.view_name) IN (SELECT asset FROM nc_names)
-                OR lower(s.schema_name) IN (SELECT asset FROM nc_names)),
--- a table column's definition: its rows in the lake (created, retyped, dropped)
-nc_cols AS (SELECT lower(s.schema_name || '.' || t.table_name || '.' || c.column_name) AS asset,
-                   lower(s.schema_name || '.' || t.table_name) AS rel, c.column_name, c.begin_snapshot, c.end_snapshot
-            FROM $table t JOIN nc_schema s USING (schema_id) JOIN $column c ON c.table_id = t.table_id
-            WHERE c.parent_column IS NULL AND lower(s.schema_name || '.' || t.table_name || '.' || c.column_name)
-                  IN (SELECT asset FROM nc_want WHERE what = 'definition')),
--- a view column's definition: the view's rows in the lake, its SQL
-nc_vcols AS (SELECT w.asset, v.begin_snapshot, v.end_snapshot
-             FROM (SELECT asset FROM nc_want WHERE what = 'definition' AND len(string_split(asset, '.')) >= 3) w
-             JOIN $view v ON true JOIN nc_schema s ON s.schema_id = v.schema_id
-             WHERE lower(s.schema_name || '.' || v.view_name) = split_part(w.asset, '.', 1) || '.' || split_part(w.asset, '.', 2)),
--- a view's definition: the annotation that defines it, its row in the lake, its property's row
-nc_defined AS (SELECT lower(subject || '.' || aspect) AS asset, begin_snapshot, end_snapshot FROM $glossary
-               WHERE NOT contains(subject, '.') AND lower(subject || '.' || aspect) IN (SELECT asset FROM nc_names)
-                 AND aspect IN (SELECT name FROM $aspects WHERE kind = 'VIEW')),
--- a table's data changed at a snapshot whose change text names its id
-nc_log AS (SELECT snapshot_id, unnest(regexp_extract_all(changes_made, '[a-z_]*(insert|delete|alter)[a-z_]*:([0-9]+)', 2))::BIGINT
-                  AS table_id
-           FROM $snapshot_changes WHERE changes_made IS NOT NULL),
-nc AS (
-$branches)
-SELECT asset, what, dataset, function, max(changed_at) AS changed_at FROM nc
-WHERE (asset, what) IN (SELECT asset, what FROM nc_want) GROUP BY ALL)";
-	// a read of the definitions alone, as the stale mark asks, plans their rows alone
-	sql =
-	    StringUtil::Replace(sql, "$branches",
-		                    definitions ? string(DEFINITION_BRANCHES)
-		                                : string(OTHER_BRANCHES) + "  UNION ALL\n" + DEFINITION_BRANCHES + OTHER_TAIL);
-	// what is written about a table holds while its columns do: for the stale mark a table changed where one of
-	// its columns' rows ended (dropped, retyped) or a load derived a column the load before held otherwise, and a
-	// column added leaves it as it was (SPEC §5.2). A result reads the table's every column row, so a column
-	// added is a member added to what it read
-	auto derived = [](const string &lineage) {
-		return "json_extract_string(" + lineage + "::JSON, '$.\"' || k || '\"')";
-	};
-	sql =
-	    StringUtil::Replace(sql, "$table_column",
-		                    definitions ? "c.end_snapshot" : "greatest(c.begin_snapshot, coalesce(c.end_snapshot, 0))");
-	sql = StringUtil::Replace(
-	    sql, "$table_rederived",
-	    definitions ? "coalesce(list_bool_or(list_transform(json_keys(before::JSON), lambda k: " + derived("before") +
-	                      " IS DISTINCT FROM " + derived("lineage") + ")), false)"
-		            : string("before IS DISTINCT FROM lineage"));
+//! The nodes as docs/specification/tables/inputs.md names them, a name matched as the lake matches names,
+//! whatever its case. `vcol:` and a view's path keys the definition of the view's columns, its SQL
+static const ChangeArm CHANGE_ARMS[] = {
+    // the lake's tables, views and macros, every row
+    {"gl_rel", "CASE WHEN kind <> 'm' THEN asset END", "'definition'", "g", true, true},
+    {"gl_rel", "CASE WHEN kind = 'v' THEN 'vcol:' || asset END", "'definition'", "g", true, true},
+    {"gl_rel", "CASE WHEN kind = 't' THEN asset END", "'data'", "g", true, false},
+    {"gl_rel", "CASE WHEN kind <> 'm' THEN ds END", "'assets'", "g", true, false},
+    {"gl_rel", "CASE WHEN kind = 'm' THEN asset END", "'macro'", "g", true, false},
+    // a table column's definition: its rows in the lake (created, retyped, dropped). What is written about a
+    // table holds while its columns do: the stale mark reads where a column's row ended, and a column added
+    // leaves it as it was (SPEC §5.2); a result reads the table's every column row, so a column added is a
+    // member added to what it read
+    {"gl_cols", "CASE WHEN parent_column IS NULL THEN asset END", "'definition'", "g", true, true},
+    {"gl_cols", "rel", "'definition'", "e", false, true},
+    {"gl_cols", "rel", "'definition'", "g", true, false},
+    {"gl_cols", "split_part(rel, '.', 1)", "'assets'", "g", true, false},
+    // a load: the table's data, and its definition where the recipe derived the columns otherwise than the
+    // load before it; for the stale mark, a column the load before derived otherwise
+    {"gl_loads", "asset", "'data'", "snapshot_id", true, false},
+    {"gl_loads", "asset", "'definition'",
+	 "CASE WHEN before IS NOT NULL AND before IS DISTINCT FROM lineage THEN snapshot_id END", true, false},
+    {"gl_loads", "asset", "'definition'",
+	 "CASE WHEN before IS NOT NULL AND coalesce(list_bool_or(list_transform(json_keys(before::JSON), lambda k: "
+	 "json_extract_string(before::JSON, '$.\"' || k || '\"') IS DISTINCT FROM json_extract_string(lineage::JSON, "
+	 "'$.\"' || k || '\"'))), false) THEN snapshot_id END",
+	 false, true},
+    // an annotation, and a view's definition: the annotation that defines it
+    {"$glossary", "lower(subject)", "'annotation ' || aspect", "$at", true, false},
+    {"$glossary",
+	 "CASE WHEN NOT contains(subject, '.') AND list_contains((SELECT views FROM gl_src), aspect) THEN lower(subject "
+	 "|| '.' || aspect) END",
+	 "'definition'", "$at", true, true},
+    {"$aspects", "lower(name)", "'property'", "$at", true, false},
+    {"$aspects", "lower(json_extract_string(schema, '$.x-kind'))", "'properties'", "$at", true, false},
+    {"$tests", "lower(aspect)", "'property'", "$at", true, false},
+    {"$functions", "lower(name)", "'function'", "$at", true, false},
+    {"$recipes", "lower(dataset || '.' || table_name)", "'recipe'", "$at", true, false},
+    {"$relationships", "lower(split_part(left_side, '.', 1) || '.' || split_part(left_side, '.', 2))",
+	 "'relationships'", "$at", true, false},
+    {"$relationships", "lower(split_part(right_side, '.', 1) || '.' || split_part(right_side, '.', 2))",
+	 "'relationships'", "$at", true, false},
+    {"$relationships", "lower(dataset)", "'relationships'", "$at", true, false},
+    // a table's data changed at a snapshot whose change text names its id
+    {"(SELECT snapshot_id, unnest(regexp_extract_all(changes_made, '[a-z_]*(insert|delete|alter)[a-z_]*:([0-9]+)', "
+	 "2))::BIGINT AS id FROM $snapshot_changes WHERE changes_made IS NOT NULL) l JOIN gl_rel t ON t.kind = 't' AND "
+	 "t.id = l.id",
+	 "t.asset", "'data'", "l.snapshot_id", true, false},
+    // a load whose recipe derived the column otherwise than the load before it
+    {"(SELECT k.asset, l.snapshot_id, json_extract_string(l.lineage::JSON, '$.\"' || k.column_name || '\"') AS "
+	 "derived, json_extract_string(l.before_ci::JSON, '$.\"' || k.column_name || '\"') AS before FROM (SELECT "
+	 "DISTINCT asset, rel, column_name FROM gl_cols WHERE parent_column IS NULL) k JOIN gl_loads l ON l.asset = "
+	 "k.rel) WHERE before IS DISTINCT FROM derived AND before IS NOT NULL",
+	 "asset", "'definition'", "snapshot_id", true, true},
+    // a view's definition: its property's rows
+    {"(SELECT asset FROM gl_rel WHERE kind = 'v' UNION SELECT lower(subject || '.' || aspect) FROM $glossary WHERE "
+	 "NOT contains(subject, '.') AND list_contains((SELECT views FROM gl_src), aspect)) v JOIN $aspects a ON "
+	 "lower(a.name) = substr(v.asset, strpos(v.asset, '.') + 1)",
+	 "v.asset", "'definition'", "greatest(a.begin_snapshot, coalesce(a.end_snapshot, 0))", true, true},
+    // a view of a kind added to or removed from a dataset; a view defined again is the same member
+    {"(SELECT ds, r.name, unnest([CASE WHEN NOT list_contains(ends, r.b) THEN r.b END, CASE WHEN r.e IS NOT NULL "
+	 "AND NOT list_contains(begins, r.e) THEN r.e END]) AS at FROM (SELECT ds, ends, begins, unnest(rs) AS r FROM "
+	 "(SELECT ds, list(e) AS ends, list(b) AS begins, list({'name': name, 'b': b, 'e': e}) AS rs FROM gl_rel WHERE "
+	 "kind = 'v' GROUP BY ds, asset))) e JOIN $aspects a ON a.kind = 'VIEW' AND a.name = e.name AND "
+	 "a.begin_snapshot <= e.at AND (a.end_snapshot IS NULL OR a.end_snapshot >= e.at)",
+	 "e.ds", "'views ' || coalesce(json_extract_string(a.schema, '$.x-kind'), 'metric')", "e.at", true, false},
+};
+
+//! When each node changed, one relation: gl_chg (key, what, dataset, function, at, checked, marked), one
+//! row per catalog row that changed a node, `checked` where the check reads it, `marked` where the stale
+//! mark of annotations does. dataset and function are NULL but for a stored result: a result read is the
+//! reader's dataset's, and a function's own results are no input of its own. With gl_src before it, as CTEs.
+//! `checked` false plans the stale mark's rows alone
+static string ChangesSQL(const Workspace &ws, bool checked) {
+	string arms;
+	for (idx_t i = 0; i < sizeof(CHANGE_ARMS) / sizeof(CHANGE_ARMS[0]);) {
+		auto from = string(CHANGE_ARMS[i].from);
+		vector<string> items;
+		for (; i < sizeof(CHANGE_ARMS) / sizeof(CHANGE_ARMS[0]) && from == CHANGE_ARMS[i].from; i++) {
+			auto &arm = CHANGE_ARMS[i];
+			if (checked || arm.marked) {
+				items.push_back("{'key': " + string(arm.key) + ", 'what': " + arm.what + ", 'at': " + arm.at +
+				                ", 'checked': " + (arm.checked ? "true" : "false") +
+				                ", 'marked': " + (arm.marked ? "true" : "false") + "}");
+			}
+		}
+		if (!items.empty()) {
+			arms += string(arms.empty() ? "" : " UNION ALL ") + "SELECT unnest([" + StringUtil::Join(items, ", ") +
+			        "]) AS gl_k FROM " + from;
+		}
+	}
+	auto sql =
+	    SourcesSQL(ws) +
+	    ", gl_rel AS MATERIALIZED (SELECT r.kind, r.id, lower(s.schema_name) AS ds, lower(s.schema_name || '.' || "
+	    "r.name) AS asset, r.name, r.begin_snapshot AS b, r.end_snapshot AS e, greatest(r.begin_snapshot, "
+	    "coalesce(r.end_snapshot, 0)) AS g FROM (SELECT 't' AS kind, table_id AS id, schema_id, table_name AS name, "
+	    "begin_snapshot, end_snapshot FROM $table UNION ALL SELECT 'v', view_id, schema_id, view_name, "
+	    "begin_snapshot, end_snapshot FROM $view UNION ALL SELECT 'm', macro_id, schema_id, macro_name, "
+	    "begin_snapshot, end_snapshot FROM $macro) r JOIN (SELECT DISTINCT schema_id, schema_name FROM $schema) s "
+	    "USING (schema_id)),"
+	    " gl_cols AS MATERIALIZED (SELECT t.asset AS rel, lower(t.asset || '.' || c.column_name) AS asset, "
+	    "c.column_name, c.parent_column, c.end_snapshot AS e, greatest(c.begin_snapshot, coalesce(c.end_snapshot, 0)) "
+	    "AS g FROM $column c JOIN gl_rel t ON t.kind = 't' AND t.id = c.table_id),"
+	    // each load with the lineage of the load before it of the same table: before by its name as written,
+	    // before_ci by its path in lower case
+	    " gl_loads AS MATERIALIZED (SELECT asset, r.s AS snapshot_id, r.l AS lineage, list_filter(ls[1:r.i - 1], "
+	    "lambda x: x.ds = r.ds AND x.tn = r.tn)[-1].l AS before, CASE WHEN r.i > 1 THEN ls[r.i - 1].l END AS "
+	    "before_ci FROM (SELECT asset, ls, unnest(list_transform(ls, lambda x, i: struct_insert(x, i := i))) AS r "
+	    "FROM (SELECT lower(dataset || '.' || table_name) AS asset, list({'s': snapshot_id, 'l': lineage, 'ds': "
+	    "dataset, 'tn': table_name} ORDER BY begin_snapshot) AS ls FROM $imports GROUP BY 1))),"
+	    " gl_chg AS MATERIALIZED (SELECT gl_k.key, gl_k.what, NULL::VARCHAR AS dataset, NULL::VARCHAR AS function, "
+	    "gl_k.at, gl_k.checked, gl_k.marked FROM (" +
+	    arms + ") WHERE gl_k.key IS NOT NULL AND gl_k.at IS NOT NULL" +
+	    // a stored result: the current row's changed_at, else the last row's end
+	    (checked ? " UNION ALL SELECT lower(subject), gl_r, dataset, function, coalesce(max(changed_at) FILTER "
+		           "(WHERE end_snapshot IS NULL), max(end_snapshot)), true, false FROM $measurements, "
+		           "unnest(['result ' || function, 'value ' || aspect]) u(gl_r) GROUP BY ALL"
+		         : "") +
+	    ")";
+	sql = StringUtil::Replace(sql, "$at", "greatest(begin_snapshot, coalesce(end_snapshot, 0))");
 	for (auto &relation :
 	     {"glossary", "measurements", "imports", "recipes", "aspects", "tests", "functions", "relationships"}) {
 		sql = StringUtil::Replace(sql, "$" + string(relation), ws.Store(relation));
@@ -1281,117 +1292,130 @@ WHERE (asset, what) IN (SELECT asset, what FROM nc_want) GROUP BY ALL)";
 	for (auto &table : {"snapshot_changes", "schema", "table", "column", "view", "macro"}) {
 		sql = StringUtil::Replace(sql, "$" + string(table), ws.Meta(table));
 	}
-	return StringUtil::Replace(sql, "$wanted", wanted);
+	return sql;
 }
 
-//! The current results that are out of date, with why: (id, dataset, function, subject, asset, what,
-//! reason), id the result's. A node it read changed after the snapshot it read at
-//! (changed), or a result it read is out of date or possibly so (possibly): it reads as it read until that
-//! result is computed again, which keeps its changed_at when its value is the same. Asked on demand: `roots` empty asks
-//! about every current result; else it is a condition on the measurements relation, and the check walks only the
-//! results it selects and those they read, through their inputs
-static string CheckRowsSQL(const Workspace &ws, const string &roots) {
-	string sql = R"(WITH RECURSIVE ck_all AS (SELECT id, dataset, function, subject, aspect, read_at
-                                FROM $measurements WHERE end_snapshot IS NULL),
-ck_edge AS (SELECT result AS id, asset, what FROM $inputs WHERE end_snapshot IS NULL),
-ck_scope(id) AS ($scope),
-ck_cur AS (SELECT * FROM ck_all WHERE id IN (SELECT id FROM ck_scope)),
-ck_in AS (SELECT * FROM ck_edge WHERE id IN (SELECT id FROM ck_scope)),
--- a result read, through a read of its function's results or of the values of its property
-ck_reads AS (SELECT r.id AS reader, q.id AS read, i.asset, i.what FROM ck_in i JOIN ck_cur r USING (id)
-             JOIN ck_cur q ON q.dataset = r.dataset AND q.subject = i.asset
-              AND (i.what = 'result ' || q.function OR (i.what = 'value ' || q.aspect AND q.function <> r.function))),
-ck_node AS ($nodes),
-ck_changed AS (SELECT c.id, i.asset, i.what FROM ck_cur c JOIN ck_in i USING (id) JOIN ck_node n
-               ON n.asset = lower(i.asset) AND n.what = i.what AND (n.dataset IS NULL OR n.dataset = c.dataset)
-              AND n.function IS DISTINCT FROM c.function WHERE n.changed_at > c.read_at),
-ck_out(id) AS (SELECT id FROM ck_changed UNION SELECT r.reader FROM ck_reads r JOIN ck_out o ON o.id = r.read)
-SELECT c.id, c.dataset, c.function, c.subject, x.asset, x.what, 'changed' AS reason FROM ck_changed x JOIN ck_cur c USING (id)
-UNION SELECT c.id, c.dataset, c.function, c.subject, r.asset, r.what, 'possibly' FROM ck_reads r
-JOIN ck_out o ON o.id = r.read JOIN ck_cur c ON c.id = r.reader)";
-	auto scope = roots.empty() ? string("SELECT id FROM ck_all")
-	                           : "SELECT id FROM $measurements WHERE end_snapshot IS NULL AND (" + roots +
-	                                 ") UNION SELECT q.id FROM ck_scope s JOIN ck_edge i ON i.id = s.id JOIN ck_all r "
-	                                 "ON r.id = s.id JOIN ck_all q"
-	                                 " ON q.dataset = r.dataset AND q.subject = i.asset AND (i.what = 'result ' ||"
-	                                 " q.function OR (i.what = 'value ' || q.aspect AND q.function <> r.function))";
-	sql = StringUtil::Replace(sql, "$scope", scope);
-	sql = StringUtil::Replace(sql, "$nodes", NodeChangesSQL(ws, "ck_in"));
-	sql = StringUtil::Replace(sql, "$measurements", ws.Store("measurements"));
-	return StringUtil::Replace(sql, "$inputs", ws.Store("inputs"));
+//! The keys of the changes to a definition node `node` (lower case): its own, and for a column its view's
+//! SQL, which defines a view's columns
+static string DefinitionKeysSQL(const string &node) {
+	return "CASE WHEN len(string_split(" + node + ", '.')) >= 3 THEN [" + node + ", 'vcol:' || split_part(" + node +
+	       ", '.', 1) || '.' || split_part(" + node + ", '.', 2)] ELSE [" + node + "] END";
+}
+
+//! The check of the current stored results in the datasets `roots` selects, a condition on the
+//! measurements relation (empty: every result), as CTEs over gl_chg (ChangesSQL): ck_cur the results,
+//! `root` where `roots` selects one; ck_changed (id, asset, what) a node it read changed after the snapshot
+//! it read at; ck_reads (reader, read, asset, what) a result read, through a read of its function's results
+//! or of the values of its property; ck_out the results out of date or possibly so, which read as they read
+//! until the result read is computed again, which keeps its changed_at when its value is the same; ck_marks
+//! each result with `changed` and `out`. A result reads within its dataset, so the datasets bound the walk
+static string CheckSQL(const Workspace &ws, const string &roots) {
+	auto measurements = ws.Store("measurements");
+	return "ck_cur AS MATERIALIZED (SELECT id, dataset, function, subject, aspect, read_at, value, computed_at, "
+	       "error, begin_snapshot, " +
+	       (roots.empty() ? string("true") : "(" + roots + ")") + " AS root FROM " + measurements +
+	       " WHERE end_snapshot IS NULL" +
+	       (roots.empty() ? string()
+	                      : " AND dataset IN (SELECT dataset FROM " + measurements +
+	                            " WHERE end_snapshot IS NULL AND (" + roots + "))") +
+	       "), ck_in AS MATERIALIZED (SELECT i.result AS id, i.asset, i.what, c.dataset, c.function, c.read_at FROM " +
+	       ws.Store("inputs") +
+	       " i JOIN ck_cur c ON c.id = i.result WHERE i.end_snapshot IS NULL),"
+	       " ck_changed AS MATERIALIZED (SELECT DISTINCT i.id, i.asset, i.what FROM (SELECT *, unnest(CASE WHEN what = "
+	       "'definition' THEN " +
+	       DefinitionKeysSQL("lower(asset)") +
+	       " ELSE [lower(asset)] END) AS key FROM ck_in) i JOIN gl_chg n ON n.key = i.key AND n.what = i.what"
+	       " WHERE n.checked AND n.at > i.read_at AND (n.dataset IS NULL OR n.dataset = i.dataset)"
+	       " AND n.function IS DISTINCT FROM i.function),"
+	       " ck_reads AS (SELECT i.id AS reader, q.id AS read, i.asset, i.what FROM ck_in i JOIN (SELECT id, dataset, "
+	       "subject, function, unnest(['result ' || function, 'value ' || aspect]) AS key FROM ck_cur) q"
+	       " ON q.dataset = i.dataset AND q.subject = i.asset AND q.key = i.what"
+	       " WHERE starts_with(i.what, 'result ') OR q.function <> i.function),"
+	       " ck_out(id) AS (SELECT id FROM ck_changed UNION SELECT r.reader FROM ck_reads r JOIN ck_out o ON o.id = "
+	       "r.read),"
+	       " ck_marks AS (SELECT c.*, x.id IS NOT NULL AS changed, o.id IS NOT NULL AS out FROM ck_cur c"
+	       " LEFT JOIN (SELECT DISTINCT id FROM ck_out) o ON o.id = c.id"
+	       " LEFT JOIN (SELECT DISTINCT id FROM ck_changed) x ON x.id = c.id)";
 }
 
 string CurrentResultsSQL(const Workspace &ws, const string &filter) {
-	return "SELECT m.*, k.id IS NULL AS current, coalesce(NOT k.changed, false) AS possibly FROM " +
-	       ws.Store("measurements") + " m LEFT JOIN (SELECT id, bool_or(reason = 'changed') AS changed FROM (" +
-	       CheckRowsSQL(ws, filter) + ") GROUP BY id) k ON k.id = m.id WHERE m.end_snapshot IS NULL AND (" + filter +
-	       ")";
+	return "WITH RECURSIVE " + ChangesSQL(ws, true) + ", " + CheckSQL(ws, filter) +
+	       " SELECT m.*, NOT k.out AS current, k.out AND NOT k.changed AS possibly FROM (SELECT * FROM " +
+	       ws.Store("measurements") + " WHERE end_snapshot IS NULL AND (" + filter +
+	       ")) m JOIN ck_marks k ON k.id = m.id";
 }
 
 string OutdatedSQL(Inner &inner) {
-	return "SELECT DISTINCT dataset, function, subject, asset, what, reason FROM (" + CheckRowsSQL(inner.ws, "") + ")";
+	return "WITH RECURSIVE " + ChangesSQL(inner.ws, true) + ", " + CheckSQL(inner.ws, "") +
+	       " SELECT c.dataset, c.function, c.subject, x.asset, x.what, 'changed' AS reason FROM ck_changed x"
+	       " JOIN ck_cur c USING (id) UNION SELECT c.dataset, c.function, c.subject, r.asset, r.what, 'possibly'"
+	       " FROM ck_reads r JOIN ck_out o ON o.id = r.read JOIN ck_cur c ON c.id = r.reader";
 }
 
-//! The lake's current table columns by their path, lower case
-static string TableColumnsSQL(const Workspace &ws) {
-	return "SELECT lower(s.schema_name || '.' || t.table_name || '.' || c.column_name) FROM " + ws.Meta("column") +
-	       " c JOIN " + ws.Meta("table") +
-	       " t ON t.table_id = c.table_id AND t.end_snapshot IS NULL JOIN (SELECT DISTINCT schema_id, schema_name "
-	       "FROM " +
-	       ws.Meta("schema") +
-	       " WHERE end_snapshot IS NULL) s ON s.schema_id = t.schema_id"
-	       " WHERE c.end_snapshot IS NULL AND c.parent_column IS NULL";
+//! The lake's current views and table columns by their path, lower case, one row of lists: gl_now
+static string NowSQL(const Workspace &ws) {
+	auto schemas = "(SELECT DISTINCT schema_id, schema_name FROM " + ws.Meta("schema") + " WHERE end_snapshot IS NULL)";
+	return "gl_now AS MATERIALIZED (SELECT coalesce((SELECT list(lower(s.schema_name || '.' || v.view_name)) FROM " +
+	       ws.Meta("view") + " v JOIN " + schemas +
+	       " s USING (schema_id) WHERE v.end_snapshot IS NULL), []) AS views, coalesce((SELECT "
+	       "list(lower(s.schema_name "
+	       "|| '.' || t.table_name || '.' || c.column_name)) FROM " +
+	       ws.Meta("column") + " c JOIN " + ws.Meta("table") +
+	       " t ON t.table_id = c.table_id AND t.end_snapshot IS NULL JOIN " + schemas +
+	       " s ON s.schema_id = t.schema_id WHERE c.end_snapshot IS NULL AND c.parent_column IS NULL), []) AS cols)";
 }
 
-//! The lake's current views by their path, lower case
-static string CurrentViewsSQL(const Workspace &ws) {
-	return "SELECT lower(s.schema_name || '.' || v.view_name) FROM " + ws.Meta("view") +
-	       " v JOIN (SELECT DISTINCT schema_id, schema_name FROM " + ws.Meta("schema") +
-	       " WHERE end_snapshot IS NULL) s ON s.schema_id = v.schema_id WHERE v.end_snapshot IS NULL";
-}
-
-string DefinitionNodeSQL(const Workspace &ws, const string &subject) {
+//! The node an annotation's staleness reads for its subject, as SQL over the subject expression and gl_now
+//! (NowSQL): the `definition` of a table or a view, and of a column, whose rows are a table column's own or a
+//! view's SQL; a column no relation holds now reads its relation's; NULL for a dataset, a source and a
+//! relationship (SPEC §5.2)
+static string DefinitionNodeSQL(const string &subject) {
 	auto relation = "split_part(" + subject + ", '.', 1) || '.' || split_part(" + subject + ", '.', 2)";
 	return "CASE WHEN " + subject + " LIKE '% -> %' OR " + subject + " LIKE '% <-> %' OR NOT contains(" + subject +
-	       ", '.') THEN NULL WHEN len(string_split(" + subject + ", '.')) = 2 THEN " + subject + " WHEN lower(" +
-	       relation + ") IN (" + CurrentViewsSQL(ws) + ") OR lower(" + subject + ") IN (" + TableColumnsSQL(ws) +
-	       ") THEN " + subject + " ELSE " + relation + " END";
+	       ", '.') THEN NULL WHEN len(string_split(" + subject + ", '.')) = 2 THEN " + subject +
+	       " WHEN list_contains((SELECT views FROM gl_now), lower(" + relation +
+	       ")) OR list_contains((SELECT cols FROM gl_now), lower(" + subject + ")) THEN " + subject + " ELSE " +
+	       relation + " END";
 }
 
-//! The annotations `filter` selects, each with whether it is stale (SPEC §5.2): the definition of its
-//! subject (DefinitionNodeSQL) changed after the snapshot it was written at, or no row of the lake's
-//! catalog holds that definition any more. A dataset, a source and a relationship never are.
-//! (subject, aspect, actor, body, written_at, stale, ord, error, dataset, possibly), ord the snapshot it
-//! was written at
-static string AnnotationsOverSQL(const Workspace &ws, const string &filter) {
-	return "WITH an_g AS MATERIALIZED (SELECT dataset, subject, aspect, actor_kind, body, written_at, begin_snapshot "
-	       "AS "
+//! The annotations `filter` selects, as CTEs over gl_chg (ChangesSQL), an: each with whether it is stale
+//! (SPEC §5.2): the definition of its subject (DefinitionNodeSQL) changed after the snapshot it was written
+//! at, or no row of the lake's catalog holds that definition any more. A dataset, a source and a
+//! relationship never are. (subject, aspect, actor, body, written_at, stale, ord, error, dataset, possibly),
+//! ord the snapshot it was written at
+static string AnnotationsSQL(const Workspace &ws, const string &filter) {
+	return NowSQL(ws) +
+	       ", an_g AS MATERIALIZED (SELECT dataset, subject, aspect, actor_kind, body, written_at, begin_snapshot AS "
 	       "id, " +
-	       DefinitionNodeSQL(ws, "subject") + " AS node FROM " + ws.Store("glossary") +
-	       " WHERE end_snapshot IS NULL AND " + filter +
-	       "), an_want AS (SELECT DISTINCT lower(node) AS asset, 'definition' AS what FROM an_g WHERE node IS NOT "
-	       "NULL), an_n AS (" +
-	       NodeChangesSQL(ws, "an_want", true) +
-	       ") SELECT g.subject, g.aspect, g.actor_kind AS actor, g.body::JSON AS body, g.written_at,"
-	       " g.node IS NOT NULL AND coalesce(n.changed_at > g.id, true) AS stale, g.id AS ord, NULL::VARCHAR AS error,"
-	       " g.dataset, false AS possibly FROM an_g g LEFT JOIN an_n n ON n.asset = lower(g.node) AND n.what = "
-	       "'definition'";
+	       DefinitionNodeSQL("subject") + " AS node FROM " + ws.Store("glossary") + " WHERE end_snapshot IS NULL AND " +
+	       filter + "), an_n AS (SELECT w.node, max(c.at) AS at FROM (SELECT node, unnest(" +
+	       DefinitionKeysSQL("node") +
+	       ") AS key FROM (SELECT DISTINCT lower(node) AS node FROM an_g WHERE node IS NOT NULL)) w"
+	       " JOIN gl_chg c ON c.key = w.key AND c.what = 'definition' AND c.marked GROUP BY w.node),"
+	       " an AS (SELECT g.subject, g.aspect, g.actor_kind AS actor, g.body::JSON AS body, g.written_at,"
+	       " g.node IS NOT NULL AND coalesce(n.at > g.id, true) AS stale, g.id AS ord, NULL::VARCHAR AS error,"
+	       " g.dataset, false AS possibly FROM an_g g LEFT JOIN an_n n ON n.node = lower(g.node))";
 }
 
-//! Every value `filter` selects, the current one per actor kind: the glossary's agent and human rows,
-//! and the function values the measurements hold, a view's lineage and a test's result none of them;
-//! each with its staleness, `ord`, the snapshot it was written at, and the error of a computation that
-//! failed, whose row holds no value
-//! The function values among stored results with their marks (CurrentResultsSQL), as values
-static string FunctionValuesSQL(const string &marked) {
-	return "SELECT subject, aspect, 'function' AS actor, value::JSON AS body, computed_at AS written_at,"
-	       " NOT current AND NOT possibly AS stale, begin_snapshot AS ord, error, dataset, possibly FROM " +
-	       marked + " WHERE aspect NOT IN ('lineage', 'test')";
+static string AnnotationsOverSQL(const Workspace &ws, const string &filter) {
+	return "WITH " + ChangesSQL(ws, false) + ", " + AnnotationsSQL(ws, filter) + " SELECT * FROM an";
 }
 
-static string ValuesSQL(const Workspace &ws, const string &filter) {
-	return "SELECT * FROM (" + AnnotationsOverSQL(ws, filter) + ") UNION ALL " +
-	       FunctionValuesSQL("(" + CurrentResultsSQL(ws, filter + " AND aspect NOT IN ('lineage', 'test')") + ")");
+//! Every value `filter` selects, the current one per actor kind, as CTEs: gl_all, the glossary's agent and
+//! human rows and the function values the measurements hold, a view's lineage and a test's result none of
+//! them; each with its staleness, `ord`, the snapshot it was written at, and the error of a computation that
+//! failed, whose row holds no value. `checked` false where no current stored result holds a value
+//! `filter` selects: the check is not planned
+static string ValuesSQL(const Workspace &ws, const string &filter, bool checked) {
+	auto roots = filter + " AND aspect NOT IN ('lineage', 'test')";
+	return ChangesSQL(ws, checked) + ", " + AnnotationsSQL(ws, filter) + ", " +
+	       (checked
+	            ? CheckSQL(ws, roots) +
+	                  ", gl_values AS (SELECT subject, aspect, 'function' AS actor, value::JSON AS body, computed_at"
+	                  " AS written_at, changed AS stale, begin_snapshot AS ord, error, dataset, out AND NOT changed"
+	                  " AS possibly FROM ck_marks WHERE root)"
+				: string("gl_values AS (SELECT * FROM an WHERE false)")) +
+	       ", gl_all AS (SELECT * FROM an UNION ALL SELECT * FROM gl_values)";
 }
 
 //! The stored results of the tests in scope, a condition on the measurements relation
@@ -1403,34 +1427,33 @@ static string TestsFilter(const Workspace &ws, const ReadScope &scope, const Val
 	                              " WHERE aspect = " + QuoteText(aspect.ToString()) + ")");
 }
 
+//! A test's stored result as its judgment: state and score, an error the state `error` with score 0
+static constexpr const char *JUDGMENT = "CASE WHEN m.error IS NOT NULL THEN 'error' ELSE m.value::JSON->>'state' "
+                                        "END AS state, CASE WHEN m.error IS NOT NULL THEN 0.0 ELSE "
+                                        "(m.value::JSON->>'score')::DOUBLE END AS score";
+//! A test's stored result that holds a judgment: a subject its detector returned no row for holds none
+static constexpr const char *JUDGED = "(m.error IS NOT NULL OR json_type(m.value::JSON) = 'OBJECT')";
+
 //! The tests' results among stored results with their marks, in the standard test-results schema
 //! (SPEC §7.2): (subject, aspect, test, state, score, computed_at, current, error), `current` whether the
-//! stored result is current (SPEC §6). A subject its detector returned no row for holds no judgment
-static string TestRowsSQL(const Workspace &ws, const string &marked) {
-	return "SELECT m.subject, t.aspect, m.function AS test,"
-	       " CASE WHEN m.error IS NOT NULL THEN 'error' ELSE m.value::JSON->>'state' END AS state,"
-	       " CASE WHEN m.error IS NOT NULL THEN 0.0 ELSE (m.value::JSON->>'score')::DOUBLE END AS score,"
-	       " m.computed_at, m.current, m.error FROM " +
-	       marked + " m JOIN " + Newest(ws, "tests") +
-	       " t ON t.name = m.function AND t.detector IS NOT NULL"
-	       " WHERE m.aspect = 'test' AND (m.error IS NOT NULL OR json_type(m.value::JSON) = 'OBJECT')";
-}
-
+//! stored result is current (SPEC §6)
 static string TestResultsSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect) {
-	return TestRowsSQL(ws, "(" + CurrentResultsSQL(ws, TestsFilter(ws, scope, aspect)) + ")");
+	return "SELECT m.subject, t.aspect, m.function AS test, " + string(JUDGMENT) +
+	       ", m.computed_at, m.current, m.error FROM (" + CurrentResultsSQL(ws, TestsFilter(ws, scope, aspect)) +
+	       ") m JOIN " + Newest(ws, "tests") + " t ON t.name = m.function AND t.detector IS NOT NULL WHERE " + JUDGED;
 }
 
-//! The subjects each tested aspect is required on, by the aspect's grain (SPEC §5.1), (subject,
-//! aspect): what the collapsed read discloses as missing when nobody annotated. A narrowed read keeps to
-//! its subject; the dataset's sweep takes every declared source
+//! The subjects each tested aspect is required on, by the aspect's grain (SPEC §5.1), as CTEs over gl_src:
+//! gl_missing (subject, aspect), what the collapsed read discloses as missing when nobody annotated. A
+//! narrowed read keeps to its subject; the dataset's sweep takes every declared source
 static string MissingSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect) {
 	auto d = QuoteText(scope.dataset);
-	return "WITH ms_tests AS (SELECT w.aspect, coalesce(from_json(a.grains, '[\"VARCHAR\"]'), []::VARCHAR[]) AS "
+	return "ms_tests AS (SELECT w.aspect, coalesce(from_json(a.grains, '[\"VARCHAR\"]'), []::VARCHAR[]) AS "
 	       "grains, a.condition::JSON->>'aspect' AS c_aspect, a.condition::JSON->>'value' AS c_value,"
 	       " from_json(a.condition::JSON->'type', '[\"VARCHAR\"]') AS c_types FROM " +
 	       Newest(ws, "tests") + " w LEFT JOIN " + Newest(ws, "aspects") + " a ON a.name = w.aspect" +
 	       (aspect.IsNull() ? string() : " WHERE w.aspect = " + QuoteText(aspect.ToString())) +
-	       "), ms_cols AS (SELECT table_name, column_name, column_type FROM glossql_columns(" + d +
+	       "), ms_cols AS MATERIALIZED (SELECT table_name, column_name, column_type FROM glossql_columns(" + d +
 	       ")), ms_cand AS (SELECT " + d +
 	       " || '.' || table_name || '.' || column_name AS subject, 'COLUMN' AS grain,"
 	       " upper(split_part(column_type, '(', 1)) AS base FROM ms_cols UNION ALL SELECT DISTINCT " +
@@ -1440,63 +1463,60 @@ static string MissingSQL(const Workspace &ws, const ReadScope &scope, const Valu
 	       ws.Store("relationships") + " WHERE dataset = " + d +
 	       " UNION ALL SELECT DISTINCT name, 'SOURCE', NULL FROM " + ws.Store("sources") +
 	       // required only where the sibling's winning value, human over agent, carries the literal (SPEC §5.1)
-	       "), ms_sibling AS (SELECT subject, aspect, body FROM " + ws.Store("glossary") +
+	       "), ms_sibling AS (SELECT subject, aspect, arg_min(body, {'r': CASE actor_kind WHEN 'human' THEN 0 ELSE 1 "
+	       "END, 'o': -begin_snapshot}) AS body FROM " +
+	       ws.Store("glossary") +
 	       " WHERE end_snapshot IS NULL AND actor_kind IN ('human', 'agent') AND (dataset = " + d + " OR " +
-	       SourceGrainSQL(ws) +
-	       ") AND aspect IN (SELECT c_aspect FROM ms_tests) QUALIFY row_number() OVER (PARTITION BY subject, aspect"
-	       " ORDER BY CASE actor_kind WHEN 'human' THEN 0 ELSE 1 END, begin_snapshot DESC) = 1)"
-	       " SELECT DISTINCT c.subject, t.aspect FROM ms_tests t JOIN ms_cand c"
+	       SourceGrainSQL() +
+	       ") AND list_contains((SELECT list(c_aspect) FROM ms_tests), aspect) GROUP BY subject, aspect),"
+	       " gl_missing AS (SELECT DISTINCT c.subject, t.aspect FROM ms_tests t JOIN ms_cand c"
 	       " ON len(t.grains) = 0 OR list_contains(t.grains, c.grain)"
 	       " LEFT JOIN ms_sibling s ON s.subject = c.subject AND s.aspect = t.c_aspect"
 	       " WHERE (t.c_aspect IS NULL OR s.body::JSON->>'value' = t.c_value)"
 	       // required only on columns of the named types: the base type, DECIMAL for DECIMAL(18,2) (SPEC §5.1)
 	       " AND (t.c_types IS NULL OR (c.grain = 'COLUMN' AND list_contains(t.c_types, c.base)))" +
-	       (scope.whole ? string() : " AND " + StringUtil::Replace(scope.subjects, "subject", "c.subject"));
+	       (scope.whole ? string() : " AND " + StringUtil::Replace(scope.subjects, "subject", "c.subject")) + ")";
 }
 
 //! The collapsed read: one row per (subject, aspect) — the precedence pick,
 //! withheld while two actors' values are current and the test's stored score
 //! exceeds its threshold; one value is never in conflict, it is served with
 //! its test state (SPEC §5.3); every gap visible
-static string CollapsedSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect) {
-	// an error is not a judgment (SPEC §7.2): it never withholds, and any other result outranks it;
-	// a stale value is served and marked (SPEC §5.3)
-	// the function values and the tests' results are marked by one walk of the check
-	auto values = RowsFilter(ws, scope, aspect);
-	return "WITH marked AS MATERIALIZED (" +
-	       CurrentResultsSQL(ws, "(" + values + " AND aspect NOT IN ('lineage', 'test')) OR (" +
-	                                 TestsFilter(ws, scope, aspect) + ")") +
-	       "), annotations_all AS MATERIALIZED (SELECT * FROM (" + AnnotationsOverSQL(ws, values) + ") UNION ALL " +
-	       FunctionValuesSQL("marked") +
-	       "), annotations AS (SELECT * FROM annotations_all WHERE error IS NULL),"
-	       " picked AS (SELECT subject, aspect, body::JSON AS value, stale, possibly FROM annotations QUALIFY"
-	       " row_number() OVER (PARTITION BY subject, aspect ORDER BY CASE actor WHEN 'human' THEN 0 WHEN 'agent'"
-	       " THEN 1 ELSE 2 END, ord DESC) = 1), judged AS (SELECT gl_r.subject, gl_r.aspect, gl_r.state, gl_r.score,"
-	       " gl_t.threshold FROM " +
-	       "(" + TestRowsSQL(ws, "marked") + ") gl_r LEFT JOIN " + Newest(ws, "tests") +
-	       " gl_t ON gl_t.name = gl_r.test QUALIFY row_number() OVER (PARTITION BY gl_r.subject, gl_r.aspect"
-	       " ORDER BY gl_r.state = 'error', gl_r.score DESC) = 1), annotation_counts AS (SELECT subject, aspect,"
-	       " count(DISTINCT actor) AS gl_actors FROM annotations GROUP BY subject, aspect), missing AS (" +
-	       MissingSQL(ws, scope, aspect) +
-	       ") SELECT * FROM (SELECT gl_p.subject, gl_p.aspect,"
-	       " CASE WHEN gl_j.score > gl_j.threshold AND gl_c.gl_actors > 1 THEN NULL ELSE gl_p.value END AS value,"
-	       " gl_j.state AS test_state, gl_j.score, CASE WHEN gl_j.score > gl_j.threshold AND gl_c.gl_actors > 1"
-	       " THEN 'conflict' WHEN gl_p.stale THEN 'stale' WHEN gl_p.possibly THEN 'possibly' ELSE 'current' END AS"
-	       " state FROM picked gl_p LEFT JOIN judged gl_j ON gl_j.subject = gl_p.subject AND gl_j.aspect = gl_p.aspect"
-	       " LEFT JOIN annotation_counts gl_c ON gl_c.subject = gl_p.subject AND gl_c.aspect = gl_p.aspect"
-	       " UNION ALL SELECT gl_o.subject, gl_o.aspect, NULL::JSON AS value, NULL::VARCHAR AS test_state,"
-	       " NULL::DOUBLE AS score, 'missing' AS state FROM missing gl_o LEFT JOIN picked gl_q"
-	       " ON gl_q.subject = gl_o.subject AND gl_q.aspect = gl_o.aspect WHERE gl_q.subject IS NULL)"
-	       " ORDER BY subject, aspect";
+static string CollapsedSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect, bool checked) {
+	// an error is not a judgment (SPEC §7.2): it never withholds, and any other result outranks it, the
+	// highest score first; a stale value is served and marked (SPEC §5.3). A test's state and score are read
+	// as stored: the collapsed read serves no test's mark
+	return "WITH RECURSIVE " + ValuesSQL(ws, RowsFilter(scope, aspect), checked) +
+	       ", gl_picked AS (SELECT subject, aspect, p.value, p.stale, p.possibly, gl_actors FROM (SELECT subject, "
+	       "aspect, count(DISTINCT actor) AS gl_actors, arg_min({'value': body::JSON, 'stale': stale, 'possibly': "
+	       "possibly}, {'r': CASE actor WHEN 'human' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END, 'o': -ord}) AS p"
+	       " FROM gl_all WHERE error IS NULL GROUP BY subject, aspect)),"
+	       " gl_judged AS (SELECT subject, aspect, j.state, j.score, j.threshold FROM (SELECT subject, aspect,"
+	       " arg_min({'state': state, 'score': score, 'threshold': threshold}, {'e': CASE WHEN state = 'error' THEN 1"
+	       " WHEN state IS NULL THEN 2 ELSE 0 END, 's': coalesce(-score, 'infinity'::DOUBLE)}) AS j FROM (SELECT"
+	       " m.subject, t.aspect, " +
+	       JUDGMENT + ", t.threshold FROM (SELECT * FROM " + ws.Store("measurements") +
+	       " WHERE end_snapshot IS NULL AND " + TestsFilter(ws, scope, Value()) + ") m JOIN " + Newest(ws, "tests") +
+	       " t ON t.name = m.function AND t.detector IS NOT NULL" +
+	       (aspect.IsNull() ? string() : " AND t.aspect = " + QuoteText(aspect.ToString())) + " WHERE " + JUDGED +
+	       ") GROUP BY subject, aspect)), " + MissingSQL(ws, scope, aspect) +
+	       " SELECT * FROM (SELECT p.subject, p.aspect,"
+	       " CASE WHEN j.score > j.threshold AND p.gl_actors > 1 THEN NULL ELSE p.value END AS value,"
+	       " j.state AS test_state, j.score, CASE WHEN j.score > j.threshold AND p.gl_actors > 1"
+	       " THEN 'conflict' WHEN p.stale THEN 'stale' WHEN p.possibly THEN 'possibly' ELSE 'current' END AS state"
+	       " FROM gl_picked p LEFT JOIN gl_judged j ON j.subject = p.subject AND j.aspect = p.aspect"
+	       " UNION ALL SELECT o.subject, o.aspect, NULL::JSON AS value, NULL::VARCHAR AS test_state,"
+	       " NULL::DOUBLE AS score, 'missing' AS state FROM gl_missing o ANTI JOIN gl_picked q"
+	       " ON q.subject = o.subject AND q.aspect = o.aspect) ORDER BY subject, aspect";
 }
 
 //! The raw read: one row per value — (subject, aspect, kind, test, actor, body, written_at, current,
 //! error); a failed computation is a row with its error and no body
-static string RawSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect) {
-	return "SELECT gl_s.subject, gl_s.aspect, gl_a.kind, gl_t.name AS test, gl_s.actor, gl_s.body::JSON AS body,"
-	       " gl_s.written_at, NOT gl_s.stale AND NOT gl_s.possibly AS current, gl_s.error FROM (" +
-	       ValuesSQL(ws, RowsFilter(ws, scope, aspect)) + ") gl_s LEFT JOIN " + Newest(ws, "aspects") +
-	       " gl_a ON gl_a.name = gl_s.aspect LEFT JOIN " + Newest(ws, "tests") +
+static string RawSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect, bool checked) {
+	return "WITH RECURSIVE " + ValuesSQL(ws, RowsFilter(scope, aspect), checked) +
+	       " SELECT gl_s.subject, gl_s.aspect, gl_a.kind, gl_t.name AS test, gl_s.actor, gl_s.body::JSON AS body,"
+	       " gl_s.written_at, NOT gl_s.stale AND NOT gl_s.possibly AS current, gl_s.error FROM gl_all gl_s LEFT JOIN " +
+	       Newest(ws, "aspects") + " gl_a ON gl_a.name = gl_s.aspect LEFT JOIN " + Newest(ws, "tests") +
 	       " gl_t ON gl_t.aspect = gl_s.aspect ORDER BY gl_s.subject, gl_s.aspect, gl_s.actor";
 }
 
@@ -1578,18 +1598,19 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
                                   const string &subject) {
 	auto &ws = inner.ws;
 	auto scope = ScopeOf(context, Value(subject));
-	auto values = RowsFilter(ws, scope, Value(test.aspect));
+	auto values = RowsFilter(scope, Value(test.aspect));
 	auto stored = "dataset = " + QuoteText(scope.dataset) + " AND function = " + QuoteText(test.name) +
 	              " AND aspect = 'test'" + (scope.whole ? string() : " AND " + scope.subjects);
 	// the subjects that hold a value of the aspect, and the test's results stored in scope with whether each
 	// is current
-	auto rows = inner.Run("WITH holding AS (SELECT DISTINCT subject FROM (SELECT subject FROM " +
-	                      inner.Current("glossary") + " WHERE " + values + " UNION ALL SELECT subject FROM " +
-	                      inner.Current("measurements") + " WHERE error IS NULL AND " + values +
-	                      ")), kept AS (SELECT subject, value, current FROM (" + CurrentResultsSQL(ws, stored) +
-	                      ")) SELECT coalesce(h.subject, k.subject), h.subject IS NOT NULL, k.subject IS NOT NULL,"
-	                      " coalesce(k.current, false), k.value FROM holding h FULL JOIN kept k ON k.subject ="
-	                      " h.subject ORDER BY 1");
+	auto rows =
+	    inner.Run("WITH " + SourcesSQL(ws) + ", holding AS (SELECT DISTINCT subject FROM (SELECT subject FROM " +
+		          inner.Current("glossary") + " WHERE " + values + " UNION ALL SELECT subject FROM " +
+		          inner.Current("measurements") + " WHERE error IS NULL AND " + values +
+		          ")), kept AS (SELECT subject, value, current FROM (" + CurrentResultsSQL(ws, stored) +
+		          ")) SELECT coalesce(h.subject, k.subject), h.subject IS NOT NULL, k.subject IS NOT NULL,"
+		          " coalesce(k.current, false), k.value FROM holding h FULL JOIN kept k ON k.subject ="
+		          " h.subject ORDER BY 1");
 	vector<string> due;
 	vector<string> retire;
 	vector<vector<Value>> served;
@@ -1621,8 +1642,9 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
 	                          : "subject IN (SELECT s FROM (VALUES " + StringUtil::Join(quoted, ", ") + ") v(s))";
 	const string once = "__gloss_test_values";
 	inner.Run("CREATE OR REPLACE TEMP TABLE " + once +
-	          " AS SELECT subject, aspect, actor AS actor_kind, body, NOT stale AND NOT possibly AS current FROM (" +
-	          ValuesSQL(ws, values + " AND " + in_due) + ") WHERE error IS NULL");
+	          " AS SELECT subject, aspect, actor AS actor_kind, body, NOT stale AND NOT possibly AS current FROM (WITH "
+	          "RECURSIVE " +
+	          ValuesSQL(ws, values + " AND " + in_due, true) + " SELECT * FROM gl_all) WHERE error IS NULL");
 	std::map<string, pair<string, string>> judged;
 	auto failure = due.empty() ? string() : RunDetector(context, inner, test, once, judged);
 	// a detector that failed ended the read it ran in, and the table with it
@@ -1634,7 +1656,7 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
 	// staleness reads, the aspect's and the test's declaration, and the detector's
 	std::map<string, string> definitions;
 	if (!due.empty()) {
-		auto nodes = inner.Run("SELECT s, " + DefinitionNodeSQL(ws, "s") + " FROM (VALUES " +
+		auto nodes = inner.Run("WITH " + NowSQL(ws) + " SELECT s, " + DefinitionNodeSQL("s") + " FROM (VALUES " +
 		                       StringUtil::Join(quoted, ", ") + ") v(s)");
 		while (auto chunk = nodes->Fetch()) {
 			for (idx_t r = 0; r < chunk->size(); r++) {
@@ -1921,10 +1943,18 @@ static unique_ptr<FunctionData> GlossaryBind(ClientContext &context, TableFuncti
 	bool all = input.inputs[2].GetValue<bool>();
 	auto scope = ScopeOf(context, input.inputs[0]);
 	auto ws = WorkspaceOf(context);
+	auto &aspect = input.inputs[1];
+	// a read of one property that no current stored result holds serves no function value: the check is
+	// not planned
+	bool checked = aspect.IsNull() ||
+	               !Inner::Of(context)
+	                    .Row("SELECT 1 FROM " + ws.Store("measurements") + " WHERE end_snapshot IS NULL AND aspect = " +
+	                         QuoteText(aspect.ToString()) + " AND aspect NOT IN ('lineage', 'test') LIMIT 1")
+	                    .empty();
 	if (all) {
-		return ReadBind(RAW_SHAPE, RawSQL(ws, scope, input.inputs[1]), return_types, names);
+		return ReadBind(RAW_SHAPE, RawSQL(ws, scope, aspect, checked), return_types, names);
 	}
-	return ReadBind(COLLAPSED_SHAPE, CollapsedSQL(ws, scope, input.inputs[1]), return_types, names);
+	return ReadBind(COLLAPSED_SHAPE, CollapsedSQL(ws, scope, aspect, checked), return_types, names);
 }
 
 static unique_ptr<FunctionData> TestsBind(ClientContext &context, TableFunctionBindInput &input,
