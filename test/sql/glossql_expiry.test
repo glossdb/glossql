@@ -86,6 +86,29 @@ fin.t	note	false
 fin.t.a	note	false
 fin.t.b	min_max	false
 
+# a read of one property marks its values as the whole read does: one that stored results hold, and one that none holds
+
+query TT
+SELECT subject, current FROM GLOSSARY(fin::min_max, all => true) ORDER BY ALL;
+----
+fin.kept.k	true
+fin.t.b	false
+
+query TT
+SELECT subject, state FROM GLOSSARY(fin::min_max) ORDER BY ALL;
+----
+fin.kept.k	current
+fin.t.b	stale
+
+query TT
+SELECT subject, state FROM GLOSSARY(fin::note) ORDER BY ALL;
+----
+fin.kept.k	current
+fin.spend	stale
+fin.spend.value	stale
+fin.t	stale
+fin.t.a	stale
+
 # every snapshot but the newest expired: the rows the writes ended are gone from the lake's catalog
 
 statement ok
