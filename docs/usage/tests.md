@@ -2,9 +2,9 @@
 
 A test (`DECLARE TEST`) is declared on one property. It says who may
 annotate the property, and which function scores how far the values
-agree: the computed values, the agent's and the person's. `TESTS()`
-returns the results. A test runs when it is read; its results are not
-stored.
+agree: the computed values, the agent's and the person's. A test's
+result is stored per asset, like a measurement's. `TESTS()` returns
+the stored results.
 
 ## Declare a test
 
@@ -29,6 +29,14 @@ DECLARE TEST gap_test ON gap_rate
   and reports `conflict` ([reading](reading.md)).
 - A property has one test. Declaring another test on it replaces the
   first.
+- A detector that compares assets with each other is refused with
+  `cross_subject`: a window that does not partition by `subject`, an
+  aggregate over the values that does not group by `subject`, or a
+  join of two reads of the values that does not match them on
+  `subject`. A result is stored per asset and reads that asset's
+  values alone. To compare the columns of a table, declare the
+  property on the table; to compare the tables of a dataset, on the
+  dataset.
 
 ## Write a detector
 
@@ -51,6 +59,34 @@ $$;
 from 0 to 1. The `kpi` kit ships `value_entropy`, a detector that
 scores disagreement between the values of a property.
 
+## Run a test
+
+```sql
+SELECT unit_test() FROM plant;
+SELECT unit_test() FROM readings.temperature;
+```
+
+The statement runs the detector on each asset at or under the one
+named that holds a value of the property. It computes an asset only
+where no result is stored or the stored one is out of date, and
+stores every result it computes in one write. It returns one row per
+asset. A stored result on an asset that holds no value any more is
+removed. The server runs these statements after each write, as it
+runs measurements ([measurements](measurements.md)).
+
+A result records what it read: the asset's values of the property,
+the asset's definition, and the declarations of the test and the
+detector. It is out of date once one of them changed after it was
+computed. `glossql_outdated()` lists it with the change.
+
+- A test or a detector declared again puts its results out of date in
+  every dataset. Each dataset computes them when its test runs next.
+- Data written by another tool changes no result until a statement
+  computes it: `TESTS()` serves the stored result, marked not
+  current.
+- A column retyped and typed back reads as changed: the results that
+  read its definition are out of date until they are computed again.
+
 ## Read the results
 
 ```sql
@@ -63,10 +99,12 @@ error)`.
 
 - With no argument, `TESTS()` covers the dataset in use.
   `subject::aspect` narrows it to one property. Filter with `WHERE`.
-- `current` is false when a computed value the result read is stale.
-- A detector that fails does not fail the read. Its rows have the
-  state `error`, score 0, and the failure text in `error`. An `error`
-  does not make `GLOSSARY()` report `conflict`.
+- `current` is false when the stored result is out of date, or read a
+  computed value that is. The state is served as it was stored.
+- A detector that fails does not fail the statement. The result of
+  each asset it ran on has the state `error`, score 0, and the failure
+  text in `error`. An `error` does not make `GLOSSARY()` report
+  `conflict`.
 - One detector can serve several tests. Each test gets its own
   results, from its own values and threshold.
 

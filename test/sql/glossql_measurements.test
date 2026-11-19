@@ -1,5 +1,5 @@
 # name: test/sql/glossql_measurements.test
-# description: a measurement is stored with what each of its reads returned; a later extraction serves it while its reads return the same, and a result that read a result that is out of date is out of date
+# description: a measurement is stored with the nodes it read; a later call serves it while they are unchanged and computes it again once one moves, keeping each value in its history; a result that read a result that moved is out of date until it is computed again; a failure is stored as a result; a property declared on columns is computed per column
 # group: [sql]
 
 require glossql
@@ -37,18 +37,18 @@ DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max"
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 
-# --- extraction stores the row with what its reads returned: one row per read, a digest of what it returned
+# --- extraction stores the row with the nodes it read: one row per node
 
 query TTTTT
 SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
 
-# the data of its subject, and the declarations of the function and of the property it returns
+# the data of its subject's table, and the declaration of the function and of the property it returns
 query T
-SELECT string_agg(i.input, ',' ORDER BY i.input) FROM measurements m JOIN inputs i USING (begin_snapshot);
+SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i ON i.result = m.id;
 ----
-data(data, itself),function,property
+fin.orders data,min_max function,min_max property
 
 # --- a repeat is a serve, not a rerun
 
@@ -89,10 +89,10 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":9.0}	true
 
 query TT
-SELECT value, (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs_history i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements_history m ORDER BY begin_snapshot;
+SELECT value, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs_history i WHERE i.result = m.id) FROM measurements_history m ORDER BY begin_snapshot;
 ----
-{"min":0.0,"max":4.5}	data(data, itself),function,property
-{"min":0.0,"max":9.0}	data(data, itself),function,property
+{"min":0.0,"max":4.5}	fin.orders data,min_max function,min_max property
+{"min":0.0,"max":9.0}	fin.orders data,min_max function,min_max property
 
 # a re-declared function is never served from a measurement of its older body
 
@@ -104,47 +104,10 @@ SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":10.0}	true
 
-# --- a body that reads annotations depends on the annotations it read
-
-statement ok
-DECLARE ASPECT notes WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
-
-statement ok
-DECLARE FUNCTION notes FOR fin AS $$ SELECT count(value) AS n FROM annotations('note', 'itself') $$ RETURNS notes;
-
-query TTTTT
-SELECT notes() FROM orders.amount;
-----
-notes	fin.orders.amount	notes	1	true
-
-# it read the note on its subject: a note elsewhere leaves it current, and so does a load, since it
-# read no data
-statement ok
-GLOSS note ON other.x AS $${"text": "elsewhere"}$$;
-
-query TTTTT
-SELECT notes() FROM orders.amount;
-----
-notes	fin.orders.amount	notes	1	false
-
 statement ok
 INSERT INTO fin.orders VALUES (10, 10.0);
 
-query TTTTT
-SELECT notes() FROM orders.amount;
-----
-notes	fin.orders.amount	notes	1	false
-
-statement ok
-GLOSS note ON orders.amount AS $${"text": "loaded again"}$$;
-
-# the annotation replaced the agent's earlier one: one current row, and the result is computed again
-query TTTTT
-SELECT notes() FROM orders.amount;
-----
-notes	fin.orders.amount	notes	1	true
-
-# --- a body that reads nothing is current while its declarations hold; one that reads the catalog past the read functions is refused at its declaration
+# --- a body that reads nothing is current while its declarations hold
 
 statement ok
 DECLARE ASPECT answer WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
@@ -152,23 +115,15 @@ DECLARE ASPECT answer WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 statement ok
 DECLARE FUNCTION answer FOR fin AS $$ SELECT 42 AS n FROM range(1) $$ RETURNS answer;
 
-statement ok
-DECLARE ASPECT tables WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
-
-statement error
-DECLARE FUNCTION tables FOR fin AS $$ SELECT count(*) AS n FROM duckdb_tables() WHERE schema_name = split_part($subject, '.', 1) $$ RETURNS tables;
-----
-untracked_read
-
 query TTTTT
 SELECT answer() FROM orders.amount;
 ----
 answer	fin.orders.amount	answer	42	true
 
 query TT
-SELECT function, (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE function = 'answer';
+SELECT function, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.result = m.id) FROM measurements m WHERE function = 'answer';
 ----
-answer	function,property
+answer	answer function,answer property
 
 statement ok
 INSERT INTO fin.other VALUES (3);
@@ -217,6 +172,9 @@ SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":11.0}	true
 
+statement ok
+SELECT min_max_test() FROM fin;
+
 query TTTT
 SELECT subject, state, current, error FROM TESTS(orders.amount::min_max);
 ----
@@ -235,7 +193,17 @@ SELECT value, test_state, state FROM GLOSSARY(orders.amount::min_max);
 statement ok
 DELETE FROM fin.orders WHERE id = 10;
 
-# the detector sees the value's current; the result's current is every function annotation it read
+# the stored test result read a value that is out of date now: it is possibly out of date, and served marked
+query TTTT
+SELECT subject, state, current, error FROM TESTS(orders.amount::min_max);
+----
+fin.orders.amount	green	false	NULL
+
+# computed again, the detector sees the value's current; the result read a result out of date, so it is not
+# current either
+
+statement ok
+SELECT min_max_test() FROM fin;
 
 query TTTT
 SELECT subject, state, current, error FROM TESTS(orders.amount::min_max);
@@ -259,6 +227,9 @@ SELECT min_max() FROM orders.amount;
 ----
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":10.0}	true
 
+statement ok
+SELECT min_max_test() FROM fin;
+
 query TTT
 SELECT value, test_state, state FROM GLOSSARY(orders.amount::min_max);
 ----
@@ -268,15 +239,6 @@ SELECT value, test_state, state FROM GLOSSARY(orders.amount::min_max);
 
 statement ok
 DECLARE TEST note_test ON note BY (AGENT, HUMAN);
-
-query TTT
-SELECT aspect, actor, current FROM GLOSSARY(orders.amount, all => true) ORDER BY aspect, actor;
-----
-answer	function	true
-min_max	function	true
-note	agent	true
-notes	function	false
-profile	function	false
 
 statement ok
 INSERT INTO fin.orders VALUES (11, 1.0);
@@ -312,7 +274,7 @@ SELECT count(*) > 0 FROM GLOSSARY(fin.orders) WHERE subject LIKE 'fin.orders.%';
 ----
 true
 
-# --- dataset_cells() over a dataset reads its every table: a new view leaves the result current, a table's load does not
+# --- dataset_cells() over a dataset reads its every table and walks the dataset's assets: a new view and a table's load each outdate the result
 
 statement ok
 DECLARE ASPECT cell_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
@@ -324,7 +286,7 @@ statement ok
 SELECT cell_count() FROM fin;
 
 query IT
-SELECT count(*), bool_and(EXISTS (SELECT 1 FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot AND i.input = 'data(tables, the dataset)')) FROM measurements m WHERE function = 'cell_count';
+SELECT count(*), bool_and(EXISTS (SELECT 1 FROM inputs i WHERE i.result = m.id AND i.asset = 'fin.other' AND i.what = 'data')) FROM measurements m WHERE function = 'cell_count';
 ----
 1	true
 
@@ -348,75 +310,16 @@ SELECT cell_count() FROM fin;
 query I
 SELECT count(*) FROM measurements_history WHERE function = 'cell_count';
 ----
-2
-
-# --- which result is out of date, and which read returns other rows now: glossql_outdated()
+3
 
 statement ok
 INSERT INTO fin.orders VALUES (11, 11.0);
-
-query TTT
-SELECT function, input, reason FROM glossql_outdated() WHERE subject = 'fin.orders.amount' AND function IN ('min_max', 'profile') ORDER BY ALL;
-----
-min_max	data(data, itself)	changed
-profile	data(data, itself)	changed
-
-# --- a read of annotations names the property it read: an annotation on another property leaves the result current, one on its own within its place outdates it
-
-statement ok
-DECLARE ASPECT note_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
-
-statement ok
-DECLARE FUNCTION note_count FOR fin AS $$ SELECT count(value) FILTER (WHERE asset = $subject) AS n FROM annotations('note', 'the dataset') $$ RETURNS note_count;
-
-query TTTTT
-SELECT note_count() FROM orders.amount;
-----
-note_count	fin.orders.amount	note_count	1	true
-
-statement ok
-DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON COLUMN;
-
-statement ok
-GLOSS remark ON orders.amount AS $${"text": "another property"}$$;
-
-query TTTTT
-SELECT note_count() FROM orders.amount;
-----
-note_count	fin.orders.amount	note_count	1	false
-
-statement ok
-GLOSS note ON orders.id AS $${"text": "the same property"}$$;
-
-query TTTTT
-SELECT note_count() FROM orders.amount;
-----
-note_count	fin.orders.amount	note_count	1	true
-
-# a declaration and a load in another dataset leave a reader of annotations current
 
 statement ok
 DECLARE DATASET other SET (purpose: 'elsewhere');
 
 statement ok
 CREATE TABLE other.t AS SELECT 1 AS a, 2 AS b;
-
-statement ok
-DECLARE FUNCTION elsewhere FOR other AS $$ SELECT 1 AS n $$ RETURNS answer;
-
-statement ok
-USE other;
-
-statement ok
-DECLARE RELATIONSHIP t.a -> t.b;
-
-statement ok
-USE fin;
-
-query TTTTT
-SELECT note_count() FROM orders.amount;
-----
-note_count	fin.orders.amount	note_count	1	false
 
 # --- a result that read a result: top reads min_max's value, top_twice reads top's. Each is current while nothing moved
 
@@ -485,21 +388,21 @@ min_max	true
 top	true
 top_twice	true
 
-# a result computed while the result it read was out of date is out of date
+# a body reads the values a result held, oldest first, once per change: min_max's max, back to 10 once and now 13
+
+statement ok
+DECLARE ASPECT top_history WITH $${"type": "array", "items": {"type": "number"}}$$ AS MEASUREMENT ON COLUMN;
+
+statement ok
+DECLARE FUNCTION top_history FOR fin AS $$ SELECT list_transform(history, lambda v: (v->>'max')::DOUBLE) AS v FROM results('min_max', 'itself') $$ RETURNS top_history;
+
+query TTTTT
+SELECT top_history() FROM orders.amount;
+----
+top_history	fin.orders.amount	top_history	[4.5,9.0,10.0,11.0,10.0,12.0,13.0]	true
 
 statement ok
 INSERT INTO fin.orders VALUES (13, 1.0);
-
-query TTTTT
-SELECT top() FROM orders.amount;
-----
-top	fin.orders.amount	top	13.0	true
-
-query TT
-SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top') ORDER BY aspect;
-----
-min_max	false
-top	false
 
 # a result of the function out of date in another dataset leaves a reader in this one current: the read was of this dataset's results
 
@@ -522,6 +425,13 @@ SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN
 ----
 min_max	true
 top	true
+
+# min_max computed again with the value it held: its history holds no new value, and what read it stays current
+
+query TT
+SELECT body, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect = 'top_history';
+----
+[4.5,9.0,10.0,11.0,10.0,12.0,13.0]	true
 
 # --- a function that reads its own results: what it stored is no input of its own, on any subject
 
@@ -697,3 +607,54 @@ query TTTTT
 SELECT label() FROM flaky;
 ----
 label	fin.flaky	label	"one"	true
+
+# --- a function whose property is declared on columns alone, called on a table or a view, computes each of its
+# columns in one write, each result with the nodes it read; a repeat serves them; a column the relation no longer
+# has retires its result
+
+statement ok
+CREATE TABLE fin.wide AS SELECT 1 AS a, NULL::INTEGER AS b;
+
+query TTTTT
+SELECT min_max() FROM wide;
+----
+min_max	fin.wide.a	min_max	{"min":1,"max":2}	true
+min_max	fin.wide.b	min_max	{"min":null,"max":null}	true
+
+# one write: one snapshot for both
+query I
+SELECT count(DISTINCT begin_snapshot) FROM measurements WHERE function = 'min_max' AND subject LIKE 'fin.wide.%';
+----
+1
+
+query TT
+SELECT m.subject, string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i ON i.result = m.id
+WHERE m.function = 'min_max' AND m.subject LIKE 'fin.wide.%' GROUP BY m.subject ORDER BY m.subject;
+----
+fin.wide.a	fin.wide data,min_max function,min_max property
+fin.wide.b	fin.wide data,min_max function,min_max property
+
+query TTTTT
+SELECT min_max() FROM wide;
+----
+min_max	fin.wide.a	min_max	{"min":1,"max":2}	false
+min_max	fin.wide.b	min_max	{"min":null,"max":null}	false
+
+statement ok
+ALTER TABLE fin.wide DROP COLUMN b;
+
+query TTTTT
+SELECT min_max() FROM wide;
+----
+min_max	fin.wide.a	min_max	{"min":1,"max":2}	true
+
+query T
+SELECT subject FROM measurements WHERE function = 'min_max' AND subject LIKE 'fin.wide.%';
+----
+fin.wide.a
+
+# a property declared on tables is computed on the table itself
+query TTTTT
+SELECT rows_seen() FROM flaky;
+----
+rows_seen	fin.flaky	rows_seen	1	false

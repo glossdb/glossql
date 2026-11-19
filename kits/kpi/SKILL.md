@@ -30,7 +30,6 @@ SELECT name, kind, grains FROM aspects;
 | `dimension` | dimension columns | `value`: `primary`, `supporting`, `none`; `basis` | whether reports slice by it |
 | `entity` | table | `value`: what one row is; `role`: `fact` or `dimension`; `grain`; `time_axis`; `identity_columns` | the table's grain and key |
 | `conventions` | source | any object | fiscal calendar, sign conventions, what nulls mean |
-| `definitions` | dataset | `definitions`: one object per metric name | the business glossary of metrics: meaning, unit, owner, source, and a derived metric's `formula` as text |
 
 The measurements: `column_profile` (`total`, `null_ratio`, `distinct`,
 `min`, `max`) and `outlier_profile`, both on a column.
@@ -58,7 +57,8 @@ the asset reads `conflict` and its value is withheld. `meaning`,
    balance"}$$;`. You write as `agent`. A person's review decision is
    written as `human`, on the person's own connection. Do not set
    `human` yourself.
-5. Read the results: `SELECT * FROM TESTS(orders.amount::role);`. A
+5. Run the test and read its results: `SELECT role_test() FROM
+   orders.amount;`, then `SELECT * FROM TESTS(orders.amount::role);`. A
    `red` state is a disagreement. Resolve it with the person; do not
    overwrite it.
 
@@ -101,8 +101,8 @@ On the view's columns:
 - `entity` on the view says what one row is.
 
 Annotating again replaces your own value. A person's value is kept
-beside it. Put what the company revises (a metric's meaning, unit,
-owner or source) into `definitions` on the dataset: the metric's
+beside it. Put what the company revises (a metric's meaning, unit)
+into annotations on the view and its columns: the metric's
 declaration cannot change once it is annotated.
 
 ## Limits

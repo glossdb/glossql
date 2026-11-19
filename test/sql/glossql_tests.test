@@ -1,5 +1,5 @@
 # name: test/sql/glossql_tests.test
-# description: tests adjudicate the values at read; GLOSSARY() discloses every gap, TESTS() every result
+# description: a test's result is stored per subject and test, computed by SELECT <test>() FROM <subject>; GLOSSARY() discloses every gap, TESTS() every stored result
 # group: [sql]
 
 require glossql
@@ -103,10 +103,41 @@ SELECT count(*) FROM TESTS();
 ----
 0
 
-# --- one annotation: current, judged green
+# --- one annotation: current, judged green once the test computed its result
 
 statement ok
 GLOSS additivity ON orders.amount AS $${"value": "additive"}$$;
+
+# a test's result is computed by its statement, not at read: nothing is judged yet
+query TTTTTT
+SELECT subject, aspect, value, test_state, score, state FROM GLOSSARY(orders);
+----
+fin.orders.amount	additivity	{"value": "additive"}	NULL	NULL	current
+fin.orders.id	additivity	NULL	NULL	NULL	missing
+
+# the test over the dataset judges each subject that holds a value, one row each
+query TTTTT
+SELECT additivity_test() FROM fin;
+----
+additivity_test	fin.orders.amount	additivity	{"state":"green","score":0.0}	true
+
+# stored per subject and test, with the nodes it read
+query TTTT
+SELECT function, subject, aspect, value FROM measurements WHERE function = 'additivity_test';
+----
+additivity_test	fin.orders.amount	test	{"state":"green","score":0.0}
+
+query T
+SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i ON i.result = m.id
+WHERE m.function = 'additivity_test';
+----
+additivity property,additivity_entropy function,fin.orders.amount annotation additivity,fin.orders.amount definition,fin.orders.amount value additivity
+
+# the stored result serves while it is current: nothing is computed again
+query TTTTT
+SELECT additivity_test() FROM fin;
+----
+additivity_test	fin.orders.amount	additivity	{"state":"green","score":0.0}	false
 
 query TTTTTT
 SELECT subject, aspect, value, test_state, score, state FROM GLOSSARY(orders);
@@ -124,6 +155,24 @@ GLOSS additivity ON orders.amount AS $${"value": "semi-additive"}$$;
 
 statement ok
 RESET VARIABLE glossql_actor;
+
+# the stored result read the annotation that moved: it is out of date until the test computes it again,
+# and its state is served marked
+query TTTT
+SELECT subject, test, state, current FROM TESTS(orders.amount::additivity);
+----
+fin.orders.amount	additivity_test	green	false
+
+query TTTTTT
+SELECT dataset, function, subject, asset, what, reason FROM glossql_outdated() WHERE function = 'additivity_test';
+----
+fin	additivity_test	fin.orders.amount	fin.orders.amount	annotation additivity	changed
+
+# a narrowed statement computes the subjects under its subject alone
+query TTTTT
+SELECT additivity_test() FROM orders.amount;
+----
+additivity_test	fin.orders.amount	additivity	{"state":"red","score":1.0}	true
 
 query TTTTT
 SELECT subject, aspect, value, test_state, state FROM GLOSSARY(orders.amount);
@@ -186,29 +235,15 @@ GLOSS additivity ON orders.amount AS $${"value": "additive"}$$;
 statement ok
 RESET VARIABLE glossql_actor;
 
+statement ok
+SELECT additivity_test() FROM fin;
+
 query TTTT
 SELECT subject, value, test_state, state FROM GLOSSARY(orders.amount);
 ----
 fin.orders.amount	{"value": "additive"}	green	current
 
-# --- function annotations arrive through RETURNS: extraction stores a measurement, served beside the glosses
-
-query TTTTT
-SELECT min_max() FROM orders.amount;
-----
-min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
-
-query TTT
-SELECT subject, actor, body FROM GLOSSARY(orders.amount::min_max, all => true);
-----
-fin.orders.amount	function	{"min":0.0,"max":4.5}
-
-query TTT
-SELECT subject, aspect, value FROM GLOSSARY(orders.amount::min_max);
-----
-fin.orders.amount	min_max	{"min":0.0,"max":4.5}
-
-# a measurement is never glossed
+# --- a measurement is never glossed
 statement error
 GLOSS min_max ON orders.amount AS $${"min": 0}$$;
 ----
@@ -241,11 +276,16 @@ GLOSS note ON orders AS $${"value": "x"}$$;
 statement ok
 RESET VARIABLE glossql_actor;
 
-# a test without a detector judges nothing: the value serves as current
+# a test without a detector judges nothing: the value serves as current, and its statement stores no result
 query TTTTT
 SELECT subject, aspect, value, test_state, state FROM GLOSSARY(orders::note);
 ----
 fin.orders	note	{"value": "x"}	NULL	current
+
+statement error
+SELECT note_test() FROM fin;
+----
+no_detector
 
 # --- a detector that cannot answer is the result `error` (SPEC §7.2): one row per subject holding values, score 0, the failure text
 
@@ -260,6 +300,10 @@ DECLARE TEST role_test ON role DETECTOR broken;
 
 statement ok
 GLOSS role ON orders.id AS $${"value": "key"}$$;
+
+# a detector that fails stores its failure as each subject's result: the statement does not fail
+statement ok
+SELECT role_test() FROM fin;
 
 # a plan the engine refuses
 query TTTR
@@ -284,6 +328,10 @@ fin.orders.id	role_test	error	Binder Error: Referenced column "no_such_column" n
 statement ok
 DECLARE FUNCTION broken FOR fin AS $$ SELECT subject, error('boom') AS state, 0.0 AS score FROM annotations $$;
 
+# the detector declared again puts the result out of date
+statement ok
+SELECT role_test() FROM fin;
+
 query TT
 SELECT state, error FROM TESTS(orders.id::role);
 ----
@@ -292,6 +340,9 @@ error	Invalid Input Error: boom
 # a row outside the test-results schema
 statement ok
 DECLARE FUNCTION broken FOR fin AS $$ SELECT subject, 'blue' AS state, 0.0 AS score FROM annotations $$;
+
+statement ok
+SELECT role_test() FROM fin;
 
 query TT
 SELECT state, (error) IS NOT NULL FROM TESTS(orders.id::role);
@@ -436,6 +487,9 @@ DECLARE TEST tie_out_test ON tie_out BY (AGENT, HUMAN) DETECTOR rate_red THRESHO
 statement ok
 SELECT tie_out_check() FROM orders;
 
+statement ok
+SELECT tie_out_test() FROM fin;
+
 query TTRT
 SELECT aspect, test_state, score, state FROM GLOSSARY(orders) WHERE aspect = 'tie_out';
 ----
@@ -451,52 +505,72 @@ red	1.0
 statement ok
 GLOSS tie_out ON orders AS $${"tolerance": 0.0}$$;
 
+statement ok
+SELECT tie_out_test() FROM fin;
+
 query TTT
 SELECT value, test_state, state FROM GLOSSARY(orders::tie_out);
 ----
 NULL	red	conflict
 
-# --- a measurement that reads another function's results is served while they hold, and computes once that function stores another value (SPEC §6)
+# --- a subject that holds no value any more retires its result
 
 statement ok
-DECLARE ASPECT tie_out_count WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+DELETE FROM glossary WHERE subject = 'fin.orders.id' AND aspect = 'role';
 
 statement ok
-DECLARE FUNCTION tie_out_count FOR GLOBAL AS $$ SELECT count(value) AS n, max(value->>'breach_rate') AS what FROM results('tie_out_check', 'itself') $$ RETURNS tie_out_count;
+SELECT role_test() FROM fin;
 
-query TTTTT
-SELECT tie_out_count() FROM orders;
+query I
+SELECT count(*) FROM measurements WHERE function = 'role_test';
 ----
-tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"1.0"}	true
+0
 
-# the reader read the function it named, not every result: another function's result
-# on the same subject leaves it current
-statement ok
-DECLARE ASPECT order_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+# --- a detector that compares the subjects it runs over is refused at the test's declaration (SPEC §7.1): the
+# result of one subject would read another's values
 
 statement ok
-DECLARE FUNCTION order_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM fin.orders $$ RETURNS order_rows;
+DECLARE ASPECT rank_note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 statement ok
-SELECT order_rows() FROM orders;
+DECLARE FUNCTION rank_share FOR fin AS $$
+  SELECT subject, CASE WHEN rank() OVER (ORDER BY count(*) DESC) = 1 THEN 'red' ELSE 'green' END AS state, 0.0 AS score
+  FROM annotations GROUP BY subject
+$$;
 
-query TTTTT
-SELECT tie_out_count() FROM orders;
+statement error
+DECLARE TEST rank_test ON rank_note DETECTOR rank_share;
 ----
-tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"1.0"}	false
+cross_subject
 
 statement ok
-DECLARE FUNCTION tie_out_check FOR GLOBAL AS $$ SELECT 0.5 AS breach_rate, 'every line against its order' AS outcome $$ RETURNS tie_out;
+DECLARE FUNCTION share_of_all FOR fin AS $$
+  SELECT a.subject, 'green' AS state, (SELECT count(*) FROM annotations)::DOUBLE / 100 AS score FROM annotations a
+$$;
+
+statement error
+DECLARE TEST share_test ON rank_note DETECTOR share_of_all;
+----
+cross_subject
 
 statement ok
-SELECT tie_out_check() FROM orders;
+DECLARE FUNCTION pairs FOR fin AS $$
+  SELECT a.subject, 'green' AS state, 0.0 AS score FROM annotations a JOIN annotations b ON a.body = b.body
+$$;
 
-query TTTTT
-SELECT tie_out_count() FROM orders;
+statement error
+DECLARE TEST pair_test ON rank_note DETECTOR pairs;
 ----
-tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"0.5"}	true
+cross_subject
 
-query TTTTT
-SELECT tie_out_count() FROM orders;
-----
-tie_out_count	fin.orders	tie_out_count	{"n":1,"what":"0.5"}	false
+# matched on the subject, a window, a subquery and a join judge each subject alone
+statement ok
+DECLARE FUNCTION own_rank FOR fin AS $$
+  SELECT a.subject, 'green' AS state,
+         (SELECT count(*) FROM annotations b WHERE b.subject = a.subject)::DOUBLE / 100 AS score
+  FROM (SELECT subject, row_number() OVER (PARTITION BY subject ORDER BY actor_kind) AS n FROM annotations) a
+  JOIN annotations c ON c.subject = a.subject WHERE a.n = 1
+$$;
+
+statement ok
+DECLARE TEST own_test ON rank_note DETECTOR own_rank;

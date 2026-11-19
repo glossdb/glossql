@@ -103,9 +103,7 @@ The view contract:
   is required.
 - `assumptions`, optional: a list of objects, each with an `assumption`
   and optionally `dimension`, `basis` and `confidence` (0 to 1).
-- Other keys are accepted. A kit can declare a schema for them: a
-  property whose schema carries `"x-kind": "definition"`. Every `VIEW`
-  value is then validated against that schema too.
+- Other keys are accepted.
 
 What else to know:
 

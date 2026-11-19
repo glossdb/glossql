@@ -20,10 +20,9 @@ Ground rules:
   context — is a JSON document validated by a [JSON Schema](https://json-schema.org).
   Rendering conventions ride the schema. Authored prose is opaque.
 - **The actor rides the transport.** Every connection carries an actor
-  (agent_id or human_id). An answer the interface elicits from
-  the human mid-call is recorded through the interface and is stored with the actor kind human —
-  the same rule; the transport is just not always a connection (fixture
-  22). There is no BY clause anywhere; the engine
+  (agent_id or human_id). A person's answer to a review question is
+  stored with the actor kind human — the same rule (fixture 22). There
+  is no BY clause anywhere; the engine
   stamps writer and actor kind on every statement.
 - **The grammar fixes keys, not mechanics.** History, replay, and supersession
   mechanics are implementation. The grammar fixes what supersedes what: the
@@ -163,6 +162,16 @@ A **subject** is what a gloss, a function SELECT, or a test attaches to:
 - `table.column -> table.column` — a declared relationship, addressed by its
   pair path (relationships have no names). An endpoint is a column or a
   column tuple: `table.(a, b)` — the tuple is the key.
+- `dataset.name` — an asset of a kind a kit declares.
+  A kit declares a kind by three table macros in `main`, each taking the
+  dataset: `lineage_assets_<kind>` (`asset, kind, node_asset, node_what`:
+  its assets and the node that declares each), `lineage_edges_<kind>`
+  (`from, to, kind`: its lineage edges) and `lineage_places_<kind>`
+  (`subject, where, asset`: the places it adds; a row with no subject
+  names a place). Such an asset is of its kind, which no grain names, so a
+  property declared `ON TABLE` does not admit it; it and a relation of its
+  dataset do not share a name (`asset_name_taken`). An asset that is a
+  relation itself keeps the relation's grain.
 
 A dataset's name and a table's name carry no dot; a column's may,
 spelled quoted, and the column is what follows the second dot.
@@ -303,8 +312,7 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   aspect takes the dataset.
 - The **metric definition contract** is fixed, like the test-results schema (§7.2): what
   the engine reads of a metric definition, and nothing a reader of its rows needs.
-  It is open: a key it does not name passes, and a kit's metric definition schema
-  is what closes the body.
+  It is open: a key it does not name passes.
 
 ```json
 {
@@ -339,11 +347,6 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   the view and its columns under the aspects a kit declares, never
   keyed in the body. A reader that needs a claim nobody made refuses
   and names the gloss; it defaults nothing.
-- A kit may declare a schema for a body key its readers need, an
-  aspect flavored `x-kind: definition`: the engine validates every
-  VIEW gloss against each such schema after the contract. The aspect
-  is never glossed, no test names it, and re-declaring it is
-  refused while a current VIEW value would stop matching.
 - `stopped` in place of `sql` records that the author serves no number,
   and why: what is missing, where, how much, what closes it. The read
   interface refuses with that text, a reader of the view's rows abstains
@@ -375,14 +378,23 @@ DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';
   took. A removed or replaced row leaves the relation's reads and stays
   in the store with the snapshot that ended it: `<name>` serves the
   current rows, `<name>_history` every row. A gloss reads `stale`
-  once its subject changed after that snapshot: a column re-derived,
-  retyped or dropped, a table one of whose columns did, a view whose
-  definition was replaced or dropped, and each column of that view. A
-  subject with none of its catalog rows from the write left, after an
-  expiry of the lake's snapshots, reads as changed. Rows arriving
-  under the same shape do not age it. Provenance and staleness are a
-  join against the catalog's column history, never a guess. The read
-  shapes in §5.3 are unchanged; the column lives on the relation.
+  once the definition of its subject changed after that snapshot, the
+  node a result reads for it (§6): a column's rows in the lake
+  (retyped, dropped, made again with its table) or a load that
+  derived it otherwise than the load before; a table's rows, its
+  columns' rows ended (dropped, retyped) and a load that derived a
+  column it held otherwise: a column added is new and leaves the
+  table's gloss current; a view's row, the annotation that defines it and its
+  aspect's row; for a column of a view, the view's row. The lake's
+  snapshot id is the only version: a type changed and changed back
+  reads stale until the gloss is written again. A subject none of
+  whose catalog rows are left, after an expiry of the lake's
+  snapshots, reads as changed. A load whose columns differ alters
+  the table in place, so a column it returns again under its name and
+  type keeps its rows. Rows arriving under the same shape do
+  not age it. Staleness is a join against the catalog's history,
+  never a guess. The read shapes in §5.3 are unchanged; the column
+  lives on the relation.
 
 ### 5.3 Reading
 
@@ -405,9 +417,10 @@ the read never hides one:
   never in conflict: it is served with its test state.
 - `current` — served, basis unchanged.
 - `stale` — served **and marked**: the subject changed since the write
-  (§5.2), or an input the serving function value read has moved since
-  it stored (§7). Staleness never suppresses judgment; it shows beside
-  it.
+  (§5.2), or a node the serving function value read changed after it
+  read (§6). Staleness never suppresses judgment; it shows beside it.
+- `possibly` — served **and marked**: the serving function value read a
+  result that is out of date and not computed again yet (§6).
 
 ```sql
 SELECT * FROM GLOSSARY(orders.amount, all => true);
@@ -418,7 +431,7 @@ The raw read: one row per (subject, aspect, kind, test) —
 every value side by side; precedence between them is the reader's
 business. `kind` is the aspect's kind; who annotated is `actor`, under
 `test`; `current` is false for a function value that is out of date
-(§6). A computation that failed is a row with its `error` and no
+or possibly so (§6). A computation that failed is a row with its `error` and no
 `body`; the collapsed read and the tests never count it as a value.
 
 With no subject, `GLOSSARY()` sweeps the `USE`'d dataset. A subject serves
@@ -469,7 +482,10 @@ $$;
   engine — read-only. A measurement runs over the data as the statement
   reads it, composing everything a read can; `$subject` arrives as a string
   literal, and `subject_column($subject)` is the subject's column as a
-  relation named `v`. The result is stored by shape: one row and one column
+  relation named `v`. `series_aggregate(subject, where, axes, grain)`
+  sums the views of a place over their own typed columns, per period
+  and per member of each dimension; a kit's macro `axes` names the
+  columns, and the read records the data of the place. The result is stored by shape: one row and one column
   is the value, one row is an object of its columns, many rows are an
   array of row objects. Settings are context, never call arguments —
   calls are always bare `f()`. A body composes its context inline: a
@@ -505,11 +521,16 @@ SELECT outliers() FROM orders.amount;
 ```
 
 Extraction writes one row in the `measurements` relation:
-`(dataset, function, subject, aspect, value, computed_at, error)`,
-and one row per read of the body in the `inputs` relation. Nobody
+`(id, dataset, function, subject, aspect, value, computed_at, error,
+read_at, changed_at)`, and one row per node the result read in the
+`inputs` relation, `(result, asset, what)`, `result` the result's `id`. Nobody
 declares the inputs: the body is SQL, and what it reads is taken from
 its text when the function is declared, macros followed, and stored
 with the function (`functions.reads`).
+A function whose property is declared on columns alone, called on a
+table or a view, computes each of its columns: one result per column,
+each with the nodes it read, in one write. A result it stored on a
+column the relation no longer has is retired.
 
 A body reads the catalog through three read functions. Each takes a
 what and a where, as constants:
@@ -521,72 +542,87 @@ SELECT * FROM definition('itself');
 ```
 
 - `annotations(property, where)`: the annotations of one property;
-- `results(function, where)`: the stored results of one function;
+- `results(function, where)`: the stored results of one function,
+  each with the values it held, once per change (`history`);
 - `definition(where)`: a view's SQL and what it reads, each loaded
   table with the source it is loaded from, and what the view's joins
   and filters require of each read of a table.
 
 The where is a place, walked from the function's subject over the
 lineage (`lineage(dataset)`: what a dataset contains, what a view
-reads and joins on, the two columns of a relationship, the metric a
-plan plans, the source each table is loaded from):
+reads and joins on, the two columns of a relationship, the source each
+table is loaded from, and the edges of each kind a kit declares, §4):
 
 | Where | The assets |
 |---|---|
 | `itself` | the subject |
 | `its columns` | what the subject contains |
-| `its sources` | the tables, columns and views a view reads |
+| `its sources` | the tables, columns and views a view reads; a view column's: the columns it is computed from |
 | `the columns it joins on` | the two columns of each join in a view |
 | `its relationships` | a view's: those between the tables it reads and those that touch the view; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
-| `its metric` | the metric a plan plans, and its columns |
 | `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads |
 | `its dataset` | the subject's dataset itself |
 | `the dataset's metrics` | the metrics of the subject's dataset and their columns |
+| `the dataset's single values` | the single values of the subject's dataset (`x-kind: scalar`) and their columns |
 | `the dataset` | the subject's dataset and every asset in it |
 
-An input is one of:
+and each place a kit adds for its kind of asset (§4). On an asset a kit declares by an annotation,
+`annotations('x-kind <kind>', 'itself')` reads that annotation alone,
+and a result on such an asset reads the node that declares it.
 
-- a read, named as the body wrote it, such as
-  `annotations(role, its columns)`. Its version is a digest of what
-  the read returns for the subject: for annotations, each asset of the
-  place with every actor's annotation of the property and whether it
-  is stale, and the property's declaration and tests; for results,
-  each asset with the function's value and error; for a definition,
-  the view's SQL, columns, reads and joins;
-- data, such as `data(data, itself)`: DuckLake's version of each
-  table the assets read, and of each view among them;
-- `function` and `property`: the function's own declaration and that
-  of the property it fills.
+The lake's snapshot id is the only version. An input is a node: an
+asset and what was read of it, such as `fin.orders.amount`
+`annotation role`, `fin.orders` `data` or `min_max` `function`.
+A read records the nodes of each asset of its place and those its
+place's walk passed (a view's lineage, a table's relationships, which
+views of a dataset are metrics), so a
+member added to the place later changes a node it read. A view's
+lineage is a stored result of its own, `lineage` on the view
+(`SELECT lineage() FROM <view>`): what the view scans, joins and maps
+and what computes each column, with the nodes its planning read (its
+definition, and that of each relation and macro its SQL names, through
+the views it reads and the macros it calls) and the relations it reads as rows of `edges`.
+Defining the view stores it in the same write; a change to a relation
+it reads makes it out of date like any result, and computed again with
+the same value it leaves what walked it current. A node changed at the latest
+snapshot one of its catalog rows begins or ends at; rows are ended,
+never deleted. The nodes, and what each read records, are listed in
+`docs/specification/tables/inputs.md`.
 
 A body that reaches the catalog past the read functions, passes a
 read function a what or a where that is not a constant, or names a
 where that is no place, is refused at its declaration
 (`untracked_read`), naming the read. A table a body names that the
-lake does not hold yet is read by its name, its version `gone` until
-it is loaded. A macro the body calls that comes to read past the read
+lake does not hold yet is read by its name, and changes when it is
+created. A macro the body calls that comes to read past the read
 functions makes the computation fail, stored with the function's
 declaration as its input.
 
-The assets of the place are part of each digest, so a view that reads
-another table, or a relationship declared between a view's tables,
-changes the inputs that name that place. `glossql_outdated()` serves
-each stored result that is out of date with the input that differs:
-`(dataset, function, subject, input, reason)`, the reason `changed`
-or `outdated` (a result it read is out of date).
-
-A stored result is current while each read returns what it returned
-and no result it read is out of date. What counts
-is what the rows hold, not when they were written: an annotation
-changed and changed back leaves the result current, and a result
-computed again with the value it had leaves its readers current. An
-annotation on an asset outside the place, or of a property the body
-did not read, leaves the result current. A column retyped makes its
+A result stores the snapshot it read at (`read_at`, the lake's newest
+snapshot before its body ran) and the snapshot its value and error
+last changed at (`changed_at`). A stored result is current while no
+node it read changed after `read_at` and no result it read is out of
+date or possibly so. `glossql_outdated()` serves each stored result
+that is not current with the node: `(dataset, function, subject,
+asset, what, reason)`, the reason `changed` (the node changed after
+the result read it: out of date) or `possibly` (a result it read is
+out of date or possibly so, and is not computed again yet). Once that
+result is computed again, the same value leaves its reader current and
+another value is a node that changed. An
+annotation changed and changed back is two snapshots: the results
+that read it compute once more. A result computed again with the
+value and error it had keeps its `changed_at`, so what read it stays
+current. A write that would store what the catalog holds writes
+nothing and takes no snapshot. An annotation on an asset outside the
+place, or of a property the body did not read, leaves the result
+current. A column retyped makes its
 annotations stale, and so the results that read them out of date. A
 function declared again, or the property it fills declared again,
 makes its results out of date. A later extraction serves a current
 row; an out-of-date one makes the next extraction compute. Old rows
 stay in `measurements_history`. A function's own results are never
-its input. A computation that
+its input. A body that refuses its subject
+raises `not_a_<kind>` and stores nothing: a refusal is no computation. A computation that
 fails, in the body or in the schema check, is stored too, with its
 inputs and its `error` and no value. It is current while its inputs
 are, so nothing computes it again on its own; a call computes it
@@ -608,8 +644,8 @@ are stored in `measurements`.
 
 ## 7. Tests
 
-A test is declared per aspect, dataset-wide. Per (subject, aspect) it
-holds one value per actor kind: each function value (the newest measurement
+A test is declared per aspect, dataset-wide, and judges each subject
+alone. Per (subject, aspect) it holds one value per actor kind: each function value (the newest measurement
 of a function whose `RETURNS` names the aspect, §6 — served whether
 current or not, and marked), the agent's
 gloss, the human's gloss — one value each.
@@ -638,6 +674,14 @@ DECLARE TEST reconciliation_test ON reconciliation
   example.
 - `THRESHOLD` (0..1) is the entropy cutoff used by the collapsed
   `GLOSSARY()` read (§5.3).
+- A detector that compares the subjects it runs over is refused
+  (`cross_subject`): a window that does not partition by `subject`,
+  an aggregate over the values that does not group by `subject` or
+  match it to an outer row's, a join of two reads of the values that
+  does not match them on `subject`. A test's result reads its own
+  subject's values alone (§7.2). A judgment across subjects is a test
+  on the asset that holds them: the table for its columns, the
+  dataset for its tables.
 
 ### 7.2 Test results
 
@@ -649,21 +693,37 @@ SELECT subject, state FROM TESTS(fin.trial_balance) WHERE state = 'red';
 The **standard test-results schema** is fixed:
 `(subject, aspect, test, state, score, computed_at, current, error)` —
 `state` in `green | yellow | orange | red | error`, `score` the
-disagreement/entropy in 0..1, `current` whether every function value
-the result read is current (§6), `error` null except where
+disagreement/entropy in 0..1, `current` whether the stored result is
+current (§6), `error` null except where
 `state` is `error`.
 A detector's query returns the authored third of it — one
 `(subject, state, score)` row per subject — and the engine completes
 each row with the test, its aspect, and its own clock.
 A detector that cannot answer — unresolved from the reading dataset,
 a body that is not one SQL query, a plan or run the engine refuses —
-refuses nothing: the failure is served as that test's result, one
-row per subject holding values, `state` `error` with `score` 0 and the
+refuses nothing: the failure is stored as that test's result, one
+per subject holding values, `state` `error` with `score` 0 and the
 failure text in `error`. An error is not a judgment: the §5.3
 collapse never withholds on it, and every other test still returns its result.
-Detectors run **at read**. A result belongs to its **test**, not to
-its detector: one detector serving three tests holds three results,
-computed from each test's own values against its own threshold.
+A result belongs to its **test**, not to its detector: one detector
+serving three tests holds three results, computed from each test's
+own values against its own threshold.
+
+A test's result is a stored result like a function's (§6), one per
+(subject, test), in `measurements` under the test's name with aspect
+`test`: its value `{"state", "score"}`, or its error. `SELECT
+additivity_test() FROM fin` computes the test on each subject at or
+under the one named that holds a value of its aspect, where no result
+is stored or the stored one is not current, in one write; a stored
+result on a subject that holds no value any more is retired. A subject
+the detector returns no row for holds the JSON `null`, no judgment. A
+result reads its subject's `annotation` and `value` of the aspect, the
+subject's `definition` (§5.2), and the declarations of the aspect, the
+test and the detector (`property`, `function`): it is out of date
+once one of them changed after it read, and possibly so while a
+function value it read is. `TESTS()` and `GLOSSARY()` read the stored
+results and compute none; `current` marks a result out of date or
+possibly so as false, its state served as stored.
 Detail lives in the value function's own output, reachable by
 SELECT. Sweeps ("all conflict
 additivity columns") are WHERE clauses over the test-results relation, never a

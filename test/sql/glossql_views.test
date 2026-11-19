@@ -83,12 +83,13 @@ SELECT min_max() FROM spend.value;
 ----
 min_max	fin.spend.value	min_max	{"min":1.0,"max":2.0}	true
 
-# it read the data of its subject: the view at the definition it holds, and the table behind it
+# it read the data of its subject: the view at the definition it holds and the stored lineage that walked
+# to the table behind it, and that table
 
 query T
-SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m;
+SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE m.function = 'min_max';
 ----
-data(data, itself),function,property
+fin.spend definition,fin.spend result lineage,fin.t data,min_max function,min_max property
 
 query TTTTT
 SELECT min_max() FROM spend.value;
@@ -105,7 +106,8 @@ SELECT min_max() FROM spend.value;
 ----
 min_max	fin.spend.value	min_max	{"min":1.0,"max":5.0}	true
 
-# the same sql glossed again keeps the view: served, and the column's gloss current
+# the same sql glossed again keeps the view and the column's gloss current; the annotation that defines
+# the view is written, so a result that read the view computes again
 
 statement ok
 GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t", "assumptions": [{"assumption": "a is net of tax"}]}$$;
@@ -113,7 +115,7 @@ GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t", "as
 query TTTTT
 SELECT min_max() FROM spend.value;
 ----
-min_max	fin.spend.value	min_max	{"min":1.0,"max":5.0}	false
+min_max	fin.spend.value	min_max	{"min":1.0,"max":5.0}	true
 
 query TT
 SELECT subject, state FROM GLOSSARY(spend.value::role);
@@ -161,9 +163,9 @@ SELECT min_max() FROM spend_total.value;
 min_max	fin.spend_total.value	min_max	{"min":16.0,"max":16.0}	true
 
 query T
-SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m ORDER BY begin_snapshot DESC LIMIT 1;
+SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m ORDER BY begin_snapshot DESC LIMIT 1;
 ----
-data(data, itself),function,property
+fin.spend definition,fin.spend result lineage,fin.spend_total definition,fin.spend_total result lineage,fin.t data,min_max function,min_max property
 
 statement ok
 GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t"}$$;
@@ -196,17 +198,12 @@ SELECT sum(TRY_CAST(val AS DOUBLE)) FROM dataset_cells('fin', true) WHERE "table
 ----
 30.0
 
-# 'views' takes the views alone; 'all' the tables and the views, as true does
+# 'views' takes the views alone
 query II
 SELECT count(DISTINCT "table") FILTER (WHERE "table" IN ('spend', 'spend_total')), count(*) FILTER (WHERE "table" = 't')
 FROM dataset_cells('fin', 'views');
 ----
 2	0
-
-query I
-SELECT count(*) FILTER (WHERE "table" = 't') > 0 FROM dataset_cells('fin', 'all');
-----
-true
 
 statement error
 SELECT * FROM dataset_cells('fin', 'some');

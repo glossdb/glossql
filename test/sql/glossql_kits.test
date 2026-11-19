@@ -1,5 +1,5 @@
 # name: test/sql/glossql_kits.test
-# description: a kit is a script of declarations glossql_kit() loads; the KPI kit's vocabulary, definition schema, detector, measurements and tests
+# description: a kit is a script of declarations glossql_kit() loads; the KPI kit's vocabulary, detector, measurements and tests
 # group: [sql]
 
 require glossql
@@ -32,26 +32,10 @@ CREATE TABLE fin.orders AS SELECT i AS id, i * 1.5 AS amount, 'c' || (i % 2) AS 
 statement ok
 CREATE TABLE main.loaded AS FROM glossql_kit('kits/kpi/kit.sql');
 
-query I
-SELECT count(*) FROM main.loaded;
-----
-19
-
 query TT
 SELECT statement, (outcome) IS NOT NULL FROM main.loaded WHERE statement LIKE 'DECLARE TEST role_test%';
 ----
 DECLARE TEST role_test ON role BY (AGENT, HUMAN) DETECTOR value_entropy THRESHOLD 0.7;	true
-
-query TTI
-SELECT name, location, statements FROM kits ORDER BY name;
-----
-kpi	kits/kpi/kit.sql	19
-lineage	glossql	26
-
-query I
-SELECT count(*) FROM aspects;
-----
-10
 
 # a kit run again with the same text, as the opener does at start-up, is current: one row says so, nothing runs, no new kits row
 query TT
@@ -107,6 +91,9 @@ GLOSS role ON orders.amount AS $${"value": "dimension"}$$;
 statement ok
 RESET VARIABLE glossql_actor;
 
+statement ok
+SELECT role_test() FROM fin;
+
 query TTR
 SELECT aspect, state, score FROM TESTS(orders.amount::role);
 ----
@@ -121,7 +108,7 @@ meaning	NULL	missing
 role	NULL	conflict
 
 # --- a metric's body is the definition contract; what a reader needs is glossed on the view's
-# columns, under the kit's words — the kit declares no definition schema
+# columns, under the kit's words
 
 statement ok
 DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS VIEW;
@@ -252,6 +239,40 @@ SELECT name, count(*) FROM kits GROUP BY name ORDER BY name;
 ----
 kpi	1
 lineage	1
+
+# --- a kit run again under a changed text writes nothing for a macro it states as the catalog holds it,
+# and writes a macro it states otherwise
+
+statement ok
+COPY (SELECT 'CREATE OR REPLACE MACRO main.kit_rows() AS TABLE SELECT 1 AS x;' AS s) TO '{TEST_DIR}/glossql_kits_lake/macros.sql' (FORMAT csv, HEADER false, QUOTE '');
+
+statement ok
+FROM glossql_kit('{TEST_DIR}/glossql_kits_lake/macros.sql');
+
+statement ok
+COPY (SELECT unnest(['-- the kit text changed', 'CREATE OR REPLACE MACRO main.kit_rows() AS TABLE SELECT 1 AS x;']) AS s) TO '{TEST_DIR}/glossql_kits_lake/macros.sql' (FORMAT csv, HEADER false, QUOTE '');
+
+statement ok
+CREATE TEMP TABLE taken AS SELECT count(*) AS n FROM ducklake_snapshots('ws');
+
+statement ok
+FROM glossql_kit('{TEST_DIR}/glossql_kits_lake/macros.sql');
+
+query I
+SELECT count(*) - (SELECT n FROM taken) FROM ducklake_snapshots('ws');
+----
+1
+
+statement ok
+COPY (SELECT 'CREATE OR REPLACE MACRO main.kit_rows() AS TABLE SELECT 2 AS x;' AS s) TO '{TEST_DIR}/glossql_kits_lake/macros.sql' (FORMAT csv, HEADER false, QUOTE '');
+
+statement ok
+FROM glossql_kit('{TEST_DIR}/glossql_kits_lake/macros.sql');
+
+query I
+SELECT count(*) - (SELECT n FROM taken) FROM ducklake_snapshots('ws');
+----
+3
 
 # --- declared_by: a kit's declarations name the kit, the connection's own name its actor
 

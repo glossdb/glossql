@@ -68,7 +68,8 @@ The statement runs the query and creates the table
   stay. A load of the same rows writes nothing, so the table keeps its
   version and the results that read it stay current. A result that
   carries a key twice is refused. Without a key, every load replaces
-  the table.
+  the table's rows; a query that returns the same columns keeps the
+  table's definition, so what read only its columns stays current.
 - **Declaring it again** with the same SQL does nothing. Changed SQL
   loads the table again from the new query. Annotations on its columns
   stay; one on a column the new query derives differently reads `stale`

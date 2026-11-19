@@ -36,6 +36,8 @@ aspects
 aspects_history
 datasets
 datasets_history
+edges
+edges_history
 functions
 functions_history
 glossary
@@ -170,6 +172,19 @@ SELECT subject, actor, current FROM GLOSSARY(segments, all => true) ORDER BY sub
 fin.segments	agent	false
 fin.segments.id	agent	false
 fin.segments.segment	agent	true
+
+# the table is altered in place: the retyped column comes after the one kept, and the rows land by name
+query TT
+SELECT segment, id FROM fin.segments ORDER BY id LIMIT 2;
+----
+seg0	0
+seg1	1
+
+query T
+SELECT string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns
+WHERE table_schema = 'fin' AND table_name = 'segments';
+----
+segment,id
 
 # a new gloss is current at the new shape
 statement ok

@@ -108,7 +108,8 @@ DECLARE TEST ids_test ON ids_present BY (AGENT, HUMAN)
   DETECTOR rate_tolerance THRESHOLD 0.0;
 ```
 
-`TESTS()` gives each asset a state: `yellow` while no function has
+Once the test ran (`SELECT ids_test() FROM orders;`), `TESTS()` gives
+each asset a state: `yellow` while no function has
 measured a rate, `green` at or under the tolerance, `red` above it.
 The person's tolerance is used before the agent's. The test's
 threshold is used while no annotation has a tolerance. The detector is

@@ -31,13 +31,6 @@ CREATE TABLE main.kpi AS FROM glossql_kit('kits/kpi/kit.sql');
 statement ok
 CREATE TABLE main.quality AS FROM glossql_kit('kits/quality/kit.sql');
 
-query TTI
-SELECT name, location, statements FROM kits ORDER BY name;
-----
-kpi	kits/kpi/kit.sql	19
-lineage	glossql	26
-quality	kits/quality/kit.sql	23
-
 # --- dataset_cells: every cell of the dataset's tables, or of one table, as one relation
 
 statement ok
@@ -235,12 +228,12 @@ FROM main.measurements WHERE function = 'relationship_coherence' AND subject = '
 ----
 ['["a","b, c"]', '["a, b","c"]']	5	5	100
 
-# its inputs: the data of the relationship, its two tables, and its own declarations
+# its inputs: the data of the relationship's two tables, and the declarations of the function and the macro it follows
 query T
-SELECT (SELECT string_agg(i.input, ',' ORDER BY i.input) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements m
+SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM main.measurements m
 WHERE function = 'relationship_coherence' AND subject = 'fin.payments.invoice_id -> fin.invoices.invoice_id';
 ----
-data(data, itself),function,property
+fin.invoices data,fin.payments data,main.relationship_checks macro,relationship_coherence function,relationship_coherence property
 
 # over a dataset it computes nothing: the check is one relationship's
 statement ok
@@ -449,6 +442,20 @@ FROM GLOSSARY(fin.monthly.d::temporal_profile);
 ----
 month	true	4/4	0
 
+# one month missing between two months: the grain is still the month, the missing month counted
+statement ok
+CREATE TABLE fin.month_missing AS SELECT * FROM (VALUES (DATE '2025-01-01'), (DATE '2025-02-01'), (DATE '2025-04-01')) t(d);
+
+statement ok
+SELECT temporal() FROM fin.month_missing.d;
+
+query TT
+SELECT json_extract_string(value, '$.granularity'),
+       json_extract_string(value, '$.completeness.actual') || '/' || json_extract_string(value, '$.completeness.expected')
+FROM GLOSSARY(fin.month_missing.d::temporal_profile);
+----
+month	3/4
+
 statement ok
 CREATE TABLE fin.irregular AS SELECT * FROM (VALUES (DATE '2024-01-01'), (DATE '2024-01-02'), (DATE '2024-01-12'), (DATE '2024-02-26')) t(d);
 
@@ -499,6 +506,9 @@ DECLARE TEST ids_test ON ids_present BY (AGENT, HUMAN) DETECTOR rate_tolerance T
 statement ok
 GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "tolerance": 0.2}$$;
 
+statement ok
+SELECT ids_test() FROM fin;
+
 # no check has annotated: yellow, never green
 query TTR
 SELECT subject, state, score FROM TESTS(orders::ids_present);
@@ -515,6 +525,9 @@ $$ RETURNS ids_present;
 statement ok
 SELECT ids_present_check() FROM orders;
 
+statement ok
+SELECT ids_test() FROM fin;
+
 # one order in five names no customer: at the tolerance, green, and nothing to score
 query TTR
 SELECT subject, state, score FROM TESTS(orders::ids_present);
@@ -530,6 +543,9 @@ GLOSS ids_present ON orders AS $${"outcome": "every order names a customer", "to
 
 statement ok
 RESET VARIABLE glossql_actor;
+
+statement ok
+SELECT ids_test() FROM fin;
 
 query TTR
 SELECT subject, state, score FROM TESTS(orders::ids_present);
