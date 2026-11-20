@@ -29,7 +29,7 @@ statement ok
 CREATE TABLE fin.orders AS SELECT i AS id, i * 1.5 AS amount FROM range(4) t(i);
 
 statement ok
-DECLARE ASPECT additivity WITH $${"type": "object", "properties": {"value": {"enum": ["semi-additive", "additive"]}}}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY additivity WITH $${"type": "object", "properties": {"value": {"enum": ["semi-additive", "additive"]}}}$$ AS FACT ON COLUMN;
 
 # a detector is a function without RETURNS: one (subject, state, score) row per subject over its test's values
 statement ok
@@ -48,7 +48,7 @@ statement ok
 DECLARE TEST additivity_test ON additivity BY (AGENT, HUMAN) DETECTOR additivity_entropy THRESHOLD 0.7;
 
 query TTTTR
-SELECT name, aspect, actors, detector, threshold FROM tests;
+SELECT name, property, actors, detector, threshold FROM tests;
 ----
 additivity_test	additivity	[AGENT, HUMAN]	additivity_entropy	0.7
 
@@ -70,7 +70,7 @@ DECLARE TEST w4 ON additivity THRESHOLD 2;
 Parser Error
 
 statement ok
-DECLARE ASPECT min_max WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY min_max WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN;
 
 statement error
 DECLARE TEST w5 ON min_max BY (AGENT);
@@ -93,7 +93,7 @@ Invalid Input Error
 # --- before anybody annotated: missing, every gap visible (SPEC §5.3)
 
 query TTTTTT
-SELECT subject, aspect, value, test_state, score, state FROM GLOSSARY(orders);
+SELECT subject, property, value, test_state, score, state FROM GLOSSARY(orders);
 ----
 fin.orders.amount	additivity	NULL	NULL	NULL	missing
 fin.orders.id	additivity	NULL	NULL	NULL	missing
@@ -110,7 +110,7 @@ GLOSS additivity ON orders.amount AS $${"value": "additive"}$$;
 
 # a test's result is computed by its statement, not at read: nothing is judged yet
 query TTTTTT
-SELECT subject, aspect, value, test_state, score, state FROM GLOSSARY(orders);
+SELECT subject, property, value, test_state, score, state FROM GLOSSARY(orders);
 ----
 fin.orders.amount	additivity	{"value": "additive"}	NULL	NULL	current
 fin.orders.id	additivity	NULL	NULL	NULL	missing
@@ -123,12 +123,12 @@ additivity_test	fin.orders.amount	additivity	{"state":"green","score":0.0}	true
 
 # stored per subject and test, with the nodes it read
 query TTTT
-SELECT function, subject, aspect, value FROM measurements WHERE function = 'additivity_test';
+SELECT function, subject, property, value FROM results WHERE function = 'additivity_test';
 ----
 additivity_test	fin.orders.amount	test	{"state":"green","score":0.0}
 
 query T
-SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i ON i.result = m.id
+SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM results m JOIN inputs i ON i.result = m.id
 WHERE m.function = 'additivity_test';
 ----
 additivity property,additivity_entropy function,fin.orders.amount annotation additivity,fin.orders.amount definition,fin.orders.amount value additivity
@@ -140,7 +140,7 @@ SELECT additivity_test() FROM fin;
 additivity_test	fin.orders.amount	additivity	{"state":"green","score":0.0}	false
 
 query TTTTTT
-SELECT subject, aspect, value, test_state, score, state FROM GLOSSARY(orders);
+SELECT subject, property, value, test_state, score, state FROM GLOSSARY(orders);
 ----
 fin.orders.amount	additivity	{"value": "additive"}	green	0.0	current
 fin.orders.id	additivity	NULL	NULL	NULL	missing
@@ -175,22 +175,22 @@ SELECT additivity_test() FROM orders.amount;
 additivity_test	fin.orders.amount	additivity	{"state":"red","score":1.0}	true
 
 query TTTTT
-SELECT subject, aspect, value, test_state, state FROM GLOSSARY(orders.amount);
+SELECT subject, property, value, test_state, state FROM GLOSSARY(orders.amount);
 ----
 fin.orders.amount	additivity	NULL	red	conflict
 
 query TTTTR
-SELECT subject, aspect, test, state, score FROM TESTS(orders.amount::additivity);
+SELECT subject, property, test, state, score FROM TESTS(orders.amount::additivity);
 ----
 fin.orders.amount	additivity	additivity_test	red	1.0
 
 query TTTTT
-SELECT subject, aspect, test, state, current FROM TESTS() WHERE state = 'red';
+SELECT subject, property, test, state, current FROM TESTS() WHERE state = 'red';
 ----
 fin.orders.amount	additivity	additivity_test	red	true
 
 # a subject is a name, not a string: the quoted form is refused by its code, for both reads, with or without the
-# aspect and the all flag, and not looked up as a table function of the read's name
+# property and the all flag, and not looked up as a table function of the read's name
 statement error
 SELECT * FROM TESTS('orders.amount');
 ----
@@ -217,9 +217,9 @@ SELECT count(*) FROM TESTS("orders".amount::additivity);
 ----
 1
 
-# the raw read shows every value with its aspect's kind and its test
+# the raw read shows every value with its property's kind and its test
 query TTTTT
-SELECT subject, aspect, kind, test, actor FROM GLOSSARY(orders.amount, all => true) ORDER BY actor;
+SELECT subject, property, kind, test, actor FROM GLOSSARY(orders.amount, all => true) ORDER BY actor;
 ----
 fin.orders.amount	additivity	FACT	additivity_test	agent
 fin.orders.amount	additivity	FACT	additivity_test	human
@@ -257,7 +257,7 @@ Invalid Input Error
 # --- BY gates the actors
 
 statement ok
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON TABLE;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT ON TABLE;
 
 statement ok
 DECLARE TEST note_test ON note BY (HUMAN);
@@ -278,7 +278,7 @@ RESET VARIABLE glossql_actor;
 
 # a test without a detector judges nothing: the value serves as current, and its statement stores no result
 query TTTTT
-SELECT subject, aspect, value, test_state, state FROM GLOSSARY(orders::note);
+SELECT subject, property, value, test_state, state FROM GLOSSARY(orders::note);
 ----
 fin.orders	note	{"value": "x"}	NULL	current
 
@@ -290,7 +290,7 @@ no_detector
 # --- a detector that cannot answer is the result `error` (SPEC §7.2): one row per subject holding values, score 0, the failure text
 
 statement ok
-DECLARE ASPECT role WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY role WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION broken FOR fin AS $$ SELECT subject, no_such_column AS state, 0.0 AS score FROM annotations $$;
@@ -361,19 +361,19 @@ statement ok
 DECLARE SOURCE erp SET (type: csv, location: '{TEST_DIR}');
 
 statement ok
-DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
+DECLARE PROPERTY conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
 
 statement ok
 DECLARE TEST conventions_test ON conventions BY (AGENT, HUMAN);
 
 # required in the dataset's sweep, as the bare name; a narrowed read keeps to its subject
 query TTT
-SELECT subject, aspect, state FROM GLOSSARY() WHERE aspect = 'conventions';
+SELECT subject, property, state FROM GLOSSARY() WHERE property = 'conventions';
 ----
 erp	conventions	missing
 
 query I
-SELECT count(*) FROM GLOSSARY(orders) WHERE aspect = 'conventions';
+SELECT count(*) FROM GLOSSARY(orders) WHERE property = 'conventions';
 ----
 0
 
@@ -382,7 +382,7 @@ SELECT subject, state FROM GLOSSARY(erp);
 ----
 erp	missing
 
-# the grain gate: a subject outside the aspect's declared grains is refused, never stored in silence
+# the grain gate: a subject outside the property's declared grains is refused, never stored in silence
 
 statement error
 GLOSS conventions ON fin AS $${"fiscal_year_start": "04-01"}$$;
@@ -409,7 +409,7 @@ GLOSS conventions ON erp AS $${"fiscal_year_start": "04-01"}$$;
 
 # the row records the dataset it was deposited in
 query TT
-SELECT dataset, subject FROM glossary WHERE aspect = 'conventions';
+SELECT dataset, subject FROM glossary WHERE property = 'conventions';
 ----
 fin	erp
 
@@ -426,7 +426,7 @@ statement ok
 USE ops;
 
 query TTT
-SELECT subject, value, state FROM GLOSSARY() WHERE aspect = 'conventions';
+SELECT subject, value, state FROM GLOSSARY() WHERE property = 'conventions';
 ----
 erp	{"fiscal_year_start": "04-01"}	current
 
@@ -446,15 +446,15 @@ SELECT actor, body, current FROM GLOSSARY(erp, all => true);
 ----
 agent	{"fiscal_year_start": "01-01"}	true
 
-# a grainless aspect on a source name stays dataset-scoped: the dataset that wrote it reads it, another does not
+# a grainless property on a source name stays dataset-scoped: the dataset that wrote it reads it, another does not
 statement ok
-DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT;
+DECLARE PROPERTY remark WITH $${"type": "object"}$$ AS FACT;
 
 statement ok
 GLOSS remark ON erp AS $${"text": "fin's"}$$;
 
 query TT
-SELECT aspect, state FROM GLOSSARY(erp) ORDER BY aspect;
+SELECT property, state FROM GLOSSARY(erp) ORDER BY property;
 ----
 conventions	current
 remark	current
@@ -463,7 +463,7 @@ statement ok
 USE ops;
 
 query TT
-SELECT aspect, state FROM GLOSSARY(erp) ORDER BY aspect;
+SELECT property, state FROM GLOSSARY(erp) ORDER BY property;
 ----
 conventions	current
 
@@ -473,7 +473,7 @@ USE fin;
 # --- one annotation scored red is served with its state: a measurement alone never contests itself (SPEC §5.3)
 
 statement ok
-DECLARE ASPECT tie_out WITH $${"type": "object", "properties": {"breach_rate": {"type": "number"}, "tolerance": {"type": "number"}}}$$ AS FACT ON TABLE;
+DECLARE PROPERTY tie_out WITH $${"type": "object", "properties": {"breach_rate": {"type": "number"}, "tolerance": {"type": "number"}}}$$ AS FACT ON TABLE;
 
 statement ok
 DECLARE FUNCTION tie_out_check FOR GLOBAL AS $$ SELECT 1.0 AS breach_rate, 'every line against its order' AS outcome $$ RETURNS tie_out;
@@ -491,7 +491,7 @@ statement ok
 SELECT tie_out_test() FROM fin;
 
 query TTRT
-SELECT aspect, test_state, score, state FROM GLOSSARY(orders) WHERE aspect = 'tie_out';
+SELECT property, test_state, score, state FROM GLOSSARY(orders) WHERE property = 'tie_out';
 ----
 tie_out	red	1.0	current
 
@@ -516,13 +516,13 @@ NULL	red	conflict
 # --- a subject that holds no value any more retires its result
 
 statement ok
-DELETE FROM glossary WHERE subject = 'fin.orders.id' AND aspect = 'role';
+DELETE FROM glossary WHERE subject = 'fin.orders.id' AND property = 'role';
 
 statement ok
 SELECT role_test() FROM fin;
 
 query I
-SELECT count(*) FROM measurements WHERE function = 'role_test';
+SELECT count(*) FROM results WHERE function = 'role_test';
 ----
 0
 
@@ -530,7 +530,7 @@ SELECT count(*) FROM measurements WHERE function = 'role_test';
 # result of one subject would read another's values
 
 statement ok
-DECLARE ASPECT rank_note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY rank_note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION rank_share FOR fin AS $$

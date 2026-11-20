@@ -5,7 +5,7 @@ sent, due, paid. The example declares the stages with their order and
 the closing stage, then maps the values of a status column to them.
 
 ```glossql
-DECLARE ASPECT ar_stage WITH $${
+DECLARE PROPERTY ar_stage WITH $${
   "type": "object",
   "properties": {
     "mappings": {
@@ -36,7 +36,7 @@ Accounts receivable and accounts payable are the two directions of one
 settlement process. That is an annotation on the dataset:
 
 ```glossql
-DECLARE ASPECT cycles WITH $${
+DECLARE PROPERTY cycles WITH $${
   "type": "object",
   "properties": {
     "families": {"type": "object"}

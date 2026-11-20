@@ -150,7 +150,7 @@ SELECT count(*) FROM imports;
 # --- unprefixed subjects resolve against the USE'd dataset
 
 statement ok
-DECLARE ASPECT unit WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY unit WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 statement ok
 GLOSS unit ON segments.segment AS $${"value": "code"}$$;

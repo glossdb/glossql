@@ -7,7 +7,7 @@ result, binds them in a test (`DECLARE TEST`) and reads the test
 results.
 
 ```glossql
-DECLARE ASPECT trial_balance WITH $${
+DECLARE PROPERTY trial_balance WITH $${
   "type": "object",
   "properties": {
     "tolerance": {"type": "number"},

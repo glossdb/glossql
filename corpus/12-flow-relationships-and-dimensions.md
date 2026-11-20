@@ -13,7 +13,7 @@ declares the ones that hold.
 ```glossql
 USE fin;
 
-DECLARE ASPECT relationship_candidates WITH $${
+DECLARE PROPERTY relationship_candidates WITH $${
   "type": "object",
   "properties": {"candidates": {"type": "array",
     "items": {"type": "object",
@@ -60,7 +60,7 @@ function reports a failing state when an aggregate does not match its
 detail.
 
 ```glossql
-DECLARE ASPECT reconciliation WITH $${
+DECLARE PROPERTY reconciliation WITH $${
   "type": "object",
   "properties": {"pairs": {"type": "array"}, "max_delta": {"type": "number"}}
 }$$ AS MEASUREMENT;
@@ -73,7 +73,7 @@ DECLARE TEST reconciliation_test ON reconciliation
 SELECT reconcile_aggregates() FROM fin;
 SELECT subject, state FROM TESTS(fin::reconciliation) WHERE state = 'red';
 
-DECLARE ASPECT driver_rankings WITH $${
+DECLARE PROPERTY driver_rankings WITH $${
   "type": "object", "properties": {"rankings": {"type": "array"}}
 }$$ AS MEASUREMENT;
 DECLARE FUNCTION drivers FOR fin AS $$/* which dimensions move the measure */$$

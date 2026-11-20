@@ -32,16 +32,16 @@ statement ok
 CREATE TABLE fin.refunds AS SELECT i AS id, i * 0.5 AS amount FROM range(3) t(i);
 
 statement ok
-DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS VIEW;
+DECLARE PROPERTY revenue WITH $${"title": "Revenue"}$$ AS VIEW;
 
 statement ok
-DECLARE ASPECT big_orders WITH $${"title": "Big orders", "x-kind": "relation"}$$ AS VIEW;
+DECLARE PROPERTY big_orders WITH $${"title": "Big orders", "x-kind": "relation"}$$ AS VIEW;
 
 statement ok
-DECLARE ASPECT order_ids WITH $${"title": "Order ids", "x-kind": "relation"}$$ AS VIEW;
+DECLARE PROPERTY order_ids WITH $${"title": "Order ids", "x-kind": "relation"}$$ AS VIEW;
 
 statement ok
-DECLARE ASPECT big_ids WITH $${"title": "Big ids", "x-kind": "relation"}$$ AS VIEW;
+DECLARE PROPERTY big_ids WITH $${"title": "Big ids", "x-kind": "relation"}$$ AS VIEW;
 
 # --- a view defined: its lineage is stored in the same write, with the nodes it read and its edges
 
@@ -49,14 +49,14 @@ statement ok
 GLOSS revenue ON fin AS $${"sql": "SELECT customer, sum(amount) AS total FROM fin.orders GROUP BY customer"}$$;
 
 query II
-SELECT count(*), bool_and(m.begin_snapshot = g.begin_snapshot) FROM main.measurements m
-JOIN main.glossary g ON g.aspect = 'revenue' AND g.subject = 'fin'
+SELECT count(*), bool_and(m.begin_snapshot = g.begin_snapshot) FROM main.results m
+JOIN main.glossary g ON g.property = 'revenue' AND g.subject = 'fin'
 WHERE m.function = 'lineage' AND m.subject = 'fin.revenue';
 ----
 1	true
 
 query TT
-SELECT i.asset, i.what FROM main.inputs i JOIN main.measurements m ON m.id = i.result
+SELECT i.asset, i.what FROM main.inputs i JOIN main.results m ON m.id = i.result
 WHERE m.function = 'lineage' AND m.subject = 'fin.revenue' ORDER BY ALL;
 ----
 fin.orders	definition
@@ -87,7 +87,7 @@ statement ok
 GLOSS big_ids ON fin AS $${"sql": "SELECT id FROM fin.big_orders"}$$;
 
 query TT
-SELECT i.asset, i.what FROM main.inputs i JOIN main.measurements m ON m.id = i.result
+SELECT i.asset, i.what FROM main.inputs i JOIN main.results m ON m.id = i.result
 WHERE m.function = 'lineage' AND m.subject = 'fin.big_ids' ORDER BY ALL;
 ----
 fin.big_ids	definition
@@ -105,13 +105,13 @@ fin.orders.id	reads
 # a result that read the sources of a view
 
 statement ok
-DECLARE ASPECT width WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY width WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION width FOR GLOBAL AS $$ SELECT count(DISTINCT v) AS n FROM subject_column($subject) $$ RETURNS width;
 
 statement ok
-DECLARE ASPECT sources_read WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY sources_read WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION sources_read FOR GLOBAL AS $$ SELECT count(*) AS n FROM results('width', 'its sources') $$ RETURNS sources_read;
@@ -120,24 +120,24 @@ statement ok
 SELECT sources_read() FROM fin.revenue;
 
 query TT
-SELECT asset, what FROM main.inputs i JOIN main.measurements m ON m.id = i.result
+SELECT asset, what FROM main.inputs i JOIN main.results m ON m.id = i.result
 WHERE m.function = 'sources_read' AND i.what IN ('result lineage', 'definition') ORDER BY ALL;
 ----
 fin.revenue	result lineage
 
 statement ok
-CREATE TABLE memory.main.before AS SELECT subject, begin_snapshot, changed_at FROM main.measurements WHERE function = 'lineage';
+CREATE TABLE memory.main.before AS SELECT subject, begin_snapshot, changed_at FROM main.results WHERE function = 'lineage';
 
 # --- a write no lineage read leaves every lineage as stored
 
 statement ok
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT;
 
 statement ok
 GLOSS note ON fin AS $${"text": "unrelated"}$$;
 
 query I
-SELECT count(*) FROM main.measurements m JOIN memory.main.before b USING (subject)
+SELECT count(*) FROM main.results m JOIN memory.main.before b USING (subject)
 WHERE m.function = 'lineage' AND m.begin_snapshot <> b.begin_snapshot;
 ----
 0
@@ -181,7 +181,7 @@ SELECT lineage() FROM fin.big_ids;
 
 query II
 SELECT count(*), count(*) FILTER (WHERE m.begin_snapshot > b.begin_snapshot AND m.changed_at = b.changed_at)
-FROM main.measurements m JOIN memory.main.before b USING (subject) WHERE m.function = 'lineage';
+FROM main.results m JOIN memory.main.before b USING (subject) WHERE m.function = 'lineage';
 ----
 4	4
 
@@ -193,13 +193,13 @@ SELECT count(*) FROM glossql_outdated();
 # served while current: a second call computes nothing
 
 statement ok
-CREATE TABLE memory.main.served AS SELECT begin_snapshot FROM main.measurements WHERE function = 'lineage' AND subject = 'fin.revenue';
+CREATE TABLE memory.main.served AS SELECT begin_snapshot FROM main.results WHERE function = 'lineage' AND subject = 'fin.revenue';
 
 statement ok
 SELECT lineage() FROM fin.revenue;
 
 query I
-SELECT count(*) FROM main.measurements m JOIN memory.main.served s USING (begin_snapshot) WHERE m.subject = 'fin.revenue';
+SELECT count(*) FROM main.results m JOIN memory.main.served s USING (begin_snapshot) WHERE m.subject = 'fin.revenue';
 ----
 1
 
@@ -255,13 +255,13 @@ statement ok
 CREATE OR REPLACE MACRO main.scaled_ids() AS TABLE SELECT ratio_outer(id) AS v FROM fin.orders;
 
 statement ok
-DECLARE ASPECT scaled WITH $${"title": "Scaled ids", "x-kind": "relation"}$$ AS VIEW;
+DECLARE PROPERTY scaled WITH $${"title": "Scaled ids", "x-kind": "relation"}$$ AS VIEW;
 
 statement ok
 GLOSS scaled ON fin AS $${"sql": "SELECT v FROM main.scaled_ids()"}$$;
 
 query T
-SELECT i.asset FROM main.inputs i JOIN main.measurements m ON m.id = i.result
+SELECT i.asset FROM main.inputs i JOIN main.results m ON m.id = i.result
 WHERE m.function = 'lineage' AND m.subject = 'fin.scaled' AND i.what = 'macro' ORDER BY ALL;
 ----
 main.ratio_inner
@@ -293,7 +293,7 @@ SELECT lineage() FROM fin.scaled;
 Invalid Input Error
 
 query II
-SELECT value IS NULL, error IS NOT NULL FROM main.measurements WHERE function = 'lineage' AND subject = 'fin.scaled';
+SELECT value IS NULL, error IS NOT NULL FROM main.results WHERE function = 'lineage' AND subject = 'fin.scaled';
 ----
 true	true
 
@@ -303,7 +303,7 @@ statement ok
 GLOSS order_ids ON fin AS $${"stopped": "no longer read"}$$;
 
 query I
-SELECT count(*) FROM main.measurements WHERE function = 'lineage' AND subject = 'fin.order_ids';
+SELECT count(*) FROM main.results WHERE function = 'lineage' AND subject = 'fin.order_ids';
 ----
 0
 
@@ -315,7 +315,7 @@ SELECT count(*) FROM main.edges WHERE "from" = 'fin.order_ids';
 # --- the lineage is no value of the glossary, and a subject that is no view has none
 
 query I
-SELECT count(*) FROM GLOSSARY(fin) WHERE aspect = 'lineage';
+SELECT count(*) FROM GLOSSARY(fin) WHERE property = 'lineage';
 ----
 0
 

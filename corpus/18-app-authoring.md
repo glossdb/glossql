@@ -10,12 +10,12 @@ whole app, fail to parse.
 DECLARE APP model SET (title: 'World model');
 
 DECLARE FRAME travels ON model AS $$
-SELECT q.aspect AS metric, '?metric=' || q.aspect AS link
+SELECT q.property AS metric, '?metric=' || q.property AS link
 FROM GLOSSARY(all => true) q
 WHERE q.kind = 'query'
   AND strpos(json_get_str(q.body, 'sql'),
              arrow_cast(substr($subject, strpos($subject, '.') + 1), 'Utf8')) > 0
-ORDER BY q.aspect
+ORDER BY q.property
 $$;
 
 DECLARE PAGE index ON model AS $$

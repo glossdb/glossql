@@ -36,11 +36,11 @@ UNION ALL SELECT 'kits' AS relation, column_name, column_type AS data_type FROM 
 UNION ALL SELECT 'sources' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_sources)
 UNION ALL SELECT 'recipes' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_recipes)
 UNION ALL SELECT 'imports' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_imports)
-UNION ALL SELECT 'aspects' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_aspects)
+UNION ALL SELECT 'properties' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_properties)
 UNION ALL SELECT 'glossary' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_glossary)
 UNION ALL SELECT 'relationships' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_relationships)
 UNION ALL SELECT 'functions' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_functions)
-UNION ALL SELECT 'measurements' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_measurements)
+UNION ALL SELECT 'results' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_results)
 UNION ALL SELECT 'tests' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_tests)
 UNION ALL SELECT 'inputs' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_inputs)
 UNION ALL SELECT 'edges' AS relation, column_name, column_type AS data_type FROM (DESCRIBE __ducklake_metadata_ws.main.glossql_edges);

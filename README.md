@@ -39,17 +39,17 @@ DECLARE RECIPE orders ON shop FROM exports SET (key: id)
   AS $$SELECT id::INTEGER AS id, placed_on::DATE AS placed_on, amount::DOUBLE AS amount FROM read_csv('orders.csv')$$;
 
 -- describe: declare a property, then annotate a column with it
-DECLARE ASPECT unit WITH $${"type": "object", "required": ["value"]}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY unit WITH $${"type": "object", "required": ["value"]}$$ AS FACT ON COLUMN;
 GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;
 
 -- measure: a function over the data, stored with the inputs it read
-DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY min_max WITH $${"type": "object", "required": ["min", "max"]}$$ AS MEASUREMENT ON COLUMN;
 DECLARE FUNCTION min_max FOR GLOBAL AS
   $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 SELECT min_max() FROM orders.amount;
 
 -- define a metric: SQL, served as the view shop.revenue
-DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS VIEW;
+DECLARE PROPERTY revenue WITH $${"title": "Revenue"}$$ AS VIEW;
 GLOSS revenue ON shop AS $${"sql": "SELECT placed_on, sum(amount) AS revenue FROM shop.orders GROUP BY placed_on"}$$;
 FROM shop.revenue;
 

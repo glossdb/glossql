@@ -29,10 +29,10 @@ statement ok
 CREATE TABLE t AS SELECT 1 AS a;
 
 statement ok
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT;
 
 statement ok
-DECLARE ASPECT m WITH $${"title": "m"}$$ AS VIEW;
+DECLARE PROPERTY m WITH $${"title": "m"}$$ AS VIEW;
 
 # --- an annotation: its row begins at a snapshot of the lake that names no lake change
 
@@ -40,19 +40,19 @@ statement ok
 GLOSS note ON d AS $${"value": 1}$$;
 
 query I
-SELECT begin_snapshot = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot) FROM glossary WHERE aspect = 'note';
+SELECT begin_snapshot = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot) FROM glossary WHERE property = 'note';
 ----
 true
 
 query TT
 SELECT changes_made, author FROM __ducklake_metadata_ws.main.ducklake_snapshot_changes
-WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'note');
+WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE property = 'note');
 ----
 NULL	agent
 
 # the lake lists the snapshot, and a write of its own follows it
 query I
-SELECT count(*) FROM ducklake_snapshots('ws') WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'note');
+SELECT count(*) FROM ducklake_snapshots('ws') WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE property = 'note');
 ----
 1
 
@@ -65,13 +65,13 @@ statement ok
 GLOSS note ON d AS $${"value": 2}$$;
 
 query TI
-SELECT body::VARCHAR, begin_snapshot = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot) FROM glossary WHERE aspect = 'note';
+SELECT body::VARCHAR, begin_snapshot = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot) FROM glossary WHERE property = 'note';
 ----
 {"value": 2}	true
 
 query TI
 SELECT body, end_snapshot IS NOT DISTINCT FROM lead(begin_snapshot) OVER (ORDER BY begin_snapshot)
-FROM __ducklake_metadata_ws.main.glossql_glossary WHERE aspect = 'note' ORDER BY begin_snapshot;
+FROM __ducklake_metadata_ws.main.glossql_glossary WHERE property = 'note' ORDER BY begin_snapshot;
 ----
 {"value": 1}	true
 {"value": 2}	true
@@ -82,9 +82,9 @@ statement ok
 SET VARIABLE before = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot);
 
 query T
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT;
 ----
-aspect note unchanged: no-op
+property note unchanged: no-op
 
 query I
 SELECT max(snapshot_id) = getvariable('before') FROM __ducklake_metadata_ws.main.ducklake_snapshot;
@@ -94,17 +94,17 @@ true
 # --- a removal ends the rows it selects: they leave the view and stay in the store
 
 query I
-DELETE FROM glossary WHERE aspect = 'note';
+DELETE FROM glossary WHERE property = 'note';
 ----
 1
 
 query I
-SELECT count(*) FROM glossary WHERE aspect = 'note';
+SELECT count(*) FROM glossary WHERE property = 'note';
 ----
 0
 
 query II
-SELECT count(*), count(end_snapshot) FROM __ducklake_metadata_ws.main.glossql_glossary WHERE aspect = 'note';
+SELECT count(*), count(end_snapshot) FROM __ducklake_metadata_ws.main.glossql_glossary WHERE property = 'note';
 ----
 2	2
 
@@ -113,7 +113,7 @@ statement ok
 SET VARIABLE before = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot);
 
 query I
-DELETE FROM glossary WHERE aspect = 'note';
+DELETE FROM glossary WHERE property = 'note';
 ----
 0
 
@@ -135,7 +135,7 @@ SELECT sum(a) FROM m;
 query I
 SELECT v.begin_snapshot = g.begin_snapshot
 FROM __ducklake_metadata_ws.main.ducklake_view v, glossary g
-WHERE v.view_name = 'm' AND v.end_snapshot IS NULL AND g.aspect = 'm';
+WHERE v.view_name = 'm' AND v.end_snapshot IS NULL AND g.property = 'm';
 ----
 true
 
@@ -157,7 +157,7 @@ duckdb	(empty)	SELECT a FROM t	true
 query TT
 SELECT replace(c.changes_made, '"m"', '"n"') = d.changes_made, c.changes_made
 FROM __ducklake_metadata_ws.main.ducklake_snapshot_changes c, __ducklake_metadata_ws.main.ducklake_snapshot_changes d
-WHERE c.snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'm')
+WHERE c.snapshot_id = (SELECT begin_snapshot FROM glossary WHERE property = 'm')
   AND d.snapshot_id = (SELECT begin_snapshot FROM __ducklake_metadata_ws.main.ducklake_view WHERE view_name = 'n');
 ----
 true	created_view:"d"."m"
@@ -166,7 +166,7 @@ true	created_view:"d"."m"
 query II
 SELECT ours.schema_version - before_ours.schema_version, ours.next_catalog_id - before_ours.next_catalog_id
 FROM __ducklake_metadata_ws.main.ducklake_snapshot ours, __ducklake_metadata_ws.main.ducklake_snapshot before_ours
-WHERE ours.snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'm') AND before_ours.snapshot_id = ours.snapshot_id - 1;
+WHERE ours.snapshot_id = (SELECT begin_snapshot FROM glossary WHERE property = 'm') AND before_ours.snapshot_id = ours.snapshot_id - 1;
 ----
 1	1
 
@@ -177,7 +177,7 @@ GLOSS m ON d AS $${"sql": "SELECT nope FROM t"}$$;
 nope
 
 query T
-SELECT body->>'sql' FROM glossary WHERE aspect = 'm';
+SELECT body->>'sql' FROM glossary WHERE property = 'm';
 ----
 SELECT a FROM t
 
@@ -192,7 +192,7 @@ SELECT sum(a) FROM m;
 
 query T
 SELECT changes_made LIKE 'dropped_view:%,created_view:"d"."m"' FROM __ducklake_metadata_ws.main.ducklake_snapshot_changes
-WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'm');
+WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE property = 'm');
 ----
 true
 
@@ -231,7 +231,7 @@ Catalog Error
 
 query T
 SELECT changes_made LIKE 'dropped_view:%' AND changes_made NOT LIKE '%created_view%' FROM __ducklake_metadata_ws.main.ducklake_snapshot_changes
-WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE aspect = 'm' AND actor_kind = 'human');
+WHERE snapshot_id = (SELECT begin_snapshot FROM glossary WHERE property = 'm' AND actor_kind = 'human');
 ----
 true
 
@@ -250,7 +250,7 @@ statement ok
 SET VARIABLE before = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot);
 
 statement ok
-DECLARE ASPECT w WITH $${"title": "w"}$$ AS VIEW;
+DECLARE PROPERTY w WITH $${"title": "w"}$$ AS VIEW;
 
 concurrentloop i 0 8
 
@@ -294,7 +294,7 @@ SELECT count(*) FROM (SELECT begin_snapshot FROM __ducklake_metadata_ws.main.glo
 
 # one current row per value, and each replaced row ends where the next begins
 query TI
-SELECT aspect || ' on ' || subject, count(*) FROM glossary WHERE aspect IN ('note', 'w') GROUP BY ALL ORDER BY 1;
+SELECT property || ' on ' || subject, count(*) FROM glossary WHERE property IN ('note', 'w') GROUP BY ALL ORDER BY 1;
 ----
 note on d	1
 note on d.t	1
@@ -302,16 +302,16 @@ w on d	1
 
 query I
 SELECT count(*) FROM (
-  SELECT end_snapshot, lead(begin_snapshot) OVER (PARTITION BY subject, aspect, actor_kind ORDER BY begin_snapshot) AS next
-  FROM __ducklake_metadata_ws.main.glossql_glossary WHERE aspect IN ('note', 'w') AND begin_snapshot > getvariable('before'))
+  SELECT end_snapshot, lead(begin_snapshot) OVER (PARTITION BY subject, property, actor_kind ORDER BY begin_snapshot) AS next
+  FROM __ducklake_metadata_ws.main.glossql_glossary WHERE property IN ('note', 'w') AND begin_snapshot > getvariable('before'))
 WHERE end_snapshot IS DISTINCT FROM next;
 ----
 0
 
 # the view is the current definition, and one view row is current
 query I
-SELECT (SELECT v FROM w)::VARCHAR || ' AS v' = replace((SELECT body->>'sql' FROM glossary WHERE aspect = 'w'), ' + 100', '')
-    OR (SELECT v - 100 FROM w)::VARCHAR || ' + 100 AS v' = replace((SELECT body->>'sql' FROM glossary WHERE aspect = 'w'), 'SELECT ', '');
+SELECT (SELECT v FROM w)::VARCHAR || ' AS v' = replace((SELECT body->>'sql' FROM glossary WHERE property = 'w'), ' + 100', '')
+    OR (SELECT v - 100 FROM w)::VARCHAR || ' + 100 AS v' = replace((SELECT body->>'sql' FROM glossary WHERE property = 'w'), 'SELECT ', '');
 ----
 true
 

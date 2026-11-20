@@ -395,14 +395,14 @@ int64_t CatalogWrite::NewCatalogId() {
 int64_t CatalogWrite::NewResultIds(idx_t count) {
 	if (next_result_id < 0) {
 		next_result_id =
-		    inner.Scalar("SELECT coalesce(max(id), 0) + 1 FROM " + inner.Store("measurements")).GetValue<int64_t>();
+		    inner.Scalar("SELECT coalesce(max(id), 0) + 1 FROM " + inner.Store("results")).GetValue<int64_t>();
 	}
 	auto first = next_result_id;
 	next_result_id += NumericCast<int64_t>(count);
 	return first;
 }
 
-void StoreResults(CatalogWrite &write, const string &dataset, const string &function, const string &aspect,
+void StoreResults(CatalogWrite &write, const string &dataset, const string &function, const string &property,
                   int64_t read_at, const vector<ResultRow> &rows, const vector<string> &retire) {
 	auto &inner = write.inner;
 	// the statements carry their rows as VALUES lists, a bounded number of rows each
@@ -415,7 +415,7 @@ void StoreResults(CatalogWrite &write, const string &dataset, const string &func
 			    ", "));
 		}
 	};
-	auto stored = inner.Current("measurements") + " p WHERE p.dataset = " + QuoteText(dataset) +
+	auto stored = inner.Current("results") + " p WHERE p.dataset = " + QuoteText(dataset) +
 	              " AND p.function = " + QuoteText(function);
 	vector<string> subjects;
 	for (auto &row : rows) {
@@ -457,8 +457,8 @@ void StoreResults(CatalogWrite &write, const string &dataset, const string &func
 	}
 	// a result computed again with the value and error it had keeps the snapshot they changed at
 	in_chunks(results, [&](const string &list) {
-		write.Run("INSERT INTO " + inner.Store("measurements") + " SELECT " + snapshot + ", NULL, n.id, " +
-		          QuoteText(dataset) + ", " + QuoteText(function) + ", n.subject, " + QuoteText(aspect) +
+		write.Run("INSERT INTO " + inner.Store("results") + " SELECT " + snapshot + ", NULL, n.id, " +
+		          QuoteText(dataset) + ", " + QuoteText(function) + ", n.subject, " + QuoteText(property) +
 		          ", n.value, now(), n.error, " + to_string(read_at) + ", coalesce((SELECT p.changed_at FROM " +
 		          stored +
 		          " AND p.subject = n.subject AND p.value IS NOT DISTINCT FROM n.value AND p.error IS NOT DISTINCT "
@@ -469,7 +469,7 @@ void StoreResults(CatalogWrite &write, const string &dataset, const string &func
 		for (auto relation : {"inputs", "edges"}) {
 			write.End(relation, "result IN (" + list + ")");
 		}
-		write.End("measurements", "id IN (" + list + ")");
+		write.End("results", "id IN (" + list + ")");
 	});
 	in_chunks(inputs,
 	          [&](const string &list) { write.Run("INSERT INTO " + inner.Store("inputs") + " VALUES " + list); });
@@ -1181,7 +1181,7 @@ TableFunction GlossPreviewFunction() {
 }
 
 //===--------------------------------------------------------------------===//
-// DECLARE FUNCTION name FOR (dataset | GLOBAL) AS $$sql$$ [RETURNS aspect]
+// DECLARE FUNCTION name FOR (dataset | GLOBAL) AS $$sql$$ [RETURNS property]
 //
 // A function is a DuckDB table macro — a UDF callable from any SQL — in the
 // dataset's schema, or in glossql for GLOBAL. Role by shape (SPEC §6): with
@@ -1261,8 +1261,8 @@ static bool IsCatalogRelation(const string &name) {
 	if (StringUtil::EndsWith(base, "_history")) {
 		base = base.substr(0, base.size() - 8);
 	}
-	for (auto relation : {"datasets", "kits", "sources", "recipes", "imports", "aspects", "glossary", "relationships",
-	                      "functions", "measurements", "inputs", "tests"}) {
+	for (auto relation : {"datasets", "kits", "sources", "recipes", "imports", "properties", "glossary",
+	                      "relationships", "functions", "results", "inputs", "tests"}) {
 		if (base == relation) {
 			return true;
 		}
@@ -2057,7 +2057,7 @@ static string ReadsCycle(Inner &inner, const string &name, const Value &returns,
 	             "), r AS (SELECT f.name, u.r.read, u.r.what FROM f, unnest(from_json(f.reads, '[{\"kind\": "
 	             "\"VARCHAR\", \"read\": \"VARCHAR\", \"what\": \"VARCHAR\"}]')) u(r) WHERE u.r.kind = 'read'),"
 	             " p AS (SELECT a.name, 'x-kind ' || json_extract_string(a.schema, '$.x-kind') AS kind FROM " +
-	             inner.Current("aspects") +
+	             inner.Current("properties") +
 	             " a), e AS (SELECT r.name AS src, r.what AS dst FROM r WHERE r.read = 'results'"
 	             " UNION SELECT r.name, g.name FROM r JOIN f g ON g.returns = r.what OR g.returns IN"
 	             " (SELECT p.name FROM p WHERE p.kind = r.what) WHERE r.read = 'annotations'),"
@@ -2133,7 +2133,7 @@ static void FunctionExec(ClientContext &context, TableFunctionInput &data, DataC
 }
 
 //===--------------------------------------------------------------------===//
-// DECLARE TEST name ON aspect [BY (AGENT, HUMAN)] [DETECTOR fn] [THRESHOLD n]
+// DECLARE TEST name ON property [BY (AGENT, HUMAN)] [DETECTOR fn] [THRESHOLD n]
 //===--------------------------------------------------------------------===//
 
 static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -2144,30 +2144,31 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 	state.done = true;
 	auto &inputs = data.bind_data->Cast<RunnerBindData>().inputs;
 	auto name = inputs[0].ToString();
-	auto aspect = inputs[1].ToString();
+	auto property = inputs[1].ToString();
 	auto actor_kinds = ListValue::GetChildren(inputs[2]);
 	auto &detector = inputs[3];
 	auto &threshold = inputs[4];
 
 	Inner inner(context);
 	auto written = inner.Write(context, [&](CatalogWrite &write) {
-		auto declared = inner.Row("SELECT aspect, actors, detector, threshold FROM " + inner.Current("tests") +
+		auto declared = inner.Row("SELECT property, actors, detector, threshold FROM " + inner.Current("tests") +
 		                          " WHERE name = " + QuoteText(name) + " ORDER BY begin_snapshot DESC LIMIT 1");
-		if (!declared.empty() && declared[0].ToString() == aspect && declared[1].ToString() == JsonList(inputs[2]) &&
+		if (!declared.empty() && declared[0].ToString() == property && declared[1].ToString() == JsonList(inputs[2]) &&
 		    SameValue(declared[2], detector) &&
 		    (declared[3].IsNull() || threshold.IsNull()
 		         ? declared[3].IsNull() == threshold.IsNull()
 				 : declared[3].GetValue<double>() == threshold.GetValue<double>())) {
 			return;
 		}
-		auto current = inner.Row("SELECT kind FROM " + inner.Current("aspects") + " WHERE name = " + QuoteText(aspect));
+		auto current =
+		    inner.Row("SELECT kind FROM " + inner.Current("properties") + " WHERE name = " + QuoteText(property));
 		if (current.empty()) {
-			throw InvalidInputException("glossql: aspect '%s' is not declared", aspect);
+			throw InvalidInputException("glossql: property '%s' is not declared", property);
 		}
 		auto &kind = current[0];
 		if (kind.ToString() == "MEASUREMENT" && !actor_kinds.empty()) {
 			throw InvalidInputException(
-			    "glossql: BY is refused on a MEASUREMENT aspect: measurements are never glossed");
+			    "glossql: BY is refused on a MEASUREMENT property: its values are never glossed");
 		}
 		if (!detector.IsNull()) {
 			auto row = inner.Row("SELECT returns FROM " + inner.Current("functions") + " WHERE name = " +
@@ -2190,12 +2191,12 @@ static void TestExec(ClientContext &context, TableFunctionInput &data, DataChunk
 				    detector.ToString(), across);
 			}
 		}
-		write.End("tests", "aspect = " + QuoteText(aspect));
-		write.Insert("tests", QuoteText(name) + ", " + QuoteText(aspect) + ", " + QuoteText(JsonList(inputs[2])) +
+		write.End("tests", "property = " + QuoteText(property));
+		write.Insert("tests", QuoteText(name) + ", " + QuoteText(property) + ", " + QuoteText(JsonList(inputs[2])) +
 		                          ", " + detector.ToSQLString() + ", " + threshold.ToSQLString() + ", now(), " +
 		                          QuoteText(DeclaredBy(context)));
 	});
-	Outcome(output, written == 0 ? "test " + name + " unchanged: no-op" : "declared test " + name + " on " + aspect);
+	Outcome(output, written == 0 ? "test " + name + " unchanged: no-op" : "declared test " + name + " on " + property);
 }
 
 TableFunction GlossTestFunction() {
@@ -2213,12 +2214,12 @@ TableFunction GlossFunctionFunction() {
 
 //===--------------------------------------------------------------------===//
 // SELECT f(), g() FROM subject: extraction computes each measurement for the
-// subject and writes one measurements row per call (SPEC §6)
+// subject and writes one results row per call (SPEC §6)
 //===--------------------------------------------------------------------===//
 
 struct ExtractState : public GlobalTableFunctionState {
 	bool done = false;
-	//! the rows to serve, (function, subject, aspect, value, computed), and the next one
+	//! the rows to serve, (function, subject, property, value, computed), and the next one
 	vector<vector<Value>> rows;
 	idx_t next = 0;
 };
@@ -2227,7 +2228,7 @@ static unique_ptr<FunctionData> ExtractBind(ClientContext &context, TableFunctio
                                             vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<RunnerBindData>();
 	result->inputs = input.inputs;
-	for (auto column : {"function", "subject", "aspect"}) {
+	for (auto column : {"function", "subject", "property"}) {
 		return_types.push_back(LogicalType::VARCHAR);
 		names.emplace_back(column);
 	}
@@ -2390,7 +2391,7 @@ kind AS MATERIALIZED (FROM glossql_kind_assets($d)))";
 	}
 	if (annotations) {
 		ctes += R"(,
-props AS (SELECT DISTINCT wa.s, wa.what, x.name, from_json(x.grains, '["VARCHAR"]') AS grains FROM wa JOIN $aspects x
+props AS (SELECT DISTINCT wa.s, wa.what, x.name, from_json(x.grains, '["VARCHAR"]') AS grains FROM wa JOIN $properties x
           ON x.name = wa.what
           OR (starts_with(wa.what, 'x-kind ') AND json_extract_string(x.schema, '$.x-kind') = substr(wa.what, 8))
           WHERE wa."read" = 'annotations'),
@@ -2402,7 +2403,7 @@ ann AS (SELECT a.s, a.asset, p.name FROM a JOIN props p ON p.s = a.s AND p.what 
   UNION ALL SELECT s, split_part(asset, '.', 1) || '.' || split_part(asset, '.', 2), 'definition' FROM ann
             WHERE contains(asset, '.') AND main.asset_grain(asset) <> 'RELATIONSHIP'
   UNION ALL SELECT s, name, 'property' FROM props
-  UNION ALL SELECT p.s, t.detector, 'function' FROM $tests t JOIN props p ON p.name = t.aspect WHERE t.detector IS NOT NULL
+  UNION ALL SELECT p.s, t.detector, 'function' FROM $tests t JOIN props p ON p.name = t.property WHERE t.detector IS NOT NULL
   UNION ALL SELECT s, substr(what, 8), 'properties' FROM wa WHERE "read" = 'annotations' AND starts_with(what, 'x-kind ')
             AND NOT ("where" = 'itself' AND s IN (SELECT asset FROM kind)))";
 	}
@@ -2435,7 +2436,7 @@ rv AS (SELECT s, r FROM rd UNION SELECT rd.s, vr.relation FROM rd JOIN vr ON vr.
 	for (auto &term : vector<pair<string, string>> {{"$placed_assets", placed_assets},
 	                                                {"$subjects", StringUtil::Join(quoted, ", ")},
 	                                                {"$wanted", StringUtil::Join(wanted, ", ")},
-	                                                {"$aspects", inner.Current("aspects")},
+	                                                {"$properties", inner.Current("properties")},
 	                                                {"$tests", inner.Current("tests")},
 	                                                {"$functions", inner.Current("functions")},
 	                                                {"$lake", QuoteText(inner.ws.lake)},
@@ -2478,7 +2479,7 @@ static std::map<string, vector<Value>> Served(Inner &inner, const string &datase
 	auto filter = "dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
 	              " AND subject IN (SELECT s FROM (VALUES " + StringUtil::Join(quoted, ", ") + ") v(s))";
 	// the check walks only what is stored: a subject computed for the first time asks none
-	if (inner.Row("SELECT 1 FROM " + inner.Current("measurements") + " WHERE " + filter + " LIMIT 1").empty()) {
+	if (inner.Row("SELECT 1 FROM " + inner.Current("results") + " WHERE " + filter + " LIMIT 1").empty()) {
 		return served;
 	}
 	auto rows = inner.Run("SELECT subject, value, error, CASE WHEN error IS NULL THEN " + SummarySQL("value::JSON") +
@@ -2634,12 +2635,12 @@ static vector<vector<Value>> Extract(ClientContext &context, const vector<Value>
 			throw InvalidInputException(
 			    "glossql: %s is a detector: it runs through its test, SELECT <test>() FROM <subject>", name);
 		}
-		// the aspect's schema is the one contract: the output is validated against it (SPEC §6)
-		auto contract =
-		    inner.Row("SELECT schema::VARCHAR, from_json(grains, '[\"VARCHAR\"]') = ['COLUMN'] FROM " +
-			          inner.Store("aspects") + " WHERE name = " + returns.ToSQLString() + " AND end_snapshot IS NULL");
+		// the property's schema is the one contract: the output is validated against it (SPEC §6)
+		auto contract = inner.Row("SELECT schema::VARCHAR, from_json(grains, '[\"VARCHAR\"]') = ['COLUMN'] FROM " +
+		                          inner.Store("properties") + " WHERE name = " + returns.ToSQLString() +
+		                          " AND end_snapshot IS NULL");
 		if (contract.empty()) {
-			throw InvalidInputException("glossql: %s returns %s, which is not a declared aspect", name,
+			throw InvalidInputException("glossql: %s returns %s, which is not a declared property", name,
 			                            returns.ToString());
 		}
 		// a function whose property is declared on columns alone, called on a table or a view, computes
@@ -2658,9 +2659,9 @@ static vector<vector<Value>> Extract(ClientContext &context, const vector<Value>
 			}
 			std::set<string> held(subjects.begin(), subjects.end());
 			auto kept =
-			    inner.Run("SELECT subject FROM " + inner.Current("measurements") +
-				          " WHERE dataset = " + QuoteText(dataset) + " AND function = " + QuoteText(name) +
-				          " AND lower(subject) LIKE lower(" + QuoteText(parts[0] + "." + parts[1] + ".%") + ")");
+			    inner.Run("SELECT subject FROM " + inner.Current("results") + " WHERE dataset = " + QuoteText(dataset) +
+				          " AND function = " + QuoteText(name) + " AND lower(subject) LIKE lower(" +
+				          QuoteText(parts[0] + "." + parts[1] + ".%") + ")");
 			while (auto chunk = kept->Fetch()) {
 				for (idx_t r = 0; r < chunk->size(); r++) {
 					auto stored = chunk->GetValue(0, r).ToString();
@@ -3983,7 +3984,7 @@ static TableFunction AdditivityCellsFunction() {
 //===--------------------------------------------------------------------===//
 
 //===--------------------------------------------------------------------===//
-// glossql_kit(path): a kit is a script of declarations — aspects, functions,
+// glossql_kit(path): a kit is a script of declarations — properties, functions,
 // tests — and the SQL beside them, read from anything DuckDB's file system
 // opens (a local path, or a URL once httpfs is loaded), run statement by
 // statement on a second connection under the glossql grammar, one row per

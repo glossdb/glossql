@@ -8,7 +8,7 @@ returns the stored result while nothing it read changed.
 ## Declare a function
 
 ```sql
-DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY min_max WITH $${"type": "object", "required": ["min", "max"]}$$ AS MEASUREMENT ON COLUMN;
 DECLARE FUNCTION min_max FOR GLOBAL AS
   $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 ```
@@ -41,9 +41,9 @@ SELECT min_max() FROM readings.temperature;
 The asset after `FROM` is the input. A call takes no arguments.
 Several calls go in one statement: `SELECT f(), g() FROM asset`.
 
-The statement returns `(function, subject, aspect, value, computed)`
+The statement returns `(function, subject, property, value, computed)`
 and stores one row in
-[measurements](../specification/tables/measurements.md).
+[results](../specification/tables/results.md).
 
 - [inputs](../specification/tables/inputs.md) holds one row per node
   the result read, as an asset and what was read of it:
@@ -61,7 +61,7 @@ and stores one row in
   lineage kit) is refused at its declaration.
 - If the value has a top-level `summary` object, the statement returns
   the summary. The whole value is stored; read it with
-  `GLOSSARY(subject::aspect)`.
+  `GLOSSARY(subject::property)`.
 
 ## Call it as SQL
 

@@ -31,10 +31,10 @@ columns as lists. Read the views; the statements write the tables.
 | [sources](tables/sources.md) | a declared source | `name` |
 | [recipes](tables/recipes.md) | a declared load query | `dataset`, `table_name` |
 | [imports](tables/imports.md) | one load of a table | none |
-| [aspects](tables/aspects.md) | a declared property | `name` |
+| [properties](tables/properties.md) | a declared property | `name` |
 | [glossary](tables/glossary.md) | one annotation | none |
 | [relationships](tables/relationships.md) | a declared key between columns | none |
 | [functions](tables/functions.md) | a declared measurement or detector | `name`, `scope` |
-| [measurements](tables/measurements.md) | one result of a measurement | none |
-| [tests](tables/tests.md) | a declared test on a property | `aspect` |
+| [results](tables/results.md) | one result of a measurement | none |
+| [tests](tables/tests.md) | a declared test on a property | `property` |
 | [kits](tables/kits.md) | one load of a kit | none |

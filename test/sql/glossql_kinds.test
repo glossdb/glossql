@@ -33,14 +33,14 @@ CREATE TABLE fin.priced AS SELECT DATE '2025-01-01' + i::INTEGER AS period, i::D
 
 statement ok
 CREATE MACRO main.lineage_assets_trial(dataset_name) AS TABLE
-SELECT dataset_name || '.' || g.aspect AS asset, 'trial' AS kind, dataset_name AS node_asset, 'annotation ' || g.aspect AS node_what
-FROM main.glossary g JOIN main.aspects a ON a.name = g.aspect AND json_extract_string(a.schema, '$.x-kind') = 'trial'
+SELECT dataset_name || '.' || g.property AS asset, 'trial' AS kind, dataset_name AS node_asset, 'annotation ' || g.property AS node_what
+FROM main.glossary g JOIN main.properties a ON a.name = g.property AND json_extract_string(a.schema, '$.x-kind') = 'trial'
 WHERE g.dataset = dataset_name AND g.subject = dataset_name;
 
 statement ok
 CREATE MACRO main.lineage_edges_trial(dataset_name) AS TABLE
-SELECT dataset_name || '.' || g.aspect AS "from", dataset_name || '.' || c AS "to", 'sets' AS kind
-FROM main.glossary g JOIN main.aspects a ON a.name = g.aspect AND json_extract_string(a.schema, '$.x-kind') = 'trial',
+SELECT dataset_name || '.' || g.property AS "from", dataset_name || '.' || c AS "to", 'sets' AS kind
+FROM main.glossary g JOIN main.properties a ON a.name = g.property AND json_extract_string(a.schema, '$.x-kind') = 'trial',
      unnest(from_json(g.body->'columns', '["VARCHAR"]')) u(c)
 WHERE g.dataset = dataset_name AND g.subject = dataset_name;
 
@@ -50,7 +50,7 @@ SELECT NULL::VARCHAR AS subject, 'its columns set' AS "where", NULL::VARCHAR AS 
 UNION ALL SELECT "from", 'its columns set', "to" FROM main.lineage_edges_trial(dataset_name);
 
 statement ok
-DECLARE ASPECT boost WITH $${"x-kind": "trial", "type": "object"}$$ AS FACT ON DATASET;
+DECLARE PROPERTY boost WITH $${"x-kind": "trial", "type": "object"}$$ AS FACT ON DATASET;
 
 statement ok
 GLOSS boost ON fin AS $${"columns": ["priced.price"]}$$;
@@ -84,7 +84,7 @@ RESET VARIABLE glossql_subject;
 # a property declared on tables does not admit an asset of another kind
 
 statement ok
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON TABLE;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT ON TABLE;
 
 statement error
 GLOSS note ON fin.boost AS $${"value": "x"}$$;
@@ -95,7 +95,7 @@ is a trial
 # and a table loaded under the asset's name, both are refused
 
 statement ok
-DECLARE ASPECT priced WITH $${"x-kind": "trial", "type": "object"}$$ AS FACT ON DATASET;
+DECLARE PROPERTY priced WITH $${"x-kind": "trial", "type": "object"}$$ AS FACT ON DATASET;
 
 statement error
 GLOSS priced ON fin AS $${"columns": ["priced.value"]}$$;
@@ -114,7 +114,7 @@ asset_name_taken
 # declaration changed makes it out of date
 
 statement ok
-DECLARE ASPECT columns_set WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY columns_set WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION columns_set FOR GLOBAL AS $$ SELECT len(from_json(max(value)->'columns', '["VARCHAR"]')) AS n FROM annotations('x-kind trial', 'itself') $$ RETURNS columns_set;
@@ -125,12 +125,12 @@ SELECT columns_set() FROM fin.boost;
 columns_set	fin.boost	columns_set	1	true
 
 query TT
-SELECT asset, what FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'columns_set' AND i.what LIKE 'annotation%';
+SELECT asset, what FROM inputs i JOIN results m USING (begin_snapshot) WHERE m.function = 'columns_set' AND i.what LIKE 'annotation%';
 ----
 fin	annotation boost
 
 statement ok
-DECLARE ASPECT cut WITH $${"x-kind": "trial", "type": "object"}$$ AS FACT ON DATASET;
+DECLARE PROPERTY cut WITH $${"x-kind": "trial", "type": "object"}$$ AS FACT ON DATASET;
 
 statement ok
 GLOSS cut ON fin AS $${"columns": ["priced.value"]}$$;
@@ -164,7 +164,7 @@ SELECT trial_only() FROM fin.priced;
 not_a_trial
 
 query I
-SELECT count(*) FROM measurements_history WHERE function = 'trial_only';
+SELECT count(*) FROM results_history WHERE function = 'trial_only';
 ----
 0
 
@@ -178,10 +178,10 @@ SELECT NULL::VARCHAR AS subject, 'its probes' AS "where", NULL::VARCHAR AS asset
 UNION ALL SELECT dataset_name || '.boost', 'its probes', dataset_name || '.priced.period' WHERE dataset_name <> '';
 
 statement ok
-DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY remark WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 statement ok
-DECLARE ASPECT remarks_set WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY remarks_set WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION remarks_set FOR GLOBAL AS $$ SELECT count(*) AS n FROM annotations('remark', 'its columns set') $$ RETURNS remarks_set;
@@ -192,7 +192,7 @@ SELECT remarks_set() FROM fin.boost;
 remarks_set	fin.boost	remarks_set	2	true
 
 query TT
-SELECT asset, what FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'remarks_set' AND (i.what = 'annotation boost' OR i.what = 'definition') ORDER BY ALL;
+SELECT asset, what FROM inputs i JOIN results m USING (begin_snapshot) WHERE m.function = 'remarks_set' AND (i.what = 'annotation boost' OR i.what = 'definition') ORDER BY ALL;
 ----
 fin	annotation boost
 fin.priced	definition

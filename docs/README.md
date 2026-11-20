@@ -31,11 +31,11 @@ Reference:
   [sources](specification/tables/sources.md),
   [recipes](specification/tables/recipes.md),
   [imports](specification/tables/imports.md),
-  [aspects](specification/tables/aspects.md),
+  [properties](specification/tables/properties.md),
   [glossary](specification/tables/glossary.md),
   [relationships](specification/tables/relationships.md),
   [functions](specification/tables/functions.md),
-  [measurements](specification/tables/measurements.md),
+  [results](specification/tables/results.md),
   [tests](specification/tables/tests.md),
   [kits](specification/tables/kits.md).
 

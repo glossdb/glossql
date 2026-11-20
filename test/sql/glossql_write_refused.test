@@ -18,7 +18,7 @@ ATTACH 'ducklake:{TEST_DIR}/refused.ducklake' AS ws (DATA_PATH '{TEST_DIR}/refus
 # a quota or a trigger refuses the same way
 statement ok
 CREATE TABLE __ducklake_metadata_ws.main.glossql_glossary (begin_snapshot BIGINT NOT NULL, end_snapshot BIGINT,
-dataset VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actor_kind VARCHAR NOT NULL,
+dataset VARCHAR NOT NULL, subject VARCHAR NOT NULL, property VARCHAR NOT NULL, actor_kind VARCHAR NOT NULL,
 actor_id VARCHAR, body VARCHAR NOT NULL, written_at TIMESTAMP NOT NULL, CHECK (length(body) < 20));
 
 statement ok
@@ -34,7 +34,7 @@ statement ok
 USE d;
 
 statement ok
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT;
 
 statement ok
 GLOSS note ON d AS $${"v": 1}$$;
@@ -60,7 +60,7 @@ SELECT (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapsh
 true
 
 query I
-SELECT body->>'v' FROM glossary WHERE aspect = 'note';
+SELECT body->>'v' FROM glossary WHERE property = 'note';
 ----
 1
 
@@ -69,6 +69,6 @@ statement ok
 GLOSS note ON d AS $${"v": 2}$$;
 
 query I
-SELECT body->>'v' FROM glossary WHERE aspect = 'note';
+SELECT body->>'v' FROM glossary WHERE property = 'note';
 ----
 2

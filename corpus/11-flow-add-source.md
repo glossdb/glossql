@@ -58,11 +58,11 @@ SELECT dropped_rows_count FROM imports WHERE table_name = 'orders';
 
 ## Profile the columns
 
-Each profile is an aspect a function fills: statistics, outliers, and
+Each profile is a property a function fills: statistics, outliers, and
 the cadence and gaps of a time column.
 
 ```glossql
-DECLARE ASPECT column_profile WITH $${
+DECLARE PROPERTY column_profile WITH $${
   "type": "object",
   "required": ["total", "null_ratio", "distinct"],
   "properties": {
@@ -81,7 +81,7 @@ DECLARE ASPECT column_profile WITH $${
 DECLARE FUNCTION profile FOR GLOBAL AS $$/* min/max/nulls/distincts per column, from kernels */$$
   RETURNS column_profile;
 
-DECLARE ASPECT outlier_profile WITH $${
+DECLARE PROPERTY outlier_profile WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"},
                  "iqr": {"type": "object"}, "zscore": {"type": "object"}}
@@ -89,7 +89,7 @@ DECLARE ASPECT outlier_profile WITH $${
 DECLARE FUNCTION outliers FOR GLOBAL AS $$/* iqr and z-score fences over the profile */$$
   RETURNS outlier_profile;
 
-DECLARE ASPECT temporal_profile WITH $${
+DECLARE PROPERTY temporal_profile WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"},
                  "granularity": {"type": "string"},

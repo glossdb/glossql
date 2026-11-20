@@ -39,7 +39,7 @@ declaration       = "DECLARE", ( source_decl
                                | recipe_decl
                                | dataset_decl
                                | relationship_decl
-                               | aspect_decl
+                               | property_decl
                                | function_decl
                                | test_decl ) ;
 
@@ -134,8 +134,8 @@ pair_path         = rel_side, rel_op, rel_side ;
 
 (* -- glossary ----------------------------------------------------------- *)
 
-aspect_decl       = "ASPECT", name, "WITH", json, "AS", aspect_kind ;
-aspect_kind       = "VIEW"                  (* SQL-defined; glosses validate
+property_decl     = "PROPERTY", name, "WITH", json, "AS", property_kind ;
+property_kind     = "VIEW"                  (* SQL-defined; glosses validate
                                                 against the standard metric definition
                                                 schema; WITH schema carries the
                                                 ontology entry; defined on the
@@ -152,25 +152,25 @@ grain_clause      = "ON", grain, { ",", grain },
                                         | "IN", "(", string, { ",", string }, ")" ) ) ] ;
 grain             = "DATASET" | "TABLE" | "COLUMN" | "RELATIONSHIP" | "SOURCE" ;
                     (* the subject classes glosses may attach to;
-                       absent = all. WHEN names a sibling aspect and a
-                       value: the aspect is required on a
-                       subject only while that aspect's collapsed body
+                       absent = all. WHEN names a sibling property and a
+                       value: the property is required on a
+                       subject only while that property's collapsed body
                        carries `value` = the literal — bounds
                        `missing` disclosure and every count derived
                        from it; writes stay gated by grain alone, and a
                        annotated value outside its condition serves
                        normally. WHEN TYPE, on a grain list of COLUMN
-                       alone, names data types instead: the aspect is
+                       alone, names data types instead: the property is
                        required on the columns whose base type (the name
                        before any parenthesis, DECIMAL for
                        DECIMAL(18,2)) is one of them. *)
 
 gloss             = "GLOSS", name, "ON", subject, "AS", json ;
                     (* body admission by declared kind:
-                       FACT -> the aspect's WITH schema,
+                       FACT -> the property's WITH schema,
                        VIEW -> the standard metric definition schema,
                        MEASUREMENT -> rejected.
-                       supersession key: (subject, aspect, actor kind) *)
+                       supersession key: (subject, property, actor kind) *)
 
 (* -- functions ---------------------------------------------------------- *)
 
@@ -178,7 +178,7 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                     "AS", dollar,
                     [ "RETURNS", name ] ;
                     (* the engine's analytical machinery; never a metric
-                       (metrics are VIEW aspects run as their SQL).
+                       (metrics are VIEW properties run as their SQL).
                        AS carries the body itself (fixture 24): a body
                        on disk was a body an agent over MCP could
                        neither write nor read, so the store keeps it and
@@ -191,19 +191,19 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                        runs over its test's `annotations` relation.
                        Settings are context, never call arguments; a SQL
                        body composes its context inline. RETURNS names
-                       the aspect the output fills,
-                       validated against that aspect's schema; a MEASUREMENT
-                       aspect has one returning function, a FACT aspect's
+                       the property the output fills,
+                       validated against that property's schema; a MEASUREMENT
+                       property has one returning function, a FACT property's
                        returning functions are values in its values. No RETURNS
                        declares a detector — role by shape; the test-results
                        contract is the engine's. Results are stored in the
-                       measurements relation *)
+                       results relation *)
 
 extract           = "SELECT", call, { ",", call }, "FROM", subject ;
 call              = name, "(", ")" ;
                     (* calls are bare — settings are context,
                        never arguments.
-                       extraction writes a measurements row with the inputs
+                       extraction writes a results row with the inputs
                        it read; it serves back while current, an input
                        moving recomputes — there is no REFRESH.
                        Functions never write the glossary. *)
@@ -216,11 +216,11 @@ test_decl      = "TEST", name, "ON", name,
                     [ "THRESHOLD", number ] ;
 actor_kind        = "AGENT"                  (* admits agent glosses *)
                   | "HUMAN" ;                (* admits human glosses *)
-                    (* declared per aspect, dataset-wide; one current value per
-                       (subject, aspect) per actor kind — function values arrive
+                    (* declared per property, dataset-wide; one current value per
+                       (subject, property) per actor kind — function values arrive
                        via RETURNS (function_decl), never through the gate.
                        BY or DETECTOR must be named (checked at admission);
-                       on a MEASUREMENT aspect BY is refused. DETECTOR names
+                       on a MEASUREMENT property BY is refused. DETECTOR names
                        a function without RETURNS; THRESHOLD is the entropy
                        cutoff in 0..1 *)
 
@@ -230,25 +230,25 @@ glossary_read     = "GLOSSARY", "(", [ glossary_args ], ")" ;
 glossary_args     = subject, [ "::", name ], [ ",", all_flag ]
                   | all_flag ;
 all_flag          = "all", "=>", "true" ;
-                    (* no subject sweeps the USE'd dataset; "::aspect" narrows
-                       to one declared aspect, as in tests_read.
-                       collapsed default: one row per (subject, aspect) —
-                       (subject, aspect, value, test_state, score, state); value is
+                    (* no subject sweeps the USE'd dataset; "::property" narrows
+                       to one declared property, as in tests_read.
+                       collapsed default: one row per (subject, property) —
+                       (subject, property, value, test_state, score, state); value is
                        the precedence pick (human > agent > function),
                        withheld when the detector's score exceeds the
                        threshold; state in missing | conflict | current |
                        stale — every gap visible, stale served-and-marked.
-                       all => true: one row per (subject, aspect, kind, test)
-                       — (subject, aspect, kind, test, actor, body,
-                       written_at); kind is the aspect's kind, the actor kind is
+                       all => true: one row per (subject, property, kind, test)
+                       — (subject, property, kind, test, actor, body,
+                       written_at); kind is the property's kind, the actor kind is
                        actor under test *)
 
 tests_read       = "TESTS", "(", [ subject, [ "::", name ] ], ")" ;
-                    (* no argument sweeps the USE'd dataset; "::aspect" (the
-                       host's cast spelling) narrows to one declared aspect —
-                       fin.trial_balance names a table, fin::reconciliation an
-                       aspect. standard test-results schema:
-                       (subject, aspect, test, state, score, computed_at,
+                    (* no argument sweeps the USE'd dataset; "::property" (the
+                       host's cast spelling) narrows to one declared property —
+                       fin.trial_balance names a table, fin::reconciliation a
+                       property. standard test-results schema:
+                       (subject, property, test, state, score, computed_at,
                        current, error);
                        state: green|yellow|orange|red|error, score: 0..1;
                        error carries the failure text where the detector

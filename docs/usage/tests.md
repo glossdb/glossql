@@ -41,7 +41,7 @@ DECLARE TEST gap_test ON gap_rate
 ## Write a detector
 
 A detector is one query over the relation `annotations`: every value
-for the property, with the columns `subject`, `aspect`, `actor_kind`
+for the property, with the columns `subject`, `property`, `actor_kind`
 (`agent`, `human` or `function`), `body` and `current`. `$threshold`
 is the test's threshold. The query returns one row per asset:
 `(subject, state, score)`.
@@ -94,11 +94,11 @@ SELECT * FROM TESTS(readings.temperature::unit);
 SELECT subject, state FROM TESTS(plant.readings) WHERE state = 'red';
 ```
 
-Columns: `(subject, aspect, test, state, score, computed_at, current,
+Columns: `(subject, property, test, state, score, computed_at, current,
 error)`.
 
 - With no argument, `TESTS()` covers the dataset in use.
-  `subject::aspect` narrows it to one property. Filter with `WHERE`.
+  `subject::property` narrows it to one property. Filter with `WHERE`.
 - `current` is false when the stored result is out of date, or read a
   computed value that is. The state is served as it was stored.
 - A detector that fails does not fail the statement. The result of

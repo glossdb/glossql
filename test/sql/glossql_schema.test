@@ -55,10 +55,10 @@ SELECT (json_schema_check('{"properties": {"n": {"type": "number", "minimum": 0,
 ----
 true
 
-# --- a FACT body validates against the aspect's WITH schema
+# --- a FACT body validates against the property's WITH schema
 
 statement ok
-DECLARE ASPECT unit WITH $${"type": "object", "properties": {"value": {"type": "string"}, "source_column": {"type": "string"}}, "required": ["value"], "additionalProperties": false}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY unit WITH $${"type": "object", "properties": {"value": {"type": "string"}, "source_column": {"type": "string"}}, "required": ["value"], "additionalProperties": false}$$ AS FACT ON COLUMN;
 
 statement error
 GLOSS unit ON orders.amount AS $${"value": 5}$$;
@@ -92,7 +92,7 @@ Invalid Input Error
 # --- a VIEW body meets the definition contract (sql or stopped, assumptions disclosed); a definition is a view
 
 statement ok
-DECLARE ASPECT revenue WITH $${"title": "revenue", "description": "income from sales", "x-kind": "measure"}$$ AS VIEW;
+DECLARE PROPERTY revenue WITH $${"title": "revenue", "description": "income from sales", "x-kind": "measure"}$$ AS VIEW;
 
 statement error
 GLOSS revenue ON fin AS $${"formula": "x"}$$;
@@ -137,7 +137,7 @@ SELECT view_name FROM duckdb_views() WHERE schema_name = 'fin';
 revenue
 
 query TTT
-SELECT subject, aspect, value->>'additivity' FROM GLOSSARY(fin::revenue);
+SELECT subject, property, value->>'additivity' FROM GLOSSARY(fin::revenue);
 ----
 fin	revenue	additive
 
@@ -163,17 +163,17 @@ fin	{"stopped": "no cost basis loaded yet"}
 
 # a view definition on a loaded table's name is refused
 statement ok
-DECLARE ASPECT orders WITH $${}$$ AS VIEW;
+DECLARE PROPERTY orders WITH $${}$$ AS VIEW;
 
 statement error
 GLOSS orders ON fin AS $${"sql": "SELECT 1"}$$;
 ----
 Invalid Input Error
 
-# --- a measurement's output validates against the aspect's schema at extraction
+# --- a measurement's output validates against the property's schema at extraction
 
 statement ok
-DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"], "properties": {"min": {"type": "number"}, "max": {"type": "number"}}}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY min_max WITH $${"type": "object", "required": ["min", "max"], "properties": {"min": {"type": "number"}, "max": {"type": "number"}}}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
@@ -191,43 +191,43 @@ SELECT lowest() FROM orders.amount;
 ----
 Invalid Input Error
 
-# --- re-declaring an aspect: identical content is a no-op, a change under glosses is refused
+# --- re-declaring a property: identical content is a no-op, a change under glosses is refused
 
 statement ok
-DECLARE ASPECT unit WITH $${"type": "object", "properties": {"value": {"type": "string"}, "source_column": {"type": "string"}}, "required": ["value"], "additionalProperties": false}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY unit WITH $${"type": "object", "properties": {"value": {"type": "string"}, "source_column": {"type": "string"}}, "required": ["value"], "additionalProperties": false}$$ AS FACT ON COLUMN;
 
 query I
-SELECT count(*) FROM aspects WHERE name = 'unit';
+SELECT count(*) FROM properties WHERE name = 'unit';
 ----
 1
 
 statement error
-DECLARE ASPECT unit WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY unit WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 ----
 Invalid Input Error
 
-# --- WHEN names a sibling aspect and a value: required only while the sibling's winning value carries it
+# --- WHEN names a sibling property and a value: required only while the sibling's winning value carries it
 
 statement ok
-DECLARE ASPECT role WITH $${"type": "object", "properties": {"value": {"enum": ["measure", "dimension", "key"]}}}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY role WITH $${"type": "object", "properties": {"value": {"enum": ["measure", "dimension", "key"]}}}$$ AS FACT ON COLUMN;
 
 statement error
-DECLARE ASPECT currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN nothing = 'measure';
+DECLARE PROPERTY currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN nothing = 'measure';
 ----
 Invalid Input Error
 
 statement error
-DECLARE ASPECT currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'colour';
+DECLARE PROPERTY currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'colour';
 ----
 Invalid Input Error
 
 statement ok
-DECLARE ASPECT currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'measure';
+DECLARE PROPERTY currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'measure';
 
 query TT
-SELECT name, condition FROM aspects WHERE name = 'currency';
+SELECT name, condition FROM properties WHERE name = 'currency';
 ----
-currency	{"aspect":"role","value":"measure"}
+currency	{"property":"role","value":"measure"}
 
 statement ok
 DECLARE TEST currency_test ON currency BY (AGENT, HUMAN);
@@ -262,18 +262,18 @@ fin.orders.id	{"value": "none"}	current
 # --- WHEN TYPE names the columns' data type: required on those columns alone; the base type, DECIMAL for DECIMAL(18,2)
 
 statement error
-DECLARE ASPECT precision WITH $${"type": "object"}$$ AS FACT ON TABLE, COLUMN WHEN TYPE = 'DOUBLE';
+DECLARE PROPERTY precision WITH $${"type": "object"}$$ AS FACT ON TABLE, COLUMN WHEN TYPE = 'DOUBLE';
 ----
 Invalid Input Error
 
 statement ok
-DECLARE ASPECT precision WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN TYPE IN ('double', 'DECIMAL');
+DECLARE PROPERTY precision WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN TYPE IN ('double', 'DECIMAL');
 
 statement ok
-DECLARE ASPECT identity WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN TYPE = 'bigint';
+DECLARE PROPERTY identity WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN TYPE = 'bigint';
 
 query TT
-SELECT name, condition FROM aspects WHERE name IN ('precision', 'identity') ORDER BY name;
+SELECT name, condition FROM properties WHERE name IN ('precision', 'identity') ORDER BY name;
 ----
 identity	{"type":["BIGINT"]}
 precision	{"type":["DOUBLE","DECIMAL"]}
@@ -285,7 +285,7 @@ statement ok
 DECLARE TEST identity_test ON identity BY (AGENT, HUMAN);
 
 query TTT
-SELECT subject, aspect, state FROM GLOSSARY(orders) WHERE aspect IN ('precision', 'identity') ORDER BY subject, aspect;
+SELECT subject, property, state FROM GLOSSARY(orders) WHERE property IN ('precision', 'identity') ORDER BY subject, property;
 ----
 fin.orders.amount	precision	missing
 fin.orders.id	identity	missing

@@ -2,11 +2,11 @@
 
 A business glossary entry names a measure, describes it and lists the
 column names that point to it. The example declares `revenue` as a view
-aspect (`AS VIEW`), so a dataset can later define it in SQL; the entry's
+property (`AS VIEW`), so a dataset can later define it in SQL; the entry's
 other fields are annotations in the schema.
 
 ```glossql
-DECLARE ASPECT revenue WITH $${
+DECLARE PROPERTY revenue WITH $${
   "title": "revenue",
   "description": "Income from sales or services",
   "x-kind": "measure",
@@ -19,7 +19,7 @@ DECLARE ASPECT revenue WITH $${
 A measure made of other measures names its parts in the same schema:
 
 ```glossql
-DECLARE ASPECT current_assets WITH $${
+DECLARE PROPERTY current_assets WITH $${
   "title": "current_assets",
   "x-kind": "measure",
   "x-parts": ["cash", "accounts_receivable", "inventory"]

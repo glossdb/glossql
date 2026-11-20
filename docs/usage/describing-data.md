@@ -1,6 +1,6 @@
 # Describing data
 
-You describe data in two steps. Declare a property (`DECLARE ASPECT`):
+You describe data in two steps. Declare a property (`DECLARE PROPERTY`):
 a name, a JSON Schema for its values, and a kind. Then annotate an
 asset with a value for it (`GLOSS`). The value is validated on write
 and stored with its actor and the lake snapshot it was written at.
@@ -8,15 +8,15 @@ and stored with its actor and the lake snapshot it was written at.
 ## Declare a property
 
 ```sql
-DECLARE ASPECT unit WITH $${
+DECLARE PROPERTY unit WITH $${
   "type": "object",
   "required": ["value"],
   "properties": {"value": {"type": "string"}}
 }$$ AS FACT ON COLUMN;
 
-DECLARE ASPECT row_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY row_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
-DECLARE ASPECT headcount WITH $${"title": "Headcount"}$$ AS VIEW;
+DECLARE PROPERTY headcount WITH $${"title": "Headcount"}$$ AS VIEW;
 ```
 
 | Kind | The value is | Validated against |
@@ -44,9 +44,9 @@ A condition makes the property required only where another property
 has a given value, or only on columns of some types:
 
 ```sql
-DECLARE ASPECT currency WITH $${"type": "object", "required": ["value"]}$$
+DECLARE PROPERTY currency WITH $${"type": "object", "required": ["value"]}$$
   AS FACT ON COLUMN WHEN role = 'measure';
-DECLARE ASPECT srid WITH $${"type": "object", "required": ["value"]}$$
+DECLARE PROPERTY srid WITH $${"type": "object", "required": ["value"]}$$
   AS FACT ON COLUMN WHEN TYPE = 'GEOMETRY';
 ```
 
@@ -89,7 +89,7 @@ dataset's schema under the property's name. Use it for a metric, a
 single value or a table.
 
 ```sql
-DECLARE ASPECT headcount WITH $${"title": "Headcount"}$$ AS VIEW;
+DECLARE PROPERTY headcount WITH $${"title": "Headcount"}$$ AS VIEW;
 GLOSS headcount ON staff AS $${
   "sql": "SELECT department, count(*) AS headcount FROM staff.employees GROUP BY department",
   "assumptions": [{"assumption": "every row is an active employee", "confidence": 0.8}]
@@ -144,7 +144,7 @@ declared relationships against the data ([kits](../kits.md)).
 ## Remove annotations
 
 ```sql
-DELETE FROM glossary WHERE subject = 'staff.employees.salary' AND aspect = 'unit';
+DELETE FROM glossary WHERE subject = 'staff.employees.salary' AND property = 'unit';
 ```
 
 The statement removes the rows from the catalog and returns their

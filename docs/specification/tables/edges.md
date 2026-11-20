@@ -12,8 +12,8 @@ its result does: a view ended takes its edges with it.
 
 | Column | Type | Description |
 |---|---|---|
-| `begin_snapshot` | BIGINT | The lake snapshot the result took: `measurements.begin_snapshot`. |
-| `result` | BIGINT | The result that holds the edge: `measurements.id`. |
+| `begin_snapshot` | BIGINT | The lake snapshot the result took: `results.begin_snapshot`. |
+| `result` | BIGINT | The result that holds the edge: `results.id`. |
 | `end_snapshot` | BIGINT | The snapshot of the write that replaced or retired the result; NULL while the result is stored. The view leaves this column out. |
 | `from` | VARCHAR | The asset the edge leaves, by its path: the view. |
 | `to` | VARCHAR | The asset it reaches, by its path: a table, a column or a view the view reads. |

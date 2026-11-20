@@ -11,25 +11,25 @@ tests.
 ```glossql
 USE fin;
 
-DECLARE ASPECT revenue WITH $${
+DECLARE PROPERTY revenue WITH $${
   "title": "Revenue",
   "description": "Income recognized in the ledger",
   "x-kind": "measure", "x-unit": "currency"
 }$$ AS VIEW;
 
-DECLARE ASPECT accounts_receivable WITH $${
+DECLARE PROPERTY accounts_receivable WITH $${
   "title": "Accounts Receivable",
   "description": "Open receivables — a stock at (account, period) grain",
   "x-kind": "measure", "x-unit": "currency"
 }$$ AS VIEW;
 
-DECLARE ASPECT dso WITH $${
+DECLARE PROPERTY dso WITH $${
   "title": "Days Sales Outstanding",
   "description": "Average days to collect a receivable",
   "x-kind": "metric", "x-unit": "days"
 }$$ AS VIEW;
 
-DECLARE ASPECT gross_profit WITH $${
+DECLARE PROPERTY gross_profit WITH $${
   "title": "Gross Profit",
   "description": "Revenue less expenses",
   "x-kind": "metric", "x-unit": "currency"
@@ -82,7 +82,7 @@ SELECT cost_center, sum(value) FROM revenue GROUP BY 1 ORDER BY 2 DESC;
 A formula is written over a window `w` and names no window.
 
 ```glossql
-DECLARE ASPECT formulas WITH $${
+DECLARE PROPERTY formulas WITH $${
   "type": "object",
   "properties": {"formulas": {"type": "object"}}
 }$$ AS FACT ON DATASET;
@@ -99,11 +99,11 @@ GLOSS formulas ON fin AS $${
 ## Validations
 
 The expectation is an annotation, the check is a function that returns
-the same aspect, and a test scores the two. The second expectation is
+the same property, and a test scores the two. The second expectation is
 deliberately not 100 percent.
 
 ```glossql
-DECLARE ASPECT journal_balanced WITH $${
+DECLARE PROPERTY journal_balanced WITH $${
   "type": "object",
   "properties": {
     "outcome": {"type": "string"},
@@ -118,7 +118,7 @@ GLOSS journal_balanced ON journal_lines AS $${
   "severity": "critical"
 }$$;
 
-DECLARE ASPECT bank_reconciliation WITH $${
+DECLARE PROPERTY bank_reconciliation WITH $${
   "type": "object",
   "properties": {
     "outcome": {"type": "string"},
@@ -157,7 +157,7 @@ SELECT * FROM TESTS(journal_lines::journal_balanced);
 
 ```glossql
 SELECT subject, state, score FROM TESTS(fin) WHERE state = 'red';
-SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
+SELECT subject, property, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
 ```glossql

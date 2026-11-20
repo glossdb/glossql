@@ -41,31 +41,31 @@ SELECT list_contains(current_setting('active_grammar_extensions'), 'glossql');
 ----
 true
 
-# a dataset is a schema: the default one is main, and a COLUMN aspect takes columns of loaded tables
+# a dataset is a schema: the default one is main, and a COLUMN property takes columns of loaded tables
 statement ok
 CREATE TABLE orders (id INTEGER, customer_id INTEGER, amount DOUBLE);
 
-# --- DECLARE ASPECT: a new Statement alternative executed through ExtensionStatement
+# --- DECLARE PROPERTY: a new Statement alternative executed through ExtensionStatement
 
 statement ok
-DECLARE ASPECT unit WITH $${"type": "object", "properties": {"value": {"type": "string"}}}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY unit WITH $${"type": "object", "properties": {"value": {"type": "string"}}}$$ AS FACT ON COLUMN;
 
 statement ok
-DECLARE ASPECT revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS VIEW;
+DECLARE PROPERTY revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS VIEW;
 
 statement ok
-DECLARE ASPECT min_max WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN, TABLE;
+DECLARE PROPERTY min_max WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN, TABLE;
 
 query TTT
-SELECT name, kind, grains FROM aspects ORDER BY name;
+SELECT name, kind, grains FROM properties ORDER BY name;
 ----
 min_max	MEASUREMENT	[COLUMN, TABLE]
 revenue	VIEW	[]
 unit	FACT	[COLUMN]
 
-# a VIEW aspect takes no grain clause (SPEC §5.1), refused at parse time
+# a VIEW property takes no grain clause (SPEC §5.1), refused at parse time
 statement error
-DECLARE ASPECT dso WITH $${}$$ AS VIEW ON COLUMN;
+DECLARE PROPERTY dso WITH $${}$$ AS VIEW ON COLUMN;
 ----
 Parser Error
 
@@ -94,7 +94,7 @@ statement ok
 RESET VARIABLE glossql_actor_id;
 
 query TTTTT
-SELECT dataset, subject, aspect, actor_kind, actor_id FROM glossary ORDER BY actor_kind, begin_snapshot;
+SELECT dataset, subject, property, actor_kind, actor_id FROM glossary ORDER BY actor_kind, begin_snapshot;
 ----
 main	main.orders.amount	unit	agent	NULL
 main	main.orders.amount	unit	human	philipp
@@ -107,22 +107,22 @@ Malformed JSON
 
 # --- GLOSSARY(): a new InnerTableRef alternative, planned as a subquery over the store
 
-# collapsed read: one row per (subject, aspect), human over agent, newest first
+# collapsed read: one row per (subject, property), human over agent, newest first
 query TTT
-SELECT subject, aspect, value FROM GLOSSARY(orders.amount);
+SELECT subject, property, value FROM GLOSSARY(orders.amount);
 ----
 main.orders.amount	unit	{"value": "CHF"}
 
-# subject::aspect narrows; all => true serves every value
+# subject::property narrows; all => true serves every value
 query TTTT
-SELECT subject, aspect, actor, body FROM GLOSSARY(orders.amount::unit, all => true) ORDER BY actor;
+SELECT subject, property, actor, body FROM GLOSSARY(orders.amount::unit, all => true) ORDER BY actor;
 ----
 main.orders.amount	unit	agent	{"value": "EUR", "source_column": "currency_code"}
 main.orders.amount	unit	human	{"value": "CHF"}
 
 # the read composes with ordinary SQL: alias, join, filter
 query TI
-SELECT g.aspect, count(*) FROM GLOSSARY(orders.amount, all => true) AS g GROUP BY g.aspect;
+SELECT g.property, count(*) FROM GLOSSARY(orders.amount, all => true) AS g GROUP BY g.property;
 ----
 unit	2
 
@@ -169,7 +169,7 @@ Invalid Input Error
 
 # only declared relationships exist: a pair path is a subject once declared
 statement ok
-DECLARE ASPECT fk_note WITH $${"type": "object"}$$ AS FACT ON RELATIONSHIP;
+DECLARE PROPERTY fk_note WITH $${"type": "object"}$$ AS FACT ON RELATIONSHIP;
 
 statement error
 GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned rows"}$$;
@@ -208,7 +208,7 @@ main.orders.customer_id -> main.customers.id	{"value": "2% orphaned rows"}
 # table so, spelled with its schema
 
 query IIII
-SELECT 1 AS gloss, 2 AS aspect, 3 AS glossary, 4 AS fact;
+SELECT 1 AS gloss, 2 AS property, 3 AS glossary, 4 AS fact;
 ----
 1	2	3	4
 

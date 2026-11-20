@@ -50,7 +50,7 @@ sales	{"id":"cast(read_csv.id:BIGINT as INTEGER)","amount":"cast(read_csv.amount
 # --- re-derivation (SPEC §3): a gloss ages once the derivation behind its column moved, per column
 
 statement ok
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON TABLE, COLUMN;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT ON TABLE, COLUMN;
 
 statement ok
 GLOSS note ON sales.amount AS $${"text": "gross"}$$;

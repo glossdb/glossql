@@ -7,7 +7,7 @@ description: The quality kit's checks for a glossql workspace — which columns 
 
 For an agent working in a DuckDB that has the glossql extension, the
 kpi kit and then this kit loaded. The kit's checks find structure in
-the data and store what they find as measurements. A result is input
+the data and store what they find as results. A result is input
 for your annotation or declaration. It does not declare anything
 itself.
 
@@ -30,7 +30,7 @@ that stores the result.
 | `relationship_coherence()` | relationship | `relationship_checks(dataset or relationship)` | `relationship`, `filled`, `orphans`, `orphan_rate`, `orphan_keys` (the three orphan keys with the most rows, each with its `rows`: values from the data, a pair of key columns as a JSON list, each value cut to its first 100 characters), `orphan_distinct` (how many orphan keys, counted on the whole values), and `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
 | `detect_hierarchies()` | table | `hierarchy_candidates(table)` | `candidates`: `from`, `to`, `g3`, `lambda`, `kind` (`edge` or `alias`); `rows`: the rows read |
 | `detect_derivations()` | table | `derivation_candidates(table)` | `candidates`: `target`, `form` (`product` or `sum`), `operands`, `support`, `violations`, `match_rate`; `truncated`; `rows`: the rows read |
-| `detect_definition_collisions()` | dataset | `definition_collisions(dataset)`, after `SET VARIABLE glossql_subject = '<dataset>'`; it compares the definition that defines each view now | `definitions`; `collisions`: `kind` (`sql` or `served_series`), `aspects`, `subjects` |
+| `detect_definition_collisions()` | dataset | `definition_collisions(dataset)`, after `SET VARIABLE glossql_subject = '<dataset>'`; it compares the definition that defines each view now | `definitions`; `collisions`: `kind` (`sql` or `served_series`), `properties`, `subjects` |
 | `additivity_evidence()` | column | `additivity_anchors(column)` | `summary`: `result` (`semi-additive`, `additive`, `abstain`), `convention`, `support`, `voted`, `event`, `align`, `grain`, `scope`, `r_flow`, `r_stock`, `sign`, `tiebreak`, `reason`; `anchors`: one row per anchor; `anchors_n`, `decided` |
 | `temporal()` | timestamp columns | | `temporal_profile`: `granularity`, `confidence`, `completeness`, `gaps` |
 
@@ -117,7 +117,7 @@ one-sided: it does not flag a rate that is lower than expected.
 
 ## Limits
 
-- No test scores these measurements. They are input for a declaration
+- No test scores these results. They are input for a declaration
   or an annotation, which you or a person make.
 - The checks compare values as text within one stored type and treat
   NULL as a category.

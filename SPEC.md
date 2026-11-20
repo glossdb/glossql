@@ -26,7 +26,7 @@ Ground rules:
   stamps writer and actor kind on every statement.
 - **The grammar fixes keys, not mechanics.** History, replay, and supersession
   mechanics are implementation. The grammar fixes what supersedes what: the
-  key is (subject, aspect, actor kind).
+  key is (subject, property, actor kind).
 - **Names fold as the host's do.** An unquoted identifier is lowercased
   before it is created or matched; a double-quoted identifier keeps its
   case. This is the SQL host's rule for its own names, and every glossql
@@ -41,7 +41,7 @@ Ground rules:
   a measurement — its query runs over the data as the statement reads it; a
   detector's query runs over its test's `annotations` relation. A
   function is either a measurement or a detector, never a
-  metric. Metrics are concepts: VIEW aspects, run as their SQL (§5.1).
+  metric. Metrics are concepts: VIEW properties, run as their SQL (§5.1).
   Analytical logic does not live in the grammar.
 
 ## 2. Origins
@@ -188,52 +188,52 @@ DECLARE RELATIONSHIP txn.(business_id, account) -> coa.(business_id, code);
 - An endpoint is a column of a loaded table. A declaration naming a table
   or column the dataset does not have is refused.
 - Relationships are **detected → verified → declared**: a function proposes
-  candidates (a MEASUREMENT aspect, §5.1), an agent or human declares. Only
+  candidates (a MEASUREMENT property, §5.1), an agent or human declares. Only
   declared relationships exist; there is no rejected or negative form — a
   rejected candidate is simply not declared, and detection functions are
   deterministic, so it does not resurface as new knowledge.
 
 ## 5. The glossary
 
-The glossary is the context store. An **aspect** is a declared vocabulary
-entry — a name with a JSON Schema and a kind. A **gloss** applies an aspect
-to a subject with a JSON body. There are no fact names: the aspect is the key.
+The glossary is the context store. A **property** is a declared vocabulary
+entry — a name with a JSON Schema and a kind. A **gloss** applies a property
+to a subject with a JSON body. There are no fact names: the property is the key.
 
-### 5.1 Aspects
+### 5.1 Properties
 
 ```sql
-DECLARE ASPECT unit WITH $${
+DECLARE PROPERTY unit WITH $${
   "type": "object",
   "properties": {"value": {"type": "string"}, "source_column": {"type": "string"}}
 }$$ AS FACT;
 
-DECLARE ASPECT revenue WITH $${
+DECLARE PROPERTY revenue WITH $${
   "title": "revenue",
   "description": "Income from sales or services",
   "x-kind": "measure",
   "x-indicators": ["revenue", "sales", "income", "turnover", "receipts"]
 }$$ AS VIEW;
 
-DECLARE ASPECT min_max WITH $${
+DECLARE PROPERTY min_max WITH $${
   "type": "object",
   "properties": {"min": {}, "max": {}}
 }$$ AS MEASUREMENT ON COLUMN;
 ```
 
-The kind fixes the aspect's role:
+The kind fixes the property's role:
 
 - **FACT** — an authored JSON assertion (units are USD, `created_at` is a
   timestamp, this convention holds). The `WITH` schema validates the gloss
-  body. Constants and formulas are FACT aspects — "cannot be defined" means
+  body. Constants and formulas are FACT properties — "cannot be defined" means
   simply not `AS VIEW`.
 - **VIEW** — an SQL-defined concept (revenue, accounts_receivable, dso).
-  Metrics are VIEW aspects: the value materializes by running the metric definition
+  Metrics are VIEW properties: the value materializes by running the metric definition
   SQL, never through a function. Glosses validate against the **metric definition
   contract** (§5.2), not the `WITH` schema; the `WITH` schema
   carries the ontology entry (description, indicators, parameters,
   rendering). Anything the company revises — meaning, unit, owner, source —
   belongs in a gloss instead, because a declaration cannot be re-declared
-  once anything is glossed on the aspect and so can never be superseded,
+  once anything is glossed on the property and so can never be superseded,
   in conflict or outranked.
 - **MEASUREMENT** — a statistical evaluation (min_max, outliers,
   relationship_candidates). Never glossed: its value is the bound
@@ -241,31 +241,31 @@ The kind fixes the aspect's role:
   served by `GLOSSARY()` beside facts and metric definitions.
 
 The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP | SOURCE, …` list
-is the aspect's **grain**: the subject classes glosses (and a `RETURNS`
-binding) may attach to. Absent, the aspect applies to all grains. A VIEW
-aspect takes no grain clause: a metric is defined on the dataset (§4),
+is the property's **grain**: the subject classes glosses (and a `RETURNS`
+binding) may attach to. Absent, the property applies to all grains. A VIEW
+property takes no grain clause: a metric is defined on the dataset (§4),
 so its grain is the dataset. Disclosure
-(§5.3) stays within it: absence shows only on subjects the aspect is
+(§5.3) stays within it: absence shows only on subjects the property is
 declared for.
 
 A grain list may carry a **condition**:
-`ON COLUMN WHEN role = 'measure'` names a sibling aspect and a value, and
-the aspect is required on a subject only while that aspect's winning value
+`ON COLUMN WHEN role = 'measure'` names a sibling property and a value, and
+the property is required on a subject only while that property's winning value
 (human over agent, contest notwithstanding) carries `value` = the literal.
 The condition bounds `missing` disclosure and every count derived from
 it — never writes: glosses stay gated by grain alone, and an annotated value
 outside its condition serves normally, so a later new decision on the sibling
 strands nothing. No sibling value annotated means nothing required yet. At
-`DECLARE`, the referenced aspect must exist, and when its schema pins
+`DECLARE`, the referenced property must exist, and when its schema pins
 `value` to an enum the literal must be a member.
 
 A grain list of `COLUMN` alone may instead carry a **type condition**:
 `ON COLUMN WHEN TYPE = 'GEOMETRY'` or `WHEN TYPE IN ('DOUBLE', 'DECIMAL')`
-names data types, and the aspect is required on the columns whose base type
+names data types, and the property is required on the columns whose base type
 — the name before any parenthesis, `DECIMAL` for `DECIMAL(18,2)`,
 matched without regard to case — is one of them. A kit for a kind of
 column (geometry, text, time) narrows its words this way without a
-sibling aspect judged on every column. The condition bounds disclosure
+sibling property judged on every column. The condition bounds disclosure
 as the sibling form does and never gates a write; with any other grain
 in the list it is refused at `DECLARE`.
 
@@ -273,13 +273,13 @@ in the list it is refused at `DECLARE`.
 (§3) — no further formality; `DECLARE SOURCE` is the definition. Sources
 are workspace rows, so source-grain values read, supersede, and disclose
 across every dataset — the deposit one onboarding makes is what the next
-dataset reads. Only aspects that declare `ON SOURCE` get this sweep; a
-grainless aspect on a bare name stays dataset-scoped.
+dataset reads. Only properties that declare `ON SOURCE` get this sweep; a
+grainless property on a bare name stays dataset-scoped.
 
 Multiplicity lives inside the blob — array-typed schemas — never in extra
 statements or values.
 
-Re-declaring an aspect with identical content is a no-op. Changing it while
+Re-declaring a property with identical content is a no-op. Changing it while
 glosses under it exist is refused — delete those rows first; existing bodies
 never silently stop matching their schema.
 
@@ -303,13 +303,13 @@ GLOSS revenue ON fin.journal_lines AS $${
 GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned rows"}$$;
 ```
 
-- You cannot gloss an aspect that was not declared. Admission validates the
-  body by the aspect's kind: FACT → the aspect's `WITH` schema, VIEW → the
+- You cannot gloss a property that was not declared. Admission validates the
+  body by the property's kind: FACT → the property's `WITH` schema, VIEW → the
   metric definition contract, MEASUREMENT → rejected.
-- An aspect whose grain names `TABLE` or `COLUMN` takes only loaded
-  subjects: the table, and the column, must exist in the dataset. An
-  aspect without a grain clause takes the subject as spelled; a VIEW
-  aspect takes the dataset.
+- A property whose grain names `TABLE` or `COLUMN` takes only loaded
+  subjects: the table, and the column, must exist in the dataset. A
+  property without a grain clause takes the subject as spelled; a VIEW
+  property takes the dataset.
 - The **metric definition contract** is fixed, like the test-results schema (§7.2): what
   the engine reads of a metric definition, and nothing a reader of its rows needs.
   It is open: a key it does not name passes.
@@ -344,7 +344,7 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   periods and members (a flow sums, a stock keeps its last level, a
   ratio re-divides its summed halves, served as columns the claim
   names), which columns slice it, and the row identity — is glossed on
-  the view and its columns under the aspects a kit declares, never
+  the view and its columns under the properties a kit declares, never
   keyed in the body. A reader that needs a claim nobody made refuses
   and names the gloss; it defaults nothing.
 - `stopped` in place of `sql` records that the author serves no number,
@@ -361,17 +361,17 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   table does. A dataset's schema
   is one name space: a metric definition on a loaded table's name is refused,
   and a recipe on a defined metric's name is refused.
-- **Supersession key: (subject, aspect, actor kind).** A human re-gloss
+- **Supersession key: (subject, property, actor kind).** A human re-gloss
   supersedes the human's value; an agent's supersedes the agent's. The values
   stay separate; a test scores across them (§7).
-- Two VIEW glosses of the same aspect on different tables may coexist — two
+- Two VIEW glosses of the same property on different tables may coexist — two
   ways to calculate revenue arriving at the same number is a correct state.
   Whether they reconcile is a test's job (a function runs both and
   reports the residual; a detector gives it a state).
 - The glossary is an ordinary queryable relation; removal is SQL:
 
 ```sql
-DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';
+DELETE FROM glossary WHERE subject = 'orders.amount' AND property = 'unit';
 ```
 
 - Every row carries `begin_snapshot` — the lake snapshot its write
@@ -385,7 +385,7 @@ DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';
   columns' rows ended (dropped, retyped) and a load that derived a
   column it held otherwise: a column added is new and leaves the
   table's gloss current; a view's row, the annotation that defines it and its
-  aspect's row; for a column of a view, the view's row. The lake's
+  property's row; for a column of a view, the view's row. The lake's
   snapshot id is the only version: a type changed and changed back
   reads stale until the gloss is written again. A subject none of
   whose catalog rows are left, after an expiry of the lake's
@@ -404,8 +404,8 @@ One table function, plain SQL:
 SELECT * FROM GLOSSARY(orders.amount);
 ```
 
-The default, collapsed read: one row per (subject, aspect) —
-`(subject, aspect, value, test_state, score, state)`. The value is the precedence
+The default, collapsed read: one row per (subject, property) —
+`(subject, property, value, test_state, score, state)`. The value is the precedence
 pick — human over agent over function — withheld only when the test
 detector's score exceeds the threshold. `state` makes every gap visible;
 the read never hides one:
@@ -426,10 +426,10 @@ the read never hides one:
 SELECT * FROM GLOSSARY(orders.amount, all => true);
 ```
 
-The raw read: one row per (subject, aspect, kind, test) —
-`(subject, aspect, kind, test, actor, body, written_at, current, error)` —
+The raw read: one row per (subject, property, kind, test) —
+`(subject, property, kind, test, actor, body, written_at, current, error)` —
 every value side by side; precedence between them is the reader's
-business. `kind` is the aspect's kind; who annotated is `actor`, under
+business. `kind` is the property's kind; who annotated is `actor`, under
 `test`; `current` is false for a function value that is out of date
 or possibly so (§6). A computation that failed is a row with its `error` and no
 `body`; the collapsed read and the tests never count it as a value.
@@ -439,7 +439,7 @@ itself and what lies under it: a table serves its columns and every
 relationship it participates in, from either side; the far endpoint's own
 context is never pulled in.
 
-`subject::aspect` narrows either read to one declared aspect, as in TESTS
+`subject::property` narrows either read to one declared property, as in TESTS
 (§7.2) — a metric's declaration and metric definition SQL are one narrowed read
 away:
 
@@ -450,7 +450,7 @@ SELECT * FROM GLOSSARY(fin::dso);
 ## 6. The function library
 
 Functions registered with name, contract and body. A function is either
-a **measurement** — it fills a MEASUREMENT aspect through that aspect's
+a **measurement** — it fills a MEASUREMENT property through that property's
 test (§7), its query running over data — or a **detector** (§7.1),
 whose query runs over its test's `annotations`. The library is the engine's
 analytical machinery (profiling, quality checks, detection) shipped as
@@ -490,22 +490,22 @@ $$;
   array of row objects. Settings are context, never call arguments —
   calls are always bare `f()`. A body composes its context inline: a
   glossed value is a read over the glossary, a stored value a read over
-  `measurements`, a statistic the same aggregate computed in place. A
+  `results`, a statistic the same aggregate computed in place. A
   declaration relation reads as a table, which needs no naming.
 - **A bound screen is an estimate.** A kit's screen may read a table
   up to a bound of cells; a larger table is read as a repeatable
   sample of its rows, and the measurement says how many rows it read.
   Such a value is an estimate.
-- `RETURNS` names the aspect the function's output fills; the aspect's
+- `RETURNS` names the property the function's output fills; the property's
   schema is the one contract — output is validated against it at
-  extraction, and `GLOSSARY()` serves it as-is. A MEASUREMENT aspect has
-  exactly one returning function (its producer); a FACT aspect may be
+  extraction, and `GLOSSARY()` serves it as-is. A MEASUREMENT property has
+  exactly one returning function (its producer); a FACT property may be
   returned by functions too — each is a *value* computed from data whose
   output joins the annotated values (§7), computed at read.
 - **No `RETURNS` declares a detector** — role by shape. A detector is
   named only in a test's `DETECTOR` clause. Its query plans over
   the `annotations` relation — the test's raw rows (§5.3),
-  narrowed to its aspect, with `actor_kind` and `current` beside them and
+  narrowed to its property, with `actor_kind` and `current` beside them and
   `body` typed by the values' own JSON — and the test `THRESHOLD`
   binds as `$threshold`. Each returned row must satisfy the standard test-results
   contract (§7.2) — the engine's contract, not authored.
@@ -520,8 +520,8 @@ SELECT profile_min_max() FROM orders;
 SELECT outliers() FROM orders.amount;
 ```
 
-Extraction writes one row in the `measurements` relation:
-`(id, dataset, function, subject, aspect, value, computed_at, error,
+Extraction writes one row in the `results` relation:
+`(id, dataset, function, subject, property, value, computed_at, error,
 read_at, changed_at)`, and one row per node the result read in the
 `inputs` relation, `(result, asset, what)`, `result` the result's `id`. Nobody
 declares the inputs: the body is SQL, and what it reads is taken from
@@ -620,7 +620,7 @@ annotations stale, and so the results that read them out of date. A
 function declared again, or the property it fills declared again,
 makes its results out of date. A later extraction serves a current
 row; an out-of-date one makes the next extraction compute. Old rows
-stay in `measurements_history`. A function's own results are never
+stay in `results_history`. A function's own results are never
 its input. A body that refuses its subject
 raises `not_a_<kind>` and stores nothing: a refusal is no computation. A computation that
 fails, in the body or in the schema check, is stored too, with its
@@ -629,7 +629,7 @@ are, so nothing computes it again on its own; a call computes it
 again, since a failure can come from what is no input (a service down,
 a configuration). A body that carries a top-level `summary`
 object serves the summary at extraction — the full value reads back
-through `GLOSSARY(subject::aspect)` (a large measurement's extraction
+through `GLOSSARY(subject::property)` (a large measurement's extraction
 result would otherwise be write-only at the interface; the summary is the
 function's own authorship, never a truncation).
 Nothing recomputes at write time, and no machinery ever deletes a gloss:
@@ -640,13 +640,13 @@ Whether multi-function
 extraction fans out or runs one call after another is the caller's choice —
 send one statement with many calls, or many statements; the grammar carries
 no ordering surface. Functions never write the glossary; their results
-are stored in `measurements`.
+are stored in `results`.
 
 ## 7. Tests
 
-A test is declared per aspect, dataset-wide, and judges each subject
-alone. Per (subject, aspect) it holds one value per actor kind: each function value (the newest measurement
-of a function whose `RETURNS` names the aspect, §6 — served whether
+A test is declared per property, dataset-wide, and judges each subject
+alone. Per (subject, property) it holds one value per actor kind: each function value (the newest measurement
+of a function whose `RETURNS` names the property, §6 — served whether
 current or not, and marked), the agent's
 gloss, the human's gloss — one value each.
 
@@ -662,14 +662,14 @@ DECLARE TEST reconciliation_test ON reconciliation
   DETECTOR reconcile_states THRESHOLD 0.5;
 ```
 
-- `BY` lists the actor kinds admitted to gloss the aspect — `AGENT`,
+- `BY` lists the actor kinds admitted to gloss the property — `AGENT`,
   `HUMAN`. Function values are not gated here: a function annotates by
-  `RETURNS` (§6). `BY` is refused on a MEASUREMENT aspect — measurements
-  are never glossed.
+  `RETURNS` (§6). `BY` is refused on a MEASUREMENT property — such a property
+  is never glossed.
 - `DETECTOR` names a function without `RETURNS` (§6) that examines the
   values and returns state + score.
 - Both clauses are optional, but not together: a test names `BY`, or
-  `DETECTOR`, or both. On a MEASUREMENT aspect only the detector form is
+  `DETECTOR`, or both. On a MEASUREMENT property only the detector form is
   possible — judgment applied to a measurement's output, as in the second
   example.
 - `THRESHOLD` (0..1) is the entropy cutoff used by the collapsed
@@ -691,14 +691,14 @@ SELECT subject, state FROM TESTS(fin.trial_balance) WHERE state = 'red';
 ```
 
 The **standard test-results schema** is fixed:
-`(subject, aspect, test, state, score, computed_at, current, error)` —
+`(subject, property, test, state, score, computed_at, current, error)` —
 `state` in `green | yellow | orange | red | error`, `score` the
 disagreement/entropy in 0..1, `current` whether the stored result is
 current (§6), `error` null except where
 `state` is `error`.
 A detector's query returns the authored third of it — one
 `(subject, state, score)` row per subject — and the engine completes
-each row with the test, its aspect, and its own clock.
+each row with the test, its property, and its own clock.
 A detector that cannot answer — unresolved from the reading dataset,
 a body that is not one SQL query, a plan or run the engine refuses —
 refuses nothing: the failure is stored as that test's result, one
@@ -710,15 +710,15 @@ serving three tests holds three results, computed from each test's
 own values against its own threshold.
 
 A test's result is a stored result like a function's (§6), one per
-(subject, test), in `measurements` under the test's name with aspect
+(subject, test), in `results` under the test's name with property
 `test`: its value `{"state", "score"}`, or its error. `SELECT
 additivity_test() FROM fin` computes the test on each subject at or
-under the one named that holds a value of its aspect, where no result
+under the one named that holds a value of its property, where no result
 is stored or the stored one is not current, in one write; a stored
 result on a subject that holds no value any more is retired. A subject
 the detector returns no row for holds the JSON `null`, no judgment. A
-result reads its subject's `annotation` and `value` of the aspect, the
-subject's `definition` (§5.2), and the declarations of the aspect, the
+result reads its subject's `annotation` and `value` of the property, the
+subject's `definition` (§5.2), and the declarations of the property, the
 test and the detector (`property`, `function`): it is out of date
 once one of them changed after it read, and possibly so while a
 function value it read is. `TESTS()` and `GLOSSARY()` read the stored
@@ -728,9 +728,9 @@ Detail lives in the value function's own output, reachable by
 SELECT. Sweeps ("all conflict
 additivity columns") are WHERE clauses over the test-results relation, never a
 special form; with no argument, `TESTS()` sweeps the `USE`'d dataset.
-`subject::aspect` — the host's cast spelling — narrows test results to one
-declared aspect, unambiguously: `fin.trial_balance` names a table,
-`fin::reconciliation` an aspect across the dataset.
+`subject::property` — the host's cast spelling — narrows test results to one
+declared property, unambiguously: `fin.trial_balance` names a table,
+`fin::reconciliation` a property across the dataset.
 
 Judgment lives here — in detector functions and read policy — never in
 results: no construct writes a result into data.
@@ -762,8 +762,8 @@ stock_movements.source_document -> purchase_orders.id WHEN
 source_type = 'purchase_order'`. It buys per-arm coherence and an
 axis through an arm; it costs the predicate riding every
 relationship consumer — a declared join stops being a plain equijoin.
-And the word shifts: the aspect `WHEN` (§5.1) names a sibling
-aspect's judged value, this one names a data column's row value.
+And the word shifts: the property `WHEN` (§5.1) names a sibling
+property's judged value, this one names a data column's row value.
 Closes by transcription against a real polymorphic artifact, never by
 argument.
 
@@ -779,7 +779,7 @@ PoC notes: batch visibility comes from (long-running) transactions — the
 running system's run_id + snapshot-head pointer is the verbose version of
 the same guarantee · the actor rides the transport — the connection,
 or an interface-asked answer, recorded through the interface with the actor kind human ·
-value-at-read: a VIEW aspect's
+value-at-read: a VIEW property's
 value is its view — `FROM dso`, or `FROM fin.dso` — the collapsed
 current metric definition expanded at plan time, nesting allowed behind a
 cycle guard; running stays the reader's act: one serving interface over

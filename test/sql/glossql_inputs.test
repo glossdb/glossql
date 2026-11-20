@@ -35,21 +35,21 @@ statement ok
 CREATE TABLE f1.circuits AS SELECT i::INTEGER AS circuit_id, 'circuit ' || i AS name FROM range(4) t(i);
 
 statement ok
-DECLARE ASPECT role WITH $${"type": "object", "required": ["value"], "properties": {"value": {"enum": ["key", "measure", "dimension", "timestamp", "attribute"]}}}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY role WITH $${"type": "object", "required": ["value"], "properties": {"value": {"enum": ["key", "measure", "dimension", "timestamp", "attribute"]}}}$$ AS FACT ON COLUMN;
 
 statement ok
-DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 # two metrics: points scans results and races and joins them on race_id; race_count scans races alone
 
 statement ok
-DECLARE ASPECT points WITH $${"title": "Points"}$$ AS VIEW;
+DECLARE PROPERTY points WITH $${"title": "Points"}$$ AS VIEW;
 
 statement ok
 GLOSS points ON f1 AS $${"sql": "SELECT r.date AS period, sum(x.points) AS value FROM f1.results x JOIN f1.races r ON r.race_id = x.race_id GROUP BY 1"}$$;
 
 statement ok
-DECLARE ASPECT race_count WITH $${"title": "Races"}$$ AS VIEW;
+DECLARE PROPERTY race_count WITH $${"title": "Races"}$$ AS VIEW;
 
 statement ok
 GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1"}$$;
@@ -57,13 +57,13 @@ GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FR
 # a check over a metric that reads one property on its sources, and one that reads its definition
 
 statement ok
-DECLARE ASPECT role_check WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY role_check WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION role_check FOR GLOBAL AS $$ SELECT count(value) AS n FROM annotations('role', 'its sources') $$ RETURNS role_check;
 
 statement ok
-DECLARE ASPECT scans WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY scans WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION scans FOR GLOBAL AS $$ SELECT coalesce(sum(len(reads)), 0) AS n FROM definition('itself') $$ RETURNS scans;
@@ -103,7 +103,7 @@ scans	f1.points	scans	2	false
 # a declaration of a property no read names leaves them current too
 
 statement ok
-DECLARE ASPECT unrelated WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY unrelated WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 query I
 SELECT count(*) FROM glossql_outdated();
@@ -175,7 +175,7 @@ SELECT role_check() FROM points;
 # result that read it is current again without being computed
 
 statement ok
-DECLARE ASPECT checked WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY checked WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION checked FOR GLOBAL AS $$ SELECT coalesce(sum(value::INTEGER), 0) AS n FROM results('role_check', 'itself') $$ RETURNS checked;
@@ -186,7 +186,7 @@ SELECT checked() FROM race_count;
 checked	f1.race_count	checked	1	true
 
 statement ok
-CREATE TEMP TABLE before AS SELECT changed_at FROM measurements WHERE function = 'role_check' AND subject = 'f1.race_count';
+CREATE TEMP TABLE before AS SELECT changed_at FROM main.results WHERE function = 'role_check' AND subject = 'f1.race_count';
 
 statement ok
 GLOSS role ON races.date AS $${"value": "attribute"}$$;
@@ -203,7 +203,7 @@ role_check	f1.races.date	annotation role	changed
 # a result it read is out of date: it is served marked, possibly out of date, and its value is as it was
 
 query TT
-SELECT aspect, state FROM GLOSSARY(race_count) WHERE aspect IN ('checked', 'role_check') ORDER BY ALL;
+SELECT property, state FROM GLOSSARY(race_count) WHERE property IN ('checked', 'role_check') ORDER BY ALL;
 ----
 checked	possibly
 role_check	stale
@@ -214,7 +214,7 @@ SELECT role_check() FROM race_count;
 role_check	f1.race_count	role_check	1	true
 
 query T
-SELECT m.changed_at = b.changed_at FROM measurements m, before b WHERE m.function = 'role_check' AND m.subject = 'f1.race_count';
+SELECT m.changed_at = b.changed_at FROM main.results m, before b WHERE m.function = 'role_check' AND m.subject = 'f1.race_count';
 ----
 true
 
@@ -283,7 +283,7 @@ SELECT checked() FROM race_count;
 # naming the set it joined; one between tables the view does not read leaves it current
 
 statement ok
-DECLARE ASPECT related WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY related WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION related FOR GLOBAL AS $$ SELECT count(*) AS n FROM annotations('meaning', 'its relationships') $$ RETURNS related;
@@ -323,7 +323,7 @@ related	f1.points	related	0	true
 # moves once an annotated column is
 
 statement ok
-DECLARE ASPECT role_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
+DECLARE PROPERTY role_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
 
 statement ok
 DECLARE FUNCTION role_rows FOR GLOBAL AS $$ SELECT count(value) FILTER (WHERE state = 'current') AS n FROM annotations('role', 'the dataset') $$ RETURNS role_rows;
@@ -332,7 +332,7 @@ statement ok
 SELECT role_rows() FROM f1;
 
 statement ok
-CREATE TEMP TABLE rows_before AS SELECT value::INTEGER AS n FROM measurements WHERE function = 'role_rows';
+CREATE TEMP TABLE rows_before AS SELECT value::INTEGER AS n FROM main.results WHERE function = 'role_rows';
 
 statement ok
 ALTER TABLE f1.teams ALTER COLUMN team_id TYPE BIGINT;
@@ -346,7 +346,7 @@ statement ok
 SELECT role_rows() FROM f1;
 
 query T
-SELECT value::INTEGER = (SELECT n FROM rows_before) FROM measurements WHERE function = 'role_rows';
+SELECT value::INTEGER = (SELECT n FROM rows_before) FROM main.results WHERE function = 'role_rows';
 ----
 true
 
@@ -359,7 +359,7 @@ statement ok
 SELECT lineage() FROM points;
 
 query TT
-SELECT subject, state FROM GLOSSARY(results.points) WHERE aspect = 'role';
+SELECT subject, state FROM GLOSSARY(results.points) WHERE property = 'role';
 ----
 f1.results.points	stale
 
@@ -367,20 +367,20 @@ statement ok
 SELECT role_rows() FROM f1;
 
 query T
-SELECT value::INTEGER = (SELECT n FROM rows_before) - 1 FROM measurements WHERE function = 'role_rows';
+SELECT value::INTEGER = (SELECT n FROM rows_before) - 1 FROM main.results WHERE function = 'role_rows';
 ----
 true
 
 # --- a result a read returned: its reader is out of date while it is, and a result outside the place leaves the reader current
 
 statement ok
-DECLARE ASPECT width WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY width WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION width FOR GLOBAL AS $$ SELECT count(DISTINCT v) AS n FROM subject_column($subject) $$ RETURNS width;
 
 statement ok
-DECLARE ASPECT widths WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY widths WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION widths FOR GLOBAL AS $$ SELECT coalesce(sum(value::INTEGER), 0) AS n FROM results('width', 'its sources') $$ RETURNS widths;
@@ -400,7 +400,7 @@ statement ok
 INSERT INTO f1.circuits VALUES (9, 'circuit 9');
 
 query T
-SELECT current FROM GLOSSARY(circuits.name, all => true) WHERE aspect = 'width';
+SELECT current FROM GLOSSARY(circuits.name, all => true) WHERE property = 'width';
 ----
 false
 
@@ -421,7 +421,7 @@ widths	f1.results.points	result width	possibly
 # follow what it read
 
 statement ok
-DECLARE ASPECT raw_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY raw_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement error
 DECLARE FUNCTION raw_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM __ducklake_metadata_ws.main.glossql_glossary $$ RETURNS raw_rows;
@@ -458,7 +458,7 @@ LEFT JOIN annotations('role', 'the dataset''s metrics') a ON a.asset = d.view ||
 GROUP BY d.view;
 
 statement ok
-DECLARE ASPECT metric_sums WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET;
+DECLARE PROPERTY metric_sums WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET;
 
 statement ok
 DECLARE FUNCTION metric_sums FOR GLOBAL AS $$ SELECT count(*) AS n, sum(value) FILTER (WHERE dimension = '') AS total FROM series_aggregate('f1', 'the dataset''s metrics', 'points_axes', 'month') $$ RETURNS metric_sums;
@@ -473,12 +473,12 @@ statement ok
 SELECT metric_sums() FROM f1;
 
 query II
-SELECT value->>'n', value->>'total' FROM measurements WHERE aspect = 'metric_sums';
+SELECT value->>'n', value->>'total' FROM main.results WHERE property = 'metric_sums';
 ----
 0	NULL
 
 statement ok
-DECLARE ASPECT points_target WITH $${"title": "Points target", "x-kind": "plan", "x-plan-of": "points"}$$ AS VIEW;
+DECLARE PROPERTY points_target WITH $${"title": "Points target", "x-kind": "plan", "x-plan-of": "points"}$$ AS VIEW;
 
 statement ok
 GLOSS points_target ON f1 AS $${"sql": "SELECT period, value * 1.1 AS value FROM f1.points"}$$;
@@ -503,14 +503,14 @@ statement ok
 SELECT metric_sums() FROM f1;
 
 query II
-SELECT value->>'n', value->>'total' FROM measurements WHERE aspect = 'metric_sums';
+SELECT value->>'n', value->>'total' FROM main.results WHERE property = 'metric_sums';
 ----
 2	146.0
 
 # a metric defined in the dataset is a member added
 
 statement ok
-DECLARE ASPECT race_points WITH $${"title": "Points per race"}$$ AS VIEW;
+DECLARE PROPERTY race_points WITH $${"title": "Points per race"}$$ AS VIEW;
 
 statement ok
 GLOSS race_points ON f1 AS $${"sql": "SELECT race_id, sum(points) AS value FROM f1.results GROUP BY 1"}$$;
@@ -537,13 +537,13 @@ f1.results	data
 # current; a single value defined outdates it
 
 statement ok
-DECLARE ASPECT single_cells WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET;
+DECLARE PROPERTY single_cells WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET;
 
 statement ok
 DECLARE FUNCTION single_cells FOR GLOBAL AS $$ SELECT count(*) AS n, count(DISTINCT "table") AS views FROM dataset_cells('f1', 'the dataset''s single values') $$ RETURNS single_cells;
 
 statement ok
-DECLARE ASPECT races_run WITH $${"title": "Races run", "x-kind": "scalar"}$$ AS VIEW;
+DECLARE PROPERTY races_run WITH $${"title": "Races run", "x-kind": "scalar"}$$ AS VIEW;
 
 statement ok
 GLOSS races_run ON f1 AS $${"sql": "SELECT count(*) AS value FROM f1.results"}$$;
@@ -552,12 +552,12 @@ statement ok
 SELECT single_cells() FROM f1;
 
 query II
-SELECT value->>'n', value->>'views' FROM measurements WHERE aspect = 'single_cells';
+SELECT value->>'n', value->>'views' FROM main.results WHERE property = 'single_cells';
 ----
 1	1
 
 statement ok
-DECLARE ASPECT race_wins WITH $${"title": "Wins per race"}$$ AS VIEW;
+DECLARE PROPERTY race_wins WITH $${"title": "Wins per race"}$$ AS VIEW;
 
 statement ok
 GLOSS race_wins ON f1 AS $${"sql": "SELECT race_id, count(*) AS value FROM f1.results GROUP BY 1"}$$;
@@ -568,7 +568,7 @@ SELECT count(*) FROM glossql_outdated() WHERE function = 'single_cells';
 0
 
 statement ok
-DECLARE ASPECT drivers_seen WITH $${"title": "Drivers seen", "x-kind": "scalar"}$$ AS VIEW;
+DECLARE PROPERTY drivers_seen WITH $${"title": "Drivers seen", "x-kind": "scalar"}$$ AS VIEW;
 
 statement ok
 GLOSS drivers_seen ON f1 AS $${"sql": "SELECT count(DISTINCT driver_id) AS value FROM f1.results"}$$;
@@ -581,13 +581,13 @@ f1	views scalar
 # --- a function's value read through annotations() is a result read: once it is out of date, so is its reader
 
 statement ok
-DECLARE ASPECT size WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY size WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION size FOR GLOBAL AS $$ SELECT count(*) AS n FROM f1.circuits $$ RETURNS size;
 
 statement ok
-DECLARE ASPECT size_seen WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY size_seen WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION size_seen FOR GLOBAL AS $$ SELECT asset, state FROM annotations('size', 'itself') $$ RETURNS size_seen;
@@ -607,7 +607,7 @@ size_seen	f1.circuits	value size	possibly
 # --- a detector declared again moves the annotations its test judges: their readers are out of date
 
 statement ok
-DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON TABLE;
+DECLARE PROPERTY remark WITH $${"type": "object"}$$ AS FACT ON TABLE;
 
 statement ok
 DECLARE FUNCTION remark_judge FOR f1 AS $$ SELECT subject, 'green' AS state, 0.0 AS score FROM annotations GROUP BY subject $$;
@@ -619,7 +619,7 @@ statement ok
 GLOSS remark ON circuits AS $${"value": "a"}$$;
 
 statement ok
-DECLARE ASPECT remark_seen WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY remark_seen WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION remark_seen FOR GLOBAL AS $$ SELECT asset, state FROM annotations('remark', 'itself') $$ RETURNS remark_seen;
@@ -644,7 +644,7 @@ remark_judge	function
 # outdates its readers
 
 statement ok
-DECLARE ASPECT remark_bar WITH $${"type": "number"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY remark_bar WITH $${"type": "number"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION remark_bar FOR GLOBAL AS $$ SELECT max(threshold) AS bar FROM annotations('remark', 'itself') $$ RETURNS remark_bar;
@@ -653,7 +653,7 @@ statement ok
 SELECT remark_bar() FROM circuits;
 
 query R
-SELECT value::DOUBLE FROM measurements WHERE function = 'remark_bar';
+SELECT value::DOUBLE FROM main.results WHERE function = 'remark_bar';
 ----
 0.5
 
@@ -669,7 +669,7 @@ statement ok
 SELECT remark_bar() FROM circuits;
 
 query R
-SELECT value::DOUBLE FROM measurements WHERE function = 'remark_bar';
+SELECT value::DOUBLE FROM main.results WHERE function = 'remark_bar';
 ----
 0.7
 
@@ -707,7 +707,7 @@ statement ok
 CREATE OR REPLACE MACRO main.circuit_count() AS TABLE SELECT count(*) AS n FROM f1.circuits;
 
 statement ok
-DECLARE ASPECT counted WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY counted WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION counted FOR GLOBAL AS $$ SELECT n FROM circuit_count() $$ RETURNS counted;
@@ -751,7 +751,7 @@ statement ok
 CREATE OR REPLACE MACRO main.nested_outer() AS TABLE SELECT n FROM main.nested_inner();
 
 statement ok
-DECLARE ASPECT nested WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY nested WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION nested FOR GLOBAL AS $$ SELECT n FROM nested_outer() $$ RETURNS nested;
@@ -770,7 +770,7 @@ main.nested_inner	macro
 # --- a table the body names before the lake holds it refuses the declaration; once it exists, the body reads it
 
 statement ok
-DECLARE ASPECT later WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY later WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement error
 DECLARE FUNCTION later FOR GLOBAL AS $$ SELECT count(*) AS n FROM f1.pit_stops $$ RETURNS later;
@@ -791,13 +791,13 @@ data	f1.pit_stops
 # --- a name the lake spells otherwise reads that table: written with another case, or without its dataset
 
 statement ok
-DECLARE ASPECT spelled_upper WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY spelled_upper WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION spelled_upper FOR GLOBAL AS $$ SELECT count(*) AS n FROM F1.Circuits $$ RETURNS spelled_upper;
 
 statement ok
-DECLARE ASPECT spelled_bare WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY spelled_bare WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION spelled_bare FOR GLOBAL AS $$ SELECT count(*) AS n FROM Circuits $$ RETURNS spelled_bare;
@@ -806,7 +806,7 @@ statement ok
 SELECT spelled_upper(), spelled_bare() FROM circuits;
 
 query TT
-SELECT m.function, i.asset FROM measurements m JOIN inputs i ON i.result = m.id
+SELECT m.function, i.asset FROM main.results m JOIN inputs i ON i.result = m.id
 WHERE m.function IN ('spelled_upper', 'spelled_bare') AND i.what = 'data' ORDER BY ALL;
 ----
 spelled_bare	f1.circuits
@@ -827,7 +827,7 @@ statement ok
 CREATE TABLE memory.main.elsewhere_rows AS SELECT 1 AS x;
 
 statement ok
-DECLARE ASPECT elsewhere WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY elsewhere WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement error
 DECLARE FUNCTION elsewhere FOR GLOBAL AS $$ SELECT count(*) AS n FROM information_schema.tables $$ RETURNS elsewhere;
@@ -850,7 +850,7 @@ statement ok
 DECLARE DATASET other SET (purpose: 'elsewhere');
 
 statement ok
-DECLARE ASPECT here WITH $${"type": "string"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY here WITH $${"type": "string"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION here FOR GLOBAL AS $$ SELECT current_schema() AS s $$ RETURNS here;
@@ -874,7 +874,7 @@ statement ok
 CREATE TABLE other.laps AS SELECT 1 AS lap;
 
 statement ok
-DECLARE ASPECT circuit_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY circuit_rows WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION circuit_rows FOR GLOBAL AS $$ SELECT count(*) AS n FROM circuits $$ RETURNS circuit_rows;
@@ -884,7 +884,7 @@ SELECT circuit_rows() FROM other.laps;
 ----
 
 query T
-SELECT i.asset FROM measurements m JOIN inputs i ON i.result = m.id
+SELECT i.asset FROM main.results m JOIN inputs i ON i.result = m.id
 WHERE m.function = 'circuit_rows' AND i.what = 'data';
 ----
 other.circuits
@@ -914,7 +914,7 @@ statement ok
 CREATE OR REPLACE MACRO main.lap_count() AS TABLE SELECT count(*) AS n FROM other.laps;
 
 statement ok
-DECLARE ASPECT lapped WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY lapped WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION lapped FOR GLOBAL AS $$ SELECT n FROM lap_count() $$ RETURNS lapped;
@@ -928,7 +928,7 @@ SELECT lapped() FROM other.laps;
 untracked_read
 
 query TT
-SELECT m.error IS NOT NULL, string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset) FROM measurements m JOIN inputs i ON i.result = m.id
+SELECT m.error IS NOT NULL, string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset) FROM main.results m JOIN inputs i ON i.result = m.id
 WHERE m.function = 'lapped' GROUP BY ALL;
 ----
 true	lapped function,lapped property,main.lap_count macro
@@ -954,13 +954,13 @@ lapped	other.laps	lapped	1	true
 # --- a statement over several subjects stores the results, and the nodes each read, that one statement per subject stores
 
 statement ok
-DECLARE ASPECT spread_all WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY spread_all WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION spread_all FOR GLOBAL AS $$ SELECT count(DISTINCT v) AS n, (SELECT count(*) FROM annotations('meaning', 'itself') WHERE state <> 'missing') AS described FROM subject_column($subject) $$ RETURNS spread_all;
 
 statement ok
-DECLARE ASPECT spread_one WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY spread_one WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION spread_one FOR GLOBAL AS $$ SELECT count(DISTINCT v) AS n, (SELECT count(*) FROM annotations('meaning', 'itself') WHERE state <> 'missing') AS described FROM subject_column($subject) $$ RETURNS spread_one;
@@ -985,17 +985,17 @@ SELECT spread_one() FROM races.name;
 
 query I
 SELECT count(*) FROM (
-  (SELECT subject, value::VARCHAR, error FROM measurements WHERE function = 'spread_all'
-   EXCEPT ALL SELECT subject, value::VARCHAR, error FROM measurements WHERE function = 'spread_one')
+  (SELECT subject, value::VARCHAR, error FROM main.results WHERE function = 'spread_all'
+   EXCEPT ALL SELECT subject, value::VARCHAR, error FROM main.results WHERE function = 'spread_one')
   UNION ALL
-  (SELECT subject, value::VARCHAR, error FROM measurements WHERE function = 'spread_one'
-   EXCEPT ALL SELECT subject, value::VARCHAR, error FROM measurements WHERE function = 'spread_all'));
+  (SELECT subject, value::VARCHAR, error FROM main.results WHERE function = 'spread_one'
+   EXCEPT ALL SELECT subject, value::VARCHAR, error FROM main.results WHERE function = 'spread_all'));
 ----
 0
 
 query I
 WITH nodes AS (SELECT m.function, m.subject, replace(i.asset, m.function, 'spread') AS asset, i.what
-               FROM measurements m JOIN inputs i ON i.result = m.id WHERE m.function IN ('spread_all', 'spread_one'))
+               FROM main.results m JOIN inputs i ON i.result = m.id WHERE m.function IN ('spread_all', 'spread_one'))
 SELECT count(*) FROM (
   (SELECT subject, asset, what FROM nodes WHERE function = 'spread_all'
    EXCEPT ALL SELECT subject, asset, what FROM nodes WHERE function = 'spread_one')
@@ -1006,7 +1006,7 @@ SELECT count(*) FROM (
 0
 
 query I
-SELECT count(DISTINCT m.subject) = 3 AND count(*) > 3 * 4 FROM measurements m JOIN inputs i ON i.result = m.id
+SELECT count(DISTINCT m.subject) = 3 AND count(*) > 3 * 4 FROM main.results m JOIN inputs i ON i.result = m.id
 WHERE m.function = 'spread_all';
 ----
 true

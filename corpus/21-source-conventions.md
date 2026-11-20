@@ -11,7 +11,7 @@ read.
 ```glossql
 USE fin;
 
-DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
+DECLARE PROPERTY conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
 
 GLOSS conventions ON erp_export AS $${
   "dates": "ISO YYYY-MM-DD throughout; try_cast(x AS DATE) suffices",
@@ -28,7 +28,7 @@ GLOSS conventions ON erp_export AS $${
 DECLARE DATASET fin_ap SET (purpose: 'AP lane from the same source');
 USE fin_ap;
 
-SELECT value FROM GLOSSARY(erp_export) WHERE aspect = 'conventions';
+SELECT value FROM GLOSSARY(erp_export) WHERE property = 'conventions';
 
 PREVIEW erp_export AS $$SELECT count(*) AS n, count(p_rec) AS reconciled_parsed
 FROM (SELECT try_cast(reconciled AS BOOLEAN) AS p_rec
@@ -59,5 +59,5 @@ GLOSS conventions ON erp_export AS $${
 
 USE fin;
 SELECT json_get_str(value, 'booleans') AS booleans
-FROM GLOSSARY(erp_export) WHERE aspect = 'conventions';
+FROM GLOSSARY(erp_export) WHERE property = 'conventions';
 ```

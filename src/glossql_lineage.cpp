@@ -1551,8 +1551,9 @@ void StoreViewLineage(CatalogWrite &write, const string &dataset, const ViewLine
 
 bool RetireViewLineage(CatalogWrite &write, const string &dataset, const string &view) {
 	auto &inner = write.inner;
-	auto stored = inner.Scalar("SELECT count(*) FROM " + inner.Current("measurements") + " WHERE dataset = " +
-	                           QuoteText(dataset) + " AND function = 'lineage' AND subject = " + QuoteText(view));
+	auto stored =
+	    inner.Scalar("SELECT count(*) FROM " + inner.Current("results") + " WHERE dataset = " + QuoteText(dataset) +
+		             " AND function = 'lineage' AND subject = " + QuoteText(view));
 	if (stored.GetValue<int64_t>() == 0) {
 		return false;
 	}

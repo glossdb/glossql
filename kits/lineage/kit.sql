@@ -63,9 +63,9 @@ SELECT "from", "to", kind FROM main.edges WHERE split_part("from", '.', 1) = dat
 -- view_bodies(dataset): the annotation that defines each view of a
 -- dataset, (view, body), the newest on the dataset
 CREATE OR REPLACE MACRO main.view_bodies(dataset_name) AS TABLE
-SELECT aspect AS view, body FROM main.glossary
-WHERE dataset = dataset_name AND subject = dataset_name AND aspect IN (SELECT name FROM main.aspects WHERE kind = 'VIEW')
-QUALIFY row_number() OVER (PARTITION BY aspect ORDER BY begin_snapshot DESC) = 1;
+SELECT property AS view, body FROM main.glossary
+WHERE dataset = dataset_name AND subject = dataset_name AND property IN (SELECT name FROM main.properties WHERE kind = 'VIEW')
+QUALIFY row_number() OVER (PARTITION BY property ORDER BY begin_snapshot DESC) = 1;
 
 -- loaded_from_edges(dataset): the lineage's loaded from edges alone,
 -- table -> source, for each loaded table of the dataset a recipe loads
@@ -112,7 +112,7 @@ UNION ALL SELECT "from", "to", kind FROM glossql_kind_edges(dataset_name);
 --                   view that does not plan has one row, complete false
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.lineage_values(dataset_name) AS TABLE
-SELECT dataset, split_part(subject, '.', 2) AS view, value, error FROM main.measurements
+SELECT dataset, split_part(subject, '.', 2) AS view, value, error FROM main.results
 WHERE function = 'lineage' AND (dataset_name IS NULL OR dataset = dataset_name);
 
 CREATE OR REPLACE MACRO main.views_lineage(dataset_name) AS TABLE
@@ -250,7 +250,7 @@ UNION SELECT dataset_name, "to" FROM main.contains_edges(dataset_name);
 -- none) and their columns
 CREATE OR REPLACE MACRO main.place_views_of(dataset_name, x_kind) AS TABLE
 WITH members AS (
-  SELECT dataset_name || '.' || name AS m FROM main.aspects
+  SELECT dataset_name || '.' || name AS m FROM main.properties
   WHERE kind = 'VIEW' AND coalesce(json_extract_string(schema, '$.x-kind'), 'metric') = x_kind
     AND name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW'))
 SELECT DISTINCT dataset_name AS subject, "to" AS asset FROM main.contains_edges(dataset_name)
@@ -376,28 +376,28 @@ UNION ALL SELECT dataset_name, 'dataset', r FROM rels WHERE k = 'table';
 -- by an annotation, that annotation alone.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.annotations_of(property, where_) AS TABLE
-WITH grains AS (SELECT grains FROM main.aspects WHERE name = property)
+WITH grains AS (SELECT grains FROM main.properties WHERE name = property)
 SELECT p.asset, property AS property, g.value, coalesce(g.state, 'missing') AS state,
-       (SELECT max(t.threshold) FROM main.tests t WHERE t.aspect = property) AS threshold
+       (SELECT max(t.threshold) FROM main.tests t WHERE t.property = property) AS threshold
 FROM main.place(where_) p
 LEFT JOIN glossql_glossary(split_part(main.read_subject(), '.', 1), property, false) g ON g.subject = p.asset
 WHERE EXISTS (SELECT 1 FROM grains WHERE len(grains) = 0 OR list_contains(grains, main.asset_grain(p.asset)));
 
 CREATE OR REPLACE MACRO main.annotations_of_kind(kind, where_) AS TABLE
-WITH props AS (SELECT name, grains FROM main.aspects WHERE json_extract_string(schema, '$.x-kind') = kind),
+WITH props AS (SELECT name, grains FROM main.properties WHERE json_extract_string(schema, '$.x-kind') = kind),
 held AS (
-  SELECT subject, aspect, body FROM main.glossary
-  WHERE dataset = split_part(main.read_subject(), '.', 1) AND aspect IN (SELECT name FROM props) AND actor_kind IN ('human', 'agent')
-  QUALIFY row_number() OVER (PARTITION BY subject, aspect ORDER BY CASE actor_kind WHEN 'human' THEN 0 ELSE 1 END, begin_snapshot DESC) = 1)
+  SELECT subject, property, body FROM main.glossary
+  WHERE dataset = split_part(main.read_subject(), '.', 1) AND property IN (SELECT name FROM props) AND actor_kind IN ('human', 'agent')
+  QUALIFY row_number() OVER (PARTITION BY subject, property ORDER BY CASE actor_kind WHEN 'human' THEN 0 ELSE 1 END, begin_snapshot DESC) = 1)
 SELECT p.asset, pr.name AS property, h.body AS value, CASE WHEN h.body IS NULL THEN 'missing' ELSE 'current' END AS state,
-       (SELECT max(t.threshold) FROM main.tests t WHERE t.aspect = pr.name) AS threshold
+       (SELECT max(t.threshold) FROM main.tests t WHERE t.property = pr.name) AS threshold
 FROM main.place(where_) p
 -- an asset of a kind a kit declares by an annotation: that annotation is its own
 LEFT JOIN glossql_kind_assets(split_part(main.read_subject(), '.', 1), kind) k
   ON k.asset = p.asset AND starts_with(k.node_what, 'annotation ')
 JOIN props pr ON CASE WHEN k.asset IS NOT NULL THEN pr.name = substr(k.node_what, 12)
                       ELSE len(pr.grains) = 0 OR list_contains(pr.grains, main.asset_grain(p.asset)) END
-LEFT JOIN held h ON h.subject = coalesce(k.node_asset, p.asset) AND h.aspect = pr.name;
+LEFT JOIN held h ON h.subject = coalesce(k.node_asset, p.asset) AND h.property = pr.name;
 
 CREATE OR REPLACE MACRO main.annotations(property, where_) AS TABLE
 FROM query(CASE WHEN starts_with(property, 'x-kind ')
@@ -415,12 +415,12 @@ FROM query(CASE WHEN starts_with(property, 'x-kind ')
 CREATE OR REPLACE MACRO main.results(function_, where_) AS TABLE
 WITH held AS (
   SELECT subject, list(value ORDER BY changed_at) AS history
-  FROM (SELECT DISTINCT subject, changed_at, value FROM main.measurements_history
+  FROM (SELECT DISTINCT subject, changed_at, value FROM main.results_history
         WHERE dataset = split_part(main.read_subject(), '.', 1) AND function = function_ AND value IS NOT NULL)
   GROUP BY subject)
 SELECT p.asset, function_ AS function, m.value, m.error, h.history
 FROM main.place(where_) p
-LEFT JOIN main.measurements m
+LEFT JOIN main.results m
   ON m.dataset = split_part(main.read_subject(), '.', 1) AND m.function = function_ AND m.subject = p.asset
 LEFT JOIN held h ON h.subject = p.asset;
 
@@ -444,7 +444,7 @@ LEFT JOIN held h ON h.subject = p.asset;
 -- the views the dataset defines, never a table of the same name.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.definitions(dataset_name) AS TABLE
-WITH lv AS (SELECT split_part(subject, '.', 2) AS view, value FROM main.measurements
+WITH lv AS (SELECT split_part(subject, '.', 2) AS view, value FROM main.results
             WHERE dataset = dataset_name AND function = 'lineage'),
 loaded AS (FROM main.loaded_from_edges(dataset_name)),
 bodies AS (FROM main.view_bodies(dataset_name))
@@ -464,7 +464,7 @@ SELECT dataset_name || '.' || a.name AS view,
        CASE WHEN json_array_length(l.value->'conditions') > 0
             THEN from_json(l.value->'conditions', '[{"table_name": "VARCHAR", "branch": "INTEGER", "alias": "VARCHAR",
                                                    "condition": "VARCHAR"}]') END AS conditions
-FROM main.aspects a LEFT JOIN bodies b ON b.view = a.name LEFT JOIN lv l ON l.view = a.name
+FROM main.properties a LEFT JOIN bodies b ON b.view = a.name LEFT JOIN lv l ON l.view = a.name
 WHERE a.kind = 'VIEW'
   AND (b.view IS NOT NULL OR a.name IN (SELECT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW'));
 

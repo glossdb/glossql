@@ -55,15 +55,15 @@ def test_the_interface(workspace: Path) -> None:
             out = await glossql(
                 "DECLARE DATASET fin SET (purpose: 'the interface'); USE fin;"
                 " CREATE TABLE fin.orders AS SELECT 1 AS id;"
-                ' DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON COLUMN;'
+                ' DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT ON COLUMN;'
                 ' GLOSS note ON orders.id AS $${"text": "x; y"}$$;'
             )
             assert "declared dataset fin" in out
             assert "glossed note on fin.orders.id as agent" in out
 
             # the connection persists: the USE above binds this call; a read is a name:TYPE table
-            out = await glossql("SELECT subject, aspect, state FROM GLOSSARY(orders.id);")
-            assert "| subject:VARCHAR | aspect:VARCHAR | state:VARCHAR |" in out
+            out = await glossql("SELECT subject, property, state FROM GLOSSARY(orders.id);")
+            assert "| subject:VARCHAR | property:VARCHAR | state:VARCHAR |" in out
             assert "| fin.orders.id | note | current |" in out
             assert out.endswith("1 rows")
 

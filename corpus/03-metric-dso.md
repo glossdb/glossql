@@ -1,12 +1,12 @@
 # Metric: days sales outstanding
 
 Days sales outstanding (DSO) is the average number of days between a
-sale and its payment. The example declares the metric as a view aspect
+sale and its payment. The example declares the metric as a view property
 with its unit, parameter and interpretation ranges, then defines it for
 the dataset `fin` in SQL, with the assumption the definition rests on.
 
 ```glossql
-DECLARE ASPECT dso WITH $${
+DECLARE PROPERTY dso WITH $${
   "title": "Days Sales Outstanding",
   "description": "Average days to collect payment after sale",
   "x-kind": "metric",

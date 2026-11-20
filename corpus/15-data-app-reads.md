@@ -13,7 +13,7 @@ missing annotations and the tests that are not passing.
 ```glossql
 USE fin;
 SELECT * FROM imports;
-SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
+SELECT subject, property, value FROM GLOSSARY(fin) WHERE state = 'current';
 SELECT left_path, right_path FROM relationships;
 SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'missing';
 SELECT subject, state, score FROM TESTS(fin) WHERE state != 'green';
@@ -40,12 +40,12 @@ SELECT * FROM TESTS(fin.trial_balance);
 
 ## Metric lineage
 
-The declared aspects and their current definitions are the nodes and
+The declared properties and their current definitions are the nodes and
 edges of the lineage graph.
 
 ```glossql
-SELECT name, kind, grains FROM aspects;
-SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
+SELECT name, kind, grains FROM properties;
+SELECT subject, property, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
 A relationship's annotation can name the conformed dimension it joins

@@ -6,16 +6,16 @@ same transaction. Key: `result`, `asset` and `what`. A row carries
 its result's id and `begin_snapshot` and ends when its result does.
 
 The lake's snapshot id is the only version. A result stores the
-snapshot it read at (`measurements.read_at`) and the snapshot its
-value last changed at (`measurements.changed_at`). A node changed at
+snapshot it read at (`results.read_at`) and the snapshot its
+value last changed at (`results.changed_at`). A node changed at
 the latest snapshot one of its rows begins or ends at. A result is out
 of date when a node it read changed after the snapshot the result read
 at. No digest of what a read returned is stored or compared.
 
 | Column | Type | Description |
 |---|---|---|
-| `begin_snapshot` | BIGINT | The lake snapshot the result took: `measurements.begin_snapshot`. |
-| `result` | BIGINT | The result that read the node: `measurements.id`. |
+| `begin_snapshot` | BIGINT | The lake snapshot the result took: `results.begin_snapshot`. |
+| `result` | BIGINT | The result that read the node: `results.id`. |
 | `end_snapshot` | BIGINT | The snapshot of the write that replaced the result; NULL while the result is current. The view leaves this column out. |
 | `asset` | VARCHAR | The asset read, by its path; the name of a property or a function; a macro's `schema.name`; an x-kind for the set of its properties. |
 | `what` | VARCHAR | What was read of it, one of the nodes below. |
@@ -25,20 +25,20 @@ at. No digest of what a read returned is stored or compared.
 | `what` | Asset | Changed at the latest begin or end of |
 |---|---|---|
 | `annotation <property>` | any | the `glossary` rows of the property on the asset, every actor's |
-| `value <property>` | any | the `measurements` rows functions other than the reader stored under the property on the asset, in the reader's dataset: the current row's `changed_at`, else the last row's end |
-| `result <function>` | any | the function's `measurements` rows on the asset, in the reader's dataset, the same way |
+| `value <property>` | any | the `results` rows functions other than the reader stored under the property on the asset, in the reader's dataset: the current row's `changed_at`, else the last row's end |
+| `result <function>` | any | the function's `results` rows on the asset, in the reader's dataset, the same way |
 | `definition` | a table | its table and column rows in the lake (created, altered, dropped), and each load whose recipe derived its columns otherwise than the load before (`imports.lineage`). An annotation's stale mark counts its column rows ended and a load that derived a column the load before held otherwise: a column added leaves it current |
-| `definition` | a view | the annotation that defines it, its view row in the lake, and its property's `aspects` row |
+| `definition` | a view | the annotation that defines it, its view row in the lake, and its property's `properties` row |
 | `data` | a table | its table rows in the lake (created, dropped), its loads (`imports.snapshot_id`) and the lake's change log for it |
 | `recipe` | a table | its `recipes` rows |
-| `property` | a property | its `aspects` and `tests` rows |
+| `property` | a property | its `properties` and `tests` rows |
 | `function` | a function | its `functions` rows |
 | `macro` | a macro | its macro rows in the lake |
 | `relationships` | a table | the `relationships` rows with a side on the table |
 | `relationships` | a dataset | the `relationships` rows of the dataset |
 | `assets` | a dataset | the table, column and view rows of its schema in the lake |
 | `views <kind>` | a dataset | the view rows of its schema in the lake whose property has that x-kind (`metric` where it names none): a view added or removed; a view defined again stays a member |
-| `properties` | an x-kind | the `aspects` rows of that x-kind |
+| `properties` | an x-kind | the `properties` rows of that x-kind |
 
 The last five are sets: a member added or removed is a row begun or
 ended, so the set changed at that snapshot. A member's own definition

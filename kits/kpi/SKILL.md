@@ -16,7 +16,7 @@ workspace; this page says what the words mean.
 ```sql
 FROM glossql_kit('kits/kpi/kit.sql');     -- also in the opener, so every session has the kit
 SELECT * FROM kits;
-SELECT name, kind, grains FROM aspects;
+SELECT name, kind, grains FROM properties;
 ```
 
 ## The properties
@@ -71,7 +71,7 @@ like a loaded table's columns. That is where a reader of the numbers
 finds what it needs.
 
 ```sql
-DECLARE ASPECT revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS VIEW;
+DECLARE PROPERTY revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS VIEW;
 GLOSS revenue ON shop AS $${
   "sql": "SELECT month AS period, customer, sum(amount) AS value FROM shop.orders GROUP BY ALL",
   "assumptions": [{"dimension": "scope", "assumption": "amounts are net of tax",

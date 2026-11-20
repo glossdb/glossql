@@ -32,13 +32,13 @@ statement ok
 INSERT INTO fin.t VALUES (DATE '2024-01-01', 1, 'x'), (DATE '2024-02-01', 2, 'y');
 
 statement ok
-DECLARE ASPECT role WITH $${"type": "object", "required": ["value"], "properties": {"value": {"enum": ["key", "measure", "dimension", "timestamp", "attribute"]}}}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY role WITH $${"type": "object", "required": ["value"], "properties": {"value": {"enum": ["key", "measure", "dimension", "timestamp", "attribute"]}}}$$ AS FACT ON COLUMN;
 
 statement ok
-DECLARE ASPECT entity WITH $${"type": "object"}$$ AS FACT ON TABLE;
+DECLARE PROPERTY entity WITH $${"type": "object"}$$ AS FACT ON TABLE;
 
 statement ok
-DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS VIEW;
+DECLARE PROPERTY spend WITH $${"title": "Spend"}$$ AS VIEW;
 
 statement ok
 GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t"}$$;
@@ -64,7 +64,7 @@ GLOSS role ON spend.amount AS $${"value": "measure"}$$;
 Invalid Input Error
 
 query TTT
-SELECT subject, aspect, state FROM GLOSSARY(spend) ORDER BY subject, aspect;
+SELECT subject, property, state FROM GLOSSARY(spend) ORDER BY subject, property;
 ----
 fin.spend	entity	current
 fin.spend.period	role	current
@@ -73,7 +73,7 @@ fin.spend.value	role	current
 # --- measured like a table's column, and served while the view and what it reads are unchanged
 
 statement ok
-DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max": {}}}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY min_max WITH $${"type": "object", "properties": {"min": {}, "max": {}}}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
@@ -87,7 +87,7 @@ min_max	fin.spend.value	min_max	{"min":1.0,"max":2.0}	true
 # to the table behind it, and that table
 
 query T
-SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m WHERE m.function = 'min_max';
+SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM results m WHERE m.function = 'min_max';
 ----
 fin.spend definition,fin.spend result lineage,fin.t data,min_max function,min_max property
 
@@ -133,7 +133,7 @@ SELECT min_max() FROM spend.value;
 min_max	fin.spend.value	min_max	{"min":2.0,"max":10.0}	true
 
 query TTT
-SELECT subject, aspect, state FROM GLOSSARY(spend) WHERE aspect IN ('role', 'entity') ORDER BY subject, aspect;
+SELECT subject, property, state FROM GLOSSARY(spend) WHERE property IN ('role', 'entity') ORDER BY subject, property;
 ----
 fin.spend	entity	stale
 fin.spend.period	role	stale
@@ -152,7 +152,7 @@ fin.spend.value	current
 # --- a view over the view: its data is both views' and the table's
 
 statement ok
-DECLARE ASPECT spend_total WITH $${"title": "Spend, total"}$$ AS VIEW;
+DECLARE PROPERTY spend_total WITH $${"title": "Spend, total"}$$ AS VIEW;
 
 statement ok
 GLOSS spend_total ON fin AS $${"sql": "SELECT sum(value) AS value FROM (SELECT * FROM spend) s"}$$;
@@ -163,7 +163,7 @@ SELECT min_max() FROM spend_total.value;
 min_max	fin.spend_total.value	min_max	{"min":16.0,"max":16.0}	true
 
 query T
-SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM measurements m ORDER BY begin_snapshot DESC LIMIT 1;
+SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.begin_snapshot = m.begin_snapshot) FROM results m ORDER BY begin_snapshot DESC LIMIT 1;
 ----
 fin.spend definition,fin.spend result lineage,fin.spend_total definition,fin.spend_total result lineage,fin.t data,min_max function,min_max property
 

@@ -26,7 +26,7 @@ data it read. A person can review and decide.
 
 | Coding harness | Data harness | In glossql |
 |---|---|---|
-| type system | what must be known about each dataset, table, column and relationship | `DECLARE ASPECT` |
+| type system | what must be known about each dataset, table, column and relationship | `DECLARE PROPERTY` |
 | type annotations, docstrings | annotations: what one row is, a column's unit, a measure's additivity | `GLOSS` |
 | compiler error | validation on write against the property's JSON Schema | |
 | linter | quality checks: keys, joins, hierarchies | the `quality` kit |

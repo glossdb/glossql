@@ -7,17 +7,17 @@ adds are in the kit's `SKILL.md` ([kits](kits.md)).
 | Keyword | Industry word | What it is |
 |---|---|---|
 | subject | asset | What a value is attached to: a dataset, a table, a column, a relationship, a source. A view and its columns count as a table and its columns |
-| `ASPECT` | property | One property the glossary holds, with a JSON Schema, the kinds of asset it applies to, and when it is required |
-| `ON COLUMN`, `ON TABLE`, … (grains) | scope | The kinds of asset an aspect applies to |
-| `FACT` aspect | stated property | A value an agent or a person states |
-| `MEASUREMENT` aspect | computed property | A value a function computes from the data |
-| `VIEW` aspect | view | SQL served as a view under the aspect's name: a metric, a single value or a table |
-| `GLOSS` | annotation | One actor's value for one aspect on one asset, validated and stored with the lake snapshot |
+| `PROPERTY` | property | One property the glossary holds, with a JSON Schema, the kinds of asset it applies to, and when it is required |
+| `ON COLUMN`, `ON TABLE`, … (grains) | scope | The kinds of asset a property applies to |
+| `FACT` property | stated property | A value an agent or a person states |
+| `MEASUREMENT` property | computed property | A value a function computes from the data |
+| `VIEW` property | view | SQL served as a view under the property's name: a metric, a single value or a table |
+| `GLOSS` | annotation | One actor's value for one property on one asset, validated and stored with the lake snapshot |
 | `DECLARE FUNCTION … RETURNS` | measurement | One SQL query over the data; its result is stored with the inputs it read and the lake snapshot it read at |
-| `DECLARE FUNCTION` without `RETURNS` (detector) | scoring function | A query that scores how far the values for an aspect agree |
-| `DECLARE TEST` | test | Declared on an aspect: who may annotate it, which detector scores it, and a threshold |
+| `DECLARE FUNCTION` without `RETURNS` (detector) | scoring function | A query that scores how far the values for a property agree |
+| `DECLARE TEST` | test | Declared on a property: who may annotate it, which detector scores it, and a threshold |
 | `TESTS()` | test results | One row per asset and test: `state`, `score`, whether it is current |
-| `GLOSSARY()` | business glossary | One row per asset and aspect, with its value and state |
+| `GLOSSARY()` | business glossary | One row per asset and property, with its value and state |
 | `current` · `stale` · `possibly` · `conflict` · `missing` | valid · outdated · possibly outdated · conflict · missing value | The state of a row in `GLOSSARY()` |
 | `state` in `TESTS()`, `test_state` in `GLOSSARY()` | test status | `green`, `yellow`, `orange`, `red` or `error` |
 | the `inputs` table | provenance | What a measurement read: one row per asset and what was read of it |
@@ -25,5 +25,5 @@ adds are in the kit's `SKILL.md` ([kits](kits.md)).
 | `DECLARE RECIPE` | load query | The SQL that loads one table from a source |
 | `IMPORT` | load | Runs a load query again; every load is a DuckLake snapshot |
 | `PREVIEW` | preview, dry run | Runs a query at a source and loads nothing |
-| kit | rule pack | A domain's aspects, functions and tests, with a skill that teaches them |
+| kit | rule pack | A domain's properties, functions and tests, with a skill that teaches them |
 | actor | user, service account | An agent or a person; set on the connection |

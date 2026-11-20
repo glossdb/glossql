@@ -328,7 +328,7 @@ string JsonStringField(const string &document_text, const string &field) {
 //! serves as a view, or the stop that ends one — and the disclosure key every
 //! reader may rely on. What a reader needs of the view's rows — the period, the
 //! measure and its additivity, the slices — is glossed on the view's columns under
-//! a kit's aspects (SPEC §5.2).
+//! a kit's properties (SPEC §5.2).
 const char *const DEFINITION_CONTRACT = R"JSON({
   "type": "object",
   "oneOf": [{"required": ["sql"]}, {"required": ["stopped"]}],
