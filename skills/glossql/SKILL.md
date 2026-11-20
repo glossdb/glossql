@@ -109,7 +109,7 @@ Where a test scores a disagreement as `red`, annotate again with a
 | `DECLARE TEST t ON property [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | says who may annotate a property and which detector scores its values. A detector that compares assets with each other is refused (`cross_subject`) |
 | `SELECT t() FROM staff;` | runs a test on each asset at or under the one named that holds a value of its property, and stores one result per asset; a stored result that is current is returned as it is |
 | `FROM glossql_kit('path-or-url');` | runs a kit's statements, one row each |
-| `FROM glossql_lineage($$sql$$);` | what computes each output column of a `SELECT`: `(column, derivation, complete, shape)` |
+| `SELECT lineage() FROM view;` | a view's stored lineage: per column the columns of loaded tables it is computed from, the tables it scans, the column pairs its joins equate |
 
 A body is written between `$$` and `$$` as it is: plain double quotes
 inside, nothing escaped. A view's `sql` is one line inside its JSON

@@ -58,10 +58,10 @@ fin.revenue	fin.orders.amount	reads
 fin.revenue	fin.orders.customer	reads
 
 query TTT
-SELECT "column", derivation, complete FROM views_lineage('fin') WHERE view = 'revenue' ORDER BY ALL;
+SELECT "column", inputs, complete FROM views_lineage('fin') WHERE view = 'revenue' ORDER BY ALL;
 ----
-customer	fin.orders.customer:BIGINT	true
-total	sum(fin.orders.amount:DECIMAL(21,1))	true
+customer	[fin.orders.customer]	true
+total	[fin.orders.amount]	true
 
 # three views over orders, one of them a view of a view
 

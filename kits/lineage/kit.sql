@@ -97,9 +97,10 @@ UNION ALL SELECT "from", "to", kind FROM glossql_kind_edges(dataset_name);
 --===------------------------------------------------------------------===--
 -- A view's stored lineage, read whole for a dataset (NULL: every dataset),
 -- one row per view, view the view's name:
---   views_lineage   per output column: column, derivation (what computes
---                   it, each scanned column as scan.column:type), complete
---                   (false where the walk could not follow a step), shape
+--   views_lineage   per output column: column, inputs (the columns of
+--                   loaded tables it is computed from, as
+--                   schema.table.column, each once), complete (false
+--                   where the walk could not follow a step), shape
 --                   (ratio, average or distinct, where that decides how it
 --                   adds up); a view that does not plan has one row, no
 --                   column, complete false
@@ -112,49 +113,35 @@ UNION ALL SELECT "from", "to", kind FROM glossql_kind_edges(dataset_name);
 --                   join columns, DISTINCT on them, or filtered to
 --                   row_number() = 1 over them), join_number (the pairs of
 --                   one join, its key, share it)
---   views_mapping   per output column, branch of the union its rows come
---                   from (1 where it has none) and scanned column: the
---                   branch's derivation, where a table read more than once
---                   carries each scan's alias as scan[alias].column;
---                   table_name and table_column; alias; condition (what
---                   the view's joins and filters require of that scan
---                   alone); lookup (the equalities of the join that joins
---                   that scan to the rows before it); literals (what the
---                   derivation tests or returns, as written); complete; a
---                   view that does not plan has one row, complete false
+-- Each unnests one list of the stored value per view; nothing else of the
+-- value is carried to the rows.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.lineage_values(dataset_name) AS TABLE
 SELECT dataset, split_part(subject, '.', 2) AS view, value, error FROM main.results
 WHERE function = 'lineage' AND (dataset_name IS NULL OR dataset = dataset_name);
 
 CREATE OR REPLACE MACRO main.views_lineage(dataset_name) AS TABLE
-WITH l AS (FROM main.lineage_values(dataset_name))
-SELECT l.dataset, l.view, u.c.name AS "column", u.c.derivation, (l.value->>'complete')::BOOLEAN AS complete, u.c.shape
-FROM l, unnest(from_json(l.value->'columns', '[{"name": "VARCHAR", "derivation": "VARCHAR", "shape": "VARCHAR"}]')) u(c)
-UNION ALL SELECT dataset, view, NULL, NULL, false, NULL FROM l
-WHERE value IS NULL OR json_array_length(value->'columns') = 0;
+WITH l AS (
+  SELECT dataset, view, (value->>'complete')::BOOLEAN AS complete,
+         from_json(value->'columns', '[{"name": "VARCHAR", "inputs": ["VARCHAR"], "shape": "VARCHAR"}]') AS cols
+  FROM main.lineage_values(dataset_name)),
+u AS (SELECT dataset, view, complete, unnest(cols) AS c FROM l)
+SELECT dataset, view, c.name AS "column", c.inputs, complete, c.shape FROM u
+UNION ALL SELECT dataset, view, NULL, NULL, false, NULL FROM l WHERE cols IS NULL OR len(cols) = 0;
 
 CREATE OR REPLACE MACRO main.views_scans(dataset_name) AS TABLE
-SELECT l.dataset, l.view, u.s.table_name, u.s.columns
-FROM main.lineage_values(dataset_name) l,
-     unnest(from_json(l.value->'scans', '[{"table_name": "VARCHAR", "columns": ["VARCHAR"]}]')) u(s);
+WITH u AS (
+  SELECT dataset, view, unnest(from_json(value->'scans', '[{"table_name": "VARCHAR", "columns": ["VARCHAR"]}]')) AS s
+  FROM main.lineage_values(dataset_name))
+SELECT dataset, view, s.table_name, s.columns FROM u;
 
 CREATE OR REPLACE MACRO main.views_joins(dataset_name) AS TABLE
-SELECT l.dataset, l.view, u.j.left_column, u.j.right_column, u.j.left_unique, u.j.right_unique, u.j.join_number
-FROM main.lineage_values(dataset_name) l,
-     unnest(from_json(l.value->'joins', '[{"left_column": "VARCHAR", "right_column": "VARCHAR", "left_unique": "BOOLEAN",
-                                         "right_unique": "BOOLEAN", "join_number": "INTEGER"}]')) u(j);
-
-CREATE OR REPLACE MACRO main.views_mapping(dataset_name) AS TABLE
-WITH l AS (FROM main.lineage_values(dataset_name))
-SELECT l.dataset, l.view, u.m."column", u.m.branch, u.m.derivation, u.m.table_name, u.m.table_column, u.m.alias,
-       u.m.condition, u.m.lookup, u.m.literals, u.m.complete
-FROM l, unnest(from_json(l.value->'mapping', '[{"column": "VARCHAR", "branch": "INTEGER", "derivation": "VARCHAR",
-                                              "table_name": "VARCHAR", "table_column": "VARCHAR", "alias": "VARCHAR",
-                                              "condition": "VARCHAR", "lookup": "VARCHAR", "literals": ["VARCHAR"],
-                                              "complete": "BOOLEAN"}]')) u(m)
-UNION ALL SELECT dataset, view, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false FROM l
-WHERE value IS NULL OR json_array_length(value->'mapping') = 0;
+WITH u AS (
+  SELECT dataset, view,
+         unnest(from_json(value->'joins', '[{"left_column": "VARCHAR", "right_column": "VARCHAR", "left_unique": "BOOLEAN",
+                                            "right_unique": "BOOLEAN", "join_number": "INTEGER"}]')) AS j
+  FROM main.lineage_values(dataset_name))
+SELECT dataset, view, j.left_column, j.right_column, j.left_unique, j.right_unique, j.join_number FROM u;
 
 -- The class of an asset by its path: what a property's grains name. A bare
 -- name is a dataset, or a source where no dataset carries it. An asset of a
@@ -217,14 +204,11 @@ CREATE OR REPLACE MACRO main.place_list() AS list_concat([
 CREATE OR REPLACE MACRO main.place_columns(dataset_name) AS TABLE
 SELECT "from" AS subject, "to" AS asset FROM main.contains_edges(dataset_name);
 
--- place_sources lists each scanned column once per view column: a derivation
--- through stacked views names one many times
+-- place_sources: a view's reads edges, and per view column the columns it is computed from
 CREATE OR REPLACE MACRO main.place_sources(dataset_name) AS TABLE
 SELECT "from" AS subject, "to" AS asset FROM main.view_edges(dataset_name) WHERE kind = 'reads'
-UNION SELECT dataset_name || '.' || l.view || '.' || l."column", u.path
-FROM main.views_lineage(dataset_name) l,
-     unnest(list_distinct(regexp_extract_all(coalesce(l.derivation, ''), '([A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*):', 1))) u(path)
-WHERE l."column" IS NOT NULL;
+UNION SELECT dataset_name || '.' || view || '.' || "column", unnest(inputs)
+FROM main.views_lineage(dataset_name) WHERE "column" IS NOT NULL;
 
 CREATE OR REPLACE MACRO main.place_joined(dataset_name) AS TABLE
 SELECT DISTINCT dataset_name || '.' || j.view AS subject, side AS asset
@@ -415,18 +399,13 @@ LEFT JOIN held h ON h.subject = p.asset;
 -- definition(where): one row per view of the place, its definition: view
 -- (its path), kind (its definition's: table, value, metric, rule, NULL for
 -- a plain view), body (the annotation that defines it, where a kit reads a
--- key of its own), the SQL of
--- the annotation that defines it (sql, or stopped), its columns with what
--- each is computed from (name, position, derivation, shape), what it
--- reads of each loaded table (table_name, columns) and its joins
--- (left_column, right_column, left_unique, right_unique, join_number: the
--- pairs of one join share its number), each loaded table
--- with the source its recipe loads it from (source; NULL for a view it
--- reads or a table loaded without a recipe), and per read of a table, by
--- the branch of the union it is read in and its alias, what the view's
--- joins and filters require of that read alone (conditions: table_name,
--- branch, alias, condition, NULL where nothing is required; rendered as
--- the lineage renders a derivation).
+-- key of its own), the SQL of the annotation that defines it (sql, or
+-- stopped), its columns with the columns of loaded tables each is computed
+-- from (name, position, inputs, shape), what it reads of each loaded table
+-- (table_name, columns) and its joins (left_column, right_column,
+-- left_unique, right_unique, join_number: the pairs of one join share its
+-- number), each loaded table with the source its recipe loads it from
+-- (source; NULL for a view it reads or a table loaded without a recipe).
 -- definitions(dataset) is the same for every view of a dataset at once:
 -- the views the dataset defines, never a table of the same name.
 --===------------------------------------------------------------------===--
@@ -440,17 +419,14 @@ SELECT dataset_name || '.' || a.name AS view,
        b.body::JSON AS body,
        json_extract_string(b.body, '$.sql') AS sql,
        json_extract_string(b.body, '$.stopped') AS stopped,
-       list_transform(from_json(l.value->'columns', '[{"name": "VARCHAR", "derivation": "VARCHAR", "shape": "VARCHAR"}]'),
-                      lambda c, i: {'name': c.name, 'position': i, 'derivation': c.derivation, 'shape': c.shape}) AS columns,
+       list_transform(from_json(l.value->'columns', '[{"name": "VARCHAR", "inputs": ["VARCHAR"], "shape": "VARCHAR"}]'),
+                      lambda c, i: {'name': c.name, 'position': i, 'inputs': c.inputs, 'shape': c.shape}) AS columns,
        (SELECT list({'table_name': s.table_name, 'columns': s.columns, 'source': r."to"} ORDER BY s.table_name)
         FROM unnest(from_json(l.value->'scans', '[{"table_name": "VARCHAR", "columns": ["VARCHAR"]}]')) u(s)
         LEFT JOIN loaded r ON r."from" = s.table_name) AS reads,
        CASE WHEN json_array_length(l.value->'joins') > 0
             THEN from_json(l.value->'joins', '[{"left_column": "VARCHAR", "right_column": "VARCHAR", "left_unique": "BOOLEAN",
-                                              "right_unique": "BOOLEAN", "join_number": "INTEGER"}]') END AS joins,
-       CASE WHEN json_array_length(l.value->'conditions') > 0
-            THEN from_json(l.value->'conditions', '[{"table_name": "VARCHAR", "branch": "INTEGER", "alias": "VARCHAR",
-                                                   "condition": "VARCHAR"}]') END AS conditions
+                                              "right_unique": "BOOLEAN", "join_number": "INTEGER"}]') END AS joins
 FROM main.properties a LEFT JOIN bodies b ON b.view = a.name LEFT JOIN lv l ON l.view = a.name
 WHERE a.kind = 'VIEW'
   AND (b.view IS NOT NULL OR a.name IN (SELECT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW'));

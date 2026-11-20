@@ -554,9 +554,10 @@ SELECT * FROM definition('itself');
 - `annotations(property, where)`: the annotations of one property;
 - `results(function, where)`: the stored results of one function,
   each with the values it held, once per change (`history`);
-- `definition(where)`: a view's SQL and what it reads, each loaded
-  table with the source it is loaded from, and what the view's joins
-  and filters require of each read of a table.
+- `definition(where)`: a view's SQL and what it reads: each column
+  with the columns of loaded tables it is computed from, each loaded
+  table with the columns read of it and the source it is loaded from,
+  and the column pairs its joins equate.
 
 The where is a place, walked from the function's subject over the
 lineage (`lineage(dataset)`: what a dataset contains, what a view
@@ -587,8 +588,11 @@ place's walk passed (a view's lineage, a table's relationships, which
 views of a dataset are metrics), so a
 member added to the place later changes a node it read. A view's
 lineage is a stored result of its own, `lineage` on the view
-(`SELECT lineage() FROM <view>`): what the view scans, joins and maps
-and what computes each column, with the nodes its planning read (its
+(`SELECT lineage() FROM <view>`): the tables the view scans with the
+columns read of each, the column pairs its joins equate, and per column
+the columns of loaded tables it is computed from and whether it is a
+ratio, an average or a distinct count; it holds no text of the view's
+expressions. It is stored with the nodes its planning read (its
 definition, and that of each relation and macro its SQL names, through
 the views it reads and the macros it calls) and the relations it reads as rows of `edges`.
 Defining the view stores it in the same write; a change to a relation

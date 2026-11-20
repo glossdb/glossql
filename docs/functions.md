@@ -51,21 +51,19 @@ See [kits](kits.md).
 
 A view's lineage is a stored result: the result of `lineage` on the
 view (`SELECT lineage() FROM <view>`), stored when the view is defined
-and computed again once a node it read changed. It holds what
-computes each of the view's columns (`derivation`, `complete`,
-`shape`), read from its plan. A leaf is `dataset.table.column:TYPE`.
-A function, an operator and a `CASE` read as their name over their
-operands, a literal as written: `coalesce(a, b)`, `=(a, 'D')`,
-`and(a, b)`, `in(a, 'D', 'A')`, `is_null(a)`,
-`case(when a then b, else c)`, `row_number() over(partition by a order by b)`.
-`complete` is false where a part of the plan could not be resolved; that
-part reads `<?>`, or `<?class>` with the expression's class.
+and computed again once a node it read changed. It is read from the
+view's plan and holds, per column of the view, the columns of loaded
+tables it is computed from (`inputs`, as `dataset.table.column`, each
+once) and its `shape`; the tables the view scans with the columns it
+reads of each (`scans`); the column pairs its joins equate (`joins`);
+and `complete`, false where a part of the plan could not be resolved.
 `shape` says how the column was computed where that decides how it
 adds up: `ratio` (a division by an aggregate), `average`, `distinct` (a
 distinct count), else NULL. A sum over one of them keeps the shape.
+The lineage holds no text of the view's expressions.
 
-The lineage kit reads it per dataset (`views_lineage`, `views_scans`, `views_joins`,
-`views_mapping`; its SKILL.md).
+The lineage kit reads it per dataset (`views_lineage`, `views_scans`,
+`views_joins`; its SKILL.md).
 
 ## glossql_columns
 

@@ -40,18 +40,17 @@ again, it is out of date like any result, and computed again by
 before the checks that read it. Computed again with the same value, it
 keeps the snapshot it changed at, so what read it stays current.
 
-Four reads serve the stored lineage of a dataset's views, one row per
+Three reads serve the stored lineage of a dataset's views, one row per
 view and part; NULL reads every dataset's:
 
 | Read | Columns | A row is |
 |---|---|---|
-| `views_lineage(dataset)` | `dataset`, `view`, `column`, `derivation`, `complete`, `shape` | one output column of a view; a view that does not plan has one row, no column, `complete` false |
+| `views_lineage(dataset)` | `dataset`, `view`, `column`, `inputs`, `complete`, `shape` | one output column of a view, with the columns of loaded tables it is computed from (`inputs`, as `dataset.table.column`, each once); a view that does not plan has one row, no column, `complete` false |
 | `views_scans(dataset)` | `dataset`, `view`, `table_name`, `columns` | one table a view scans, joins and filters included, with the columns it reads |
 | `views_joins(dataset)` | `dataset`, `view`, `left_column`, `right_column`, `left_unique`, `right_unique`, `join_number` | one pair of columns a join of a view equates, as `schema.table.column`, the left side as the predicate's left input; `left_unique` where that side is joined one row per value, `join_number` shared by the pairs of one join |
-| `views_mapping(dataset)` | `dataset`, `view`, `column`, `branch`, `derivation`, `table_name`, `table_column`, `alias`, `condition`, `lookup`, `literals`, `complete` | one output column of a view per branch of its union and per lake column it is computed from: what the view's joins and filters require of that scan (`condition`), the equalities that look it up (`lookup`), the literals the derivation tests or returns |
 
 ```sql
-SELECT "column", derivation FROM views_lineage('fin') WHERE view = 'revenue';
+SELECT "column", inputs FROM views_lineage('fin') WHERE view = 'revenue';
 ```
 
 ## The read functions
@@ -64,7 +63,7 @@ says where. Both are constants.
 |---|---|
 | `annotations(property, where)` | `asset`, `property`, `value`, `state`, `threshold`; state `missing` where nobody annotated the asset; `threshold` the THRESHOLD of the test on the property, NULL where it has none. A property declared on tables returns no row for a column |
 | `results(function, where)` | `asset`, `function`, `value`, `error`; both empty where no result is stored; `history`, each value the result held, oldest first, once per change, the newest last |
-| `definition(where)` | one row per view: `view`, `kind` (`table`, `value`, `metric`, `rule`, NULL for a plain view), `body` (the annotation that defines it, where a kit reads a key of its own), `sql`, `stopped`, `columns`, `reads`, `joins`, `conditions`. The view's SQL and what it reads, each loaded table with the `source` it is loaded from, and per read of a table (`branch`, `alias`) the `condition` the view's joins and filters require of it alone |
+| `definition(where)` | one row per view: `view`, `kind` (`table`, `value`, `metric`, `rule`, NULL for a plain view), `body` (the annotation that defines it, where a kit reads a key of its own), `sql`, `stopped`, `columns`, `reads`, `joins`. The view's SQL and what it reads: each column with the columns of loaded tables it is computed from (`inputs`), each loaded table with the columns read of it and the `source` it is loaded from, and the column pairs its joins equate |
 
 The places, walked from the function's subject:
 

@@ -180,18 +180,18 @@ statement ok
 SELECT lineage() FROM ops.visit_count;
 
 query TTTT
-SELECT dataset, view, "column", derivation FROM views_lineage('fin') ORDER BY ALL;
+SELECT dataset, view, "column", inputs FROM views_lineage('fin') ORDER BY ALL;
 ----
-fin	revenue	customer	fin.orders.customer:VARCHAR
-fin	revenue	total	sum(fin.orders.amount:DECIMAL(21,1))
+fin	revenue	customer	[fin.orders.customer]
+fin	revenue	total	[fin.orders.amount]
 
 query TTTT
-SELECT dataset, view, "column", derivation FROM views_lineage(NULL) ORDER BY ALL;
+SELECT dataset, view, "column", inputs FROM views_lineage(NULL) ORDER BY ALL;
 ----
-fin	revenue	customer	fin.orders.customer:VARCHAR
-fin	revenue	total	sum(fin.orders.amount:DECIMAL(21,1))
-ops	visit_count	customer	ops.visits.customer:VARCHAR
-ops	visit_count	visits	count(ops.visits.id:INTEGER)
+fin	revenue	customer	[fin.orders.customer]
+fin	revenue	total	[fin.orders.amount]
+ops	visit_count	customer	[ops.visits.customer]
+ops	visit_count	visits	[ops.visits.id]
 
 # more rows than one chunk holds come out whole
 statement ok
@@ -360,3 +360,50 @@ revenue	customer	NULL
 revenue	total	NULL
 summed_rate	value	ratio
 
+# --- the stored lineage holds per column the columns of loaded tables it is computed from, each once, and no
+# text of the expressions: three views stacked over a UNION ALL of three tables with CASE expressions store a
+# small value, and the third view's inputs are the base tables' columns
+
+statement ok
+CREATE TABLE fin.stock_a AS SELECT 'A' || i AS part, i * 1.0 AS qty, 'PAL' AS uom FROM range(3) r(i);
+
+statement ok
+CREATE TABLE fin.stock_b AS SELECT 'B' || i AS part, i * 2.0 AS qty, 'pal' AS uom FROM range(3) r(i);
+
+statement ok
+CREATE TABLE fin.stock_c AS SELECT 'C' || i AS part, i * 3.0 AS qty, 'Pl' AS uom FROM range(3) r(i);
+
+statement ok
+CREATE VIEW fin.stock_all AS
+SELECT part, CASE WHEN uom = 'PAL' THEN qty * 24 WHEN uom = 'CS' THEN qty ELSE NULL END AS cases, 'a' AS system FROM fin.stock_a
+UNION ALL SELECT part, CASE uom WHEN 'pal' THEN qty * 20 WHEN 'kart' THEN qty END, 'b' FROM fin.stock_b
+UNION ALL SELECT part, CASE WHEN uom IN ('Pl', 'PL') THEN qty * 30 ELSE qty END, 'c' FROM fin.stock_c;
+
+statement ok
+CREATE VIEW fin.stock_cases AS
+SELECT part, CASE WHEN cases > 10 THEN cases * 2 WHEN cases > 5 THEN cases ELSE coalesce(cases, 0) END AS cases, system FROM fin.stock_all;
+
+statement ok
+CREATE VIEW fin.stock_flags AS
+SELECT part, CASE WHEN cases > 20 AND system IN ('a', 'b') THEN 'high' WHEN cases > 0 THEN 'some' ELSE 'none' END AS level FROM fin.stock_cases;
+
+statement ok
+SELECT lineage() FROM fin.stock_flags;
+
+query I
+SELECT strlen(value::VARCHAR) < 1024 FROM main.results WHERE function = 'lineage' AND subject = 'fin.stock_flags';
+----
+true
+
+query TT
+SELECT "column", list_sort(inputs) FROM views_lineage('fin') WHERE view = 'stock_flags' ORDER BY ALL;
+----
+level	[fin.stock_a.qty, fin.stock_a.uom, fin.stock_b.qty, fin.stock_b.uom, fin.stock_c.qty, fin.stock_c.uom]
+part	[fin.stock_a.part, fin.stock_b.part, fin.stock_c.part]
+
+query TT
+SELECT table_name, columns FROM views_scans('fin') WHERE view = 'stock_flags' ORDER BY ALL;
+----
+fin.stock_a	[part, qty, uom]
+fin.stock_b	[part, qty, uom]
+fin.stock_c	[part, qty, uom]

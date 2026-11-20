@@ -125,6 +125,8 @@ void RegisterGlossService(ExtensionLoader &loader);
 //! `complete` is false when the walk could not follow a step (glossql_lineage.cpp)
 struct QueryLineage {
 	vector<pair<string, string>> columns;
+	//! per column, the columns of lake tables it is computed from, as schema.table.column, each once
+	vector<vector<string>> inputs;
 	//! per column, how its value was computed where that decides how it adds up:
 	//! "ratio", "average", "distinct", or empty
 	vector<string> shapes;
@@ -144,29 +146,8 @@ struct QueryLineage {
 		idx_t join;
 	};
 	vector<JoinPair> joins;
-	//! the mapping of a view: one row per output column, branch of its union and
-	//! scanned column, filled where the view's own SQL is given
-	struct Mapping {
-		string column;
-		idx_t branch;
-		string derivation;
-		//! schema.table and its column, empty where the derivation reads no lake table
-		string table;
-		string table_column;
-		//! the name the view's SQL gives the scan, where it reads the table more than once
-		string alias;
-		//! the conjuncts of the view's joins and filters that read this scan alone
-		string condition;
-		//! the equalities of the join that looks this scan up: its columns against
-		//! the columns of the side it is joined to
-		string lookup;
-		vector<string> literals;
-		bool complete;
-	};
-	vector<Mapping> mapping;
 };
-//! `view_sql`, the view's CREATE VIEW statement, asks for the mapping too
-QueryLineage LineageOf(ClientContext &context, const string &sql, const string *view_sql = nullptr);
+QueryLineage LineageOf(ClientContext &context, const string &sql);
 //! The lineage as one JSON object, column to derivation; a column the walk could
 //! not follow carries a digest of the SQL, so it reads moved whenever the SQL did
 string LineageJson(const QueryLineage &lineage, const string &sql);
