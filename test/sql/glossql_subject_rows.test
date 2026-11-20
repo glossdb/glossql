@@ -1,0 +1,78 @@
+# name: test/sql/glossql_subject_rows.test
+# description: a function that reads its subject's rows with dataset_cells($subject, true) reads the subject and what it reads, not its dataset: another view defined and another table loaded leave its result current, a load of the table it reads outdates it (SPEC §6)
+# group: [sql]
+
+require glossql
+
+require json
+
+require parquet
+
+require ducklake
+
+statement ok
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_subject_rows_lake/');
+
+statement ok
+USE ws;
+
+statement ok
+PRAGMA glossql;
+
+statement ok
+DECLARE DATASET d SET (purpose: 'subject rows');
+
+statement ok
+USE d;
+
+statement ok
+CREATE TABLE d.a AS SELECT i AS id FROM range(10) t(i);
+
+statement ok
+CREATE TABLE d.b AS SELECT i AS id FROM range(5) t(i);
+
+statement ok
+DECLARE PROPERTY v1 WITH $${"x-kind": "relation"}$$ AS VIEW;
+
+statement ok
+GLOSS v1 ON d AS $${"sql": "SELECT id FROM a"}$$;
+
+statement ok
+DECLARE PROPERTY cells WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+DECLARE FUNCTION cell_count FOR d AS $$SELECT count(*) AS n FROM dataset_cells($subject, true)$$ RETURNS cells;
+
+statement ok
+SELECT cell_count() FROM d.v1;
+
+# the result read the view, its lineage and the table the view reads; not the other table, not the dataset
+query TT
+SELECT i.asset, i.what FROM main.inputs i JOIN main.results m ON m.id = i.result
+WHERE m.function = 'cell_count' AND i.what NOT IN ('function', 'property') ORDER BY ALL;
+----
+d.a	data
+d.v1	definition
+d.v1	result lineage
+
+statement ok
+DECLARE PROPERTY v2 WITH $${"x-kind": "relation"}$$ AS VIEW;
+
+statement ok
+GLOSS v2 ON d AS $${"sql": "SELECT id FROM b"}$$;
+
+statement ok
+INSERT INTO d.b VALUES (99);
+
+query I
+SELECT count(*) FROM glossql_outdated() WHERE function = 'cell_count';
+----
+0
+
+statement ok
+INSERT INTO d.a VALUES (99);
+
+query TT
+SELECT asset, what FROM glossql_outdated() WHERE function = 'cell_count';
+----
+d.a	data

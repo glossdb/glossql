@@ -2254,8 +2254,8 @@ struct Read {
 };
 
 //! The data a body reads, as a place: subject_column() and the relationship checks the subject's
-//! own; series_aggregate() the views of its place; dataset_cells() its dataset's tables, its views ('views'),
-//! both (true), the tables
+//! own; series_aggregate() the views of its place; dataset_cells() the subject's own rows where it is
+//! called on $subject, else its dataset's tables, its views ('views'), both (true), the tables
 //! and views of a place, or the one table it names; a dataset it names is the subject's, since one
 //! that is not is refused at the declaration. A table the body names in FROM is that table: one
 //! named without its dataset is taken in the subject's, by the name the lake spells it with, or as
@@ -2286,6 +2286,10 @@ static Read DataRead(ClientContext &context, const std::set<string> &places, con
 			}
 		}
 		auto first = list.empty() ? string() : list[0];
+		if (first == "$subject") {
+			// the subject's own rows: the subject is the place, not its dataset
+			return {"data", what, "itself"};
+		}
 		bool constant = !first.empty() && first[0] != '<' && first[0] != '$';
 		if (constant && first.find('.') != string::npos) {
 			return {"data", what, first};
@@ -2421,8 +2425,9 @@ lv AS MATERIALIZED (SELECT schema_name || '.' || view_name AS v FROM duckdb_view
 	}
 	if (data) {
 		ctes += R"(,
-rd AS (SELECT a.s, t.table_name AS r FROM a JOIN main.tables_read($d) t ON t.asset = a.asset
-       WHERE a."read" = 'data' AND (a.what = 'data' OR (a.what = 'tables' AND t.asset_kind = 'table')
+rd AS (SELECT a.s, t.table_name AS r FROM a JOIN main.tables_read($d) t
+         ON t.asset = a.asset OR (a.asset = $d AND t.asset_kind IN ('table', 'view'))
+       WHERE a."read" = 'data' AND (a.what = 'data' OR (a.what = 'tables' AND t.asset_kind IN ('table', 'dataset'))
                                     OR (a.what = 'views' AND t.asset_kind = 'view'))
        UNION SELECT s, asset FROM a WHERE "read" = 'data' AND "where" NOT IN (SELECT "where" FROM pl)),
 rv AS (SELECT s, r FROM rd UNION SELECT rd.s, vr.relation FROM rd JOIN vr ON vr.view = rd.r))";
