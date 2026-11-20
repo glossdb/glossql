@@ -62,9 +62,9 @@ says where. Both are constants.
 
 | Read | Returns, one row per asset of the place |
 |---|---|
-| `annotations(property, where)` | `asset`, `property`, `value`, `state`, `threshold`; state `missing` where nobody annotated the asset; `threshold` the THRESHOLD of the test on the property, NULL where it has none. A property declared on tables returns no row for a column. `'x-kind <kind>'` as the property reads every property declared with that `x-kind`: a person's newest annotation, else an agent's |
+| `annotations(property, where)` | `asset`, `property`, `value`, `state`, `threshold`; state `missing` where nobody annotated the asset; `threshold` the THRESHOLD of the test on the property, NULL where it has none. A property declared on tables returns no row for a column |
 | `results(function, where)` | `asset`, `function`, `value`, `error`; both empty where no result is stored; `history`, each value the result held, oldest first, once per change, the newest last |
-| `definition(where)` | one row per view: `view`, `kind`, `schema` (the property's, where a kit reads its own keys), `sql`, `stopped`, `columns`, `reads`, `joins`, `conditions`. The view's SQL and what it reads, each loaded table with the `source` it is loaded from, and per read of a table (`branch`, `alias`) the `condition` the view's joins and filters require of it alone; not the rest of the annotation that defines it |
+| `definition(where)` | one row per view: `view`, `kind` (`table`, `value`, `metric`, `rule`, NULL for a plain view), `body` (the annotation that defines it, where a kit reads a key of its own), `sql`, `stopped`, `columns`, `reads`, `joins`, `conditions`. The view's SQL and what it reads, each loaded table with the `source` it is loaded from, and per read of a table (`branch`, `alias`) the `condition` the view's joins and filters require of it alone |
 
 The places, walked from the function's subject:
 
@@ -78,8 +78,8 @@ The places, walked from the function's subject:
 | `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads. `annotations()` of a property declared `ON SOURCE`, such as `conventions`, returns each source's annotation |
 | `its dataset` | the subject's dataset itself |
 | `the dataset` | the dataset and every asset in it |
-| `the dataset's metrics` | the views of the dataset that are metrics, and their columns |
-| `the dataset's single values` | the views of the dataset that are single values, and their columns |
+| `the dataset's metrics` | the views of the dataset of kind `metric`, and their columns |
+| `the dataset's single values` | the views of the dataset of kind `value`, and their columns |
 | a kit's own | what its `lineage_places_<kind>` macro names |
 
 ```sql

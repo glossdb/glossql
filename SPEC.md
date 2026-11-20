@@ -41,7 +41,7 @@ Ground rules:
   a measurement — its query runs over the data as the statement reads it; a
   detector's query runs over its test's `annotations` relation. A
   function is either a measurement or a detector, never a
-  metric. Metrics are concepts: VIEW properties, run as their SQL (§5.1).
+  metric. A metric is a view definition, run as its SQL (§5.2).
   Analytical logic does not live in the grammar.
 
 ## 2. Origins
@@ -128,7 +128,7 @@ Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
 `EXPLAIN` pass as reads about schema and plans (`DESCRIBE` over any
 name a read can plan — a loaded table, a store relation, a shipped
 read, a metrics read with its arguments; `SHOW TABLES` lists the bound
-dataset's tables and its metric definitions' views, typed; `EXPLAIN` only
+dataset's tables and its view definitions' views, typed; `EXPLAIN` only
 over a query), `DROP TABLE` routes to the rules
 above, and everything else that would alter schema or data directly is
 refused. Tables come from recipes.
@@ -207,13 +207,6 @@ DECLARE PROPERTY unit WITH $${
   "properties": {"value": {"type": "string"}, "source_column": {"type": "string"}}
 }$$ AS FACT;
 
-DECLARE PROPERTY revenue WITH $${
-  "title": "revenue",
-  "description": "Income from sales or services",
-  "x-kind": "measure",
-  "x-indicators": ["revenue", "sales", "income", "turnover", "receipts"]
-}$$ AS VIEW;
-
 DECLARE PROPERTY min_max WITH $${
   "type": "object",
   "properties": {"min": {}, "max": {}}
@@ -224,27 +217,25 @@ The kind fixes the property's role:
 
 - **FACT** — an authored JSON assertion (units are USD, `created_at` is a
   timestamp, this convention holds). The `WITH` schema validates the gloss
-  body. Constants and formulas are FACT properties — "cannot be defined" means
-  simply not `AS VIEW`.
-- **VIEW** — an SQL-defined concept (revenue, accounts_receivable, dso).
-  Metrics are VIEW properties: the value materializes by running the metric definition
-  SQL, never through a function. Glosses validate against the **metric definition
-  contract** (§5.2), not the `WITH` schema; the `WITH` schema
-  carries the ontology entry (description, indicators, parameters,
-  rendering). Anything the company revises — meaning, unit, owner, source —
-  belongs in a gloss instead, because a declaration cannot be re-declared
-  once anything is glossed on the property and so can never be superseded,
-  in conflict or outranked.
+  body. Constants are FACT properties; what is computed in SQL is a view
+  definition.
+- **VIEW** — a view definition's name (revenue, accounts_receivable, dso,
+  a kept query). No statement declares it: the first view definition of
+  the name declares it (§5.2). Its value materializes by running the
+  definition's SQL, never through a function. Glosses validate against the
+  **view definition contract** (§5.2). What the company says about the
+  view — meaning, unit, owner, source — is a gloss on the view and its
+  columns.
 - **MEASUREMENT** — a statistical evaluation (min_max, outliers,
   relationship_candidates). Never glossed: its value is the bound
   function's stored output (§6, §7), stored with the inputs it read and
-  served by `GLOSSARY()` beside facts and metric definitions.
+  served by `GLOSSARY()` beside facts and view definitions.
 
 The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP | SOURCE, …` list
 is the property's **grain**: the subject classes glosses (and a `RETURNS`
 binding) may attach to. Absent, the property applies to all grains. A VIEW
-property takes no grain clause: a metric is defined on the dataset (§4),
-so its grain is the dataset. Disclosure
+property has no grain: a view is defined on the dataset (§4), so its grain
+is the dataset. Disclosure
 (§5.3) stays within it: absence shows only on subjects the property is
 declared for.
 
@@ -292,8 +283,9 @@ One uniform statement; every body is JSON. Bodies are dollar-quoted
 ```sql
 GLOSS unit ON orders.amount AS $${"value": "EUR", "source_column": "currency_code"}$$;
 
-GLOSS revenue ON fin.journal_lines AS $${
-  "sql": "SELECT debit_amount - credit_amount FROM journal_lines WHERE account_type = 'revenue'",
+GLOSS revenue ON fin AS $${
+  "kind": "metric",
+  "sql": "SELECT debit_amount - credit_amount AS value FROM journal_lines WHERE account_type = 'revenue'",
   "assumptions": [
     {"dimension": "sign", "assumption": "ledger stores debits positive",
      "basis": "column_stats", "confidence": 0.9}
@@ -303,15 +295,18 @@ GLOSS revenue ON fin.journal_lines AS $${
 GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned rows"}$$;
 ```
 
-- You cannot gloss a property that was not declared. Admission validates the
-  body by the property's kind: FACT → the property's `WITH` schema, VIEW → the
-  metric definition contract, MEASUREMENT → rejected.
+- You cannot gloss a property that was not declared, with one exception: a
+  **view definition**, `GLOSS name ON dataset AS $${"sql": …}$$` where no
+  property is named `name`, declares `name` as a VIEW property by the actor
+  that writes it, in the same write. Admission validates the body by the
+  property's kind: FACT → the property's `WITH` schema, VIEW → the view
+  definition contract, MEASUREMENT → rejected.
 - A property whose grain names `TABLE` or `COLUMN` takes only loaded
   subjects: the table, and the column, must exist in the dataset. A
   property without a grain clause takes the subject as spelled; a VIEW
   property takes the dataset.
-- The **metric definition contract** is fixed, like the test-results schema (§7.2): what
-  the engine reads of a metric definition, and nothing a reader of its rows needs.
+- The **view definition contract** is fixed, like the test-results schema (§7.2): what
+  the engine reads of a view definition, and nothing a reader of its rows needs.
   It is open: a key it does not name passes.
 
 ```json
@@ -321,6 +316,7 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   "properties": {
     "sql": {"type": "string"},
     "stopped": {"type": "string"},
+    "kind": {"enum": ["table", "value", "metric", "rule"]},
     "assumptions": {
       "type": "array",
       "items": {
@@ -338,34 +334,44 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 }
 ```
 
-- A metric definition's view is a table of its dataset (§3), and its columns
+- `kind` says what the view is for: `table` (rows), `value` (one row, a
+  column `value`), `metric` (a value per period, with its dimensions) or
+  `rule` (each row it returns breaks a rule, so it returns none when the
+  rule holds). A definition without `kind` is a plain view: a query kept
+  with its reason. A new definition may change the kind; a stop that
+  names none keeps the kind of the newest definition with `sql`.
+- A view definition's view is a table of its dataset (§3), and its columns
   are subjects. What a reader needs to combine the view's rows — which
   column is the period, which is the measure and how it combines over
   periods and members (a flow sums, a stock keeps its last level, a
   ratio re-divides its summed halves, served as columns the claim
   names), which columns slice it, and the row identity — is glossed on
-  the view and its columns under the properties a kit declares, never
-  keyed in the body. A reader that needs a claim nobody made refuses
-  and names the gloss; it defaults nothing.
+  the view and its columns under the properties a kit declares. A reader
+  that needs a claim nobody made refuses and names the gloss; it
+  defaults nothing.
+- The body may carry more keys than the contract names. A server may read
+  `meaning` and `tags` from it, and a metric's `time`, `measure` and
+  `dimensions`, and write them as the annotations on the view and its
+  columns they stand for; the engine reads none of them.
 - `stopped` in place of `sql` records that the author serves no number,
   and why: what is missing, where, how much, what closes it. The read
   interface refuses with that text, a reader of the view's rows abstains
   with it, `view_definitions` serves it, and the assumptions ride the
-  body as on any metric definition. Supersession is the
+  body as on any view definition. Supersession is the
   usual: a human `sql` over an agent `stopped` serves, a human `stopped`
   over an agent `sql` stops.
-- **A metric definition is a view in the catalog.** The dataset's schema holds
-  a view under the metric's name carrying the serving metric definition's
-  `sql`, in the engine's dialect; a superseding metric definition replaces it,
+- **A view definition is a view in the catalog.** The dataset's schema holds
+  a view under its name carrying the serving view definition's
+  `sql`, in the engine's dialect; a superseding view definition replaces it,
   a stop ends it. The bare name — or `dataset.metric` — plans as a
   table does. A dataset's schema
-  is one name space: a metric definition on a loaded table's name is refused,
-  and a recipe on a defined metric's name is refused.
+  is one name space: a view definition on a loaded table's name is refused,
+  and a recipe on a defined view's name is refused.
 - **Supersession key: (subject, property, actor kind).** A human re-gloss
   supersedes the human's value; an agent's supersedes the agent's. The values
   stay separate; a test scores across them (§7).
-- Two VIEW glosses of the same property on different tables may coexist — two
-  ways to calculate revenue arriving at the same number is a correct state.
+- Two view definitions that calculate revenue two ways, under two names,
+  arriving at the same number is a correct state.
   Whether they reconcile is a test's job (a function runs both and
   reports the residual; a detector gives it a state).
 - The glossary is an ordinary queryable relation; removal is SQL:
@@ -440,7 +446,7 @@ relationship it participates in, from either side; the far endpoint's own
 context is never pulled in.
 
 `subject::property` narrows either read to one declared property, as in TESTS
-(§7.2) — a metric's declaration and metric definition SQL are one narrowed read
+(§7.2) — a view's definition and its SQL are one narrowed read
 away:
 
 ```sql
@@ -562,13 +568,12 @@ table is loaded from, and the edges of each kind a kit declares, §4):
 | `its relationships` | a view's: those between the tables it reads and those that touch the view; a table's or a column's: those that touch it; a dataset's: all; a relationship's: itself |
 | `its source systems` | a table's: the source its recipe loads it from; a view's: those of the tables it reads |
 | `its dataset` | the subject's dataset itself |
-| `the dataset's metrics` | the metrics of the subject's dataset and their columns |
-| `the dataset's single values` | the single values of the subject's dataset (`x-kind: scalar`) and their columns |
+| `the dataset's metrics` | the views of kind `metric` of the subject's dataset and their columns |
+| `the dataset's single values` | the views of kind `value` of the subject's dataset and their columns |
 | `the dataset` | the subject's dataset and every asset in it |
 
-and each place a kit adds for its kind of asset (§4). On an asset a kit declares by an annotation,
-`annotations('x-kind <kind>', 'itself')` reads that annotation alone,
-and a result on such an asset reads the node that declares it.
+and each place a kit adds for its kind of asset (§4). A result on an asset a kit
+declares reads the node that declares it.
 
 The lake's snapshot id is the only version. An input is a node: an
 asset and what was read of it, such as `fin.orders.amount`
@@ -779,11 +784,11 @@ PoC notes: batch visibility comes from (long-running) transactions — the
 running system's run_id + snapshot-head pointer is the verbose version of
 the same guarantee · the actor rides the transport — the connection,
 or an interface-asked answer, recorded through the interface with the actor kind human ·
-value-at-read: a VIEW property's
+value-at-read: a view definition's
 value is its view — `FROM dso`, or `FROM fin.dso` — the collapsed
-current metric definition expanded at plan time, nesting allowed behind a
+current view definition expanded at plan time, nesting allowed behind a
 cycle guard; running stays the reader's act: one serving interface over
-every VIEW gloss, whatever flavor `x-kind` names.
+every view definition, whatever its kind.
 
 Deferred, not under discussion: access rights · portability · persistence
 backend and engine mapping.

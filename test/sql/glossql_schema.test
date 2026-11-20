@@ -89,10 +89,7 @@ GLOSS unit ON nothing.amount AS $${"value": "EUR"}$$;
 ----
 Invalid Input Error
 
-# --- a VIEW body meets the definition contract (sql or stopped, assumptions disclosed); a definition is a view
-
-statement ok
-DECLARE PROPERTY revenue WITH $${"title": "revenue", "description": "income from sales", "x-kind": "measure"}$$ AS VIEW;
+# --- a view definition meets the contract (sql or stopped, its kind, assumptions disclosed); a definition is a view
 
 statement error
 GLOSS revenue ON fin AS $${"formula": "x"}$$;
@@ -100,31 +97,31 @@ GLOSS revenue ON fin AS $${"formula": "x"}$$;
 Invalid Input Error
 
 statement error
-GLOSS revenue ON fin AS $${"sql": "SELECT 1", "stopped": "x"}$$;
+GLOSS revenue ON fin AS $${"kind": "metric", "sql": "SELECT 1", "stopped": "x"}$$;
 ----
 Invalid Input Error
 
 statement error
-GLOSS revenue ON fin AS $${"sql": 1}$$;
+GLOSS revenue ON fin AS $${"kind": "metric", "sql": 1}$$;
 ----
 Invalid Input Error
 
 statement error
-GLOSS revenue ON fin AS $${"sql": "SELECT 1", "assumptions": [{"basis": "guess"}]}$$;
+GLOSS revenue ON fin AS $${"kind": "metric", "sql": "SELECT 1", "assumptions": [{"basis": "guess"}]}$$;
 ----
 Invalid Input Error
 
 statement error
-GLOSS revenue ON orders AS $${"sql": "SELECT 1"}$$;
+GLOSS revenue ON orders AS $${"kind": "metric", "sql": "SELECT 1"}$$;
 ----
 Invalid Input Error
 
 # a key beside the contract's is admitted
 statement ok
-GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders", "window": "7 days"}$$;
+GLOSS revenue ON fin AS $${"kind": "metric", "sql": "SELECT sum(amount) AS revenue FROM fin.orders", "window": "7 days"}$$;
 
 statement ok
-GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders", "additivity": "additive", "assumptions": [{"assumption": "amounts are net", "basis": "column_stats", "confidence": 0.9}]}$$;
+GLOSS revenue ON fin AS $${"kind": "metric", "sql": "SELECT sum(amount) AS revenue FROM fin.orders", "additivity": "additive", "assumptions": [{"assumption": "amounts are net", "basis": "column_stats", "confidence": 0.9}]}$$;
 
 query R
 SELECT revenue FROM fin.revenue;
@@ -161,12 +158,32 @@ SELECT subject, value FROM GLOSSARY(fin::revenue);
 ----
 fin	{"stopped": "no cost basis loaded yet"}
 
-# a view definition on a loaded table's name is refused
-statement ok
-DECLARE PROPERTY orders WITH $${}$$ AS VIEW;
+# a stop that names no kind keeps the kind of the newest definition with sql
+query TT
+SELECT view, kind FROM view_bodies('fin');
+----
+revenue	metric
+
+# the first definition declared the name, a VIEW property by the actor that wrote it; a refused definition
+# declares nothing, and a kind outside the four is refused
+query TT
+SELECT kind, declared_by FROM properties WHERE name = 'revenue';
+----
+VIEW	agent
 
 statement error
-GLOSS orders ON fin AS $${"sql": "SELECT 1"}$$;
+GLOSS chart ON fin AS $${"kind": "chart", "sql": "SELECT 1 AS value"}$$;
+----
+Invalid Input Error
+
+query I
+SELECT count(*) FROM properties_history WHERE name IN ('chart');
+----
+0
+
+# a view definition on a loaded table's name is refused
+statement error
+GLOSS orders ON fin AS $${"kind": "metric", "sql": "SELECT 1"}$$;
 ----
 Invalid Input Error
 

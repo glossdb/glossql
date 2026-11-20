@@ -518,16 +518,9 @@ static arena_ptr<TransformResultValue> FinalizeDeclareTest(PEGTransformer &trans
 }
 GLOSSQL_TRANSFORM(StartDeclareTest, FinalizeDeclareTest)
 
-//! GlossPropertyKind <- GlossKindMeasurement / GlossKindFact / GlossKindView
+//! GlossPropertyKind <- GlossKindMeasurement / GlossKindFact
 static string PropertyKindText(ParseResult &parse_result) {
-	auto &kind = GetChoice(parse_result);
-	if (IsRule(kind, "GlossKindMeasurement")) {
-		return "MEASUREMENT";
-	}
-	if (IsRule(kind, "GlossKindFact")) {
-		return "FACT";
-	}
-	return "VIEW";
+	return IsRule(GetChoice(parse_result), "GlossKindMeasurement") ? "MEASUREMENT" : "FACT";
 }
 
 //! GlossGrain <- GlossGrainDataset / GlossGrainTable / GlossGrainColumn / GlossGrainRelationship /
@@ -584,10 +577,6 @@ static arena_ptr<TransformResultValue> FinalizeDeclareProperty(PEGTransformer &t
 				                  ",\"value\":" + JsonString(Text(transformer, clause_when.GetChild(2))) + "}");
 			}
 		}
-	}
-	if (kind == "VIEW" && !grains.empty()) {
-		// SPEC §5.1: a metric is defined on the dataset; a grain clause is refused
-		throw ParserException("a VIEW property takes no grain clause: its grain is the dataset");
 	}
 	return MakeWrite(
 	    transformer, "properties",
@@ -774,10 +763,9 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	statement("GlossDeclareProperty <- 'DECLARE' 'PROPERTY' Identifier 'WITH' StringLiteral 'AS' GlossPropertyKind "
 	          "GlossGrainClause?",
 	          StartDeclareProperty);
-	rule("GlossPropertyKind <- GlossKindMeasurement / GlossKindFact / GlossKindView");
+	rule("GlossPropertyKind <- GlossKindMeasurement / GlossKindFact");
 	rule("GlossKindMeasurement <- 'MEASUREMENT'");
 	rule("GlossKindFact <- 'FACT'");
-	rule("GlossKindView <- 'VIEW'");
 	rule("GlossGrainClause <- 'ON' List(GlossGrain) GlossWhen?");
 	rule("GlossWhen <- 'WHEN' GlossWhenBody");
 	rule("GlossWhenBody <- GlossWhenType / GlossWhenProperty");

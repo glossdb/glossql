@@ -22,7 +22,6 @@ A kit can declare a schema for the keys of a body:
 
 ```glossql
 DECLARE PROPERTY kpi_definition WITH $${
-  "x-kind": "definition",
   "type": "object", "additionalProperties": false,
   "properties": {
     "sql": {"type": "string"}, "stopped": {"type": "string"},

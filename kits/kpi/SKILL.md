@@ -71,8 +71,8 @@ like a loaded table's columns. That is where a reader of the numbers
 finds what it needs.
 
 ```sql
-DECLARE PROPERTY revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS VIEW;
 GLOSS revenue ON shop AS $${
+  "kind": "metric",
   "sql": "SELECT month AS period, customer, sum(amount) AS value FROM shop.orders GROUP BY ALL",
   "assumptions": [{"dimension": "scope", "assumption": "amounts are net of tax",
                    "basis": "column_profile", "confidence": 0.9}]

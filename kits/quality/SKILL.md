@@ -47,7 +47,7 @@ How to read them:
   is predicted when `from` is known.
 - **Derivations.** A candidate is reported at `match_rate >= 0.95`
   over at least 20 rows.
-- **Definition collisions.** Two metrics with the same `x-kind` that
+- **Definition collisions.** Two views of the same kind that
   are the same thing. `sql`: the two SQL texts parse to the same
   statement. `served_series`: the SQL differs but the monthly series
   agree. The series is read from the view's annotations: the column

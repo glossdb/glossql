@@ -61,11 +61,23 @@ CREATE OR REPLACE MACRO main.view_edges(dataset_name) AS TABLE
 SELECT "from", "to", kind FROM main.edges WHERE split_part("from", '.', 1) = dataset_name;
 
 -- view_bodies(dataset): the annotation that defines each view of a
--- dataset, (view, body), the newest on the dataset
+-- dataset, (view, body, kind), the newest on the dataset. kind is the
+-- body's: table, value, metric or rule, NULL for a plain view; a stop that
+-- names none keeps the kind of the newest body with sql
 CREATE OR REPLACE MACRO main.view_bodies(dataset_name) AS TABLE
-SELECT property AS view, body FROM main.glossary
-WHERE dataset = dataset_name AND subject = dataset_name AND property IN (SELECT name FROM main.properties WHERE kind = 'VIEW')
-QUALIFY row_number() OVER (PARTITION BY property ORDER BY begin_snapshot DESC) = 1;
+WITH defs AS (
+  SELECT property, body, begin_snapshot, end_snapshot FROM main.glossary_history
+  WHERE dataset = dataset_name AND subject = dataset_name AND property IN (SELECT name FROM main.properties WHERE kind = 'VIEW')),
+served AS (
+  SELECT property, (list(json_extract_string(body, '$.kind') ORDER BY begin_snapshot DESC)
+                    FILTER (WHERE json_extract_string(body, '$.sql') IS NOT NULL))[1] AS kind
+  FROM defs GROUP BY property)
+SELECT d.property AS view, d.body,
+       CASE WHEN json_extract_string(d.body, '$.sql') IS NOT NULL OR json_exists(d.body, '$.kind')
+            THEN json_extract_string(d.body, '$.kind') ELSE s.kind END AS kind
+FROM defs d LEFT JOIN served s USING (property)
+WHERE d.end_snapshot IS NULL
+QUALIFY row_number() OVER (PARTITION BY d.property ORDER BY d.begin_snapshot DESC) = 1;
 
 -- loaded_from_edges(dataset): the lineage's loaded from edges alone,
 -- table -> source, for each loaded table of the dataset a recipe loads
@@ -173,12 +185,10 @@ CREATE OR REPLACE MACRO main.asset_grain(asset) AS
 --                              view's: those of the tables it reads
 --   'its dataset'              the subject's dataset itself
 --   'the dataset'              the subject's dataset and every asset in it
---   'the dataset's metrics'    the views of the subject's dataset that are
---                              metrics (no relation or single value), and
---                              their columns
---   'the dataset's single values'  the views of the subject's dataset that
---                              are single values (x-kind scalar), and their
---                              columns
+--   'the dataset's metrics'    the views of the subject's dataset of kind
+--                              metric, and their columns
+--   'the dataset's single values'  the views of the subject's dataset of
+--                              kind value, and their columns
 -- and the places of each kind of asset a kit declares
 -- (glossql_kind_places(): its lineage_places_<kind> macro; a row with no
 -- subject names a place it adds). Any other where is refused, not_a_place.
@@ -246,19 +256,19 @@ CREATE OR REPLACE MACRO main.place_dataset(dataset_name) AS TABLE
 SELECT dataset_name AS subject, dataset_name AS asset
 UNION SELECT dataset_name, "to" FROM main.contains_edges(dataset_name);
 
--- place_views_of(dataset, kind): the dataset's views of one x-kind ('metric' where the property names
--- none) and their columns
-CREATE OR REPLACE MACRO main.place_views_of(dataset_name, x_kind) AS TABLE
+-- place_views_of(dataset, kind): the dataset's views of one kind, as their definitions name it, and
+-- their columns
+CREATE OR REPLACE MACRO main.place_views_of(dataset_name, view_kind) AS TABLE
 WITH members AS (
-  SELECT dataset_name || '.' || name AS m FROM main.properties
-  WHERE kind = 'VIEW' AND coalesce(json_extract_string(schema, '$.x-kind'), 'metric') = x_kind
-    AND name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW'))
+  SELECT dataset_name || '.' || view AS m FROM main.view_bodies(dataset_name)
+  WHERE kind = view_kind
+    AND view IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW'))
 SELECT DISTINCT dataset_name AS subject, "to" AS asset FROM main.contains_edges(dataset_name)
 WHERE "to" IN (SELECT m FROM members) OR "from" IN (SELECT m FROM members);
 
 CREATE OR REPLACE MACRO main.place_metrics(dataset_name) AS TABLE FROM main.place_views_of(dataset_name, 'metric');
 
-CREATE OR REPLACE MACRO main.place_single_values(dataset_name) AS TABLE FROM main.place_views_of(dataset_name, 'scalar');
+CREATE OR REPLACE MACRO main.place_single_values(dataset_name) AS TABLE FROM main.place_views_of(dataset_name, 'value');
 
 -- places(dataset): every place of every subject of a dataset, (subject,
 -- where, asset); 'itself' is the subject and has no row here
@@ -326,7 +336,7 @@ UNION ALL SELECT dataset_name, 'the dataset''s metrics', dataset_name, 'views me
 UNION ALL SELECT dataset_name, 'the dataset''s metrics', asset, 'definition' FROM main.place_metrics(dataset_name)
           WHERE len(string_split(asset, '.')) = 2
 -- the dataset's single values: which views are single values, and the definition of each
-UNION ALL SELECT dataset_name, 'the dataset''s single values', dataset_name, 'views scalar'
+UNION ALL SELECT dataset_name, 'the dataset''s single values', dataset_name, 'views value'
 UNION ALL SELECT dataset_name, 'the dataset''s single values', asset, 'definition' FROM main.place_single_values(dataset_name)
           WHERE len(string_split(asset, '.')) = 2
 UNION ALL SELECT dataset_name, 'its relationships', dataset_name, 'relationships';
@@ -369,40 +379,15 @@ UNION ALL SELECT dataset_name, 'dataset', r FROM rels WHERE k = 'table';
 -- conflict, as GLOSSARY() says; missing, and no value, where nobody
 -- annotated the asset), threshold (the THRESHOLD of the test declared
 -- on the property, NULL where it has none). A property declared on
--- tables returns no row for a column. A what of the form 'x-kind <kind>' names every property
--- declared with that x-kind: one row per
--- property and asset, the value a person's newest annotation, else an
--- agent's, state current, or missing; on an asset of a kind a kit declares
--- by an annotation, that annotation alone.
+-- tables returns no row for a column.
 --===------------------------------------------------------------------===--
-CREATE OR REPLACE MACRO main.annotations_of(property, where_) AS TABLE
+CREATE OR REPLACE MACRO main.annotations(property, where_) AS TABLE
 WITH grains AS (SELECT grains FROM main.properties WHERE name = property)
 SELECT p.asset, property AS property, g.value, coalesce(g.state, 'missing') AS state,
        (SELECT max(t.threshold) FROM main.tests t WHERE t.property = property) AS threshold
 FROM main.place(where_) p
 LEFT JOIN glossql_glossary(split_part(main.read_subject(), '.', 1), property, false) g ON g.subject = p.asset
 WHERE EXISTS (SELECT 1 FROM grains WHERE len(grains) = 0 OR list_contains(grains, main.asset_grain(p.asset)));
-
-CREATE OR REPLACE MACRO main.annotations_of_kind(kind, where_) AS TABLE
-WITH props AS (SELECT name, grains FROM main.properties WHERE json_extract_string(schema, '$.x-kind') = kind),
-held AS (
-  SELECT subject, property, body FROM main.glossary
-  WHERE dataset = split_part(main.read_subject(), '.', 1) AND property IN (SELECT name FROM props) AND actor_kind IN ('human', 'agent')
-  QUALIFY row_number() OVER (PARTITION BY subject, property ORDER BY CASE actor_kind WHEN 'human' THEN 0 ELSE 1 END, begin_snapshot DESC) = 1)
-SELECT p.asset, pr.name AS property, h.body AS value, CASE WHEN h.body IS NULL THEN 'missing' ELSE 'current' END AS state,
-       (SELECT max(t.threshold) FROM main.tests t WHERE t.property = pr.name) AS threshold
-FROM main.place(where_) p
--- an asset of a kind a kit declares by an annotation: that annotation is its own
-LEFT JOIN glossql_kind_assets(split_part(main.read_subject(), '.', 1), kind) k
-  ON k.asset = p.asset AND starts_with(k.node_what, 'annotation ')
-JOIN props pr ON CASE WHEN k.asset IS NOT NULL THEN pr.name = substr(k.node_what, 12)
-                      ELSE len(pr.grains) = 0 OR list_contains(pr.grains, main.asset_grain(p.asset)) END
-LEFT JOIN held h ON h.subject = coalesce(k.node_asset, p.asset) AND h.property = pr.name;
-
-CREATE OR REPLACE MACRO main.annotations(property, where_) AS TABLE
-FROM query(CASE WHEN starts_with(property, 'x-kind ')
-                THEN 'FROM main.annotations_of_kind(''' || replace(substr(property, 8), '''', '''''') || ''', ''' || replace(where_, '''', '''''') || ''')'
-                ELSE 'FROM main.annotations_of(''' || replace(property, '''', '''''') || ''', ''' || replace(where_, '''', '''''') || ''')' END);
 
 --===------------------------------------------------------------------===--
 -- results(function, where): one row per asset of the place, with the
@@ -426,8 +411,9 @@ LEFT JOIN held h ON h.subject = p.asset;
 
 --===------------------------------------------------------------------===--
 -- definition(where): one row per view of the place, its definition: view
--- (its path), kind (the property's x-kind), schema (the property's, where a
--- kit reads its own keys), the SQL of
+-- (its path), kind (its definition's: table, value, metric, rule, NULL for
+-- a plain view), body (the annotation that defines it, where a kit reads a
+-- key of its own), the SQL of
 -- the annotation that defines it (sql, or stopped), its columns with what
 -- each is computed from (name, position, derivation, shape), what it
 -- reads of each loaded table (table_name, columns) and its joins
@@ -438,8 +424,7 @@ LEFT JOIN held h ON h.subject = p.asset;
 -- the branch of the union it is read in and its alias, what the view's
 -- joins and filters require of that read alone (conditions: table_name,
 -- branch, alias, condition, NULL where nothing is required; rendered as
--- the lineage renders a derivation). The rest of the annotation, its
--- assumptions, is no part of the definition a body reads.
+-- the lineage renders a derivation).
 -- definitions(dataset) is the same for every view of a dataset at once:
 -- the views the dataset defines, never a table of the same name.
 --===------------------------------------------------------------------===--
@@ -449,8 +434,8 @@ WITH lv AS (SELECT split_part(subject, '.', 2) AS view, value FROM main.results
 loaded AS (FROM main.loaded_from_edges(dataset_name)),
 bodies AS (FROM main.view_bodies(dataset_name))
 SELECT dataset_name || '.' || a.name AS view,
-       json_extract_string(a.schema, '$.x-kind') AS kind,
-       a.schema::JSON AS schema,
+       b.kind,
+       b.body::JSON AS body,
        json_extract_string(b.body, '$.sql') AS sql,
        json_extract_string(b.body, '$.stopped') AS stopped,
        list_transform(from_json(l.value->'columns', '[{"name": "VARCHAR", "derivation": "VARCHAR", "shape": "VARCHAR"}]'),

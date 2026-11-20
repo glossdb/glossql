@@ -51,16 +51,12 @@ statement ok
 DECLARE PROPERTY unit WITH $${"type": "object", "properties": {"value": {"type": "string"}}}$$ AS FACT ON COLUMN;
 
 statement ok
-DECLARE PROPERTY revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS VIEW;
-
-statement ok
 DECLARE PROPERTY min_max WITH $${"type": "object"}$$ AS MEASUREMENT ON COLUMN, TABLE;
 
 query TTT
 SELECT name, kind, grains FROM properties ORDER BY name;
 ----
 min_max	MEASUREMENT	[COLUMN, TABLE]
-revenue	VIEW	[]
 unit	FACT	[COLUMN]
 
 # --- GLOSS: dollar-quoted JSON body, actor from the connection

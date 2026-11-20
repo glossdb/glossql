@@ -35,10 +35,7 @@ statement ok
 DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT ON COLUMN, TABLE;
 
 statement ok
-DECLARE PROPERTY spend WITH $${"title": "Spend"}$$ AS VIEW;
-
-statement ok
-GLOSS spend ON fin AS $${"sql": "SELECT a AS value FROM fin.t"}$$;
+GLOSS spend ON fin AS $${"kind": "metric", "sql": "SELECT a AS value FROM fin.t"}$$;
 
 statement ok
 GLOSS note ON t.a AS $${"text": "a number"}$$;
@@ -73,7 +70,7 @@ statement ok
 CREATE OR REPLACE TABLE fin.t AS SELECT 'x' || i AS a, i * 2 AS b FROM range(3) t(i);
 
 statement ok
-GLOSS spend ON fin AS $${"sql": "SELECT b AS value FROM fin.t"}$$;
+GLOSS spend ON fin AS $${"kind": "metric", "sql": "SELECT b AS value FROM fin.t"}$$;
 
 query TTT
 SELECT subject, property, current FROM GLOSSARY(fin, all => true) WHERE property IN ('note', 'min_max') ORDER BY ALL;

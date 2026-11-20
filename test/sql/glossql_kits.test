@@ -111,10 +111,7 @@ role	NULL	conflict
 # columns, under the kit's words
 
 statement ok
-DECLARE PROPERTY revenue WITH $${"title": "revenue"}$$ AS VIEW;
-
-statement ok
-GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders"}$$;
+GLOSS revenue ON fin AS $${"kind": "metric", "sql": "SELECT sum(amount) AS revenue FROM fin.orders"}$$;
 
 query R
 SELECT revenue FROM fin.revenue;

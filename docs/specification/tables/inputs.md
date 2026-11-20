@@ -17,7 +17,7 @@ at. No digest of what a read returned is stored or compared.
 | `begin_snapshot` | BIGINT | The lake snapshot the result took: `results.begin_snapshot`. |
 | `result` | BIGINT | The result that read the node: `results.id`. |
 | `end_snapshot` | BIGINT | The snapshot of the write that replaced the result; NULL while the result is current. The view leaves this column out. |
-| `asset` | VARCHAR | The asset read, by its path; the name of a property or a function; a macro's `schema.name`; an x-kind for the set of its properties. |
+| `asset` | VARCHAR | The asset read, by its path; the name of a property or a function; a macro's `schema.name`. |
 | `what` | VARCHAR | What was read of it, one of the nodes below. |
 
 ## Nodes
@@ -37,10 +37,9 @@ at. No digest of what a read returned is stored or compared.
 | `relationships` | a table | the `relationships` rows with a side on the table |
 | `relationships` | a dataset | the `relationships` rows of the dataset |
 | `assets` | a dataset | the table, column and view rows of its schema in the lake |
-| `views <kind>` | a dataset | the view rows of its schema in the lake whose property has that x-kind (`metric` where it names none): a view added or removed; a view defined again stays a member |
-| `properties` | an x-kind | the `properties` rows of that x-kind |
+| `views <kind>` | a dataset | the definitions of that kind on the dataset, as their bodies name it: one written or ended |
 
-The last five are sets: a member added or removed is a row begun or
+The last four are sets: a member added or removed is a row begun or
 ended, so the set changed at that snapshot. A member's own definition
 is a node of its own.
 
@@ -53,14 +52,13 @@ was walked over.
 | Read | Nodes |
 |---|---|
 | `annotations(p, where)` | per asset of the place that `p`'s grains admit, `annotation p`, `value p` and the `definition` of the asset's table or view (an annotation is stale once its asset's definition moved); `property` `p`, and `function` of each detector its tests name |
-| `annotations('x-kind k', where)` | the same for each property of the kind, and `properties` of `k` |
 | `results(f, where)` | per asset of the place `result f`, which its `history` changes with |
 | `definition(where)` | per view of the place its `definition` and `result lineage`, and the `recipe` of each table it reads, through views |
 | the subject's data, or a table the body names | `data` of each table read, through views, and the `definition` and `result lineage` of each view on the way |
 | a series of a place's views (`series_aggregate(subject, where, axes, grain)`) | `data` of each table the views of the place read, through views, the nodes the place's walk passes, and what the `axes` macro reads |
 | the lineage, read by a primitive (`glossql_additivity_cells`) | the nodes its place's walk passes |
 | the function itself | `function` of the function, `macro` of each macro its body follows, and `property` of the property it fills |
-| a subject of a kind a kit declares | the node that declares it (`node_asset`, `node_what` of `lineage_assets_<kind>`); `annotations('x-kind k', 'itself')` on it records that node and no `properties k` |
+| a subject of a kind a kit declares | the node that declares it (`node_asset`, `node_what` of `lineage_assets_<kind>`) |
 
 | Place | Nodes its walk passes |
 |---|---|
@@ -72,7 +70,7 @@ was walked over.
 | `its source systems` | a table's `recipe`; a view's `result lineage`, and the `recipe` of each table it reads, through views |
 | `the dataset` | the dataset's `assets` and `relationships` |
 | `the dataset's metrics` | the dataset's `views metric`, and each metric's `definition` |
-| `the dataset's single values` | the dataset's `views scalar`, and each single value's `definition` |
+| `the dataset's single values` | the dataset's `views value`, and each single value's `definition` |
 
 ## A view's lineage
 

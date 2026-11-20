@@ -31,9 +31,6 @@ CREATE TABLE t AS SELECT 1 AS a;
 statement ok
 DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT;
 
-statement ok
-DECLARE PROPERTY m WITH $${"title": "m"}$$ AS VIEW;
-
 # --- an annotation: its row begins at a snapshot of the lake that names no lake change
 
 statement ok
@@ -125,7 +122,7 @@ true
 # --- a definition: the view's row is written in the transaction of its glossary row, as the lake writes one
 
 statement ok
-GLOSS m ON d AS $${"sql": "SELECT a FROM t"}$$;
+GLOSS m ON d AS $${"kind": "metric", "sql": "SELECT a FROM t"}$$;
 
 query I
 SELECT sum(a) FROM m;
@@ -172,7 +169,7 @@ WHERE ours.snapshot_id = (SELECT begin_snapshot FROM glossary WHERE property = '
 
 # a definition that does not bind is refused and writes nothing
 statement error
-GLOSS m ON d AS $${"sql": "SELECT nope FROM t"}$$;
+GLOSS m ON d AS $${"kind": "metric", "sql": "SELECT nope FROM t"}$$;
 ----
 nope
 
@@ -183,7 +180,7 @@ SELECT a FROM t
 
 # a replacing definition ends the view's row and makes the next, in one snapshot
 statement ok
-GLOSS m ON d AS $${"sql": "SELECT a + 1 AS a FROM t"}$$;
+GLOSS m ON d AS $${"kind": "metric", "sql": "SELECT a + 1 AS a FROM t"}$$;
 
 query I
 SELECT sum(a) FROM m;
@@ -201,13 +198,13 @@ statement ok
 SET VARIABLE glossql_actor = 'human';
 
 statement ok
-GLOSS m ON d AS $${"sql": "SELECT a + 10 AS a FROM t"}$$;
+GLOSS m ON d AS $${"kind": "metric", "sql": "SELECT a + 10 AS a FROM t"}$$;
 
 statement ok
 RESET VARIABLE glossql_actor;
 
 statement ok
-GLOSS m ON d AS $${"sql": "SELECT a + 100 AS a FROM t"}$$;
+GLOSS m ON d AS $${"kind": "metric", "sql": "SELECT a + 100 AS a FROM t"}$$;
 
 query I
 SELECT sum(a) FROM m;
@@ -239,7 +236,7 @@ statement ok
 SET VARIABLE glossql_actor = 'human';
 
 statement ok
-GLOSS m ON d AS $${"sql": "SELECT a FROM t"}$$;
+GLOSS m ON d AS $${"kind": "metric", "sql": "SELECT a FROM t"}$$;
 
 statement ok
 RESET VARIABLE glossql_actor;
@@ -248,9 +245,6 @@ RESET VARIABLE glossql_actor;
 
 statement ok
 SET VARIABLE before = (SELECT max(snapshot_id) FROM __ducklake_metadata_ws.main.ducklake_snapshot);
-
-statement ok
-DECLARE PROPERTY w WITH $${"title": "w"}$$ AS VIEW;
 
 concurrentloop i 0 8
 
@@ -264,13 +258,13 @@ statement ok
 GLOSS note ON d AS $${"value": {i}}$$;
 
 statement ok
-GLOSS w ON d AS $${"sql": "SELECT {i} AS v"}$$;
+GLOSS w ON d AS $${"kind": "metric", "sql": "SELECT {i} AS v"}$$;
 
 statement ok
 GLOSS note ON d.t AS $${"value": {i}}$$;
 
 statement ok
-GLOSS w ON d AS $${"sql": "SELECT {i} + 100 AS v"}$$;
+GLOSS w ON d AS $${"kind": "metric", "sql": "SELECT {i} + 100 AS v"}$$;
 
 endloop
 

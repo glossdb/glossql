@@ -324,17 +324,18 @@ string JsonStringField(const string &document_text, const string &field) {
 	return result;
 }
 
-//! The metric definition contract: what the engine reads of a VIEW gloss — the sql it
-//! serves as a view, or the stop that ends one — and the disclosure key every
-//! reader may rely on. What a reader needs of the view's rows — the period, the
-//! measure and its additivity, the slices — is glossed on the view's columns under
-//! a kit's properties (SPEC §5.2).
+//! The view definition contract: what the engine reads of a definition — the sql it
+//! serves as a view, or the stop that ends one, and its kind — and the disclosure key
+//! every reader may rely on. Any other key passes. What a reader needs of the view's
+//! rows — the period, the measure and its additivity, the slices — is annotated on the
+//! view's columns under a kit's properties (SPEC §5.2).
 const char *const DEFINITION_CONTRACT = R"JSON({
   "type": "object",
   "oneOf": [{"required": ["sql"]}, {"required": ["stopped"]}],
   "properties": {
     "sql": {"type": "string"},
     "stopped": {"type": "string"},
+    "kind": {"enum": ["table", "value", "metric", "rule"]},
     "assumptions": {
       "type": "array",
       "items": {

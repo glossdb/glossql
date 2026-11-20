@@ -858,14 +858,18 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 
 	Inner inner(context);
 	// a definition is bound before the write, and its lineage planned: the lake binds it, and the write
-	// touches the catalogue alone
+	// touches the catalogue alone. A name no property declares, on a dataset, is a view definition: the
+	// write declares its property (SPEC §5.2)
 	ViewLineageResult admitted;
 	string admitted_sql;
+	bool defines = false;
 	if (bind.table == "glossary") {
 		auto resolved = subject(bind.row[0]);
 		auto kind = inner.Scalar("SELECT kind FROM " + inner.Current("properties") +
 		                         " WHERE name = " + bind.row[1].ToSQLString());
-		if (!kind.IsNull() && kind.ToString() == "VIEW" && resolved.find('.') == string::npos) {
+		defines = resolved.find('.') == string::npos && resolved.find(' ') == string::npos &&
+		          (kind.IsNull() ? SchemaExists(context, resolved) : kind.ToString() == "VIEW");
+		if (defines) {
 			admitted = AdmitDefinition(inner, resolved, bind.row[1].ToString(), json(bind.row[2]));
 			admitted_sql = JsonStringField(json(bind.row[2]), "sql");
 		}
@@ -919,6 +923,13 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 			auto actor = ActorKindOf(context);
 			auto resolved = subject(bind.row[0]);
 			auto body = json(bind.row[2]);
+			// a definition of a name no property declares declares it, by its actor, in this write
+			auto declared = inner.Scalar("SELECT count(*) FROM " + inner.Current("properties") +
+			                             " WHERE name = " + bind.row[1].ToSQLString());
+			if (defines && declared.GetValue<int64_t>() == 0) {
+				write.Insert("properties", bind.row[1].ToSQLString() + ", 'VIEW', '[]', NULL, '{}', now(), " +
+				                               QuoteText(DeclaredBy(context)));
+			}
 			auto property = AdmitGloss(context, inner, bind.row[1].ToString(), resolved, body, actor);
 			auto dataset = DatasetOf(context, resolved);
 			// a value is superseded per (subject, property, actor kind) (SPEC §5.2), within its dataset;
@@ -1199,8 +1210,12 @@ static const ChangeArm CHANGE_ARMS[] = {
 	 "CASE WHEN NOT contains(subject, '.') AND list_contains((SELECT views FROM gl_src), property) THEN lower(subject "
 	 "|| '.' || property) END",
 	 "'definition'", "$at", true, true},
+    // the views of a kind in a dataset: a definition of that kind written or ended, the kind its body names
+    {"$glossary",
+	 "CASE WHEN NOT contains(subject, '.') AND list_contains((SELECT views FROM gl_src), property) AND "
+	 "json_extract_string(body, '$.kind') IS NOT NULL THEN lower(subject) END",
+	 "'views ' || json_extract_string(body, '$.kind')", "$at", true, false},
     {"$properties", "lower(name)", "'property'", "$at", true, false},
-    {"$properties", "lower(json_extract_string(schema, '$.x-kind'))", "'properties'", "$at", true, false},
     {"$tests", "lower(property)", "'property'", "$at", true, false},
     {"$functions", "lower(name)", "'function'", "$at", true, false},
     {"$recipes", "lower(dataset || '.' || table_name)", "'recipe'", "$at", true, false},
@@ -1225,13 +1240,6 @@ static const ChangeArm CHANGE_ARMS[] = {
 	 "NOT contains(subject, '.') AND list_contains((SELECT views FROM gl_src), property)) v JOIN $properties a ON "
 	 "lower(a.name) = substr(v.asset, strpos(v.asset, '.') + 1)",
 	 "v.asset", "'definition'", "greatest(a.begin_snapshot, coalesce(a.end_snapshot, 0))", true, true},
-    // a view of a kind added to or removed from a dataset; a view defined again is the same member
-    {"(SELECT ds, r.name, unnest([CASE WHEN NOT list_contains(ends, r.b) THEN r.b END, CASE WHEN r.e IS NOT NULL "
-	 "AND NOT list_contains(begins, r.e) THEN r.e END]) AS at FROM (SELECT ds, ends, begins, unnest(rs) AS r FROM "
-	 "(SELECT ds, list(e) AS ends, list(b) AS begins, list({'name': name, 'b': b, 'e': e}) AS rs FROM gl_rel WHERE "
-	 "kind = 'v' GROUP BY ds, asset))) e JOIN $properties a ON a.kind = 'VIEW' AND a.name = e.name AND "
-	 "a.begin_snapshot <= e.at AND (a.end_snapshot IS NULL OR a.end_snapshot >= e.at)",
-	 "e.ds", "'views ' || coalesce(json_extract_string(a.schema, '$.x-kind'), 'metric')", "e.at", true, false},
 };
 
 //! When each node changed, one relation: gl_chg (key, what, dataset, function, at, checked, marked), one

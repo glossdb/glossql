@@ -135,13 +135,7 @@ pair_path         = rel_side, rel_op, rel_side ;
 (* -- glossary ----------------------------------------------------------- *)
 
 property_decl     = "PROPERTY", name, "WITH", json, "AS", property_kind ;
-property_kind     = "VIEW"                  (* SQL-defined; glosses validate
-                                                against the standard metric definition
-                                                schema; WITH schema carries the
-                                                ontology entry; defined on the
-                                                dataset, so it takes no grain
-                                                clause *)
-                  | ( "MEASUREMENT"          (* never glossed; value = bound
+property_kind     = ( "MEASUREMENT"          (* never glossed; value = bound
                                                 function's cached JSON output *)
                     | "FACT" ),              (* authored assertion; WITH schema
                                                 validates the gloss body *)
@@ -166,10 +160,13 @@ grain             = "DATASET" | "TABLE" | "COLUMN" | "RELATIONSHIP" | "SOURCE" ;
                        DECIMAL(18,2)) is one of them. *)
 
 gloss             = "GLOSS", name, "ON", subject, "AS", json ;
-                    (* body admission by declared kind:
+                    (* body admission by the property's kind:
                        FACT -> the property's WITH schema,
-                       VIEW -> the standard metric definition schema,
-                       MEASUREMENT -> rejected.
+                       MEASUREMENT -> rejected;
+                       a name no property declares, on a dataset, is a view
+                       definition: it declares the view property in the
+                       same write, and the body meets the view definition
+                       contract (SPEC 5.2).
                        supersession key: (subject, property, actor kind) *)
 
 (* -- functions ---------------------------------------------------------- *)
@@ -178,7 +175,7 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                     "AS", dollar,
                     [ "RETURNS", name ] ;
                     (* the engine's analytical machinery; never a metric
-                       (metrics are VIEW properties run as their SQL).
+                       (a metric is a view definition run as its SQL).
                        AS carries the body itself (fixture 24): a body
                        on disk was a body an agent over MCP could
                        neither write nor read, so the store keeps it and

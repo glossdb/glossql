@@ -2056,11 +2056,8 @@ static string ReadsCycle(Inner &inner, const string &name, const Value &returns,
 	             QuoteText(reads) +
 	             "), r AS (SELECT f.name, u.r.read, u.r.what FROM f, unnest(from_json(f.reads, '[{\"kind\": "
 	             "\"VARCHAR\", \"read\": \"VARCHAR\", \"what\": \"VARCHAR\"}]')) u(r) WHERE u.r.kind = 'read'),"
-	             " p AS (SELECT a.name, 'x-kind ' || json_extract_string(a.schema, '$.x-kind') AS kind FROM " +
-	             inner.Current("properties") +
-	             " a), e AS (SELECT r.name AS src, r.what AS dst FROM r WHERE r.read = 'results'"
-	             " UNION SELECT r.name, g.name FROM r JOIN f g ON g.returns = r.what OR g.returns IN"
-	             " (SELECT p.name FROM p WHERE p.kind = r.what) WHERE r.read = 'annotations'),"
+	             " e AS (SELECT r.name AS src, r.what AS dst FROM r WHERE r.read = 'results'"
+	             " UNION SELECT r.name, g.name FROM r JOIN f g ON g.returns = r.what WHERE r.read = 'annotations'),"
 	             " walk(n, path) AS (SELECT dst, [src, dst] FROM e WHERE src = " +
 	             QuoteText(name) +
 	             " AND dst <> src UNION ALL SELECT e.dst, list_append(w.path, e.dst) FROM walk w JOIN e ON e.src = w.n"
@@ -2396,9 +2393,7 @@ kind AS MATERIALIZED (FROM glossql_kind_assets($d)))";
 	if (annotations) {
 		ctes += R"(,
 props AS (SELECT DISTINCT wa.s, wa.what, x.name, from_json(x.grains, '["VARCHAR"]') AS grains FROM wa JOIN $properties x
-          ON x.name = wa.what
-          OR (starts_with(wa.what, 'x-kind ') AND json_extract_string(x.schema, '$.x-kind') = substr(wa.what, 8))
-          WHERE wa."read" = 'annotations'),
+          ON x.name = wa.what WHERE wa."read" = 'annotations'),
 -- the assets an annotations read returns rows for: those of the property's grains
 ann AS (SELECT a.s, a.asset, p.name FROM a JOIN props p ON p.s = a.s AND p.what = a.what
         WHERE a."read" = 'annotations' AND (len(p.grains) = 0 OR list_contains(p.grains, main.asset_grain(a.asset)))))";
@@ -2407,9 +2402,7 @@ ann AS (SELECT a.s, a.asset, p.name FROM a JOIN props p ON p.s = a.s AND p.what 
   UNION ALL SELECT s, split_part(asset, '.', 1) || '.' || split_part(asset, '.', 2), 'definition' FROM ann
             WHERE contains(asset, '.') AND main.asset_grain(asset) <> 'RELATIONSHIP'
   UNION ALL SELECT s, name, 'property' FROM props
-  UNION ALL SELECT p.s, t.detector, 'function' FROM $tests t JOIN props p ON p.name = t.property WHERE t.detector IS NOT NULL
-  UNION ALL SELECT s, substr(what, 8), 'properties' FROM wa WHERE "read" = 'annotations' AND starts_with(what, 'x-kind ')
-            AND NOT ("where" = 'itself' AND s IN (SELECT asset FROM kind)))";
+  UNION ALL SELECT p.s, t.detector, 'function' FROM $tests t JOIN props p ON p.name = t.property WHERE t.detector IS NOT NULL)";
 	}
 	if (data || definition) {
 		ctes += R"(,

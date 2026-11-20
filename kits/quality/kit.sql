@@ -285,8 +285,8 @@ ORDER BY seq;
 -- glossed on the value column folds the month: a flow summed, a stock the
 -- month's last level, a ratio its summed halves re-divided, the columns
 -- its numerator and denominator name; none claimed reads as flow. A
--- collision is two definitions of one flavor, the property's x-kind: a
--- definition flavored otherwise sits beside a metric and is never its
+-- collision is two definitions of one kind, as their bodies name it: a
+-- definition of another kind sits beside a metric and is never its
 -- twin. No definitions is one row with definitions 0.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.definition_collisions(ds) AS TABLE

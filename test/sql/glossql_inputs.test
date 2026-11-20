@@ -43,16 +43,10 @@ DECLARE PROPERTY meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 # two metrics: points scans results and races and joins them on race_id; race_count scans races alone
 
 statement ok
-DECLARE PROPERTY points WITH $${"title": "Points"}$$ AS VIEW;
+GLOSS points ON f1 AS $${"kind": "metric", "sql": "SELECT r.date AS period, sum(x.points) AS value FROM f1.results x JOIN f1.races r ON r.race_id = x.race_id GROUP BY 1"}$$;
 
 statement ok
-GLOSS points ON f1 AS $${"sql": "SELECT r.date AS period, sum(x.points) AS value FROM f1.results x JOIN f1.races r ON r.race_id = x.race_id GROUP BY 1"}$$;
-
-statement ok
-DECLARE PROPERTY race_count WITH $${"title": "Races"}$$ AS VIEW;
-
-statement ok
-GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1"}$$;
+GLOSS race_count ON f1 AS $${"kind": "metric", "sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1"}$$;
 
 # a check over a metric that reads one property on its sources, and one that reads its definition
 
@@ -232,7 +226,7 @@ SELECT role_check() FROM points;
 # lineage; computed again, they read that table
 
 statement ok
-GLOSS race_count ON f1 AS $${"sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1", "assumptions": [{"assumption": "a race counts once"}]}$$;
+GLOSS race_count ON f1 AS $${"kind": "metric", "sql": "SELECT date AS period, count(*) AS value FROM f1.races GROUP BY 1", "assumptions": [{"assumption": "a race counts once"}]}$$;
 
 query TTTT
 SELECT function, asset, what, reason FROM glossql_outdated() WHERE subject = 'f1.race_count' ORDER BY ALL;
@@ -243,7 +237,7 @@ statement ok
 SELECT scans() FROM race_count;
 
 statement ok
-GLOSS race_count ON f1 AS $${"sql": "SELECT r.date AS period, count(*) AS value FROM f1.races r JOIN f1.circuits c ON c.circuit_id = r.race_id GROUP BY 1"}$$;
+GLOSS race_count ON f1 AS $${"kind": "metric", "sql": "SELECT r.date AS period, count(*) AS value FROM f1.races r JOIN f1.circuits c ON c.circuit_id = r.race_id GROUP BY 1"}$$;
 
 query TTT
 SELECT function, asset, what FROM glossql_outdated() WHERE subject = 'f1.race_count' AND reason = 'changed' ORDER BY ALL;
@@ -443,8 +437,8 @@ SELECT count(*) FROM functions_history WHERE name = 'raw_rows';
 ----
 0
 
-# --- a metric's series, series_aggregate() over the dataset's metrics: the views that are metrics, not plans,
-# their columns named by a macro at bind. Its walk passes which views are metrics, so a plan defined in the
+# --- a metric's series, series_aggregate() over the dataset's metrics: the views of kind metric, not plain views,
+# their columns named by a macro at bind. Its walk passes which views are metrics, so a plain view defined in the
 # dataset leaves its reader current; a role the macro reads on a metric's column, a metric defined and a load
 # of a table a metric reads outdate it
 
@@ -478,9 +472,6 @@ SELECT value->>'n', value->>'total' FROM main.results WHERE property = 'metric_s
 0	NULL
 
 statement ok
-DECLARE PROPERTY points_target WITH $${"title": "Points target", "x-kind": "plan", "x-plan-of": "points"}$$ AS VIEW;
-
-statement ok
 GLOSS points_target ON f1 AS $${"sql": "SELECT period, value * 1.1 AS value FROM f1.points"}$$;
 
 statement ok
@@ -510,10 +501,7 @@ SELECT value->>'n', value->>'total' FROM main.results WHERE property = 'metric_s
 # a metric defined in the dataset is a member added
 
 statement ok
-DECLARE PROPERTY race_points WITH $${"title": "Points per race"}$$ AS VIEW;
-
-statement ok
-GLOSS race_points ON f1 AS $${"sql": "SELECT race_id, sum(points) AS value FROM f1.results GROUP BY 1"}$$;
+GLOSS race_points ON f1 AS $${"kind": "metric", "sql": "SELECT race_id, sum(points) AS value FROM f1.results GROUP BY 1"}$$;
 
 query TT
 SELECT asset, what FROM glossql_outdated() WHERE function = 'metric_sums';
@@ -543,10 +531,7 @@ statement ok
 DECLARE FUNCTION single_cells FOR GLOBAL AS $$ SELECT count(*) AS n, count(DISTINCT "table") AS views FROM dataset_cells('f1', 'the dataset''s single values') $$ RETURNS single_cells;
 
 statement ok
-DECLARE PROPERTY races_run WITH $${"title": "Races run", "x-kind": "scalar"}$$ AS VIEW;
-
-statement ok
-GLOSS races_run ON f1 AS $${"sql": "SELECT count(*) AS value FROM f1.results"}$$;
+GLOSS races_run ON f1 AS $${"kind": "value", "sql": "SELECT count(*) AS value FROM f1.results"}$$;
 
 statement ok
 SELECT single_cells() FROM f1;
@@ -557,10 +542,7 @@ SELECT value->>'n', value->>'views' FROM main.results WHERE property = 'single_c
 1	1
 
 statement ok
-DECLARE PROPERTY race_wins WITH $${"title": "Wins per race"}$$ AS VIEW;
-
-statement ok
-GLOSS race_wins ON f1 AS $${"sql": "SELECT race_id, count(*) AS value FROM f1.results GROUP BY 1"}$$;
+GLOSS race_wins ON f1 AS $${"kind": "metric", "sql": "SELECT race_id, count(*) AS value FROM f1.results GROUP BY 1"}$$;
 
 query I
 SELECT count(*) FROM glossql_outdated() WHERE function = 'single_cells';
@@ -568,15 +550,12 @@ SELECT count(*) FROM glossql_outdated() WHERE function = 'single_cells';
 0
 
 statement ok
-DECLARE PROPERTY drivers_seen WITH $${"title": "Drivers seen", "x-kind": "scalar"}$$ AS VIEW;
-
-statement ok
-GLOSS drivers_seen ON f1 AS $${"sql": "SELECT count(DISTINCT driver_id) AS value FROM f1.results"}$$;
+GLOSS drivers_seen ON f1 AS $${"kind": "value", "sql": "SELECT count(DISTINCT driver_id) AS value FROM f1.results"}$$;
 
 query TT
 SELECT asset, what FROM glossql_outdated() WHERE function = 'single_cells';
 ----
-f1	views scalar
+f1	views value
 
 # --- a function's value read through annotations() is a result read: once it is out of date, so is its reader
 

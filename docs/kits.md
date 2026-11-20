@@ -47,7 +47,7 @@ the tests that name both. See the usage pages for each statement:
 [functions](usage/measurements.md), [tests](usage/tests.md).
 
 - A property's `WITH` schema is a JSON Schema. Keywords such as `title`
-  or `x-kind` are stored with it.
+  or `description` are stored with it.
 - A measurement that reads a file, a table function or another
   database is computed again after any change in the dataset. Read
   tables where you can.

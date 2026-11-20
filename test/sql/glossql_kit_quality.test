@@ -336,28 +336,16 @@ statement ok
 CREATE TABLE fin.ledger AS SELECT * FROM (VALUES (DATE '2024-01-15', 100.0), (DATE '2024-01-20', 200.0), (DATE '2024-02-10', 300.0), (DATE '2024-03-05', 400.0)) t(date, value);
 
 statement ok
-DECLARE PROPERTY revenue WITH $${"title": "revenue"}$$ AS VIEW;
+GLOSS revenue ON fin AS $${"kind": "metric", "sql": "SELECT date AS period, value FROM fin.ledger"}$$;
 
 statement ok
-DECLARE PROPERTY turnover WITH $${"title": "turnover"}$$ AS VIEW;
+GLOSS turnover ON fin AS $${"kind": "metric", "sql": "select DATE as period,  value from fin.ledger"}$$;
 
 statement ok
-DECLARE PROPERTY open_items WITH $${"title": "open items"}$$ AS VIEW;
+GLOSS open_items ON fin AS $${"kind": "metric", "sql": "SELECT date AS period, value FROM fin.ledger WHERE value IS NOT NULL"}$$;
 
 statement ok
-DECLARE PROPERTY costs WITH $${"title": "costs"}$$ AS VIEW;
-
-statement ok
-GLOSS revenue ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger"}$$;
-
-statement ok
-GLOSS turnover ON fin AS $${"sql": "select DATE as period,  value from fin.ledger"}$$;
-
-statement ok
-GLOSS open_items ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger WHERE value IS NOT NULL"}$$;
-
-statement ok
-GLOSS costs ON fin AS $${"sql": "SELECT date AS period, value FROM fin.ledger WHERE value > 250"}$$;
+GLOSS costs ON fin AS $${"kind": "metric", "sql": "SELECT date AS period, value FROM fin.ledger WHERE value > 250"}$$;
 
 query ITTI
 SELECT definitions, kind, properties::VARCHAR, months FROM definition_collisions('fin') ORDER BY seq;
@@ -368,10 +356,7 @@ SELECT definitions, kind, properties::VARCHAR, months FROM definition_collisions
 # the series pass reads the view's claims: a view whose columns carry role timestamp and role measure under
 # other names folds like one named period and value, and not before the roles are glossed
 statement ok
-DECLARE PROPERTY margin WITH $${"title": "margin"}$$ AS VIEW;
-
-statement ok
-GLOSS margin ON fin AS $${"sql": "SELECT date AS day, value AS amount FROM fin.ledger"}$$;
+GLOSS margin ON fin AS $${"kind": "metric", "sql": "SELECT date AS day, value AS amount FROM fin.ledger"}$$;
 
 query T
 SELECT properties::VARCHAR FROM definition_collisions('fin') WHERE kind = 'served_series';

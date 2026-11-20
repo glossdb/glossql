@@ -176,7 +176,7 @@ string JsonSchemaCheck(const string &schema, const string &document);
 string JsonSchemaValueEnumCheck(const string &schema, const string &literal);
 //! A top-level string field of a JSON object, empty when absent
 string JsonStringField(const string &document, const string &field);
-//! The metric definition contract: sql or stopped, assumptions disclosed; every other key is a kit's
+//! The view definition contract: sql or stopped, its kind, assumptions disclosed; every other key passes
 extern const char *const DEFINITION_CONTRACT;
 
 //! Parses plain SQL with the stock grammar into one SELECT

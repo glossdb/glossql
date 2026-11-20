@@ -49,8 +49,7 @@ DECLARE FUNCTION min_max FOR GLOBAL AS
 SELECT min_max() FROM orders.amount;
 
 -- define a metric: SQL, served as the view shop.revenue
-DECLARE PROPERTY revenue WITH $${"title": "Revenue"}$$ AS VIEW;
-GLOSS revenue ON shop AS $${"sql": "SELECT placed_on, sum(amount) AS revenue FROM shop.orders GROUP BY placed_on"}$$;
+GLOSS revenue ON shop AS $${"kind": "metric", "sql": "SELECT placed_on, sum(amount) AS revenue FROM shop.orders GROUP BY placed_on"}$$;
 FROM shop.revenue;
 
 -- read: one row per asset and property, with its state

@@ -38,10 +38,7 @@ statement ok
 DECLARE PROPERTY entity WITH $${"type": "object"}$$ AS FACT ON TABLE;
 
 statement ok
-DECLARE PROPERTY spend WITH $${"title": "Spend"}$$ AS VIEW;
-
-statement ok
-GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t"}$$;
+GLOSS spend ON fin AS $${"kind": "metric", "sql": "SELECT d AS period, a AS value FROM fin.t"}$$;
 
 # --- the view's columns are subjects: relative or qualified, in the catalog's spelling
 
@@ -110,7 +107,7 @@ min_max	fin.spend.value	min_max	{"min":1.0,"max":5.0}	true
 # the view is written, so a result that read the view computes again
 
 statement ok
-GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t", "assumptions": [{"assumption": "a is net of tax"}]}$$;
+GLOSS spend ON fin AS $${"kind": "metric", "sql": "SELECT d AS period, a AS value FROM fin.t", "assumptions": [{"assumption": "a is net of tax"}]}$$;
 
 query TTTTT
 SELECT min_max() FROM spend.value;
@@ -125,7 +122,7 @@ fin.spend.value	current
 # --- other sql is a new definition: the measurement reruns, and the glosses on the view and its columns read stale
 
 statement ok
-GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a * 2 AS value FROM fin.t"}$$;
+GLOSS spend ON fin AS $${"kind": "metric", "sql": "SELECT d AS period, a * 2 AS value FROM fin.t"}$$;
 
 query TTTTT
 SELECT min_max() FROM spend.value;
@@ -152,10 +149,7 @@ fin.spend.value	current
 # --- a view over the view: its data is both views' and the table's
 
 statement ok
-DECLARE PROPERTY spend_total WITH $${"title": "Spend, total"}$$ AS VIEW;
-
-statement ok
-GLOSS spend_total ON fin AS $${"sql": "SELECT sum(value) AS value FROM (SELECT * FROM spend) s"}$$;
+GLOSS spend_total ON fin AS $${"kind": "metric", "sql": "SELECT sum(value) AS value FROM (SELECT * FROM spend) s"}$$;
 
 query TTTTT
 SELECT min_max() FROM spend_total.value;
@@ -168,7 +162,7 @@ SELECT (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what
 fin.spend definition,fin.spend result lineage,fin.spend_total definition,fin.spend_total result lineage,fin.t data,min_max function,min_max property
 
 statement ok
-GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a AS value FROM fin.t"}$$;
+GLOSS spend ON fin AS $${"kind": "metric", "sql": "SELECT d AS period, a AS value FROM fin.t"}$$;
 
 query TTTTT
 SELECT min_max() FROM spend_total.value;
@@ -191,7 +185,7 @@ SELECT count(*), sum(TRY_CAST(val AS DOUBLE)) FILTER (WHERE "column" = 'value') 
 8	15.0
 
 statement ok
-GLOSS spend ON fin AS $${"sql": "SELECT d AS period, a * 2 AS value FROM fin.t"}$$;
+GLOSS spend ON fin AS $${"kind": "metric", "sql": "SELECT d AS period, a * 2 AS value FROM fin.t"}$$;
 
 query R
 SELECT sum(TRY_CAST(val AS DOUBLE)) FROM dataset_cells('fin', true) WHERE "table" = 'spend' AND "column" = 'value';

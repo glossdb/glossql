@@ -12,6 +12,6 @@ again once anything is annotated on it.
 | `kind` | VARCHAR | `FACT` (stated by an actor), `MEASUREMENT` (computed by a function, not annotated) or `VIEW` (SQL, served as a view under the property's name). |
 | `grains` | VARCHAR | The kinds of asset it applies to, as a JSON list of `DATASET`, `TABLE`, `COLUMN`, `RELATIONSHIP`, `SOURCE`; empty for all. The view serves it as a list. |
 | `condition` | VARCHAR | When the property is required, as JSON: `{"property": …, "value": …}` for another property's value (`WHEN role = 'measure'`), or `{"type": [...]}` for column types (`WHEN TYPE IN (…)`). NULL when it is required wherever its grains apply. The view serves it as JSON. |
-| `schema` | VARCHAR | The JSON Schema every value is validated against. For a `VIEW` property it carries the definition's metadata (`title`, `x-kind`) and the annotation is validated against the view contract instead. The view serves it as JSON. |
+| `schema` | VARCHAR | The JSON Schema every value is validated against. A `VIEW` property is declared by its first definition with an empty schema, and its annotations are validated against the view contract instead. The view serves it as JSON. |
 | `declared_at` | TIMESTAMP | When the row was written. |
 | `declared_by` | VARCHAR | Who wrote the row: `kit:<name>` for a declaration a kit made, else the actor as `<kind>:<id>` (`agent:builder`, `human:ana`), or the kind alone where the connection named no one. |
