@@ -13,9 +13,9 @@ convention, a validation, a load, a review question.
 
 | File | Shows |
 |---|---|
-| [01](01-concept-revenue.md) | a glossary entry for a measure |
+| [01](01-concept-revenue.md) | a glossary entry for a measure, as its view definition |
 | [02](02-convention-sign-natural-balance.md) | an accounting convention on a dataset |
-| [03](03-metric-dso.md) | a metric: its declaration and its definition in SQL |
+| [03](03-metric-dso.md) | a metric: its definition in SQL, with its meaning |
 | [04](04-validation-trial-balance.md) | a validation: expectation, check and test |
 | [05](05-cycle-accounts-receivable.md) | the stages of a business process on a status column |
 | [06](06-test-additivity.md) | a test that compares annotations of a column's additivity |

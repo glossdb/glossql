@@ -859,8 +859,8 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		    op.type == LogicalOperatorType::LOGICAL_ASOF_JOIN || op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
 			for (auto &condition : op.Cast<LogicalComparisonJoin>().conditions) {
 				if (!condition.IsComparison()) {
-					Equalities(condition.GetLHS(), equalities);
-					Conditions(condition.GetLHS(), lineage);
+					Equalities(condition.GetJoinExpression(), equalities);
+					Conditions(condition.GetJoinExpression(), lineage);
 					continue;
 				}
 				if (condition.GetComparisonType() == ExpressionType::COMPARE_EQUAL) {
@@ -1551,8 +1551,9 @@ void StoreViewLineage(CatalogWrite &write, const string &dataset, const ViewLine
 
 bool RetireViewLineage(CatalogWrite &write, const string &dataset, const string &view) {
 	auto &inner = write.inner;
-	auto stored = inner.Scalar("SELECT count(*) FROM " + inner.Current("measurements") + " WHERE dataset = " +
-	                           QuoteText(dataset) + " AND function = 'lineage' AND subject = " + QuoteText(view));
+	auto stored =
+	    inner.Scalar("SELECT count(*) FROM " + inner.Current("results") + " WHERE dataset = " + QuoteText(dataset) +
+		             " AND function = 'lineage' AND subject = " + QuoteText(view));
 	if (stored.GetValue<int64_t>() == 0) {
 		return false;
 	}

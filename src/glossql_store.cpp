@@ -322,15 +322,15 @@ static const StoreRelation STORE_RELATIONS[] = {
 	 "source_rows BIGINT, changed_rows BIGINT, fingerprint VARCHAR, identical BOOLEAN",
 	 "begin_snapshot, dataset, table_name, mode, rows, dropped_rows_count, lineage::JSON AS lineage, snapshot_id, "
 	 "imported_at, source_rows, changed_rows, fingerprint, identical"},
-    {"aspects",
+    {"properties",
 	 "name VARCHAR NOT NULL, kind VARCHAR NOT NULL, grains VARCHAR NOT NULL, condition VARCHAR, "
 	 "schema VARCHAR NOT NULL, declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
 	 "begin_snapshot, name, kind, from_json(grains, '[\"VARCHAR\"]') AS grains, condition::JSON AS condition, "
 	 "schema::JSON AS schema, declared_at, declared_by"},
     {"glossary",
-	 "dataset VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actor_kind VARCHAR NOT NULL, "
+	 "dataset VARCHAR NOT NULL, subject VARCHAR NOT NULL, property VARCHAR NOT NULL, actor_kind VARCHAR NOT NULL, "
 	 "actor_id VARCHAR, body VARCHAR NOT NULL, written_at TIMESTAMP NOT NULL",
-	 "begin_snapshot, dataset, subject, aspect, actor_kind, actor_id, body::JSON AS body, written_at"},
+	 "begin_snapshot, dataset, subject, property, actor_kind, actor_id, body::JSON AS body, written_at"},
     {"relationships",
 	 "dataset VARCHAR NOT NULL, left_side VARCHAR NOT NULL, op VARCHAR NOT NULL, right_side VARCHAR NOT NULL, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
@@ -344,11 +344,11 @@ static const StoreRelation STORE_RELATIONS[] = {
     // id: the result's own, as one write may store many; read_at: the lake's newest snapshot when the
     // computation began to read; changed_at: the snapshot its value and error last changed at, kept by a
     // computation that returns the same
-    {"measurements",
-	 "id BIGINT NOT NULL, dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, aspect "
+    {"results",
+	 "id BIGINT NOT NULL, dataset VARCHAR NOT NULL, function VARCHAR NOT NULL, subject VARCHAR NOT NULL, property "
 	 "VARCHAR NOT NULL, value VARCHAR, computed_at TIMESTAMP NOT NULL, error VARCHAR, read_at BIGINT NOT NULL, "
 	 "changed_at BIGINT NOT NULL",
-	 "begin_snapshot, id, dataset, function, subject, aspect, value::JSON AS value, computed_at, error, read_at, "
+	 "begin_snapshot, id, dataset, function, subject, property, value::JSON AS value, computed_at, error, read_at, "
 	 "changed_at"},
     // one row per node a stored result read (SPEC §6), by the result's id: the rows begin with their
     // result and end with it
@@ -359,9 +359,9 @@ static const StoreRelation STORE_RELATIONS[] = {
     {"edges", "result BIGINT NOT NULL, \"from\" VARCHAR NOT NULL, \"to\" VARCHAR NOT NULL, kind VARCHAR NOT NULL",
 	 "begin_snapshot, result, \"from\", \"to\", kind"},
     {"tests",
-	 "name VARCHAR NOT NULL, aspect VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
+	 "name VARCHAR NOT NULL, property VARCHAR NOT NULL, actors VARCHAR NOT NULL, detector VARCHAR, threshold DOUBLE, "
 	 "declared_at TIMESTAMP NOT NULL, declared_by VARCHAR",
-	 "begin_snapshot, name, aspect, from_json(actors, '[\"VARCHAR\"]') AS actors, detector, threshold, declared_at, "
+	 "begin_snapshot, name, property, from_json(actors, '[\"VARCHAR\"]') AS actors, detector, threshold, declared_at, "
 	 "declared_by"},
 };
 
@@ -526,21 +526,21 @@ string DeclaredBy(ClientContext &context) {
 	return ActorKindOf(context) + (id.IsNull() ? string() : ":" + id.ToString());
 }
 
-//! An aspect as its newest row holds
-struct AspectRow {
+//! A property as its newest row holds
+struct PropertyRow {
 	string name;
 	string schema;
 	string kind;
 	vector<string> grains;
 };
 
-static AspectRow LookupAspect(Inner &inner, const string &name) {
-	auto row = inner.Row("SELECT schema, kind, from_json(grains, '[\"VARCHAR\"]') FROM " + inner.Store("aspects") +
+static PropertyRow LookupProperty(Inner &inner, const string &name) {
+	auto row = inner.Row("SELECT schema, kind, from_json(grains, '[\"VARCHAR\"]') FROM " + inner.Store("properties") +
 	                     " WHERE name = " + QuoteText(name) + " AND end_snapshot IS NULL");
 	if (row.empty()) {
-		throw InvalidInputException("glossql: aspect '%s' is not declared", name);
+		throw InvalidInputException("glossql: property '%s' is not declared", name);
 	}
-	AspectRow result;
+	PropertyRow result;
 	result.name = name;
 	result.schema = row[0].ToString();
 	result.kind = row[1].ToString();
@@ -550,45 +550,45 @@ static AspectRow LookupAspect(Inner &inner, const string &name) {
 	return result;
 }
 
-static bool HasGrain(const AspectRow &aspect, const string &grain) {
-	return std::find(aspect.grains.begin(), aspect.grains.end(), grain) != aspect.grains.end();
+static bool HasGrain(const PropertyRow &property, const string &grain) {
+	return std::find(property.grains.begin(), property.grains.end(), grain) != property.grains.end();
 }
 
-//! Admission of a gloss (SPEC §5.2, §7.1): the aspect is declared and not a
-//! MEASUREMENT; the body conforms to the aspect's schema (FACT) or the
+//! Admission of a gloss (SPEC §5.2, §7.1): the property is declared and not a
+//! MEASUREMENT; the body conforms to the property's schema (FACT) or the
 //! metric definition contract (VIEW); a TABLE or COLUMN grain takes stored
 //! subjects only; a test's BY admits the actor's kind
-static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &aspect_name, const string &subject,
-                            const string &body, const string &actor) {
-	auto aspect = LookupAspect(inner, aspect_name);
-	if (aspect.kind == "MEASUREMENT") {
-		throw InvalidInputException("glossql: aspect '%s' is a MEASUREMENT: never glossed, its value is its function's",
-		                            aspect_name);
+static PropertyRow AdmitGloss(ClientContext &context, Inner &inner, const string &property_name, const string &subject,
+                              const string &body, const string &actor) {
+	auto property = LookupProperty(inner, property_name);
+	if (property.kind == "MEASUREMENT") {
+		throw InvalidInputException(
+		    "glossql: property '%s' is a MEASUREMENT: never glossed, its value is its function's", property_name);
 	}
 	// A VIEW body meets the metric definition contract (sql or stopped, assumptions
-	// disclosed); a FACT body meets the aspect's own WITH schema
-	if (aspect.kind == "VIEW") {
+	// disclosed); a FACT body meets the property's own WITH schema
+	if (property.kind == "VIEW") {
 		auto error = JsonSchemaCheck(DEFINITION_CONTRACT, body);
 		if (!error.empty()) {
 			throw InvalidInputException("glossql: the body of %s does not meet the definition contract: %s",
-			                            aspect_name, error);
+			                            property_name, error);
 		}
 	} else {
-		auto error = JsonSchemaCheck(aspect.schema, body);
+		auto error = JsonSchemaCheck(property.schema, body);
 		if (!error.empty()) {
-			throw InvalidInputException("glossql: the body of %s does not conform to the aspect's schema: %s",
-			                            aspect_name, error);
+			throw InvalidInputException("glossql: the body of %s does not conform to the property's schema: %s",
+			                            property_name, error);
 		}
 	}
 	auto parts = SubjectParts(subject);
 	bool pair = subject.find(" -> ") != string::npos || subject.find(" <-> ") != string::npos;
-	if (aspect.kind == "VIEW" && (parts.size() != 1 || pair)) {
-		throw InvalidInputException("glossql: a VIEW aspect takes the dataset as its subject, not %s", subject);
+	if (property.kind == "VIEW" && (parts.size() != 1 || pair)) {
+		throw InvalidInputException("glossql: a VIEW property takes the dataset as its subject, not %s", subject);
 	}
-	// the grain gate (SPEC §5.1): the subject's class is one the aspect declared. A
+	// the grain gate (SPEC §5.1): the subject's class is one the property declared. A
 	// bare name is a source when one is declared by it, a dataset when a schema is,
 	// and either when both are: the declaration says which is meant
-	if (!aspect.grains.empty()) {
+	if (!property.grains.empty()) {
 		bool is_source =
 		    !pair && parts.size() == 1 &&
 		    inner.Scalar("SELECT count(*) FROM " + inner.Current("sources") + " WHERE name = " + QuoteText(subject))
@@ -606,23 +606,23 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 			                              .ToString());
 		}
 		bool admitted =
-		    HasGrain(aspect, grain) || (is_source && SchemaExists(context, subject) && HasGrain(aspect, "DATASET"));
+		    HasGrain(property, grain) || (is_source && SchemaExists(context, subject) && HasGrain(property, "DATASET"));
 		if (!admitted) {
-			throw InvalidInputException("glossql: aspect '%s' is declared ON %s; %s is a %s", aspect_name,
-			                            StringUtil::Join(aspect.grains, ", "), subject, StringUtil::Lower(grain));
+			throw InvalidInputException("glossql: property '%s' is declared ON %s; %s is a %s", property_name,
+			                            StringUtil::Join(property.grains, ", "), subject, StringUtil::Lower(grain));
 		}
 	}
-	if (!pair && parts.size() == 2 && HasGrain(aspect, "TABLE") && !RelationEntry(context, parts[0], parts[1])) {
+	if (!pair && parts.size() == 2 && HasGrain(property, "TABLE") && !RelationEntry(context, parts[0], parts[1])) {
 		throw InvalidInputException("glossql: %s names no table of %s", subject, parts[0]);
 	}
-	if (!pair && parts.size() == 3 && HasGrain(aspect, "COLUMN")) {
+	if (!pair && parts.size() == 3 && HasGrain(property, "COLUMN")) {
 		auto entry = RelationEntry(context, parts[0], parts[1]);
 		if (!entry || ColumnOf(context, *entry, parts[2]).empty()) {
 			throw InvalidInputException("glossql: %s names no column of %s.%s", subject, parts[0], parts[1]);
 		}
 	}
 	// only declared relationships exist (SPEC §4): a pair path is a subject once declared
-	if (pair && HasGrain(aspect, "RELATIONSHIP")) {
+	if (pair && HasGrain(property, "RELATIONSHIP")) {
 		auto declared = inner.Scalar("SELECT count(*) FROM " + inner.Current("relationships") +
 		                             " WHERE left_side || ' ' || op || ' ' || right_side = " + QuoteText(subject));
 		if (declared.GetValue<int64_t>() == 0) {
@@ -630,22 +630,22 @@ static AspectRow AdmitGloss(ClientContext &context, Inner &inner, const string &
 		}
 	}
 	auto actor_kinds = inner.Scalar("SELECT from_json(actors, '[\"VARCHAR\"]') FROM " + inner.Current("tests") +
-	                                " WHERE aspect = " + QuoteText(aspect_name));
+	                                " WHERE property = " + QuoteText(property_name));
 	if (actor_kinds.IsNull()) {
-		return aspect;
+		return property;
 	}
 	auto admitted = ListValue::GetChildren(actor_kinds);
 	if (admitted.empty()) {
-		return aspect;
+		return property;
 	}
 	vector<string> names;
 	for (auto &actor_kind : admitted) {
 		names.push_back(actor_kind.ToString());
 		if (StringUtil::Lower(actor_kind.ToString()) == actor) {
-			return aspect;
+			return property;
 		}
 	}
-	throw InvalidInputException("glossql: the test on '%s' admits %s, not %s", aspect_name,
+	throw InvalidInputException("glossql: the test on '%s' admits %s, not %s", property_name,
 	                            StringUtil::Join(names, ", "), actor);
 }
 
@@ -717,7 +717,7 @@ static ViewLineageResult AdmitDefinition(Inner &inner, const string &dataset, co
 //! agent's, a stop ending it: its DuckLake row is written in the catalog write
 //! that wrote the definition, as DuckLake writes one, so the view and the
 //! glossary are one commit. The same sql again keeps the view and its version:
-//! the annotations and measurements on its columns stay current. The view's
+//! the annotations and results on its columns stay current. The view's
 //! lineage is stored in the same write where it was planned for the sql that
 //! now serves (`admitted`), read at this write; a view ended takes its lineage
 //! with it
@@ -727,7 +727,7 @@ static void DefineView(CatalogWrite &write, const string &dataset, const string 
 	auto &ws = inner.ws;
 	auto serving =
 	    inner.Scalar("SELECT body FROM " + inner.Current("glossary") + " WHERE dataset = " + QuoteText(dataset) +
-		             " AND subject = " + QuoteText(dataset) + " AND aspect = " + QuoteText(metric) +
+		             " AND subject = " + QuoteText(dataset) + " AND property = " + QuoteText(metric) +
 		             " AND actor_kind IN ('human', 'agent')"
 		             " ORDER BY CASE actor_kind WHEN 'human' THEN 0 ELSE 1 END LIMIT 1");
 	auto sql = serving.IsNull() ? string() : JsonStringField(serving.ToString(), "sql");
@@ -765,12 +765,12 @@ static void DefineView(CatalogWrite &write, const string &dataset, const string 
 	}
 }
 
-//! Admission of an aspect (SPEC §5.1): identical content is a no-op, a change
+//! Admission of a property (SPEC §5.1): identical content is a no-op, a change
 //! under glosses is refused, a WHEN names a declared sibling whose enum holds
 //! the literal. Returns false for the no-op.
-static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
+static bool AdmitProperty(Inner &inner, const vector<Value> &row) {
 	auto name = row[0].ToString();
-	auto current = inner.Row("SELECT schema, kind, grains, condition FROM " + inner.Current("aspects") +
+	auto current = inner.Row("SELECT schema, kind, grains, condition FROM " + inner.Current("properties") +
 	                         " WHERE name = " + QuoteText(name));
 	if (!current.empty()) {
 		// compared as the store holds them: text, the grains as their JSON list
@@ -786,21 +786,21 @@ static bool AdmitAspect(Inner &inner, const vector<Value> &row) {
 			return false;
 		}
 		auto glossed =
-		    inner.Scalar("SELECT count(*) FROM " + inner.Current("glossary") + " WHERE aspect = " + QuoteText(name));
+		    inner.Scalar("SELECT count(*) FROM " + inner.Current("glossary") + " WHERE property = " + QuoteText(name));
 		if (glossed.GetValue<int64_t>() > 0) {
-			throw InvalidInputException("glossql: aspect '%s' has glosses: delete them before changing it", name);
+			throw InvalidInputException("glossql: property '%s' has glosses: delete them before changing it", name);
 		}
 	}
 	if (!row[4].IsNull()) {
 		auto condition = row[4].ToString();
-		if (JsonStringField(condition, "aspect").empty()) {
+		if (JsonStringField(condition, "property").empty()) {
 			// WHEN TYPE narrows columns by their data type: the grain is COLUMN alone
 			if (JsonList(row[3]) != "[\"COLUMN\"]") {
-				throw InvalidInputException("glossql: WHEN TYPE narrows columns; aspect '%s' is declared ON %s", name,
+				throw InvalidInputException("glossql: WHEN TYPE narrows columns; property '%s' is declared ON %s", name,
 				                            JsonList(row[3]));
 			}
 		} else {
-			auto sibling = LookupAspect(inner, JsonStringField(condition, "aspect"));
+			auto sibling = LookupProperty(inner, JsonStringField(condition, "property"));
 			auto literal = JsonStringField(condition, "value");
 			auto error = JsonSchemaValueEnumCheck(sibling.schema, literal);
 			if (!error.empty()) {
@@ -822,21 +822,22 @@ string KindNameTaken(Inner &inner, const string &dataset, const string &relation
 	return taken.IsNull() ? string() : taken.ToString();
 }
 
-//! The sources and aspects the reads look names up in, one row of lists: every source declared (names),
-//! the aspects that declare ON SOURCE now (props), every aspect ever declared of kind VIEW (views)
+//! The sources and properties the reads look names up in, one row of lists: every source declared (names),
+//! the properties that declare ON SOURCE now (props), every property ever declared of kind VIEW (views)
 static string SourcesSQL(const Workspace &ws) {
 	return "gl_src AS MATERIALIZED (SELECT coalesce((SELECT list(name) FROM " + ws.Store("sources") +
-	       "), []) AS names, coalesce((SELECT list(name) FROM " + ws.Store("aspects") +
+	       "), []) AS names, coalesce((SELECT list(name) FROM " + ws.Store("properties") +
 	       " WHERE end_snapshot IS NULL AND list_contains(from_json(grains, '[\"VARCHAR\"]'), 'SOURCE')), []) AS "
 	       "props, coalesce((SELECT list(name) FROM " +
-	       ws.Store("aspects") + " WHERE kind = 'VIEW'), []) AS views)";
+	       ws.Store("properties") + " WHERE kind = 'VIEW'), []) AS views)";
 }
 
-//! A source-grain row: its subject names a declared source and its aspect
+//! A source-grain row: its subject names a declared source and its property
 //! declares ON SOURCE. Such a row reads and supersedes workspace-wide (SPEC
-//! §5.1); a grainless aspect on a source name stays dataset-scoped. Over gl_src (SourcesSQL)
+//! §5.1); a grainless property on a source name stays dataset-scoped. Over gl_src (SourcesSQL)
 static string SourceGrainSQL() {
-	return "(list_contains((SELECT names FROM gl_src), subject) AND list_contains((SELECT props FROM gl_src), aspect))";
+	return "(list_contains((SELECT names FROM gl_src), subject) AND list_contains((SELECT props FROM gl_src), "
+	       "property))";
 }
 
 static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -857,14 +858,18 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 
 	Inner inner(context);
 	// a definition is bound before the write, and its lineage planned: the lake binds it, and the write
-	// touches the catalogue alone
+	// touches the catalogue alone. A name no property declares, on a dataset, is a view definition: the
+	// write declares its property (SPEC §5.2)
 	ViewLineageResult admitted;
 	string admitted_sql;
+	bool defines = false;
 	if (bind.table == "glossary") {
 		auto resolved = subject(bind.row[0]);
-		auto kind =
-		    inner.Scalar("SELECT kind FROM " + inner.Current("aspects") + " WHERE name = " + bind.row[1].ToSQLString());
-		if (!kind.IsNull() && kind.ToString() == "VIEW" && resolved.find('.') == string::npos) {
+		auto kind = inner.Scalar("SELECT kind FROM " + inner.Current("properties") +
+		                         " WHERE name = " + bind.row[1].ToSQLString());
+		defines = resolved.find('.') == string::npos && resolved.find(' ') == string::npos &&
+		          (kind.IsNull() ? SchemaExists(context, resolved) : kind.ToString() == "VIEW");
+		if (defines) {
 			admitted = AdmitDefinition(inner, resolved, bind.row[1].ToString(), json(bind.row[2]));
 			admitted_sql = JsonStringField(json(bind.row[2]), "sql");
 		}
@@ -872,18 +877,18 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 	string outcome;
 	inner.Write(context, [&](CatalogWrite &write) {
 		outcome.clear();
-		if (bind.table == "aspects") {
-			if (!AdmitAspect(inner, bind.row)) {
-				outcome = "aspect " + bind.row[0].ToString() + " unchanged: no-op";
+		if (bind.table == "properties") {
+			if (!AdmitProperty(inner, bind.row)) {
+				outcome = "property " + bind.row[0].ToString() + " unchanged: no-op";
 				return;
 			}
 			// (name, schema, kind, grains, condition) from the statement; the schema last in the row, being the long
 			// one
-			write.End("aspects", "name = " + bind.row[0].ToSQLString());
-			write.Insert("aspects", bind.row[0].ToSQLString() + ", " + bind.row[2].ToSQLString() + ", " +
-			                            QuoteText(JsonList(bind.row[3])) + ", " + bind.row[4].ToSQLString() + ", " +
-			                            QuoteText(json(bind.row[1])) + ", now(), " + QuoteText(DeclaredBy(context)));
-			outcome = "declared aspect " + bind.row[0].ToString();
+			write.End("properties", "name = " + bind.row[0].ToSQLString());
+			write.Insert("properties", bind.row[0].ToSQLString() + ", " + bind.row[2].ToSQLString() + ", " +
+			                               QuoteText(JsonList(bind.row[3])) + ", " + bind.row[4].ToSQLString() + ", " +
+			                               QuoteText(json(bind.row[1])) + ", now(), " + QuoteText(DeclaredBy(context)));
+			outcome = "declared property " + bind.row[0].ToString();
 		} else if (bind.table == "sources") {
 			// identity is content (SPEC §3): an unchanged declaration is a no-op, so a script replays silently
 			auto current = inner.Row("SELECT settings FROM " + inner.Current("sources") +
@@ -914,18 +919,25 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 			                                  QuoteText(DeclaredBy(context)));
 			outcome = "declared relationship " + spelled;
 		} else if (bind.table == "glossary") {
-			// (subject, aspect) from the statement, the actor from the connection, then the body
+			// (subject, property) from the statement, the actor from the connection, then the body
 			auto actor = ActorKindOf(context);
 			auto resolved = subject(bind.row[0]);
 			auto body = json(bind.row[2]);
-			auto aspect = AdmitGloss(context, inner, bind.row[1].ToString(), resolved, body, actor);
+			// a definition of a name no property declares declares it, by its actor, in this write
+			auto declared = inner.Scalar("SELECT count(*) FROM " + inner.Current("properties") +
+			                             " WHERE name = " + bind.row[1].ToSQLString());
+			if (defines && declared.GetValue<int64_t>() == 0) {
+				write.Insert("properties", bind.row[1].ToSQLString() + ", 'VIEW', '[]', NULL, '{}', now(), " +
+				                               QuoteText(DeclaredBy(context)));
+			}
+			auto property = AdmitGloss(context, inner, bind.row[1].ToString(), resolved, body, actor);
 			auto dataset = DatasetOf(context, resolved);
-			// a value is superseded per (subject, aspect, actor kind) (SPEC §5.2), within its dataset;
+			// a value is superseded per (subject, property, actor kind) (SPEC §5.2), within its dataset;
 			// a source-grain row is superseded workspace-wide (SPEC §5.1)
 			auto source_grain =
 			    inner.Scalar("WITH " + SourcesSQL(inner.ws) + " SELECT " + SourceGrainSQL() + " FROM (SELECT " +
-				             QuoteText(resolved) + " AS subject, " + QuoteText(aspect.name) + " AS aspect)");
-			auto held = "subject = " + QuoteText(resolved) + " AND aspect = " + QuoteText(aspect.name) +
+				             QuoteText(resolved) + " AS subject, " + QuoteText(property.name) + " AS property)");
+			auto held = "subject = " + QuoteText(resolved) + " AND property = " + QuoteText(property.name) +
 			            " AND actor_kind = " + QuoteText(actor) +
 			            (source_grain.GetValue<bool>() ? string() : " AND dataset = " + QuoteText(dataset));
 			// the same body by the same actor on an annotation that is not stale writes nothing
@@ -938,11 +950,11 @@ static void GlossWriteExec(ClientContext &context, TableFunctionInput &data, Dat
 				return;
 			}
 			write.End("glossary", held);
-			write.Insert("glossary", QuoteText(dataset) + ", " + QuoteText(resolved) + ", " + QuoteText(aspect.name) +
+			write.Insert("glossary", QuoteText(dataset) + ", " + QuoteText(resolved) + ", " + QuoteText(property.name) +
 			                             ", " + QuoteText(actor) + ", " + ActorIdOf(context).ToSQLString() + ", " +
 			                             QuoteText(body) + ", now()");
-			if (aspect.kind == "VIEW") {
-				DefineView(write, resolved, aspect.name, admitted, admitted_sql);
+			if (property.kind == "VIEW") {
+				DefineView(write, resolved, property.name, admitted, admitted_sql);
 			}
 			// an asset of a kind a kit declares and a relation of its dataset do not share a name
 			auto taken = KindNameTaken(inner, dataset, "");
@@ -1106,7 +1118,7 @@ ParserExtension GlossParserExtension() {
 //===--------------------------------------------------------------------===//
 // The reads: GLOSSARY() and TESTS(), planned as subqueries over the store
 // (bind_replace), so they compose with any SQL. They read stored rows: the
-// annotations, the measurements, and each test's stored result (SPEC §7.2).
+// annotations, the results, and each test's stored result (SPEC §7.2).
 // The marks are planned once per statement: an annotation is stale once the
 // definition of its subject changed after the snapshot it was written at, a
 // stored result is out of date once a node it read changed after it read
@@ -1134,16 +1146,16 @@ static ReadScope ScopeOf(ClientContext &context, const Value &subject) {
 	return result;
 }
 
-static string AspectFilter(const Value &aspect) {
-	return aspect.IsNull() ? string() : " AND aspect = " + QuoteText(aspect.ToString());
+static string PropertyFilter(const Value &property) {
+	return property.IsNull() ? string() : " AND property = " + QuoteText(property.ToString());
 }
 
-//! The rows a read of a scope serves, over columns dataset, subject and aspect: the dataset's own and the
-//! source-grain rows every dataset reads, narrowed to the scope's subjects and to an aspect; over gl_src
+//! The rows a read of a scope serves, over columns dataset, subject and property: the dataset's own and the
+//! source-grain rows every dataset reads, narrowed to the scope's subjects and to a property; over gl_src
 //! (SourcesSQL)
-static string RowsFilter(const ReadScope &scope, const Value &aspect) {
+static string RowsFilter(const ReadScope &scope, const Value &property) {
 	return "(dataset = " + QuoteText(scope.dataset) + " OR " + SourceGrainSQL() + ")" +
-	       (scope.whole ? string() : " AND " + scope.subjects) + AspectFilter(aspect);
+	       (scope.whole ? string() : " AND " + scope.subjects) + PropertyFilter(property);
 }
 
 //===--------------------------------------------------------------------===//
@@ -1193,14 +1205,18 @@ static const ChangeArm CHANGE_ARMS[] = {
 	 "'$.\"' || k || '\"'))), false) THEN snapshot_id END",
 	 false, true},
     // an annotation, and a view's definition: the annotation that defines it
-    {"$glossary", "lower(subject)", "'annotation ' || aspect", "$at", true, false},
+    {"$glossary", "lower(subject)", "'annotation ' || property", "$at", true, false},
     {"$glossary",
-	 "CASE WHEN NOT contains(subject, '.') AND list_contains((SELECT views FROM gl_src), aspect) THEN lower(subject "
-	 "|| '.' || aspect) END",
+	 "CASE WHEN NOT contains(subject, '.') AND list_contains((SELECT views FROM gl_src), property) THEN lower(subject "
+	 "|| '.' || property) END",
 	 "'definition'", "$at", true, true},
-    {"$aspects", "lower(name)", "'property'", "$at", true, false},
-    {"$aspects", "lower(json_extract_string(schema, '$.x-kind'))", "'properties'", "$at", true, false},
-    {"$tests", "lower(aspect)", "'property'", "$at", true, false},
+    // the views of a kind in a dataset: a definition of that kind written or ended, the kind its body names
+    {"$glossary",
+	 "CASE WHEN NOT contains(subject, '.') AND list_contains((SELECT views FROM gl_src), property) AND "
+	 "json_extract_string(body, '$.kind') IS NOT NULL THEN lower(subject) END",
+	 "'views ' || json_extract_string(body, '$.kind')", "$at", true, false},
+    {"$properties", "lower(name)", "'property'", "$at", true, false},
+    {"$tests", "lower(property)", "'property'", "$at", true, false},
     {"$functions", "lower(name)", "'function'", "$at", true, false},
     {"$recipes", "lower(dataset || '.' || table_name)", "'recipe'", "$at", true, false},
     {"$relationships", "lower(split_part(left_side, '.', 1) || '.' || split_part(left_side, '.', 2))",
@@ -1220,17 +1236,10 @@ static const ChangeArm CHANGE_ARMS[] = {
 	 "k.rel) WHERE before IS DISTINCT FROM derived AND before IS NOT NULL",
 	 "asset", "'definition'", "snapshot_id", true, true},
     // a view's definition: its property's rows
-    {"(SELECT asset FROM gl_rel WHERE kind = 'v' UNION SELECT lower(subject || '.' || aspect) FROM $glossary WHERE "
-	 "NOT contains(subject, '.') AND list_contains((SELECT views FROM gl_src), aspect)) v JOIN $aspects a ON "
+    {"(SELECT asset FROM gl_rel WHERE kind = 'v' UNION SELECT lower(subject || '.' || property) FROM $glossary WHERE "
+	 "NOT contains(subject, '.') AND list_contains((SELECT views FROM gl_src), property)) v JOIN $properties a ON "
 	 "lower(a.name) = substr(v.asset, strpos(v.asset, '.') + 1)",
 	 "v.asset", "'definition'", "greatest(a.begin_snapshot, coalesce(a.end_snapshot, 0))", true, true},
-    // a view of a kind added to or removed from a dataset; a view defined again is the same member
-    {"(SELECT ds, r.name, unnest([CASE WHEN NOT list_contains(ends, r.b) THEN r.b END, CASE WHEN r.e IS NOT NULL "
-	 "AND NOT list_contains(begins, r.e) THEN r.e END]) AS at FROM (SELECT ds, ends, begins, unnest(rs) AS r FROM "
-	 "(SELECT ds, list(e) AS ends, list(b) AS begins, list({'name': name, 'b': b, 'e': e}) AS rs FROM gl_rel WHERE "
-	 "kind = 'v' GROUP BY ds, asset))) e JOIN $aspects a ON a.kind = 'VIEW' AND a.name = e.name AND "
-	 "a.begin_snapshot <= e.at AND (a.end_snapshot IS NULL OR a.end_snapshot >= e.at)",
-	 "e.ds", "'views ' || coalesce(json_extract_string(a.schema, '$.x-kind'), 'metric')", "e.at", true, false},
 };
 
 //! When each node changed, one relation: gl_chg (key, what, dataset, function, at, checked, marked), one
@@ -1280,13 +1289,13 @@ static string ChangesSQL(const Workspace &ws, bool checked) {
 	    arms + ") WHERE gl_k.key IS NOT NULL AND gl_k.at IS NOT NULL" +
 	    // a stored result: the current row's changed_at, else the last row's end
 	    (checked ? " UNION ALL SELECT lower(subject), gl_r, dataset, function, coalesce(max(changed_at) FILTER "
-		           "(WHERE end_snapshot IS NULL), max(end_snapshot)), true, false FROM $measurements, "
-		           "unnest(['result ' || function, 'value ' || aspect]) u(gl_r) GROUP BY ALL"
+		           "(WHERE end_snapshot IS NULL), max(end_snapshot)), true, false FROM $results, "
+		           "unnest(['result ' || function, 'value ' || property]) u(gl_r) GROUP BY ALL"
 		         : "") +
 	    ")";
 	sql = StringUtil::Replace(sql, "$at", "greatest(begin_snapshot, coalesce(end_snapshot, 0))");
 	for (auto &relation :
-	     {"glossary", "measurements", "imports", "recipes", "aspects", "tests", "functions", "relationships"}) {
+	     {"glossary", "results", "imports", "recipes", "properties", "tests", "functions", "relationships"}) {
 		sql = StringUtil::Replace(sql, "$" + string(relation), ws.Store(relation));
 	}
 	for (auto &table : {"snapshot_changes", "schema", "table", "column", "view", "macro"}) {
@@ -1303,21 +1312,21 @@ static string DefinitionKeysSQL(const string &node) {
 }
 
 //! The check of the current stored results in the datasets `roots` selects, a condition on the
-//! measurements relation (empty: every result), as CTEs over gl_chg (ChangesSQL): ck_cur the results,
+//! results relation (empty: every result), as CTEs over gl_chg (ChangesSQL): ck_cur the results,
 //! `root` where `roots` selects one; ck_changed (id, asset, what) a node it read changed after the snapshot
 //! it read at; ck_reads (reader, read, asset, what) a result read, through a read of its function's results
 //! or of the values of its property; ck_out the results out of date or possibly so, which read as they read
 //! until the result read is computed again, which keeps its changed_at when its value is the same; ck_marks
 //! each result with `changed` and `out`. A result reads within its dataset, so the datasets bound the walk
 static string CheckSQL(const Workspace &ws, const string &roots) {
-	auto measurements = ws.Store("measurements");
-	return "ck_cur AS MATERIALIZED (SELECT id, dataset, function, subject, aspect, read_at, value, computed_at, "
+	auto results = ws.Store("results");
+	return "ck_cur AS MATERIALIZED (SELECT id, dataset, function, subject, property, read_at, value, computed_at, "
 	       "error, begin_snapshot, " +
-	       (roots.empty() ? string("true") : "(" + roots + ")") + " AS root FROM " + measurements +
+	       (roots.empty() ? string("true") : "(" + roots + ")") + " AS root FROM " + results +
 	       " WHERE end_snapshot IS NULL" +
 	       (roots.empty() ? string()
-	                      : " AND dataset IN (SELECT dataset FROM " + measurements +
-	                            " WHERE end_snapshot IS NULL AND (" + roots + "))") +
+	                      : " AND dataset IN (SELECT dataset FROM " + results + " WHERE end_snapshot IS NULL AND (" +
+	                            roots + "))") +
 	       "), ck_in AS MATERIALIZED (SELECT i.result AS id, i.asset, i.what, c.dataset, c.function, c.read_at FROM " +
 	       ws.Store("inputs") +
 	       " i JOIN ck_cur c ON c.id = i.result WHERE i.end_snapshot IS NULL),"
@@ -1328,7 +1337,7 @@ static string CheckSQL(const Workspace &ws, const string &roots) {
 	       " WHERE n.checked AND n.at > i.read_at AND (n.dataset IS NULL OR n.dataset = i.dataset)"
 	       " AND n.function IS DISTINCT FROM i.function),"
 	       " ck_reads AS (SELECT i.id AS reader, q.id AS read, i.asset, i.what FROM ck_in i JOIN (SELECT id, dataset, "
-	       "subject, function, unnest(['result ' || function, 'value ' || aspect]) AS key FROM ck_cur) q"
+	       "subject, function, unnest(['result ' || function, 'value ' || property]) AS key FROM ck_cur) q"
 	       " ON q.dataset = i.dataset AND q.subject = i.asset AND q.key = i.what"
 	       " WHERE starts_with(i.what, 'result ') OR q.function <> i.function),"
 	       " ck_out(id) AS (SELECT id FROM ck_changed UNION SELECT r.reader FROM ck_reads r JOIN ck_out o ON o.id = "
@@ -1341,8 +1350,7 @@ static string CheckSQL(const Workspace &ws, const string &roots) {
 string CurrentResultsSQL(const Workspace &ws, const string &filter) {
 	return "WITH RECURSIVE " + ChangesSQL(ws, true) + ", " + CheckSQL(ws, filter) +
 	       " SELECT m.*, NOT k.out AS current, k.out AND NOT k.changed AS possibly FROM (SELECT * FROM " +
-	       ws.Store("measurements") + " WHERE end_snapshot IS NULL AND (" + filter +
-	       ")) m JOIN ck_marks k ON k.id = m.id";
+	       ws.Store("results") + " WHERE end_snapshot IS NULL AND (" + filter + ")) m JOIN ck_marks k ON k.id = m.id";
 }
 
 string OutdatedSQL(Inner &inner) {
@@ -1381,18 +1389,18 @@ static string DefinitionNodeSQL(const string &subject) {
 //! The annotations `filter` selects, as CTEs over gl_chg (ChangesSQL), an: each with whether it is stale
 //! (SPEC §5.2): the definition of its subject (DefinitionNodeSQL) changed after the snapshot it was written
 //! at, or no row of the lake's catalog holds that definition any more. A dataset, a source and a
-//! relationship never are. (subject, aspect, actor, body, written_at, stale, ord, error, dataset, possibly),
+//! relationship never are. (subject, property, actor, body, written_at, stale, ord, error, dataset, possibly),
 //! ord the snapshot it was written at
 static string AnnotationsSQL(const Workspace &ws, const string &filter) {
 	return NowSQL(ws) +
-	       ", an_g AS MATERIALIZED (SELECT dataset, subject, aspect, actor_kind, body, written_at, begin_snapshot AS "
+	       ", an_g AS MATERIALIZED (SELECT dataset, subject, property, actor_kind, body, written_at, begin_snapshot AS "
 	       "id, " +
 	       DefinitionNodeSQL("subject") + " AS node FROM " + ws.Store("glossary") + " WHERE end_snapshot IS NULL AND " +
 	       filter + "), an_n AS (SELECT w.node, max(c.at) AS at FROM (SELECT node, unnest(" +
 	       DefinitionKeysSQL("node") +
 	       ") AS key FROM (SELECT DISTINCT lower(node) AS node FROM an_g WHERE node IS NOT NULL)) w"
 	       " JOIN gl_chg c ON c.key = w.key AND c.what = 'definition' AND c.marked GROUP BY w.node),"
-	       " an AS (SELECT g.subject, g.aspect, g.actor_kind AS actor, g.body::JSON AS body, g.written_at,"
+	       " an AS (SELECT g.subject, g.property, g.actor_kind AS actor, g.body::JSON AS body, g.written_at,"
 	       " g.node IS NOT NULL AND coalesce(n.at > g.id, true) AS stale, g.id AS ord, NULL::VARCHAR AS error,"
 	       " g.dataset, false AS possibly FROM an_g g LEFT JOIN an_n n ON n.node = lower(g.node))";
 }
@@ -1402,29 +1410,29 @@ static string AnnotationsOverSQL(const Workspace &ws, const string &filter) {
 }
 
 //! Every value `filter` selects, the current one per actor kind, as CTEs: gl_all, the glossary's agent and
-//! human rows and the function values the measurements hold, a view's lineage and a test's result none of
+//! human rows and the function values the results hold, a view's lineage and a test's result none of
 //! them; each with its staleness, `ord`, the snapshot it was written at, and the error of a computation that
 //! failed, whose row holds no value. `checked` false where no current stored result holds a value
 //! `filter` selects: the check is not planned
 static string ValuesSQL(const Workspace &ws, const string &filter, bool checked) {
-	auto roots = filter + " AND aspect NOT IN ('lineage', 'test')";
+	auto roots = filter + " AND property NOT IN ('lineage', 'test')";
 	return ChangesSQL(ws, checked) + ", " + AnnotationsSQL(ws, filter) + ", " +
 	       (checked
 	            ? CheckSQL(ws, roots) +
-	                  ", gl_values AS (SELECT subject, aspect, 'function' AS actor, value::JSON AS body, computed_at"
+	                  ", gl_values AS (SELECT subject, property, 'function' AS actor, value::JSON AS body, computed_at"
 	                  " AS written_at, changed AS stale, begin_snapshot AS ord, error, dataset, out AND NOT changed"
 	                  " AS possibly FROM ck_marks WHERE root)"
 				: string("gl_values AS (SELECT * FROM an WHERE false)")) +
 	       ", gl_all AS (SELECT * FROM an UNION ALL SELECT * FROM gl_values)";
 }
 
-//! The stored results of the tests in scope, a condition on the measurements relation
-static string TestsFilter(const Workspace &ws, const ReadScope &scope, const Value &aspect) {
-	return "dataset = " + QuoteText(scope.dataset) + " AND aspect = 'test'" +
+//! The stored results of the tests in scope, a condition on the results relation
+static string TestsFilter(const Workspace &ws, const ReadScope &scope, const Value &property) {
+	return "dataset = " + QuoteText(scope.dataset) + " AND property = 'test'" +
 	       (scope.whole ? string() : " AND " + scope.subjects) +
-	       (aspect.IsNull() ? string()
-	                        : " AND function IN (SELECT name FROM " + Newest(ws, "tests") +
-	                              " WHERE aspect = " + QuoteText(aspect.ToString()) + ")");
+	       (property.IsNull() ? string()
+	                          : " AND function IN (SELECT name FROM " + Newest(ws, "tests") +
+	                                " WHERE property = " + QuoteText(property.ToString()) + ")");
 }
 
 //! A test's stored result as its judgment: state and score, an error the state `error` with score 0
@@ -1435,24 +1443,24 @@ static constexpr const char *JUDGMENT = "CASE WHEN m.error IS NOT NULL THEN 'err
 static constexpr const char *JUDGED = "(m.error IS NOT NULL OR json_type(m.value::JSON) = 'OBJECT')";
 
 //! The tests' results among stored results with their marks, in the standard test-results schema
-//! (SPEC §7.2): (subject, aspect, test, state, score, computed_at, current, error), `current` whether the
+//! (SPEC §7.2): (subject, property, test, state, score, computed_at, current, error), `current` whether the
 //! stored result is current (SPEC §6)
-static string TestResultsSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect) {
-	return "SELECT m.subject, t.aspect, m.function AS test, " + string(JUDGMENT) +
-	       ", m.computed_at, m.current, m.error FROM (" + CurrentResultsSQL(ws, TestsFilter(ws, scope, aspect)) +
+static string TestResultsSQL(const Workspace &ws, const ReadScope &scope, const Value &property) {
+	return "SELECT m.subject, t.property, m.function AS test, " + string(JUDGMENT) +
+	       ", m.computed_at, m.current, m.error FROM (" + CurrentResultsSQL(ws, TestsFilter(ws, scope, property)) +
 	       ") m JOIN " + Newest(ws, "tests") + " t ON t.name = m.function AND t.detector IS NOT NULL WHERE " + JUDGED;
 }
 
-//! The subjects each tested aspect is required on, by the aspect's grain (SPEC §5.1), as CTEs over gl_src:
-//! gl_missing (subject, aspect), what the collapsed read discloses as missing when nobody annotated. A
+//! The subjects each tested property is required on, by the property's grain (SPEC §5.1), as CTEs over gl_src:
+//! gl_missing (subject, property), what the collapsed read discloses as missing when nobody annotated. A
 //! narrowed read keeps to its subject; the dataset's sweep takes every declared source
-static string MissingSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect) {
+static string MissingSQL(const Workspace &ws, const ReadScope &scope, const Value &property) {
 	auto d = QuoteText(scope.dataset);
-	return "ms_tests AS (SELECT w.aspect, coalesce(from_json(a.grains, '[\"VARCHAR\"]'), []::VARCHAR[]) AS "
-	       "grains, a.condition::JSON->>'aspect' AS c_aspect, a.condition::JSON->>'value' AS c_value,"
+	return "ms_tests AS (SELECT w.property, coalesce(from_json(a.grains, '[\"VARCHAR\"]'), []::VARCHAR[]) AS "
+	       "grains, a.condition::JSON->>'property' AS c_property, a.condition::JSON->>'value' AS c_value,"
 	       " from_json(a.condition::JSON->'type', '[\"VARCHAR\"]') AS c_types FROM " +
-	       Newest(ws, "tests") + " w LEFT JOIN " + Newest(ws, "aspects") + " a ON a.name = w.aspect" +
-	       (aspect.IsNull() ? string() : " WHERE w.aspect = " + QuoteText(aspect.ToString())) +
+	       Newest(ws, "tests") + " w LEFT JOIN " + Newest(ws, "properties") + " a ON a.name = w.property" +
+	       (property.IsNull() ? string() : " WHERE w.property = " + QuoteText(property.ToString())) +
 	       "), ms_cols AS MATERIALIZED (SELECT table_name, column_name, column_type FROM glossql_columns(" + d +
 	       ")), ms_cand AS (SELECT " + d +
 	       " || '.' || table_name || '.' || column_name AS subject, 'COLUMN' AS grain,"
@@ -1463,67 +1471,67 @@ static string MissingSQL(const Workspace &ws, const ReadScope &scope, const Valu
 	       ws.Store("relationships") + " WHERE dataset = " + d +
 	       " UNION ALL SELECT DISTINCT name, 'SOURCE', NULL FROM " + ws.Store("sources") +
 	       // required only where the sibling's winning value, human over agent, carries the literal (SPEC §5.1)
-	       "), ms_sibling AS (SELECT subject, aspect, arg_min(body, {'r': CASE actor_kind WHEN 'human' THEN 0 ELSE 1 "
+	       "), ms_sibling AS (SELECT subject, property, arg_min(body, {'r': CASE actor_kind WHEN 'human' THEN 0 ELSE 1 "
 	       "END, 'o': -begin_snapshot}) AS body FROM " +
 	       ws.Store("glossary") +
 	       " WHERE end_snapshot IS NULL AND actor_kind IN ('human', 'agent') AND (dataset = " + d + " OR " +
 	       SourceGrainSQL() +
-	       ") AND list_contains((SELECT list(c_aspect) FROM ms_tests), aspect) GROUP BY subject, aspect),"
-	       " gl_missing AS (SELECT DISTINCT c.subject, t.aspect FROM ms_tests t JOIN ms_cand c"
+	       ") AND list_contains((SELECT list(c_property) FROM ms_tests), property) GROUP BY subject, property),"
+	       " gl_missing AS (SELECT DISTINCT c.subject, t.property FROM ms_tests t JOIN ms_cand c"
 	       " ON len(t.grains) = 0 OR list_contains(t.grains, c.grain)"
-	       " LEFT JOIN ms_sibling s ON s.subject = c.subject AND s.aspect = t.c_aspect"
-	       " WHERE (t.c_aspect IS NULL OR s.body::JSON->>'value' = t.c_value)"
+	       " LEFT JOIN ms_sibling s ON s.subject = c.subject AND s.property = t.c_property"
+	       " WHERE (t.c_property IS NULL OR s.body::JSON->>'value' = t.c_value)"
 	       // required only on columns of the named types: the base type, DECIMAL for DECIMAL(18,2) (SPEC §5.1)
 	       " AND (t.c_types IS NULL OR (c.grain = 'COLUMN' AND list_contains(t.c_types, c.base)))" +
 	       (scope.whole ? string() : " AND " + StringUtil::Replace(scope.subjects, "subject", "c.subject")) + ")";
 }
 
-//! The collapsed read: one row per (subject, aspect) — the precedence pick,
+//! The collapsed read: one row per (subject, property) — the precedence pick,
 //! withheld while two actors' values are current and the test's stored score
 //! exceeds its threshold; one value is never in conflict, it is served with
 //! its test state (SPEC §5.3); every gap visible
-static string CollapsedSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect, bool checked) {
+static string CollapsedSQL(const Workspace &ws, const ReadScope &scope, const Value &property, bool checked) {
 	// an error is not a judgment (SPEC §7.2): it never withholds, and any other result outranks it, the
 	// highest score first; a stale value is served and marked (SPEC §5.3). A test's state and score are read
 	// as stored: the collapsed read serves no test's mark
-	return "WITH RECURSIVE " + ValuesSQL(ws, RowsFilter(scope, aspect), checked) +
-	       ", gl_picked AS (SELECT subject, aspect, p.value, p.stale, p.possibly, gl_actors FROM (SELECT subject, "
-	       "aspect, count(DISTINCT actor) AS gl_actors, arg_min({'value': body::JSON, 'stale': stale, 'possibly': "
+	return "WITH RECURSIVE " + ValuesSQL(ws, RowsFilter(scope, property), checked) +
+	       ", gl_picked AS (SELECT subject, property, p.value, p.stale, p.possibly, gl_actors FROM (SELECT subject, "
+	       "property, count(DISTINCT actor) AS gl_actors, arg_min({'value': body::JSON, 'stale': stale, 'possibly': "
 	       "possibly}, {'r': CASE actor WHEN 'human' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END, 'o': -ord}) AS p"
-	       " FROM gl_all WHERE error IS NULL GROUP BY subject, aspect)),"
-	       " gl_judged AS (SELECT subject, aspect, j.state, j.score, j.threshold FROM (SELECT subject, aspect,"
+	       " FROM gl_all WHERE error IS NULL GROUP BY subject, property)),"
+	       " gl_judged AS (SELECT subject, property, j.state, j.score, j.threshold FROM (SELECT subject, property,"
 	       " arg_min({'state': state, 'score': score, 'threshold': threshold}, {'e': CASE WHEN state = 'error' THEN 1"
 	       " WHEN state IS NULL THEN 2 ELSE 0 END, 's': coalesce(-score, 'infinity'::DOUBLE)}) AS j FROM (SELECT"
-	       " m.subject, t.aspect, " +
-	       JUDGMENT + ", t.threshold FROM (SELECT * FROM " + ws.Store("measurements") +
-	       " WHERE end_snapshot IS NULL AND " + TestsFilter(ws, scope, Value()) + ") m JOIN " + Newest(ws, "tests") +
+	       " m.subject, t.property, " +
+	       JUDGMENT + ", t.threshold FROM (SELECT * FROM " + ws.Store("results") + " WHERE end_snapshot IS NULL AND " +
+	       TestsFilter(ws, scope, Value()) + ") m JOIN " + Newest(ws, "tests") +
 	       " t ON t.name = m.function AND t.detector IS NOT NULL" +
-	       (aspect.IsNull() ? string() : " AND t.aspect = " + QuoteText(aspect.ToString())) + " WHERE " + JUDGED +
-	       ") GROUP BY subject, aspect)), " + MissingSQL(ws, scope, aspect) +
-	       " SELECT * FROM (SELECT p.subject, p.aspect,"
+	       (property.IsNull() ? string() : " AND t.property = " + QuoteText(property.ToString())) + " WHERE " + JUDGED +
+	       ") GROUP BY subject, property)), " + MissingSQL(ws, scope, property) +
+	       " SELECT * FROM (SELECT p.subject, p.property,"
 	       " CASE WHEN j.score > j.threshold AND p.gl_actors > 1 THEN NULL ELSE p.value END AS value,"
 	       " j.state AS test_state, j.score, CASE WHEN j.score > j.threshold AND p.gl_actors > 1"
 	       " THEN 'conflict' WHEN p.stale THEN 'stale' WHEN p.possibly THEN 'possibly' ELSE 'current' END AS state"
-	       " FROM gl_picked p LEFT JOIN gl_judged j ON j.subject = p.subject AND j.aspect = p.aspect"
-	       " UNION ALL SELECT o.subject, o.aspect, NULL::JSON AS value, NULL::VARCHAR AS test_state,"
+	       " FROM gl_picked p LEFT JOIN gl_judged j ON j.subject = p.subject AND j.property = p.property"
+	       " UNION ALL SELECT o.subject, o.property, NULL::JSON AS value, NULL::VARCHAR AS test_state,"
 	       " NULL::DOUBLE AS score, 'missing' AS state FROM gl_missing o ANTI JOIN gl_picked q"
-	       " ON q.subject = o.subject AND q.aspect = o.aspect) ORDER BY subject, aspect";
+	       " ON q.subject = o.subject AND q.property = o.property) ORDER BY subject, property";
 }
 
-//! The raw read: one row per value — (subject, aspect, kind, test, actor, body, written_at, current,
+//! The raw read: one row per value — (subject, property, kind, test, actor, body, written_at, current,
 //! error); a failed computation is a row with its error and no body
-static string RawSQL(const Workspace &ws, const ReadScope &scope, const Value &aspect, bool checked) {
-	return "WITH RECURSIVE " + ValuesSQL(ws, RowsFilter(scope, aspect), checked) +
-	       " SELECT gl_s.subject, gl_s.aspect, gl_a.kind, gl_t.name AS test, gl_s.actor, gl_s.body::JSON AS body,"
+static string RawSQL(const Workspace &ws, const ReadScope &scope, const Value &property, bool checked) {
+	return "WITH RECURSIVE " + ValuesSQL(ws, RowsFilter(scope, property), checked) +
+	       " SELECT gl_s.subject, gl_s.property, gl_a.kind, gl_t.name AS test, gl_s.actor, gl_s.body::JSON AS body,"
 	       " gl_s.written_at, NOT gl_s.stale AND NOT gl_s.possibly AS current, gl_s.error FROM gl_all gl_s LEFT JOIN " +
-	       Newest(ws, "aspects") + " gl_a ON gl_a.name = gl_s.aspect LEFT JOIN " + Newest(ws, "tests") +
-	       " gl_t ON gl_t.aspect = gl_s.aspect ORDER BY gl_s.subject, gl_s.aspect, gl_s.actor";
+	       Newest(ws, "properties") + " gl_a ON gl_a.name = gl_s.property LEFT JOIN " + Newest(ws, "tests") +
+	       " gl_t ON gl_t.property = gl_s.property ORDER BY gl_s.subject, gl_s.property, gl_s.actor";
 }
 
 //===--------------------------------------------------------------------===//
 // A test's result (SPEC §7.2): SELECT <test>() FROM <subject> computes the
 // test on each subject at or under the subject that holds a value of its
-// aspect, where no result is stored or the stored one is not current, and
+// property, where no result is stored or the stored one is not current, and
 // stores one result per subject and test in one write: the detector's state
 // and score, or the error it failed with, with the nodes it read. A stored
 // result on a subject that holds no value any more retires.
@@ -1531,7 +1539,7 @@ static string RawSQL(const Workspace &ws, const ReadScope &scope, const Value &a
 
 TestDeclaration DeclaredTest(Inner &inner, const string &name) {
 	TestDeclaration test;
-	auto row = inner.Row("SELECT w.name, w.aspect, w.detector, w.threshold, (SELECT f.script FROM " +
+	auto row = inner.Row("SELECT w.name, w.property, w.detector, w.threshold, (SELECT f.script FROM " +
 	                     inner.Store("functions") +
 	                     " f WHERE f.name = w.detector AND f.returns IS NULL AND f.end_snapshot IS NULL"
 	                     " ORDER BY f.begin_snapshot DESC LIMIT 1) FROM " +
@@ -1540,7 +1548,7 @@ TestDeclaration DeclaredTest(Inner &inner, const string &name) {
 		return test;
 	}
 	test.name = row[0].ToString();
-	test.aspect = row[1].ToString();
+	test.property = row[1].ToString();
 	test.detector = row[2].IsNull() ? string() : row[2].ToString();
 	test.threshold = row[3];
 	test.script = row[4];
@@ -1598,15 +1606,15 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
                                   const string &subject) {
 	auto &ws = inner.ws;
 	auto scope = ScopeOf(context, Value(subject));
-	auto values = RowsFilter(scope, Value(test.aspect));
+	auto values = RowsFilter(scope, Value(test.property));
 	auto stored = "dataset = " + QuoteText(scope.dataset) + " AND function = " + QuoteText(test.name) +
-	              " AND aspect = 'test'" + (scope.whole ? string() : " AND " + scope.subjects);
-	// the subjects that hold a value of the aspect, and the test's results stored in scope with whether each
+	              " AND property = 'test'" + (scope.whole ? string() : " AND " + scope.subjects);
+	// the subjects that hold a value of the property, and the test's results stored in scope with whether each
 	// is current
 	auto rows =
 	    inner.Run("WITH " + SourcesSQL(ws) + ", holding AS (SELECT DISTINCT subject FROM (SELECT subject FROM " +
 		          inner.Current("glossary") + " WHERE " + values + " UNION ALL SELECT subject FROM " +
-		          inner.Current("measurements") + " WHERE error IS NULL AND " + values +
+		          inner.Current("results") + " WHERE error IS NULL AND " + values +
 		          ")), kept AS (SELECT subject, value, current FROM (" + CurrentResultsSQL(ws, stored) +
 		          ")) SELECT coalesce(h.subject, k.subject), h.subject IS NOT NULL, k.subject IS NOT NULL,"
 		          " coalesce(k.current, false), k.value FROM holding h FULL JOIN kept k ON k.subject ="
@@ -1622,8 +1630,8 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
 			if (!holds) {
 				retire.push_back(name);
 			} else if (kept && chunk->GetValue(3, r).GetValue<bool>()) {
-				served.push_back(
-				    {Value(test.name), Value(name), Value(test.aspect), chunk->GetValue(4, r), Value::BOOLEAN(false)});
+				served.push_back({Value(test.name), Value(name), Value(test.property), chunk->GetValue(4, r),
+				                  Value::BOOLEAN(false)});
 			} else {
 				due.push_back(name);
 			}
@@ -1641,10 +1649,11 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
 	auto in_due = due.empty() ? string("false")
 	                          : "subject IN (SELECT s FROM (VALUES " + StringUtil::Join(quoted, ", ") + ") v(s))";
 	const string once = "__gloss_test_values";
-	inner.Run("CREATE OR REPLACE TEMP TABLE " + once +
-	          " AS SELECT subject, aspect, actor AS actor_kind, body, NOT stale AND NOT possibly AS current FROM (WITH "
-	          "RECURSIVE " +
-	          ValuesSQL(ws, values + " AND " + in_due, true) + " SELECT * FROM gl_all) WHERE error IS NULL");
+	inner.Run(
+	    "CREATE OR REPLACE TEMP TABLE " + once +
+	    " AS SELECT subject, property, actor AS actor_kind, body, NOT stale AND NOT possibly AS current FROM (WITH "
+	    "RECURSIVE " +
+	    ValuesSQL(ws, values + " AND " + in_due, true) + " SELECT * FROM gl_all) WHERE error IS NULL");
 	std::map<string, pair<string, string>> judged;
 	auto failure = due.empty() ? string() : RunDetector(context, inner, test, once, judged);
 	// a detector that failed ended the read it ran in, and the table with it
@@ -1652,8 +1661,8 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
 	if (context.IsInterrupted()) {
 		throw InterruptException();
 	}
-	// the nodes each result read: the subject's values of the aspect, its definition, which its values'
-	// staleness reads, the aspect's and the test's declaration, and the detector's
+	// the nodes each result read: the subject's values of the property, its definition, which its values'
+	// staleness reads, the property's and the test's declaration, and the detector's
 	std::map<string, string> definitions;
 	if (!due.empty()) {
 		auto nodes = inner.Run("WITH " + NowSQL(ws) + " SELECT s, " + DefinitionNodeSQL("s") + " FROM (VALUES " +
@@ -1681,7 +1690,8 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
 			                                  : Value("{\"state\":" + JsonString(found->second.first) +
 			                                          ",\"score\":" + found->second.second + "}");
 		}
-		row.nodes = {{name, "annotation " + test.aspect}, {name, "value " + test.aspect}, {test.aspect, "property"}};
+		row.nodes = {
+		    {name, "annotation " + test.property}, {name, "value " + test.property}, {test.property, "property"}};
 		if (!test.detector.empty()) {
 			row.nodes.emplace_back(test.detector, "function");
 		}
@@ -1689,7 +1699,7 @@ vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const Te
 		if (definition != definitions.end()) {
 			row.nodes.emplace_back(definition->second, "definition");
 		}
-		out.push_back({Value(test.name), Value(name), Value(test.aspect), row.error.IsNull() ? row.value : Value(),
+		out.push_back({Value(test.name), Value(name), Value(test.property), row.error.IsNull() ? row.value : Value(),
 		               Value::BOOLEAN(true)});
 		results.push_back(std::move(row));
 	}
@@ -1883,7 +1893,7 @@ static TableFunctionSet GlossKindFunction(idx_t stem, table_function_bind_replac
 }
 
 //===--------------------------------------------------------------------===//
-// glossql_glossary(subject, aspect, all) and glossql_tests(subject, aspect):
+// glossql_glossary(subject, property, all) and glossql_tests(subject, property):
 // GLOSSARY() and TESTS() as the grammar rewrites them. Each read's rows are
 // computed when the statement runs, on the second connection, and scanned:
 // planned there, apart from the statement that reads them, so a statement
@@ -1911,10 +1921,10 @@ struct ReadState : public GlobalTableFunctionState {
 
 //! The columns of each read, `name TYPE` each
 static const char *const COLLAPSED_SHAPE =
-    "subject VARCHAR, aspect VARCHAR, value JSON, test_state VARCHAR, score DOUBLE, state VARCHAR";
-static const char *const RAW_SHAPE = "subject VARCHAR, aspect VARCHAR, kind VARCHAR, test VARCHAR, actor VARCHAR, "
+    "subject VARCHAR, property VARCHAR, value JSON, test_state VARCHAR, score DOUBLE, state VARCHAR";
+static const char *const RAW_SHAPE = "subject VARCHAR, property VARCHAR, kind VARCHAR, test VARCHAR, actor VARCHAR, "
                                      "body JSON, written_at TIMESTAMP, current BOOLEAN, error VARCHAR";
-static const char *const TESTS_SHAPE = "subject VARCHAR, aspect VARCHAR, test VARCHAR, state VARCHAR, "
+static const char *const TESTS_SHAPE = "subject VARCHAR, property VARCHAR, test VARCHAR, state VARCHAR, "
                                        "score DOUBLE, computed_at TIMESTAMP, current BOOLEAN, error VARCHAR";
 
 //! A read's bind: its columns from the shape, and its SQL cast to them
@@ -1943,18 +1953,18 @@ static unique_ptr<FunctionData> GlossaryBind(ClientContext &context, TableFuncti
 	bool all = input.inputs[2].GetValue<bool>();
 	auto scope = ScopeOf(context, input.inputs[0]);
 	auto ws = WorkspaceOf(context);
-	auto &aspect = input.inputs[1];
+	auto &property = input.inputs[1];
 	// a read of one property that no current stored result holds serves no function value: the check is
 	// not planned
-	bool checked = aspect.IsNull() ||
+	bool checked = property.IsNull() ||
 	               !Inner::Of(context)
-	                    .Row("SELECT 1 FROM " + ws.Store("measurements") + " WHERE end_snapshot IS NULL AND aspect = " +
-	                         QuoteText(aspect.ToString()) + " AND aspect NOT IN ('lineage', 'test') LIMIT 1")
+	                    .Row("SELECT 1 FROM " + ws.Store("results") + " WHERE end_snapshot IS NULL AND property = " +
+	                         QuoteText(property.ToString()) + " AND property NOT IN ('lineage', 'test') LIMIT 1")
 	                    .empty();
 	if (all) {
-		return ReadBind(RAW_SHAPE, RawSQL(ws, scope, aspect, checked), return_types, names);
+		return ReadBind(RAW_SHAPE, RawSQL(ws, scope, property, checked), return_types, names);
 	}
-	return ReadBind(COLLAPSED_SHAPE, CollapsedSQL(ws, scope, aspect, checked), return_types, names);
+	return ReadBind(COLLAPSED_SHAPE, CollapsedSQL(ws, scope, property, checked), return_types, names);
 }
 
 static unique_ptr<FunctionData> TestsBind(ClientContext &context, TableFunctionBindInput &input,
@@ -1962,7 +1972,7 @@ static unique_ptr<FunctionData> TestsBind(ClientContext &context, TableFunctionB
 	auto scope = ScopeOf(context, input.inputs[0]);
 	return ReadBind(TESTS_SHAPE,
 	                "SELECT * FROM (" + TestResultsSQL(WorkspaceOf(context), scope, input.inputs[1]) +
-	                    ") ORDER BY subject, aspect, test",
+	                    ") ORDER BY subject, property, test",
 	                return_types, names);
 }
 

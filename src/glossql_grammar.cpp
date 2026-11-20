@@ -246,11 +246,11 @@ static arena_ptr<TransformResultValue> MakeWrite(PEGTransformer &transformer, co
 //! GlossGlossStatement <- 'GLOSS' Identifier 'ON' GlossSubject 'AS' StringLiteral
 static arena_ptr<TransformResultValue> FinalizeGloss(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
-	auto aspect = Ident(transformer, list.GetChild(1));
+	auto property = Ident(transformer, list.GetChild(1));
 	auto subject = SubjectText(transformer, list.GetChild(3));
 	auto body = Text(transformer, list.GetChild(5));
-	return MakeWrite(transformer, "glossary", {Value(subject), Value(aspect), Value(body)},
-	                 "GLOSS " + aspect + " ON " + subject);
+	return MakeWrite(transformer, "glossary", {Value(subject), Value(property), Value(body)},
+	                 "GLOSS " + property + " ON " + subject);
 }
 GLOSSQL_TRANSFORM(StartGloss, FinalizeGloss)
 
@@ -483,7 +483,7 @@ GLOSSQL_TRANSFORM(StartExtract, FinalizeExtract)
 static arena_ptr<TransformResultValue> FinalizeDeclareTest(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	auto name = Ident(transformer, list.GetChild(2));
-	auto aspect = Ident(transformer, list.GetChild(4));
+	auto property = Ident(transformer, list.GetChild(4));
 	vector<Value> actor_kinds;
 	auto &by = list.Child<OptionalParseResult>(5);
 	if (by.HasResult()) {
@@ -513,21 +513,14 @@ static arena_ptr<TransformResultValue> FinalizeDeclareTest(PEGTransformer &trans
 	}
 	return MakeStatement(
 	    transformer, "test", "",
-	    {Value(name), Value(aspect), Value::LIST(LogicalType::VARCHAR, std::move(actor_kinds)), detector, threshold},
-	    "DECLARE TEST " + name + " ON " + aspect);
+	    {Value(name), Value(property), Value::LIST(LogicalType::VARCHAR, std::move(actor_kinds)), detector, threshold},
+	    "DECLARE TEST " + name + " ON " + property);
 }
 GLOSSQL_TRANSFORM(StartDeclareTest, FinalizeDeclareTest)
 
-//! GlossAspectKind <- GlossKindMeasurement / GlossKindFact / GlossKindView
-static string AspectKindText(ParseResult &parse_result) {
-	auto &kind = GetChoice(parse_result);
-	if (IsRule(kind, "GlossKindMeasurement")) {
-		return "MEASUREMENT";
-	}
-	if (IsRule(kind, "GlossKindFact")) {
-		return "FACT";
-	}
-	return "VIEW";
+//! GlossPropertyKind <- GlossKindMeasurement / GlossKindFact
+static string PropertyKindText(ParseResult &parse_result) {
+	return IsRule(GetChoice(parse_result), "GlossKindMeasurement") ? "MEASUREMENT" : "FACT";
 }
 
 //! GlossGrain <- GlossGrainDataset / GlossGrainTable / GlossGrainColumn / GlossGrainRelationship /
@@ -542,19 +535,19 @@ static string GrainText(ParseResult &parse_result) {
 	throw InternalException("unknown grain rule '%s'", grain.Name());
 }
 
-//! GlossDeclareAspect <- 'DECLARE' 'ASPECT' Identifier 'WITH' StringLiteral 'AS' GlossAspectKind
+//! GlossDeclareProperty <- 'DECLARE' 'PROPERTY' Identifier 'WITH' StringLiteral 'AS' GlossPropertyKind
 //!                         GlossGrainClause?
 //! GlossGrainClause <- 'ON' List(GlossGrain) GlossWhen? ; GlossWhen <- 'WHEN' GlossWhenBody
-//! GlossWhenBody <- GlossWhenType / GlossWhenAspect ; GlossWhenAspect <- Identifier '=' StringLiteral
+//! GlossWhenBody <- GlossWhenType / GlossWhenProperty ; GlossWhenProperty <- Identifier '=' StringLiteral
 //! GlossWhenType <- 'TYPE' GlossWhenTypes ; GlossWhenTypes <- GlossWhenTypeOne / GlossWhenTypeIn
 //! GlossWhenTypeOne <- '=' StringLiteral ; GlossWhenTypeIn <- 'IN' '(' List(StringLiteral) ')'
-static arena_ptr<TransformResultValue> FinalizeDeclareAspect(PEGTransformer &transformer, ParseResult &parse_result) {
+static arena_ptr<TransformResultValue> FinalizeDeclareProperty(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	auto name = Ident(transformer, list.GetChild(2));
 	auto schema = Text(transformer, list.GetChild(4));
-	auto kind = AspectKindText(list.GetChild(6));
+	auto kind = PropertyKindText(list.GetChild(6));
 	vector<Value> grains;
-	// the WHEN as JSON: the sibling aspect and the literal its winning value carries, or the
+	// the WHEN as JSON: the sibling property and the literal its winning value carries, or the
 	// columns' data types, upper-cased as DuckDB names them
 	Value condition(LogicalType::VARCHAR);
 	auto &grain_clause = list.Child<OptionalParseResult>(7);
@@ -580,21 +573,17 @@ static arena_ptr<TransformResultValue> FinalizeDeclareAspect(PEGTransformer &tra
 				condition = Value("{\"type\":[" + StringUtil::Join(names, ",") + "]}");
 			} else {
 				auto &clause_when = body.Cast<ListParseResult>();
-				condition = Value("{\"aspect\":" + JsonString(Ident(transformer, clause_when.GetChild(0))) +
+				condition = Value("{\"property\":" + JsonString(Ident(transformer, clause_when.GetChild(0))) +
 				                  ",\"value\":" + JsonString(Text(transformer, clause_when.GetChild(2))) + "}");
 			}
 		}
 	}
-	if (kind == "VIEW" && !grains.empty()) {
-		// SPEC §5.1: a metric is defined on the dataset; a grain clause is refused
-		throw ParserException("a VIEW aspect takes no grain clause: its grain is the dataset");
-	}
 	return MakeWrite(
-	    transformer, "aspects",
+	    transformer, "properties",
 	    {Value(name), Value(schema), Value(kind), Value::LIST(LogicalType::VARCHAR, std::move(grains)), condition},
-	    "DECLARE ASPECT " + name);
+	    "DECLARE PROPERTY " + name);
 }
-GLOSSQL_TRANSFORM(StartDeclareAspect, FinalizeDeclareAspect)
+GLOSSQL_TRANSFORM(StartDeclareProperty, FinalizeDeclareProperty)
 
 //! GlossDeclareRelationship <- 'DECLARE' 'RELATIONSHIP' GlossRelSide GlossRelOp GlossRelSide
 static arena_ptr<TransformResultValue> FinalizeDeclareRelationship(PEGTransformer &transformer,
@@ -609,8 +598,8 @@ static arena_ptr<TransformResultValue> FinalizeDeclareRelationship(PEGTransforme
 GLOSSQL_TRANSFORM(StartDeclareRelationship, FinalizeDeclareRelationship)
 
 //===--------------------------------------------------------------------===//
-// Reads: GLOSSARY(...) becomes glossql_glossary(subject, aspect, all) and
-// TESTS(...) becomes glossql_tests(subject, aspect) — stock table-function
+// Reads: GLOSSARY(...) becomes glossql_glossary(subject, property, all) and
+// TESTS(...) becomes glossql_tests(subject, property) — stock table-function
 // references, whose bind plans the read over the store
 //===--------------------------------------------------------------------===//
 
@@ -630,13 +619,13 @@ static arena_ptr<TransformResultValue> ReadRef(PEGTransformer &transformer, cons
 
 //! GlossGlossaryRead <- 'GLOSSARY' Parens(GlossGlossaryArgs?) TableAlias?
 //! GlossGlossaryArgs <- GlossSubjectArgs / GlossAllFlag
-//! GlossSubjectArgs <- GlossSubject GlossAspectNarrow? GlossAllTail?
-//! GlossAspectNarrow <- '::' Identifier ; GlossAllTail <- ',' GlossAllFlag
+//! GlossSubjectArgs <- GlossSubject GlossPropertyNarrow? GlossAllTail?
+//! GlossPropertyNarrow <- '::' Identifier ; GlossAllTail <- ',' GlossAllFlag
 //! GlossAllFlag <- 'ALL' '=>' 'TRUE'
 static arena_ptr<TransformResultValue> FinalizeGlossaryRead(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	unique_ptr<ParsedExpression> subject = ConstantExpression::Null();
-	unique_ptr<ParsedExpression> aspect = ConstantExpression::Null();
+	unique_ptr<ParsedExpression> property = ConstantExpression::Null();
 	bool all = false;
 
 	auto &args_opt = InParens(list.GetChild(1)).Cast<OptionalParseResult>();
@@ -649,7 +638,7 @@ static arena_ptr<TransformResultValue> FinalizeGlossaryRead(PEGTransformer &tran
 			subject = ConstantExpression::String(SubjectText(transformer, subject_args.GetChild(0)));
 			auto &narrow = subject_args.Child<OptionalParseResult>(1);
 			if (narrow.HasResult()) {
-				aspect = ConstantExpression::String(
+				property = ConstantExpression::String(
 				    Ident(transformer, narrow.GetResult().Cast<ListParseResult>().GetChild(1)));
 			}
 			all = subject_args.Child<OptionalParseResult>(2).HasResult();
@@ -658,38 +647,38 @@ static arena_ptr<TransformResultValue> FinalizeGlossaryRead(PEGTransformer &tran
 
 	vector<unique_ptr<ParsedExpression>> children;
 	children.push_back(std::move(subject));
-	children.push_back(std::move(aspect));
+	children.push_back(std::move(property));
 	children.push_back(ConstantExpression::Boolean(all));
 	return ReadRef(transformer, "glossql_glossary", std::move(children), list.Child<OptionalParseResult>(2));
 }
 GLOSSQL_TRANSFORM(StartGlossaryRead, FinalizeGlossaryRead)
 
 //! GlossTestsRead <- 'TESTS' Parens(GlossTestsArgs?) TableAlias?
-//! GlossTestsArgs <- GlossSubject GlossAspectNarrow?
+//! GlossTestsArgs <- GlossSubject GlossPropertyNarrow?
 static arena_ptr<TransformResultValue> FinalizeTestsRead(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list = parse_result.Cast<ListParseResult>();
 	unique_ptr<ParsedExpression> subject = ConstantExpression::Null();
-	unique_ptr<ParsedExpression> aspect = ConstantExpression::Null();
+	unique_ptr<ParsedExpression> property = ConstantExpression::Null();
 	auto &args_opt = InParens(list.GetChild(1)).Cast<OptionalParseResult>();
 	if (args_opt.HasResult()) {
 		auto &args = args_opt.GetResult().Cast<ListParseResult>();
 		subject = ConstantExpression::String(SubjectText(transformer, args.GetChild(0)));
 		auto &narrow = args.Child<OptionalParseResult>(1);
 		if (narrow.HasResult()) {
-			aspect =
+			property =
 			    ConstantExpression::String(Ident(transformer, narrow.GetResult().Cast<ListParseResult>().GetChild(1)));
 		}
 	}
 	vector<unique_ptr<ParsedExpression>> children;
 	children.push_back(std::move(subject));
-	children.push_back(std::move(aspect));
+	children.push_back(std::move(property));
 	return ReadRef(transformer, "glossql_tests", std::move(children), list.Child<OptionalParseResult>(2));
 }
 GLOSSQL_TRANSFORM(StartTestsRead, FinalizeTestsRead)
 
 //! GlossGlossaryQuoted <- 'GLOSSARY' Parens(GlossQuotedArgs) TableAlias?
 //! GlossTestsQuoted <- 'TESTS' Parens(GlossQuotedArgs) TableAlias?
-//! GlossQuotedArgs <- StringLiteral GlossAspectNarrow? GlossAllTail?
+//! GlossQuotedArgs <- StringLiteral GlossPropertyNarrow? GlossAllTail?
 //! A subject is a path (grammar.ebnf), never a string: a string where it stands is refused by
 //! code with the form that reads it, where the stock parser would look up a table function of
 //! the read's name
@@ -741,7 +730,7 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 
 	// New words are unreserved: still usable as column and table names
 	for (auto keyword :
-	     {"'GLOSS'", "'GLOSSARY'", "'ASPECT'", "'RELATIONSHIP'", "'FACT'", "'MEASUREMENT'", "'DATASET'", "'RECIPE'",
+	     {"'GLOSS'", "'GLOSSARY'", "'PROPERTY'", "'RELATIONSHIP'", "'FACT'", "'MEASUREMENT'", "'DATASET'", "'RECIPE'",
 	      "'PREVIEW'", "'TEST'", "'DETECTOR'", "'THRESHOLD'", "'AGENT'", "'HUMAN'", "'TESTS'"}) {
 		changes.push_back(GrammarChange::AddChoice("UnreservedKeyword", keyword));
 	}
@@ -771,21 +760,20 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	statement("GlossDeclareRecipe <- 'DECLARE' 'RECIPE' Identifier 'ON' Identifier 'FROM' Identifier "
 	          "GlossSettings? 'AS' StringLiteral",
 	          StartDeclareRecipe);
-	statement("GlossDeclareAspect <- 'DECLARE' 'ASPECT' Identifier 'WITH' StringLiteral 'AS' GlossAspectKind "
+	statement("GlossDeclareProperty <- 'DECLARE' 'PROPERTY' Identifier 'WITH' StringLiteral 'AS' GlossPropertyKind "
 	          "GlossGrainClause?",
-	          StartDeclareAspect);
-	rule("GlossAspectKind <- GlossKindMeasurement / GlossKindFact / GlossKindView");
+	          StartDeclareProperty);
+	rule("GlossPropertyKind <- GlossKindMeasurement / GlossKindFact");
 	rule("GlossKindMeasurement <- 'MEASUREMENT'");
 	rule("GlossKindFact <- 'FACT'");
-	rule("GlossKindView <- 'VIEW'");
 	rule("GlossGrainClause <- 'ON' List(GlossGrain) GlossWhen?");
 	rule("GlossWhen <- 'WHEN' GlossWhenBody");
-	rule("GlossWhenBody <- GlossWhenType / GlossWhenAspect");
+	rule("GlossWhenBody <- GlossWhenType / GlossWhenProperty");
 	rule("GlossWhenType <- 'TYPE' GlossWhenTypes");
 	rule("GlossWhenTypes <- GlossWhenTypeOne / GlossWhenTypeIn");
 	rule("GlossWhenTypeOne <- '=' StringLiteral");
 	rule("GlossWhenTypeIn <- 'IN' '(' List(StringLiteral) ')'");
-	rule("GlossWhenAspect <- Identifier '=' StringLiteral");
+	rule("GlossWhenProperty <- Identifier '=' StringLiteral");
 	rule("GlossGrain <- GlossGrainDataset / GlossGrainTable / GlossGrainColumn / GlossGrainRelationship / "
 	     "GlossGrainSource");
 	rule("GlossGrainDataset <- 'DATASET'");
@@ -836,21 +824,21 @@ vector<GrammarChange> GlossGrammar::GetChanges() const {
 	changes.push_back(GrammarChange::AddRule("GlossGlossaryRead <- 'GLOSSARY' Parens(GlossGlossaryArgs?) TableAlias?",
 	                                         StartGlossaryRead));
 	rule("GlossGlossaryArgs <- GlossSubjectArgs / GlossAllFlag");
-	rule("GlossSubjectArgs <- GlossSubject GlossAspectNarrow? GlossAllTail?");
-	rule("GlossAspectNarrow <- '::' Identifier");
+	rule("GlossSubjectArgs <- GlossSubject GlossPropertyNarrow? GlossAllTail?");
+	rule("GlossPropertyNarrow <- '::' Identifier");
 	rule("GlossAllTail <- ',' GlossAllFlag");
 	rule("GlossAllFlag <- 'ALL' '=>' 'TRUE'");
 	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossGlossaryRead"));
 	changes.push_back(
 	    GrammarChange::AddRule("GlossTestsRead <- 'TESTS' Parens(GlossTestsArgs?) TableAlias?", StartTestsRead));
-	rule("GlossTestsArgs <- GlossSubject GlossAspectNarrow?");
+	rule("GlossTestsArgs <- GlossSubject GlossPropertyNarrow?");
 	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossTestsRead"));
 	// a string where the subject stands: refused by code, not left to the stock parser
 	changes.push_back(GrammarChange::AddRule("GlossGlossaryQuoted <- 'GLOSSARY' Parens(GlossQuotedArgs) TableAlias?",
 	                                         StartGlossaryQuoted));
 	changes.push_back(
 	    GrammarChange::AddRule("GlossTestsQuoted <- 'TESTS' Parens(GlossQuotedArgs) TableAlias?", StartTestsQuoted));
-	rule("GlossQuotedArgs <- StringLiteral GlossAspectNarrow? GlossAllTail?");
+	rule("GlossQuotedArgs <- StringLiteral GlossPropertyNarrow? GlossAllTail?");
 	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossGlossaryQuoted"));
 	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "GlossTestsQuoted"));
 

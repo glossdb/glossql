@@ -3,8 +3,14 @@
 A test (`DECLARE TEST`) is declared on one property. It says who may
 annotate the property, and which function scores how far the values
 agree: the computed values, the agent's and the person's. A test's
-result is stored per asset, like a measurement's. `TESTS()` returns
+result is stored per asset, like a function's. `TESTS()` returns
 the stored results.
+
+A rule the data must hold is first a view of kind `rule`: a query
+whose rows break it ([SPEC.md §5.2](../../SPEC.md#52-glosses)). The
+glossdb server tests each rule view after every write. A test declared
+here is for a property: a share of rows with a tolerance, or values
+that agents and people disagree on.
 
 ## Declare a test
 
@@ -41,7 +47,7 @@ DECLARE TEST gap_test ON gap_rate
 ## Write a detector
 
 A detector is one query over the relation `annotations`: every value
-for the property, with the columns `subject`, `aspect`, `actor_kind`
+for the property, with the columns `subject`, `property`, `actor_kind`
 (`agent`, `human` or `function`), `body` and `current`. `$threshold`
 is the test's threshold. The query returns one row per asset:
 `(subject, state, score)`.
@@ -72,7 +78,7 @@ where no result is stored or the stored one is out of date, and
 stores every result it computes in one write. It returns one row per
 asset. A stored result on an asset that holds no value any more is
 removed. The server runs these statements after each write, as it
-runs measurements ([measurements](measurements.md)).
+runs functions ([measurements](measurements.md)).
 
 A result records what it read: the asset's values of the property,
 the asset's definition, and the declarations of the test and the
@@ -94,11 +100,11 @@ SELECT * FROM TESTS(readings.temperature::unit);
 SELECT subject, state FROM TESTS(plant.readings) WHERE state = 'red';
 ```
 
-Columns: `(subject, aspect, test, state, score, computed_at, current,
+Columns: `(subject, property, test, state, score, computed_at, current,
 error)`.
 
 - With no argument, `TESTS()` covers the dataset in use.
-  `subject::aspect` narrows it to one property. Filter with `WHERE`.
+  `subject::property` narrows it to one property. Filter with `WHERE`.
 - `current` is false when the stored result is out of date, or read a
   computed value that is. The state is served as it was stored.
 - A detector that fails does not fail the statement. The result of

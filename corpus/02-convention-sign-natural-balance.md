@@ -2,12 +2,12 @@
 
 An accounting convention is a rule every query over the ledger follows:
 here, that each monetary measure is read in its natural-balance
-direction. The example declares one aspect that holds a dataset's
+direction. The example declares one property that holds a dataset's
 conventions as a list and annotates the dataset `fin` with the rule and
 the two account groups it refers to.
 
 ```glossql
-DECLARE ASPECT conventions WITH $${
+DECLARE PROPERTY conventions WITH $${
   "type": "object",
   "properties": {
     "items": {

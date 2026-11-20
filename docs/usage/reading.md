@@ -11,7 +11,7 @@ tables.
 SELECT * FROM GLOSSARY(readings.temperature);
 ```
 
-Columns: `(subject, aspect, value, test_state, score, state)`. The
+Columns: `(subject, property, value, test_state, score, state)`. The
 value is a person's if there is one, else an agent's, else a
 function's.
 
@@ -26,7 +26,7 @@ function's.
 - With no argument, `GLOSSARY()` covers the dataset in use.
 - A table returns itself, its columns, and the relationships it takes
   part in, from either side.
-- `subject::aspect` narrows to one property.
+- `subject::property` narrows to one property.
 
 ```sql
 SELECT * FROM GLOSSARY(plant::uptime);
@@ -39,7 +39,7 @@ SELECT * FROM GLOSSARY(readings) WHERE state <> 'current';
 SELECT * FROM GLOSSARY(readings.temperature, all => true);
 ```
 
-Columns: `(subject, aspect, kind, test, actor, body, written_at,
+Columns: `(subject, property, kind, test, actor, body, written_at,
 current)`, one row per value: the agent's, the person's and each
 function's. `kind` is the property's kind, `actor` is `agent`, `human`
 or `function`. `current` is false for a stale value.
@@ -69,14 +69,15 @@ value.
 
 ## The catalog tables
 
-Every declaration, annotation and measurement is a row of a catalog
-table. Each table is a view in the lake's `main` schema, and reads by
-its bare name from any dataset:
+Every declaration, annotation and result is a row of a catalog table.
+Each table is a view in the lake's `main` schema. Read it as
+`main.<name>`: a table of the same name in the dataset in use hides
+the bare name.
 
 ```sql
-SELECT name, kind, grains FROM aspects;
-SELECT subject, aspect, actor_kind, body FROM glossary WHERE aspect = 'unit';
-SELECT function, subject, computed_at FROM measurements ORDER BY computed_at DESC;
+SELECT name, kind, grains FROM main.properties;
+SELECT subject, property, actor_kind, body FROM main.glossary WHERE property = 'unit';
+SELECT function, subject, computed_at FROM main.results ORDER BY computed_at DESC;
 ```
 
 The views serve the current rows. Every row a write replaced or
@@ -100,7 +101,7 @@ that now arrives under another type.
 ## What a read computes
 
 `GLOSSARY()` and `TESTS()` read stored rows: the annotations, the
-measurements and each test's stored result. A read marks each row
+results and each test's stored result. A read marks each row
 once per statement. An annotation is stale once the definition of its
 asset changed after it was written. A stored result is out of date
 once something it read changed after it was computed:

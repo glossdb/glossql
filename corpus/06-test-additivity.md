@@ -7,7 +7,7 @@ compares the function's value with the agent's and the person's
 annotations and reports a state above a threshold.
 
 ```glossql
-DECLARE ASPECT additivity WITH $${
+DECLARE PROPERTY additivity WITH $${
   "type": "object",
   "properties": {"value": {"enum": ["semi-additive", "additive"]}}
 }$$ AS FACT ON COLUMN;

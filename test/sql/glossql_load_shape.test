@@ -38,17 +38,17 @@ statement ok
 DECLARE RECIPE keyed ON fin FROM files SET (key: id) AS $$SELECT id::INTEGER AS id, segment FROM read_csv('load_shape.csv')$$;
 
 statement ok
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 # a result that reads the notes on the table's columns, and one that reads every asset of the dataset
 statement ok
-DECLARE ASPECT width WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY width WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION width FOR fin AS $$ SELECT count(*) AS n FROM annotations('note', 'its columns') $$ RETURNS width;
 
 statement ok
-DECLARE ASPECT assets WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
+DECLARE PROPERTY assets WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
 
 statement ok
 DECLARE FUNCTION assets FOR fin AS $$ SELECT count(*) AS n FROM annotations('note', 'the dataset') $$ RETURNS assets;
@@ -82,7 +82,7 @@ SELECT width() FROM whole;
 width	fin.whole	width	2	false
 
 query T
-SELECT current FROM GLOSSARY(fin, all => true) WHERE aspect = 'assets';
+SELECT current FROM GLOSSARY(fin, all => true) WHERE property = 'assets';
 ----
 true
 
@@ -130,7 +130,7 @@ statement ok
 DECLARE RECIPE ledger ON fin FROM files SET (key: id) AS $$SELECT id::BIGINT AS id, account, amount::DECIMAL(10,1) AS amount, note FROM read_csv('merge_rows.csv')$$;
 
 statement ok
-DECLARE ASPECT ledger_total WITH $${"type": "number"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY ledger_total WITH $${"type": "number"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION ledger_total FOR fin AS $$ SELECT sum(amount)::DOUBLE AS n FROM ledger $$ RETURNS ledger_total;

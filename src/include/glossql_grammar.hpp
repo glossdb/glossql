@@ -176,7 +176,7 @@ string JsonSchemaCheck(const string &schema, const string &document);
 string JsonSchemaValueEnumCheck(const string &schema, const string &literal);
 //! A top-level string field of a JSON object, empty when absent
 string JsonStringField(const string &document, const string &field);
-//! The metric definition contract: sql or stopped, assumptions disclosed; every other key is a kit's
+//! The view definition contract: sql or stopped, its kind, assumptions disclosed; every other key passes
 extern const char *const DEFINITION_CONTRACT;
 
 //! Parses plain SQL with the stock grammar into one SELECT
@@ -212,7 +212,7 @@ struct Workspace {
 
 class Inner;
 
-//! The current stored results `filter` selects, a condition on the measurements relation, each row with
+//! The current stored results `filter` selects, a condition on the results relation, each row with
 //! `current`: no node it read changed after the snapshot it read at, and no result it read is out of
 //! date (SPEC §6). The check walks only those results and what they read
 string CurrentResultsSQL(const Workspace &ws, const string &filter);
@@ -221,19 +221,19 @@ Workspace WorkspaceOf(ClientContext &context);
 //! Why a detector's body compares the subjects it runs over (SPEC §7.1), in words, or empty where it
 //! judges each subject's values alone
 string CrossSubject(ClientContext &context, const string &script);
-//! A declared test: its aspect, its detector with that function's current script, its threshold; the
+//! A declared test: its property, its detector with that function's current script, its threshold; the
 //! name empty where no test of that name is declared
 struct TestDeclaration {
 	string name;
-	string aspect;
+	string property;
 	string detector;
 	Value threshold;
 	Value script;
 };
 TestDeclaration DeclaredTest(Inner &inner, const string &name);
 //! SELECT <test>() FROM <subject> (SPEC §7.2): the test on each subject at or under `subject` holding a
-//! value of its aspect, computed and stored where no current result is, and retired on a subject that
-//! holds none; (test, subject, aspect, value, computed) per subject that holds a value
+//! value of its property, computed and stored where no current result is, and retired on a subject that
+//! holds none; (test, subject, property, value, computed) per subject that holds a value
 vector<vector<Value>> ComputeTest(ClientContext &context, Inner &inner, const TestDeclaration &test,
                                   const string &subject);
 //! Why a stored result is out of date: (dataset, function, subject, asset, what, reason), a node it
@@ -385,7 +385,7 @@ struct ResultRow {
 //! Stores results of one function in one write, each read at `read_at`, with its inputs and edges, and
 //! retires the stored results of the function on the subjects of `retire`. The result a row replaces
 //! ends, its inputs and edges with it; the same value and error keep the snapshot they changed at
-void StoreResults(CatalogWrite &write, const string &dataset, const string &function, const string &aspect,
+void StoreResults(CatalogWrite &write, const string &dataset, const string &function, const string &property,
                   int64_t read_at, const vector<ResultRow> &rows, const vector<string> &retire = {});
 
 //! A view's lineage as its stored result holds it (glossql_lineage.cpp): the view's path as the catalog

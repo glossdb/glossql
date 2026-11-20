@@ -198,7 +198,7 @@ DECLARE RELATIONSHIP product_mono.group_code -> hierarchy_pl.local_node;
 ## 4. A row condition with `WHERE`
 
 Form 2 with SQL's word for a row condition, so `WHEN` keeps its one
-meaning on an aspect.
+meaning on a property.
 
 ```glossql-gap
 DECLARE RELATIONSHIP material_sap.matnr_sap -> model_identities.local_code WHERE model_identities.market = 'DK';

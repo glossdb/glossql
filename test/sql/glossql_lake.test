@@ -25,15 +25,13 @@ PRAGMA glossql;
 
 # the store relations sit beside the ducklake_* tables, in the catalog's own layout; the lake reads them as views
 query I
-SELECT count(*) FROM __ducklake_metadata_ws.main.glossql_aspects;
+SELECT count(*) FROM __ducklake_metadata_ws.main.glossql_properties;
 ----
 0
 
 query T
 SELECT table_name FROM information_schema.tables WHERE table_catalog = 'ws' AND table_schema = 'main' ORDER BY table_name;
 ----
-aspects
-aspects_history
 datasets
 datasets_history
 edges
@@ -48,12 +46,14 @@ inputs
 inputs_history
 kits
 kits_history
-measurements
-measurements_history
+properties
+properties_history
 recipes
 recipes_history
 relationships
 relationships_history
+results
+results_history
 sources
 sources_history
 tests
@@ -91,7 +91,7 @@ true	true
 # --- a gloss carries the snapshot it was written at; a dataset or a pair path carries none (SPEC §5.2)
 
 statement ok
-DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN, TABLE, DATASET;
+DECLARE PROPERTY meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN, TABLE, DATASET;
 
 statement ok
 GLOSS meaning ON segments.id AS $${"value": "the row's number"}$$;

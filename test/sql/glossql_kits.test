@@ -58,7 +58,7 @@ nothing
 # additivity, unit and dimension wait on a role (WHEN)
 
 query TTT
-SELECT subject, aspect, state FROM GLOSSARY(orders) ORDER BY subject, aspect;
+SELECT subject, property, state FROM GLOSSARY(orders) ORDER BY subject, property;
 ----
 fin.orders	entity	missing
 fin.orders	meaning	missing
@@ -73,7 +73,7 @@ statement ok
 GLOSS role ON orders.amount AS $${"value": "measure"}$$;
 
 query TT
-SELECT aspect, state FROM GLOSSARY(orders.amount) ORDER BY aspect;
+SELECT property, state FROM GLOSSARY(orders.amount) ORDER BY property;
 ----
 additivity	missing
 meaning	missing
@@ -95,13 +95,13 @@ statement ok
 SELECT role_test() FROM fin;
 
 query TTR
-SELECT aspect, state, score FROM TESTS(orders.amount::role);
+SELECT property, state, score FROM TESTS(orders.amount::role);
 ----
 role	red	1.0
 
 # the human's value wins the WHEN: dimension is required now, additivity and unit are not
 query TTT
-SELECT aspect, value, state FROM GLOSSARY(orders.amount) ORDER BY aspect;
+SELECT property, value, state FROM GLOSSARY(orders.amount) ORDER BY property;
 ----
 dimension	NULL	missing
 meaning	NULL	missing
@@ -111,10 +111,7 @@ role	NULL	conflict
 # columns, under the kit's words
 
 statement ok
-DECLARE ASPECT revenue WITH $${"title": "revenue"}$$ AS VIEW;
-
-statement ok
-GLOSS revenue ON fin AS $${"sql": "SELECT sum(amount) AS revenue FROM fin.orders"}$$;
+GLOSS revenue ON fin AS $${"kind": "metric", "sql": "SELECT sum(amount) AS revenue FROM fin.orders"}$$;
 
 query R
 SELECT revenue FROM fin.revenue;
@@ -132,7 +129,7 @@ Invalid Input Error
 statement ok
 GLOSS additivity ON revenue.revenue AS $${"value": "ratio", "numerator": "won", "denominator": "offered"}$$;
 
-# --- the measurements are stored through extraction and serve beside the glosses
+# --- the results are stored through extraction and serve beside the glosses
 
 query TTTTT
 SELECT column_profile() FROM orders.amount;
@@ -151,7 +148,7 @@ SELECT outlier_profile() FROM orders.customer;
 outlier_profile	fin.orders.customer	outlier_profile	{"applicable":false,"iqr":null,"zscore":null}	true
 
 query TTT
-SELECT aspect, value, state FROM GLOSSARY(orders.amount) ORDER BY aspect;
+SELECT property, value, state FROM GLOSSARY(orders.amount) ORDER BY property;
 ----
 column_profile	{"total":4,"null_ratio":0.0,"distinct":4,"min":"0.0","max":"4.5"}	current
 dimension	NULL	missing
@@ -174,7 +171,7 @@ statement ok
 GLOSS meaning ON cased.orderid AS $${"value": "the order"}$$;
 
 query TT
-SELECT subject, state FROM GLOSSARY(cased) WHERE aspect = 'meaning' AND subject LIKE '%.OrderId';
+SELECT subject, state FROM GLOSSARY(cased) WHERE property = 'meaning' AND subject LIKE '%.OrderId';
 ----
 fin.cased.OrderId	current
 
@@ -188,7 +185,7 @@ statement ok
 GLOSS meaning ON dotted."a.b" AS $${"value": "dotted"}$$;
 
 query TT
-SELECT subject, state FROM GLOSSARY(dotted."a.b") WHERE aspect = 'meaning';
+SELECT subject, state FROM GLOSSARY(dotted."a.b") WHERE property = 'meaning';
 ----
 fin.dotted.a.b	current
 
@@ -196,7 +193,7 @@ statement ok
 SELECT column_profile() FROM dotted."a.b";
 
 query T
-SELECT value->>'total' FROM measurements WHERE function = 'column_profile' AND subject = 'fin.dotted.a.b';
+SELECT value->>'total' FROM results WHERE function = 'column_profile' AND subject = 'fin.dotted.a.b';
 ----
 1
 
@@ -204,7 +201,7 @@ statement ok
 CREATE OR REPLACE TABLE fin.dotted AS SELECT 2 AS c;
 
 query TT
-SELECT subject, state FROM GLOSSARY(dotted."a.b") WHERE aspect = 'meaning';
+SELECT subject, state FROM GLOSSARY(dotted."a.b") WHERE property = 'meaning';
 ----
 fin.dotted.a.b	stale
 
@@ -222,7 +219,7 @@ Invalid Input Error
 # newest row's for the name, so it runs again
 
 statement ok
-COPY (SELECT 'DECLARE ASPECT sample WITH $${"title": "Sample"}$$ AS FACT ON DATASET;' AS s) TO '{TEST_DIR}/glossql_kits_lake/kpi.sql' (FORMAT csv, HEADER false, QUOTE '');
+COPY (SELECT 'DECLARE PROPERTY sample WITH $${"title": "Sample"}$$ AS FACT ON DATASET;' AS s) TO '{TEST_DIR}/glossql_kits_lake/kpi.sql' (FORMAT csv, HEADER false, QUOTE '');
 
 query I
 SELECT count(*) FROM (FROM glossql_kit('{TEST_DIR}/glossql_kits_lake/kpi.sql')) WHERE outcome <> 'current';
@@ -277,12 +274,12 @@ SELECT count(*) - (SELECT n FROM taken) FROM ducklake_snapshots('ws');
 # --- declared_by: a kit's declarations name the kit, the connection's own name its actor
 
 query TT
-SELECT DISTINCT declared_by, (SELECT DISTINCT declared_by FROM tests WHERE name = 'unit_test') FROM aspects WHERE name IN ('meaning', 'unit');
+SELECT DISTINCT declared_by, (SELECT DISTINCT declared_by FROM tests WHERE name = 'unit_test') FROM properties WHERE name IN ('meaning', 'unit');
 ----
 kit:kpi	kit:kpi
 
 statement ok
-DECLARE ASPECT house_rule WITH $${"type": "object"}$$ AS FACT ON DATASET;
+DECLARE PROPERTY house_rule WITH $${"type": "object"}$$ AS FACT ON DATASET;
 
 statement ok
 SET VARIABLE glossql_actor = 'human';
@@ -300,6 +297,6 @@ statement ok
 RESET VARIABLE glossql_actor;
 
 query TT
-SELECT (SELECT declared_by FROM aspects WHERE name = 'house_rule'), (SELECT declared_by FROM tests WHERE name = 'house_rule_test');
+SELECT (SELECT declared_by FROM properties WHERE name = 'house_rule'), (SELECT declared_by FROM tests WHERE name = 'house_rule_test');
 ----
 agent	human:ana

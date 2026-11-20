@@ -44,38 +44,29 @@ statement ok
 DECLARE RELATIONSHIP notes.order_id -> orders.order_id;
 
 statement ok
-DECLARE ASPECT sales WITH $${"title": "Sales"}$$ AS VIEW;
+GLOSS sales ON fin AS $${"kind": "metric", "sql": "SELECT date_trunc('month', o.booked)::DATE AS period, sum(o.amount) AS value, c.name FROM fin.orders o JOIN fin.customers c ON c.customer_id = o.customer_id GROUP BY ALL"}$$;
 
 statement ok
-GLOSS sales ON fin AS $${"sql": "SELECT date_trunc('month', o.booked)::DATE AS period, sum(o.amount) AS value, c.name FROM fin.orders o JOIN fin.customers c ON c.customer_id = o.customer_id GROUP BY ALL"}$$;
+GLOSS sales_by_year ON fin AS $${"kind": "metric", "sql": "SELECT date_trunc('year', period)::DATE AS period, sum(value) AS value FROM fin.sales GROUP BY 1"}$$;
 
 statement ok
-DECLARE ASPECT sales_by_year WITH $${"title": "Sales by year"}$$ AS VIEW;
+GLOSS sales_plan ON fin AS $${"x-plan-of": "sales", "sql": "SELECT DATE '2024-01-01' AS period, 100.0 AS value"}$$;
 
-statement ok
-GLOSS sales_by_year ON fin AS $${"sql": "SELECT date_trunc('year', period)::DATE AS period, sum(value) AS value FROM fin.sales GROUP BY 1"}$$;
-
-statement ok
-DECLARE ASPECT sales_plan WITH $${"title": "Sales plan", "x-kind": "plan", "x-plan-of": "sales"}$$ AS VIEW;
-
-statement ok
-GLOSS sales_plan ON fin AS $${"sql": "SELECT DATE '2024-01-01' AS period, 100.0 AS value"}$$;
-
-# a kind of asset a kit declares, as the plan kit does: its edges join the lineage, its place is a place
+# a kind of asset a kit declares, as the plan kit does: its edges join the lineage, its place is a place.
+# A key of its own in a definition's body names the plans
 
 statement ok
 CREATE OR REPLACE MACRO main.lineage_assets_plan(dataset_name) AS TABLE
-SELECT dataset_name || '.' || name AS asset, 'plan' AS kind, dataset_name || '.' || name AS node_asset,
+SELECT dataset_name || '.' || view AS asset, 'plan' AS kind, dataset_name || '.' || view AS node_asset,
        'definition' AS node_what
-FROM main.aspects
-WHERE kind = 'VIEW' AND json_extract_string(schema, '$.x-kind') = 'plan'
-  AND name IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW');
+FROM main.view_bodies(dataset_name)
+WHERE json_extract_string(body, '$.x-plan-of') IS NOT NULL
+  AND view IN (SELECT DISTINCT table_name FROM glossql_columns(dataset_name) WHERE table_type = 'VIEW');
 
 statement ok
 CREATE OR REPLACE MACRO main.lineage_edges_plan(dataset_name) AS TABLE
-SELECT p.asset AS "from", dataset_name || '.' || json_extract_string(a.schema, '$.x-plan-of') AS "to", 'plans' AS kind
-FROM main.lineage_assets_plan(dataset_name) p JOIN main.aspects a ON dataset_name || '.' || a.name = p.asset
-WHERE json_extract_string(a.schema, '$.x-plan-of') IS NOT NULL;
+SELECT p.asset AS "from", dataset_name || '.' || json_extract_string(b.body, '$.x-plan-of') AS "to", 'plans' AS kind
+FROM main.lineage_assets_plan(dataset_name) p JOIN main.view_bodies(dataset_name) b ON dataset_name || '.' || b.view = p.asset;
 
 statement ok
 CREATE OR REPLACE MACRO main.lineage_places_plan(dataset_name) AS TABLE
@@ -137,23 +128,6 @@ fin.sales.name	missing
 fin.sales.period	current
 fin.sales.value	missing
 
-# a what of the form 'x-kind <kind>' names every property declared with that x-kind: one row per property
-# and asset, missing where nobody annotated it
-statement ok
-DECLARE ASPECT price_cut WITH $${"type": "object", "x-kind": "scenario"}$$ AS FACT ON DATASET;
-
-statement ok
-DECLARE ASPECT price_hold WITH $${"type": "object", "x-kind": "scenario"}$$ AS FACT ON DATASET;
-
-statement ok
-GLOSS price_cut ON fin AS $${"levers": []}$$;
-
-query TTTT
-SELECT asset, property, json_array_length(value, '$.levers'), state FROM annotations('x-kind scenario', 'the dataset') ORDER BY property;
-----
-fin	price_cut	0	current
-fin	price_hold	NULL	missing
-
 statement ok
 SET VARIABLE glossql_subject = 'fin.sales';
 
@@ -201,7 +175,7 @@ fin.orders.customer_id	true	true
 query TTTI
 SELECT view, kind, sql IS NOT NULL, len(joins) FROM definition('itself');
 ----
-fin.sales	NULL	true	1
+fin.sales	metric	true	1
 
 # a table's relationships are those that touch it; a plan's metric is the one it plans
 statement ok
@@ -222,7 +196,7 @@ SELECT view FROM definition('its metric');
 fin.sales
 
 query TT
-SELECT view, schema->>'x-plan-of' FROM definition('itself');
+SELECT view, body->>'x-plan-of' FROM definition('itself');
 ----
 fin.sales_plan	sales
 
@@ -249,7 +223,7 @@ RESET VARIABLE glossql_subject;
 # --- in a run, the engine names the subject: a function's body reads through the read functions
 
 statement ok
-DECLARE ASPECT probe WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET, TABLE, COLUMN, RELATIONSHIP;
+DECLARE PROPERTY probe WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET, TABLE, COLUMN, RELATIONSHIP;
 
 statement ok
 DECLARE FUNCTION probe FOR GLOBAL AS $$
@@ -261,7 +235,7 @@ statement ok
 SELECT probe() FROM sales;
 
 query TT
-SELECT value->>'columns', value->>'joined' FROM main.measurements WHERE function = 'probe' AND subject = 'fin.sales';
+SELECT value->>'columns', value->>'joined' FROM main.results WHERE function = 'probe' AND subject = 'fin.sales';
 ----
 ["fin.sales.name","fin.sales.period","fin.sales.value"]	["fin.customers.customer_id","fin.orders.customer_id"]
 
@@ -473,10 +447,7 @@ statement ok
 CREATE TABLE fin.ord AS SELECT i AS cust_id, 1.0 AS amount FROM range(5) r(i);
 
 statement ok
-DECLARE ASPECT dotted WITH $${"title": "Dotted"}$$ AS VIEW;
-
-statement ok
-GLOSS dotted ON fin AS $${"sql": "SELECT sum(o.amount) AS value FROM fin.ord o JOIN fin.\"cust.eu\" c ON c.id = o.cust_id"}$$;
+GLOSS dotted ON fin AS $${"kind": "metric", "sql": "SELECT sum(o.amount) AS value FROM fin.ord o JOIN fin.\"cust.eu\" c ON c.id = o.cust_id"}$$;
 
 query T
 SELECT "to" FROM lineage('fin') WHERE "from" = 'fin.dotted' AND kind = 'reads' AND "to" IN ('fin.cust', 'fin.cust.eu', 'fin.ord') ORDER BY ALL;
@@ -506,10 +477,7 @@ statement ok
 DECLARE RECIPE stock_ch ON fin FROM erp_ch AS $$SELECT item, CAST(amount AS DOUBLE) AS amount FROM read_csv('stock_ch.csv')$$;
 
 statement ok
-DECLARE ASPECT stock WITH $${"title": "Stock", "x-kind": "relation"}$$ AS VIEW;
-
-statement ok
-GLOSS stock ON fin AS $${"sql": "SELECT matnr AS part, qty AS quantity FROM fin.stock_dk UNION ALL SELECT item, amount FROM fin.stock_ch"}$$;
+GLOSS stock ON fin AS $${"kind": "table", "sql": "SELECT matnr AS part, qty AS quantity FROM fin.stock_dk UNION ALL SELECT item, amount FROM fin.stock_ch"}$$;
 
 query TTT
 SELECT "from", "to", kind FROM lineage('fin') WHERE kind = 'loaded from' ORDER BY ALL;
@@ -576,7 +544,7 @@ SELECT count(*) FROM places('fin') WHERE "where" = 'its source systems' AND subj
 0
 
 statement ok
-DECLARE ASPECT systems WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY systems WITH $${"type": "object"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION systems FOR GLOBAL AS $$
@@ -590,7 +558,7 @@ statement ok
 SELECT systems() FROM stock_dk;
 
 query TT
-SELECT subject, value::VARCHAR FROM main.measurements WHERE function = 'systems' ORDER BY subject;
+SELECT subject, value::VARCHAR FROM main.results WHERE function = 'systems' ORDER BY subject;
 ----
 fin.stock	{"systems":[{"system":"erp_ch","state":"missing"},{"system":"erp_dk","state":"current"}],"missing":1}
 fin.stock_dk	{"systems":[{"system":"erp_dk","state":"current"}],"missing":0}

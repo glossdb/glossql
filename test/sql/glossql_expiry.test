@@ -32,13 +32,10 @@ statement ok
 CREATE TABLE fin.kept AS SELECT 1 AS k;
 
 statement ok
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON COLUMN, TABLE;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT ON COLUMN, TABLE;
 
 statement ok
-DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS VIEW;
-
-statement ok
-GLOSS spend ON fin AS $${"sql": "SELECT a AS value FROM fin.t"}$$;
+GLOSS spend ON fin AS $${"kind": "metric", "sql": "SELECT a AS value FROM fin.t"}$$;
 
 statement ok
 GLOSS note ON t.a AS $${"text": "a number"}$$;
@@ -56,7 +53,7 @@ statement ok
 GLOSS note ON kept.k AS $${"text": "unchanged"}$$;
 
 statement ok
-DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max": {}}}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY min_max WITH $${"type": "object", "properties": {"min": {}, "max": {}}}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
@@ -73,10 +70,10 @@ statement ok
 CREATE OR REPLACE TABLE fin.t AS SELECT 'x' || i AS a, i * 2 AS b FROM range(3) t(i);
 
 statement ok
-GLOSS spend ON fin AS $${"sql": "SELECT b AS value FROM fin.t"}$$;
+GLOSS spend ON fin AS $${"kind": "metric", "sql": "SELECT b AS value FROM fin.t"}$$;
 
 query TTT
-SELECT subject, aspect, current FROM GLOSSARY(fin, all => true) WHERE aspect IN ('note', 'min_max') ORDER BY ALL;
+SELECT subject, property, current FROM GLOSSARY(fin, all => true) WHERE property IN ('note', 'min_max') ORDER BY ALL;
 ----
 fin.kept.k	min_max	true
 fin.kept.k	note	true
@@ -125,7 +122,7 @@ statement ok
 GLOSS note ON kept AS $${"text": "written after the expiry"}$$;
 
 query TTT
-SELECT subject, aspect, current FROM GLOSSARY(fin, all => true) WHERE aspect IN ('note', 'min_max') ORDER BY ALL;
+SELECT subject, property, current FROM GLOSSARY(fin, all => true) WHERE property IN ('note', 'min_max') ORDER BY ALL;
 ----
 fin.kept	note	true
 fin.kept.k	min_max	true
@@ -145,12 +142,12 @@ statement ok
 SELECT min_max() FROM t.b;
 
 query TT
-SELECT subject, current FROM GLOSSARY(fin, all => true) WHERE aspect = 'min_max' ORDER BY subject;
+SELECT subject, current FROM GLOSSARY(fin, all => true) WHERE property = 'min_max' ORDER BY subject;
 ----
 fin.kept.k	true
 fin.t.b	true
 
 query I
-SELECT count(*) FROM measurements_history WHERE function = 'min_max' AND subject = 'fin.t.b';
+SELECT count(*) FROM results_history WHERE function = 'min_max' AND subject = 'fin.t.b';
 ----
 2

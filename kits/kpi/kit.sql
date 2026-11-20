@@ -1,6 +1,6 @@
 -- The KPI kit: the vocabulary a workspace starts with, the detector that
 -- judges the vocabulary, two measurements that profile the columns, and
--- the tests that bind them. The core ships no aspect; what an actor
+-- the tests that bind them. The core ships no property; what an actor
 -- must learn about these words is SKILL.md beside this file. Load it with
 --
 --   FROM glossql_kit('kits/kpi/kit.sql');
@@ -18,20 +18,20 @@
 -- level, a ratio re-divides its summed halves, the columns numerator and
 -- denominator name.
 
-DECLARE ASPECT meaning WITH $${
+DECLARE PROPERTY meaning WITH $${
   "description": "What the table, column or relationship means, in the words of the business.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"type": "string"}, "term": {"type": "string"}}
 }$$ AS FACT ON TABLE, COLUMN, RELATIONSHIP;
 
-DECLARE ASPECT role WITH $${
+DECLARE PROPERTY role WITH $${
   "description": "What a column is in the semantic model: a key, a measure, a dimension, a timestamp or an attribute.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"enum": ["key", "measure", "dimension",
                                     "timestamp", "attribute"]}}
 }$$ AS FACT ON COLUMN;
 
-DECLARE ASPECT additivity WITH $${
+DECLARE PROPERTY additivity WITH $${
   "description": "How a measure adds up over time and over the members of a dimension.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"enum": ["semi-additive", "additive", "ratio", "non-additive"]},
@@ -40,14 +40,14 @@ DECLARE ASPECT additivity WITH $${
                  "basis": {"type": "string"}}
 }$$ AS FACT ON COLUMN WHEN role = 'measure';
 
-DECLARE ASPECT unit WITH $${
+DECLARE PROPERTY unit WITH $${
   "description": "The unit a measure is in.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"type": "string"},
                  "source_column": {"type": "string"}}
 }$$ AS FACT ON COLUMN WHEN role = 'measure';
 
-DECLARE ASPECT dimension WITH $${
+DECLARE PROPERTY dimension WITH $${
   "description": "Whether a dimension is a primary way to slice the data, a supporting one, or none.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"enum": ["primary", "supporting", "none"]},
@@ -56,7 +56,7 @@ DECLARE ASPECT dimension WITH $${
 
 -- Table identity: the entity every aggregate rests on.
 
-DECLARE ASPECT entity WITH $${
+DECLARE PROPERTY entity WITH $${
   "description": "What one row of the table is, with its grain and its time axis.",
   "type": "object", "required": ["value"],
   "properties": {"value": {"type": "string"},
@@ -69,7 +69,7 @@ DECLARE ASPECT entity WITH $${
 -- Source conventions: fiscal calendar, sign conventions, what an export's
 -- nulls mean. Read and superseded workspace-wide.
 
-DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
+DECLARE PROPERTY conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
 
 -- The detector: one query over the test's annotations, a (subject, state,
 -- score) row per subject. Score is the fraction of extra distinct values
@@ -91,11 +91,11 @@ DECLARE FUNCTION value_entropy FOR GLOBAL AS $$
   FROM s
 $$;
 
--- Measurements: a function with RETURNS fills its aspect at extraction,
--- SELECT column_profile() FROM orders.amount; the output meets the aspect's
--- schema, is stored in measurements, and GLOSSARY() serves it beside the glosses.
+-- Measurements: a function with RETURNS fills its property at extraction,
+-- SELECT column_profile() FROM orders.amount; the output meets the property's
+-- schema, is stored in results, and GLOSSARY() serves it beside the glosses.
 
-DECLARE ASPECT column_profile WITH $${
+DECLARE PROPERTY column_profile WITH $${
   "type": "object", "required": ["total", "null_ratio", "distinct"],
   "properties": {"total": {"type": "integer"}, "null_ratio": {"type": "number"},
                  "distinct": {"type": "integer"}, "min": {}, "max": {}}
@@ -114,7 +114,7 @@ $$ RETURNS column_profile;
 -- applicable; MAD 0 makes every deviation infinite, so that check counts
 -- zero and the fences remain alone.
 
-DECLARE ASPECT outlier_profile WITH $${
+DECLARE PROPERTY outlier_profile WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"}, "iqr": {}, "zscore": {}}
 }$$ AS MEASUREMENT ON COLUMN;
@@ -138,7 +138,7 @@ DECLARE FUNCTION outlier_profile FOR GLOBAL AS $$
   FROM f CROSS JOIN c
 $$ RETURNS outlier_profile;
 
--- The tests, last: a test names an aspect and a detector that are declared.
+-- The tests, last: a test names a property and a detector that are declared.
 -- BY says who may annotate; value_entropy judges the enum claims.
 
 DECLARE TEST meaning_test ON meaning BY (AGENT, HUMAN);

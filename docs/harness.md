@@ -26,22 +26,24 @@ data it read. A person can review and decide.
 
 | Coding harness | Data harness | In glossql |
 |---|---|---|
-| type system | what must be known about each dataset, table, column and relationship | `DECLARE ASPECT` |
+| type system | what must be known about each dataset, table, column and relationship | `DECLARE PROPERTY` |
 | type annotations, docstrings | annotations: what one row is, a column's unit, a measure's additivity | `GLOSS` |
 | compiler error | validation on write against the property's JSON Schema | |
 | linter | quality checks: keys, joins, hierarchies | the `quality` kit |
-| unit test | measurements and tests on the data | `DECLARE FUNCTION`, `DECLARE TEST` |
+| unit test | a rule view, whose rows break a rule; a test on a property | `"kind": "rule"`, `DECLARE TEST` |
 | test coverage | coverage of the required annotations | `GLOSSARY()`, state `missing` |
 | CI on every commit | results stored with the inputs they read; out of date when one changes | state `stale` |
 | git history | snapshots of the data and the catalog together | DuckLake |
 | code review | a person's annotation beside the agent's; a test scores where they differ | `BY (AGENT, HUMAN)` |
-| rule packs | kits: a domain's properties, measurements and tests, with a skill | `glossql_kit()` |
+| rule packs | kits: a domain's properties, functions and tests, with a skill | `glossql_kit()` |
 
 ## How the parts work together
 
-Declare a property, annotate assets with it, measure the data, test
-the values against each other, and read the state of each. The usage
-pages cover each step: [describing data](usage/describing-data.md),
+Declare a property and annotate assets with it. Keep each query worth
+reading again as a view, with its reason; a view of kind `rule` holds
+the rows that break a rule. Run a kit's functions on the data, test
+the values, and read the state of each. The usage pages cover each
+step: [describing data](usage/describing-data.md),
 [measurements](usage/measurements.md), [tests](usage/tests.md),
 [reading](usage/reading.md).
 

@@ -13,13 +13,13 @@ SELECT * FROM GLOSSARY(shop::revenue);
 ```
 
 What is known about an asset and the assets under it. Without an
-argument, the dataset in use. `subject::aspect` narrows to one
+argument, the dataset in use. `subject::property` narrows to one
 property.
 
 | Form | Columns |
 |---|---|
-| default | `subject VARCHAR`, `aspect VARCHAR`, `value JSON`, `test_state VARCHAR`, `score DOUBLE`, `state VARCHAR` |
-| `all => true` | `subject`, `aspect`, `kind`, `test`, `actor`, `body`, `written_at`, `current` |
+| default | `subject VARCHAR`, `property VARCHAR`, `value JSON`, `test_state VARCHAR`, `score DOUBLE`, `state VARCHAR` |
+| `all => true` | `subject`, `property`, `kind`, `test`, `actor`, `body`, `written_at`, `current` |
 
 `state` is `current`, `stale`, `possibly`, `conflict` or `missing`. See
 [reading](usage/reading.md).
@@ -30,7 +30,7 @@ property.
 SELECT * FROM TESTS(orders.amount::unit);
 ```
 
-Test results: `subject VARCHAR`, `aspect VARCHAR`, `test VARCHAR`,
+Test results: `subject VARCHAR`, `property VARCHAR`, `test VARCHAR`,
 `state VARCHAR`, `score DOUBLE`, `computed_at TIMESTAMP`, `current
 BOOLEAN`, `error VARCHAR`. `state` is `green`, `yellow`, `orange`,
 `red` or `error`. Without an argument, the dataset in use. It reads
@@ -143,7 +143,7 @@ SELECT min(v), max(v) FROM subject_column('shop.orders.amount');
 ```
 
 `subject_column(subject VARCHAR)` → `(v)`. One column as a relation
-with the column `v`. Takes `dataset.table.column`. A measurement's body
+with the column `v`. Takes `dataset.table.column`. A function's body
 reads its asset with `subject_column($subject)`.
 
 ## json_schema_check
@@ -154,7 +154,7 @@ SELECT json_schema_check('{"type": "object", "required": ["value"]}', '{"value":
 
 `json_schema_check(schema JSON, document JSON)` → `VARCHAR`: NULL when
 the document matches the schema, else the first failure as text. The
-extension validates every annotation and every measurement with it.
+extension validates every annotation and every function result with it.
 
 ## glossql_service (preview)
 

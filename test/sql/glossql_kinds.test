@@ -1,5 +1,5 @@
 # name: test/sql/glossql_kinds.test
-# description: a kind of asset a kit declares through its lineage_assets_, lineage_edges_ and lineage_places_ macros: its assets are subjects of that kind, its edges join the lineage, its places are places; a property's grains do not admit it; it and a relation of its dataset do not share a name; a result on it reads its own declaration, so declaring another leaves it current; a body that refuses its subject stores nothing (SPEC §4, §6)
+# description: a kind of asset a kit declares through its lineage_assets_, lineage_edges_ and lineage_places_ macros: its assets are subjects of that kind, its edges join the lineage, its places are places; a property's grains do not admit it; it and a relation of its dataset do not share a name; a body that refuses its subject stores nothing (SPEC §4, §6)
 # group: [sql]
 
 require glossql
@@ -28,19 +28,19 @@ USE fin;
 statement ok
 CREATE TABLE fin.priced AS SELECT DATE '2025-01-01' + i::INTEGER AS period, i::DOUBLE AS value, 10.0 + i AS price FROM range(30) t(i);
 
-# a kit's kind: an asset per annotation of a property of x-kind trial on the dataset, its edges to the columns
+# a kit's kind: an asset per annotation of a property of x-asset trial on the dataset, its edges to the columns
 # its body names, and the place 'its columns set' it adds
 
 statement ok
 CREATE MACRO main.lineage_assets_trial(dataset_name) AS TABLE
-SELECT dataset_name || '.' || g.aspect AS asset, 'trial' AS kind, dataset_name AS node_asset, 'annotation ' || g.aspect AS node_what
-FROM main.glossary g JOIN main.aspects a ON a.name = g.aspect AND json_extract_string(a.schema, '$.x-kind') = 'trial'
+SELECT dataset_name || '.' || g.property AS asset, 'trial' AS kind, dataset_name AS node_asset, 'annotation ' || g.property AS node_what
+FROM main.glossary g JOIN main.properties a ON a.name = g.property AND json_extract_string(a.schema, '$.x-asset') = 'trial'
 WHERE g.dataset = dataset_name AND g.subject = dataset_name;
 
 statement ok
 CREATE MACRO main.lineage_edges_trial(dataset_name) AS TABLE
-SELECT dataset_name || '.' || g.aspect AS "from", dataset_name || '.' || c AS "to", 'sets' AS kind
-FROM main.glossary g JOIN main.aspects a ON a.name = g.aspect AND json_extract_string(a.schema, '$.x-kind') = 'trial',
+SELECT dataset_name || '.' || g.property AS "from", dataset_name || '.' || c AS "to", 'sets' AS kind
+FROM main.glossary g JOIN main.properties a ON a.name = g.property AND json_extract_string(a.schema, '$.x-asset') = 'trial',
      unnest(from_json(g.body->'columns', '["VARCHAR"]')) u(c)
 WHERE g.dataset = dataset_name AND g.subject = dataset_name;
 
@@ -50,7 +50,7 @@ SELECT NULL::VARCHAR AS subject, 'its columns set' AS "where", NULL::VARCHAR AS 
 UNION ALL SELECT "from", 'its columns set', "to" FROM main.lineage_edges_trial(dataset_name);
 
 statement ok
-DECLARE ASPECT boost WITH $${"x-kind": "trial", "type": "object"}$$ AS FACT ON DATASET;
+DECLARE PROPERTY boost WITH $${"x-asset": "trial", "type": "object"}$$ AS FACT ON DATASET;
 
 statement ok
 GLOSS boost ON fin AS $${"columns": ["priced.price"]}$$;
@@ -84,7 +84,7 @@ RESET VARIABLE glossql_subject;
 # a property declared on tables does not admit an asset of another kind
 
 statement ok
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON TABLE;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT ON TABLE;
 
 statement error
 GLOSS note ON fin.boost AS $${"value": "x"}$$;
@@ -95,7 +95,7 @@ is a trial
 # and a table loaded under the asset's name, both are refused
 
 statement ok
-DECLARE ASPECT priced WITH $${"x-kind": "trial", "type": "object"}$$ AS FACT ON DATASET;
+DECLARE PROPERTY priced WITH $${"x-asset": "trial", "type": "object"}$$ AS FACT ON DATASET;
 
 statement error
 GLOSS priced ON fin AS $${"columns": ["priced.value"]}$$;
@@ -110,48 +110,8 @@ DECLARE RECIPE boost ON fin FROM files AS $$SELECT 1 AS x$$;
 ----
 asset_name_taken
 
-# a result on the asset reads its own declaration: another asset of the kind leaves it current, its own
-# declaration changed makes it out of date
-
 statement ok
-DECLARE ASPECT columns_set WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
-
-statement ok
-DECLARE FUNCTION columns_set FOR GLOBAL AS $$ SELECT len(from_json(max(value)->'columns', '["VARCHAR"]')) AS n FROM annotations('x-kind trial', 'itself') $$ RETURNS columns_set;
-
-query TTTTT
-SELECT columns_set() FROM fin.boost;
-----
-columns_set	fin.boost	columns_set	1	true
-
-query TT
-SELECT asset, what FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'columns_set' AND i.what LIKE 'annotation%';
-----
-fin	annotation boost
-
-statement ok
-DECLARE ASPECT cut WITH $${"x-kind": "trial", "type": "object"}$$ AS FACT ON DATASET;
-
-statement ok
-GLOSS cut ON fin AS $${"columns": ["priced.value"]}$$;
-
-query I
-SELECT count(*) FROM glossql_outdated() WHERE function = 'columns_set';
-----
-0
-
-statement ok
-GLOSS boost ON fin AS $${"columns": ["priced.price", "priced.value"]}$$;
-
-query TT
-SELECT asset, what FROM glossql_outdated() WHERE function = 'columns_set';
-----
-fin	annotation boost
-
-query TTTTT
-SELECT columns_set() FROM fin.boost;
-----
-columns_set	fin.boost	columns_set	2	true
+DECLARE PROPERTY columns_set WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 # a body that refuses its subject (not_a_<kind>) stores no result: a refusal is no failed computation
 
@@ -164,7 +124,7 @@ SELECT trial_only() FROM fin.priced;
 not_a_trial
 
 query I
-SELECT count(*) FROM measurements_history WHERE function = 'trial_only';
+SELECT count(*) FROM results_history WHERE function = 'trial_only';
 ----
 0
 
@@ -178,10 +138,13 @@ SELECT NULL::VARCHAR AS subject, 'its probes' AS "where", NULL::VARCHAR AS asset
 UNION ALL SELECT dataset_name || '.boost', 'its probes', dataset_name || '.priced.period' WHERE dataset_name <> '';
 
 statement ok
-DECLARE ASPECT remark WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY remark WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 statement ok
-DECLARE ASPECT remarks_set WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY remarks_set WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+
+statement ok
+GLOSS boost ON fin AS $${"columns": ["priced.price", "priced.value"]}$$;
 
 statement ok
 DECLARE FUNCTION remarks_set FOR GLOBAL AS $$ SELECT count(*) AS n FROM annotations('remark', 'its columns set') $$ RETURNS remarks_set;
@@ -192,7 +155,7 @@ SELECT remarks_set() FROM fin.boost;
 remarks_set	fin.boost	remarks_set	2	true
 
 query TT
-SELECT asset, what FROM inputs i JOIN measurements m USING (begin_snapshot) WHERE m.function = 'remarks_set' AND (i.what = 'annotation boost' OR i.what = 'definition') ORDER BY ALL;
+SELECT asset, what FROM inputs i JOIN results m USING (begin_snapshot) WHERE m.function = 'remarks_set' AND (i.what = 'annotation boost' OR i.what = 'definition') ORDER BY ALL;
 ----
 fin	annotation boost
 fin.priced	definition

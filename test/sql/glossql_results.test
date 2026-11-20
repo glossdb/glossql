@@ -1,4 +1,4 @@
-# name: test/sql/glossql_measurements.test
+# name: test/sql/glossql_results.test
 # description: a measurement is stored with the nodes it read; a later call serves it while they are unchanged and computes it again once one moves, keeping each value in its history; a result that read a result that moved is out of date until it is computed again; a failure is stored as a result; a property declared on columns is computed per column
 # group: [sql]
 
@@ -11,7 +11,7 @@ require parquet
 require ducklake
 
 statement ok
-ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_measurements_lake/');
+ATTACH 'ducklake::memory:' AS ws (DATA_PATH '{TEST_DIR}/glossql_results_lake/');
 
 statement ok
 USE ws;
@@ -20,7 +20,7 @@ statement ok
 PRAGMA glossql;
 
 statement ok
-DECLARE DATASET fin SET (purpose: 'measurements');
+DECLARE DATASET fin SET (purpose: 'results');
 
 statement ok
 USE fin;
@@ -32,7 +32,7 @@ statement ok
 CREATE TABLE fin.other AS SELECT 1 AS x;
 
 statement ok
-DECLARE ASPECT min_max WITH $${"type": "object", "properties": {"min": {}, "max": {}}}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY min_max WITH $${"type": "object", "properties": {"min": {}, "max": {}}}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION min_max FOR GLOBAL AS $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
@@ -46,7 +46,7 @@ min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	true
 
 # the data of its subject's table, and the declaration of the function and of the property it returns
 query T
-SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i ON i.result = m.id;
+SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM results m JOIN inputs i ON i.result = m.id;
 ----
 fin.orders data,min_max function,min_max property
 
@@ -58,7 +58,7 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":4.5}	false
 
 query I
-SELECT count(*) FROM measurements;
+SELECT count(*) FROM results;
 ----
 1
 
@@ -68,7 +68,7 @@ statement ok
 INSERT INTO fin.other VALUES (2);
 
 statement ok
-DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+DECLARE PROPERTY note WITH $${"type": "object"}$$ AS FACT ON COLUMN;
 
 statement ok
 GLOSS note ON orders.amount AS $${"text": "loaded"}$$;
@@ -89,7 +89,7 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":9.0}	true
 
 query TT
-SELECT value, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs_history i WHERE i.result = m.id) FROM measurements_history m ORDER BY begin_snapshot;
+SELECT value, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs_history i WHERE i.result = m.id) FROM results_history m ORDER BY begin_snapshot;
 ----
 {"min":0.0,"max":4.5}	fin.orders data,min_max function,min_max property
 {"min":0.0,"max":9.0}	fin.orders data,min_max function,min_max property
@@ -110,7 +110,7 @@ INSERT INTO fin.orders VALUES (10, 10.0);
 # --- a body that reads nothing is current while its declarations hold
 
 statement ok
-DECLARE ASPECT answer WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY answer WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION answer FOR fin AS $$ SELECT 42 AS n FROM range(1) $$ RETURNS answer;
@@ -121,7 +121,7 @@ SELECT answer() FROM orders.amount;
 answer	fin.orders.amount	answer	42	true
 
 query TT
-SELECT function, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.result = m.id) FROM measurements m WHERE function = 'answer';
+SELECT function, (SELECT string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM inputs i WHERE i.result = m.id) FROM results m WHERE function = 'answer';
 ----
 answer	answer function,answer property
 
@@ -139,7 +139,7 @@ answer	fin.orders.amount	answer	42	false
 # --- a body that carries a top-level summary serves the summary; the whole value is stored
 
 statement ok
-DECLARE ASPECT profile WITH $${"type": "object", "required": ["summary", "detail"]}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY profile WITH $${"type": "object", "required": ["summary", "detail"]}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION profile FOR fin AS $$ SELECT {'n': count(*)} AS summary, list(v ORDER BY v) AS detail FROM subject_column($subject) $$ RETURNS profile;
@@ -150,12 +150,12 @@ SELECT profile() FROM orders.amount;
 profile	fin.orders.amount	profile	{"n":6}	true
 
 query T
-SELECT value FROM measurements WHERE function = 'profile';
+SELECT value FROM results WHERE function = 'profile';
 ----
 {"summary":{"n":6},"detail":[0.0,1.5,3.0,4.5,9.0,10.0]}
 
 query TT
-SELECT aspect, value FROM GLOSSARY(orders.amount::profile);
+SELECT property, value FROM GLOSSARY(orders.amount::profile);
 ----
 profile	{"summary":{"n":6},"detail":[0.0,1.5,3.0,4.5,9.0,10.0]}
 
@@ -244,7 +244,7 @@ statement ok
 INSERT INTO fin.orders VALUES (11, 1.0);
 
 query TTT
-SELECT aspect, actor, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'note') ORDER BY aspect;
+SELECT property, actor, current FROM GLOSSARY(orders.amount, all => true) WHERE property IN ('min_max', 'note') ORDER BY property;
 ----
 min_max	function	false
 note	agent	true
@@ -277,7 +277,7 @@ true
 # --- dataset_cells() over a dataset reads its every table and walks the dataset's assets: a new view and a table's load each outdate the result
 
 statement ok
-DECLARE ASPECT cell_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
+DECLARE PROPERTY cell_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON DATASET;
 
 statement ok
 DECLARE FUNCTION cell_count FOR fin AS $$ SELECT count(*) AS n FROM dataset_cells('fin') $$ RETURNS cell_count;
@@ -286,7 +286,7 @@ statement ok
 SELECT cell_count() FROM fin;
 
 query IT
-SELECT count(*), bool_and(EXISTS (SELECT 1 FROM inputs i WHERE i.result = m.id AND i.asset = 'fin.other' AND i.what = 'data')) FROM measurements m WHERE function = 'cell_count';
+SELECT count(*), bool_and(EXISTS (SELECT 1 FROM inputs i WHERE i.result = m.id AND i.asset = 'fin.other' AND i.what = 'data')) FROM results m WHERE function = 'cell_count';
 ----
 1	true
 
@@ -297,7 +297,7 @@ statement ok
 SELECT cell_count() FROM fin;
 
 query I
-SELECT count(*) FROM measurements WHERE function = 'cell_count';
+SELECT count(*) FROM results WHERE function = 'cell_count';
 ----
 1
 
@@ -308,7 +308,7 @@ statement ok
 SELECT cell_count() FROM fin;
 
 query I
-SELECT count(*) FROM measurements_history WHERE function = 'cell_count';
+SELECT count(*) FROM results_history WHERE function = 'cell_count';
 ----
 3
 
@@ -324,13 +324,13 @@ CREATE TABLE other.t AS SELECT 1 AS a, 2 AS b;
 # --- a result that read a result: top reads min_max's value, top_twice reads top's. Each is current while nothing moved
 
 statement ok
-DECLARE ASPECT top WITH $${"type": "number"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY top WITH $${"type": "number"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION top FOR fin AS $$ SELECT max((value->>'max')::DOUBLE) AS top FROM results('min_max', 'itself') $$ RETURNS top;
 
 statement ok
-DECLARE ASPECT top_twice WITH $${"type": "number"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY top_twice WITH $${"type": "number"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION top_twice FOR fin AS $$ SELECT max(value::DOUBLE) * 2 AS v FROM results('top', 'itself') $$ RETURNS top_twice;
@@ -355,7 +355,7 @@ statement ok
 INSERT INTO fin.orders VALUES (12, 12.0);
 
 query TT
-SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top', 'top_twice') ORDER BY aspect;
+SELECT property, current FROM GLOSSARY(orders.amount, all => true) WHERE property IN ('min_max', 'top', 'top_twice') ORDER BY property;
 ----
 min_max	false
 top	false
@@ -369,7 +369,7 @@ SELECT min_max() FROM orders.amount;
 min_max	fin.orders.amount	min_max	{"min":0.0,"max":13.0}	true
 
 query TT
-SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top', 'top_twice') ORDER BY aspect;
+SELECT property, current FROM GLOSSARY(orders.amount, all => true) WHERE property IN ('min_max', 'top', 'top_twice') ORDER BY property;
 ----
 min_max	true
 top	false
@@ -382,7 +382,7 @@ top	fin.orders.amount	top	13.0	true
 top_twice	fin.orders.amount	top_twice	26.0	true
 
 query TT
-SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top', 'top_twice') ORDER BY aspect;
+SELECT property, current FROM GLOSSARY(orders.amount, all => true) WHERE property IN ('min_max', 'top', 'top_twice') ORDER BY property;
 ----
 min_max	true
 top	true
@@ -391,7 +391,7 @@ top_twice	true
 # a body reads the values a result held, oldest first, once per change: min_max's max, back to 10 once and now 13
 
 statement ok
-DECLARE ASPECT top_history WITH $${"type": "array", "items": {"type": "number"}}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY top_history WITH $${"type": "array", "items": {"type": "number"}}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION top_history FOR fin AS $$ SELECT list_transform(history, lambda v: (v->>'max')::DOUBLE) AS v FROM results('min_max', 'itself') $$ RETURNS top_history;
@@ -416,12 +416,12 @@ statement ok
 INSERT INTO other.t VALUES (3, 4);
 
 query TT
-SELECT aspect, current FROM GLOSSARY(other.t.a, all => true) WHERE aspect = 'min_max';
+SELECT property, current FROM GLOSSARY(other.t.a, all => true) WHERE property = 'min_max';
 ----
 min_max	false
 
 query TT
-SELECT aspect, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect IN ('min_max', 'top') ORDER BY aspect;
+SELECT property, current FROM GLOSSARY(orders.amount, all => true) WHERE property IN ('min_max', 'top') ORDER BY property;
 ----
 min_max	true
 top	true
@@ -429,14 +429,14 @@ top	true
 # min_max computed again with the value it held: its history holds no new value, and what read it stays current
 
 query TT
-SELECT body, current FROM GLOSSARY(orders.amount, all => true) WHERE aspect = 'top_history';
+SELECT body, current FROM GLOSSARY(orders.amount, all => true) WHERE property = 'top_history';
 ----
 [4.5,9.0,10.0,11.0,10.0,12.0,13.0]	true
 
 # --- a function that reads its own results: what it stored is no input of its own, on any subject
 
 statement ok
-DECLARE ASPECT seen WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY seen WITH $${"type": "integer"}$$ AS MEASUREMENT ON COLUMN;
 
 statement ok
 DECLARE FUNCTION seen FOR fin AS $$ SELECT count(value) AS n FROM results('seen', 'the dataset') $$ RETURNS seen;
@@ -448,7 +448,7 @@ statement ok
 SELECT seen() FROM orders.id;
 
 query TT
-SELECT subject, current FROM GLOSSARY(fin, all => true) WHERE aspect = 'seen' ORDER BY subject;
+SELECT subject, current FROM GLOSSARY(fin, all => true) WHERE property = 'seen' ORDER BY subject;
 ----
 fin.orders.amount	true
 fin.orders.id	true
@@ -457,13 +457,13 @@ fin.orders.id	true
 # refused at its declaration: no value of the two settles. A result read on another subject is no input
 
 statement ok
-DECLARE ASPECT values_a WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY values_a WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION values_a FOR fin AS $$ SELECT count(value) AS n FROM results('values_b', 'itself') $$ RETURNS values_a;
 
 statement ok
-DECLARE ASPECT values_b WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY values_b WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement error
 DECLARE FUNCTION values_b FOR fin AS $$ SELECT count(value) AS n FROM results('values_a', 'itself') $$ RETURNS values_b;
@@ -496,7 +496,7 @@ statement ok
 SELECT values_a(), values_b() FROM pair;
 
 query TT
-SELECT aspect, current FROM GLOSSARY(pair, all => true) WHERE aspect IN ('values_a', 'values_b') ORDER BY aspect;
+SELECT property, current FROM GLOSSARY(pair, all => true) WHERE property IN ('values_a', 'values_b') ORDER BY property;
 ----
 values_a	true
 values_b	true
@@ -505,7 +505,7 @@ statement ok
 SELECT values_b() FROM fin.other;
 
 query TT
-SELECT aspect, current FROM GLOSSARY(pair, all => true) WHERE aspect IN ('values_a', 'values_b') ORDER BY aspect;
+SELECT property, current FROM GLOSSARY(pair, all => true) WHERE property IN ('values_a', 'values_b') ORDER BY property;
 ----
 values_a	true
 values_b	true
@@ -516,7 +516,7 @@ statement ok
 CREATE TABLE fin.flaky (x INTEGER);
 
 statement ok
-DECLARE ASPECT rows_seen WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY rows_seen WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION rows_seen FOR fin AS $$ SELECT CASE WHEN count(*) = 0 THEN error('no rows yet') ELSE count(*) END AS n FROM fin.flaky $$ RETURNS rows_seen;
@@ -547,7 +547,7 @@ SELECT rows_seen() FROM flaky;
 no rows yet
 
 query I
-SELECT count(*) FROM measurements_history WHERE function = 'rows_seen';
+SELECT count(*) FROM results_history WHERE function = 'rows_seen';
 ----
 2
 
@@ -572,14 +572,14 @@ SELECT rows_seen() FROM flaky;
 rows_seen	fin.flaky	rows_seen	1	true
 
 query TT
-SELECT value, error FROM measurements WHERE function = 'rows_seen';
+SELECT value, error FROM results WHERE function = 'rows_seen';
 ----
 1	NULL
 
 # an output outside the property's schema is a failure too; the property declared again computes it again
 
 statement ok
-DECLARE ASPECT label WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY label WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 
 statement ok
 DECLARE FUNCTION label FOR fin AS $$ SELECT 'one' AS v $$ RETURNS label;
@@ -595,7 +595,7 @@ SELECT current FROM GLOSSARY(flaky::label, all => true);
 true
 
 statement ok
-DECLARE ASPECT label WITH $${"type": "string"}$$ AS MEASUREMENT ON TABLE;
+DECLARE PROPERTY label WITH $${"type": "string"}$$ AS MEASUREMENT ON TABLE;
 
 # the property declared again outdates the failure: what is due computes it again
 query T
@@ -623,12 +623,12 @@ min_max	fin.wide.b	min_max	{"min":null,"max":null}	true
 
 # one write: one snapshot for both
 query I
-SELECT count(DISTINCT begin_snapshot) FROM measurements WHERE function = 'min_max' AND subject LIKE 'fin.wide.%';
+SELECT count(DISTINCT begin_snapshot) FROM results WHERE function = 'min_max' AND subject LIKE 'fin.wide.%';
 ----
 1
 
 query TT
-SELECT m.subject, string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM measurements m JOIN inputs i ON i.result = m.id
+SELECT m.subject, string_agg(i.asset || ' ' || i.what, ',' ORDER BY i.asset, i.what) FROM results m JOIN inputs i ON i.result = m.id
 WHERE m.function = 'min_max' AND m.subject LIKE 'fin.wide.%' GROUP BY m.subject ORDER BY m.subject;
 ----
 fin.wide.a	fin.wide data,min_max function,min_max property
@@ -649,7 +649,7 @@ SELECT min_max() FROM wide;
 min_max	fin.wide.a	min_max	{"min":1,"max":2}	true
 
 query T
-SELECT subject FROM measurements WHERE function = 'min_max' AND subject LIKE 'fin.wide.%';
+SELECT subject FROM results WHERE function = 'min_max' AND subject LIKE 'fin.wide.%';
 ----
 fin.wide.a
 

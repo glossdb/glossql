@@ -1,14 +1,19 @@
 # Measurements
 
-A measurement is a value a function computes from the data: a profile,
-an outlier count, relationship candidates. You declare the function
-once. Running it stores the result with what it read. The next run
-returns the stored result while nothing it read changed.
+A function computes one value per asset from the data: a profile, an
+outlier count, relationship candidates. It is a kit's machinery. You
+declare it once. Running it stores the result with what it read. The
+next run returns the stored result while nothing it read changed. A
+property declared `AS MEASUREMENT` holds only such results.
+
+A query you want to read again is a view, not a function
+([SPEC.md §5.2](../../SPEC.md#52-glosses)). Write a function for a value
+that many assets need, each computed again when what it read changed.
 
 ## Declare a function
 
 ```sql
-DECLARE ASPECT min_max WITH $${"type": "object", "required": ["min", "max"]}$$ AS MEASUREMENT ON COLUMN;
+DECLARE PROPERTY min_max WITH $${"type": "object", "required": ["min", "max"]}$$ AS MEASUREMENT ON COLUMN;
 DECLARE FUNCTION min_max FOR GLOBAL AS
   $$ SELECT min(v) AS min, max(v) AS max FROM subject_column($subject) $$ RETURNS min_max;
 ```
@@ -16,7 +21,7 @@ DECLARE FUNCTION min_max FOR GLOBAL AS
 - `FOR` names a dataset, or `GLOBAL` for every dataset.
 - The body is one DuckDB query. Declaring the function again replaces
   it.
-- `$subject` is the asset the function measures, as text.
+- `$subject` is the asset the function runs on, as text.
   `subject_column($subject)` is that column as a relation with one
   column, `v`.
 - `RETURNS` names the property the result is stored under. The result
@@ -41,9 +46,9 @@ SELECT min_max() FROM readings.temperature;
 The asset after `FROM` is the input. A call takes no arguments.
 Several calls go in one statement: `SELECT f(), g() FROM asset`.
 
-The statement returns `(function, subject, aspect, value, computed)`
+The statement returns `(function, subject, property, value, computed)`
 and stores one row in
-[measurements](../specification/tables/measurements.md).
+[results](../specification/tables/results.md).
 
 - [inputs](../specification/tables/inputs.md) holds one row per node
   the result read, as an asset and what was read of it:
@@ -61,11 +66,11 @@ and stores one row in
   lineage kit) is refused at its declaration.
 - If the value has a top-level `summary` object, the statement returns
   the summary. The whole value is stored; read it with
-  `GLOSSARY(subject::aspect)`.
+  `GLOSSARY(subject::property)`.
 
 ## Call it as SQL
 
-A measurement function is also a table macro, in the dataset's schema
+A function with `RETURNS` is also a table macro, in the dataset's schema
 or in `main` for `GLOBAL`. Any SQL can call it with the asset as its
 argument. This call stores nothing.
 
@@ -73,7 +78,7 @@ argument. This call stores nothing.
 FROM min_max('plant.readings.temperature');
 ```
 
-## Measure a whole dataset
+## Read a whole dataset
 
 `dataset_cells(subject)` returns every scalar cell of a dataset, or of
 one table, as one relation, so a check over a dataset is plain SQL. See

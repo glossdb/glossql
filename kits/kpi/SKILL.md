@@ -15,8 +15,8 @@ workspace; this page says what the words mean.
 
 ```sql
 FROM glossql_kit('kits/kpi/kit.sql');     -- also in the opener, so every session has the kit
-SELECT * FROM kits;
-SELECT name, kind, grains FROM aspects;
+SELECT * FROM main.kits;
+SELECT name, kind, grains FROM main.properties;
 ```
 
 ## The properties
@@ -46,7 +46,7 @@ the asset reads `conflict` and its value is withheld. `meaning`,
    `SELECT * FROM GLOSSARY(orders) WHERE state <> 'current';`
 2. Annotate `role` on every column first. `additivity` and `unit` are
    required only on measures, `dimension` only on dimensions.
-3. Measure before you annotate. `SELECT column_profile() FROM
+3. Profile before you annotate. `SELECT column_profile() FROM
    orders.amount;` and `SELECT outlier_profile() FROM orders.amount;`
    store results that `GLOSSARY()` returns beside the annotations. Name
    them in `basis`. With the quality kit loaded and the relationships
@@ -64,15 +64,15 @@ the asset reads `conflict` and its value is withheld. `meaning`,
 
 ## Metrics
 
-A metric is a `VIEW` property, defined by an annotation on the
-dataset. Its SQL is served as a view under the metric's name. The view
-is a table of the dataset, so its columns take this kit's properties
-like a loaded table's columns. That is where a reader of the numbers
+A metric is a view of kind `metric`: a named SQL query on the dataset,
+defined by one annotation on the dataset and served as a view under
+its name. The view is a table of the dataset, so its columns take this
+kit's properties like a loaded table's columns. That is where a reader of the numbers
 finds what it needs.
 
 ```sql
-DECLARE ASPECT revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS VIEW;
 GLOSS revenue ON shop AS $${
+  "kind": "metric",
   "sql": "SELECT month AS period, customer, sum(amount) AS value FROM shop.orders GROUP BY ALL",
   "assumptions": [{"dimension": "scope", "assumption": "amounts are net of tax",
                    "basis": "column_profile", "confidence": 0.9}]
@@ -86,6 +86,8 @@ FROM shop.revenue;
 
 The body:
 
+- `kind`: `metric` here; `table`, `value` and `rule` are the other
+  kinds, and a view without one is a query kept with its reason.
 - `sql`, or `stopped`. `stopped` says that you serve no number, and
   why: what is missing and what would fix it.
 - `assumptions`: each with its `assumption`, and `dimension`, `basis`
@@ -102,8 +104,7 @@ On the view's columns:
 
 Annotating again replaces your own value. A person's value is kept
 beside it. Put what the company revises (a metric's meaning, unit)
-into annotations on the view and its columns: the metric's
-declaration cannot change once it is annotated.
+into annotations on the view and its columns.
 
 ## Limits
 

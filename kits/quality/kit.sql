@@ -18,7 +18,7 @@
 -- table's columns reads it under a bound of cells (SPEC §6): a larger table
 -- is read as a sample of its rows kept by the hash of each row, the same
 -- rows every run, and `rows` says how many were read. Each screen's measurement function reads the screen, keeps what
--- crosses its line, and stores the aspect; the thresholds are the function's,
+-- crosses its line, and stores the property; the thresholds are the function's,
 -- the counts the screen's. A key a screen did not reach is null, and the
 -- schemas say so.
 
@@ -275,7 +275,7 @@ ORDER BY seq;
 -- It compares the definition that defines each view of the dataset now,
 -- the newest annotation of the view's property on the dataset.
 -- Two kinds: definitions whose SQL is the same statement once parsed, case
--- and spacing aside, under different aspects; and definitions whose monthly
+-- and spacing aside, under different properties; and definitions whose monthly
 -- series agree over every month though their SQL differs. The series pass
 -- reads each definition's view by the claims on its columns, as a metrics
 -- kit does: the period is the column glossed role timestamp (one, or the
@@ -285,54 +285,54 @@ ORDER BY seq;
 -- glossed on the value column folds the month: a flow summed, a stock the
 -- month's last level, a ratio its summed halves re-divided, the columns
 -- its numerator and denominator name; none claimed reads as flow. A
--- collision is two definitions of one flavor, the aspect's x-kind: a
--- definition flavored otherwise sits beside a metric and is never its
+-- collision is two definitions of one kind, as their bodies name it: a
+-- definition of another kind sits beside a metric and is never its
 -- twin. No definitions is one row with definitions 0.
 --===------------------------------------------------------------------===--
 CREATE OR REPLACE MACRO main.definition_collisions(ds) AS TABLE
 WITH definitions AS (
-  SELECT split_part(view, '.', 2) AS aspect, ds AS subject, coalesce(kind, '') AS flavor, sql
+  SELECT split_part(view, '.', 2) AS property, ds AS subject, coalesce(kind, '') AS flavor, sql
   FROM definition('the dataset') WHERE sql IS NOT NULL),
 canon AS (
-  SELECT aspect, subject, flavor, sql,
+  SELECT property, subject, flavor, sql,
          lower(coalesce(regexp_replace(json_serialize_sql(sql)::VARCHAR, '"query_location(_length)?":\d+,?', '', 'g'),
                         regexp_replace(trim(sql), '\s+', ' ', 'g'))) AS canon
   FROM definitions),
 sql_hits AS (
-  SELECT canon, list(DISTINCT aspect ORDER BY aspect) AS aspects, list(DISTINCT subject ORDER BY subject) AS subjects,
-         min(sql) AS sql, count(DISTINCT aspect) AS n
-  FROM canon GROUP BY canon, flavor HAVING count(DISTINCT aspect) >= 2),
-vcells AS (SELECT * FROM dataset_cells(ds, 'views') WHERE "table" IN (SELECT aspect FROM definitions)),
+  SELECT canon, list(DISTINCT property ORDER BY property) AS properties, list(DISTINCT subject ORDER BY subject) AS subjects,
+         min(sql) AS sql, count(DISTINCT property) AS n
+  FROM canon GROUP BY canon, flavor HAVING count(DISTINCT property) >= 2),
+vcells AS (SELECT * FROM dataset_cells(ds, 'views') WHERE "table" IN (SELECT property FROM definitions)),
 vcols AS (SELECT DISTINCT "table", "column", ci, column_type FROM vcells),
 claims AS (
-  SELECT split_part(asset, '.', 2) AS aspect,
+  SELECT split_part(asset, '.', 2) AS property,
          substr(asset, length(split_part(asset, '.', 1)) + length(split_part(asset, '.', 2)) + 3) AS col,
          property AS claim, value
   FROM (FROM annotations('role', 'the dataset') UNION ALL FROM annotations('additivity', 'the dataset'))
   WHERE state IN ('current', 'stale') AND value IS NOT NULL
-    AND len(string_split(asset, '.')) >= 3 AND split_part(asset, '.', 2) IN (SELECT aspect FROM definitions)),
+    AND len(string_split(asset, '.')) >= 3 AND split_part(asset, '.', 2) IN (SELECT property FROM definitions)),
 roles AS (
-  SELECT aspect, value->>'value' AS role,
+  SELECT property, value->>'value' AS role,
          list(col ORDER BY CASE WHEN col IN ('period', 'value') THEN 0 ELSE 1 END, col) AS cols
-  FROM claims WHERE claim = 'role' GROUP BY aspect, value->>'value'),
+  FROM claims WHERE claim = 'role' GROUP BY property, value->>'value'),
 chosen AS (
-  SELECT g.aspect,
+  SELECT g.property,
          coalesce(CASE WHEN len(p.cols) = 1 OR p.cols[1] = 'period' THEN p.cols[1] END,
-                  (SELECT c."column" FROM vcols c WHERE c."table" = g.aspect AND c."column" = 'period'),
-                  (SELECT c."column" FROM vcols c WHERE c."table" = g.aspect AND (c.column_type = 'DATE' OR c.column_type LIKE 'TIMESTAMP%')
+                  (SELECT c."column" FROM vcols c WHERE c."table" = g.property AND c."column" = 'period'),
+                  (SELECT c."column" FROM vcols c WHERE c."table" = g.property AND (c.column_type = 'DATE' OR c.column_type LIKE 'TIMESTAMP%')
                    ORDER BY c.ci LIMIT 1)) AS period_column,
          coalesce(CASE WHEN len(m.cols) = 1 OR m.cols[1] = 'value' THEN m.cols[1] END,
-                  (SELECT c."column" FROM vcols c WHERE c."table" = g.aspect AND c."column" = 'value')) AS value_column
+                  (SELECT c."column" FROM vcols c WHERE c."table" = g.property AND c."column" = 'value')) AS value_column
   FROM definitions g
-  LEFT JOIN roles p ON p.aspect = g.aspect AND p.role = 'timestamp'
-  LEFT JOIN roles m ON m.aspect = g.aspect AND m.role = 'measure'),
+  LEFT JOIN roles p ON p.property = g.property AND p.role = 'timestamp'
+  LEFT JOIN roles m ON m.property = g.property AND m.role = 'measure'),
 folds AS (
-  SELECT c.aspect, c.period_column, c.value_column,
+  SELECT c.property, c.period_column, c.value_column,
          coalesce(b.value->>'value', 'additive') AS verb, b.value->>'numerator' AS num, b.value->>'denominator' AS den
-  FROM chosen c LEFT JOIN claims b ON b.claim = 'additivity' AND b.aspect = c.aspect AND b.col = c.value_column
+  FROM chosen c LEFT JOIN claims b ON b.claim = 'additivity' AND b.property = c.property AND b.col = c.value_column
   WHERE c.period_column IS NOT NULL AND c.value_column IS NOT NULL),
 series AS (
-  SELECT f.aspect, date_trunc('month', TRY_CAST(p.val AS TIMESTAMP)) AS month,
+  SELECT f.property, date_trunc('month', TRY_CAST(p.val AS TIMESTAMP)) AS month,
          CASE f.verb
            WHEN 'semi-additive' THEN arg_max(TRY_CAST(v.val AS DOUBLE), TRY_CAST(p.val AS TIMESTAMP)) FILTER (WHERE v."column" = f.value_column)
            WHEN 'ratio' THEN sum(TRY_CAST(v.val AS DOUBLE)) FILTER (WHERE v."column" = f.num)
@@ -340,24 +340,24 @@ series AS (
            ELSE sum(TRY_CAST(v.val AS DOUBLE)) FILTER (WHERE v."column" = f.value_column) END AS value,
          bool_or(v.val IS NULL) FILTER (WHERE v."column" = f.value_column) AS has_null
   FROM folds f
-  JOIN vcells p ON p."table" = f.aspect AND p."column" = f.period_column AND TRY_CAST(p.val AS TIMESTAMP) IS NOT NULL
-  JOIN vcells v ON v."table" = f.aspect AND v.rn = p.rn AND v."column" IN (f.value_column, f.num, f.den)
-  GROUP BY f.aspect, date_trunc('month', TRY_CAST(p.val AS TIMESTAMP)), f.verb, f.value_column, f.num, f.den),
+  JOIN vcells p ON p."table" = f.property AND p."column" = f.period_column AND TRY_CAST(p.val AS TIMESTAMP) IS NOT NULL
+  JOIN vcells v ON v."table" = f.property AND v.rn = p.rn AND v."column" IN (f.value_column, f.num, f.den)
+  GROUP BY f.property, date_trunc('month', TRY_CAST(p.val AS TIMESTAMP)), f.verb, f.value_column, f.num, f.den),
 prints AS (
-  SELECT aspect, string_agg(strftime(month, '%Y-%m') || '=' || round(value, 2)::VARCHAR, ';' ORDER BY month) AS fingerprint,
+  SELECT property, string_agg(strftime(month, '%Y-%m') || '=' || round(value, 2)::VARCHAR, ';' ORDER BY month) AS fingerprint,
          count(*) AS months
-  FROM series GROUP BY aspect HAVING NOT bool_or(coalesce(has_null, false) OR value IS NULL)),
+  FROM series GROUP BY property HAVING NOT bool_or(coalesce(has_null, false) OR value IS NULL)),
 series_hits AS (
-  SELECT fingerprint, list(DISTINCT p.aspect ORDER BY p.aspect) AS aspects,
+  SELECT fingerprint, list(DISTINCT p.property ORDER BY p.property) AS properties,
          list(DISTINCT c.subject ORDER BY c.subject) AS subjects, max(months) AS months
-  FROM prints p JOIN canon c USING (aspect)
-  GROUP BY fingerprint, c.flavor HAVING count(DISTINCT p.aspect) >= 2 AND count(DISTINCT c.canon) >= 2),
+  FROM prints p JOIN canon c USING (property)
+  GROUP BY fingerprint, c.flavor HAVING count(DISTINCT p.property) >= 2 AND count(DISTINCT c.canon) >= 2),
 hits AS (
-  SELECT 0 AS phase, 'sql' AS kind, sql, NULL::BIGINT AS months, aspects, subjects FROM sql_hits
+  SELECT 0 AS phase, 'sql' AS kind, sql, NULL::BIGINT AS months, properties, subjects FROM sql_hits
   UNION ALL
-  SELECT 1, 'served_series', '', months, aspects, subjects FROM series_hits)
+  SELECT 1, 'served_series', '', months, properties, subjects FROM series_hits)
 SELECT (SELECT count(*) FROM definitions) AS definitions,
-       row_number() OVER (ORDER BY phase, aspects[1]) AS seq, kind, sql, months, aspects, subjects
+       row_number() OVER (ORDER BY phase, properties[1]) AS seq, kind, sql, months, properties, subjects
 FROM hits
 UNION ALL
 SELECT (SELECT count(*) FROM definitions), NULL, NULL, NULL, NULL, NULL, NULL
@@ -633,12 +633,12 @@ WHERE NOT EXISTS (SELECT 1 FROM numbered) OR EXISTS (SELECT 1 FROM refused)
 ORDER BY seq;
 
 --===------------------------------------------------------------------===--
--- The aspects each screen stores, and the functions that store them. A
+-- The properties each screen stores, and the functions that store them. A
 -- function reads its screen, keeps what crosses its line, and shapes the
--- value the aspect's schema requires. Each is FOR GLOBAL: any dataset.
+-- value the property's schema requires. Each is FOR GLOBAL: any dataset.
 --===------------------------------------------------------------------===--
 
-DECLARE ASPECT hierarchy_candidates WITH $${
+DECLARE PROPERTY hierarchy_candidates WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"}, "rows": {"type": ["integer", "null"]},
                  "candidates": {"type": ["array", "null"], "items": {"type": "object",
@@ -658,7 +658,7 @@ DECLARE FUNCTION detect_hierarchies FOR GLOBAL AS $$
   FROM hierarchy_candidates($subject)
 $$ RETURNS hierarchy_candidates;
 
-DECLARE ASPECT relationship_candidates WITH $${
+DECLARE PROPERTY relationship_candidates WITH $${
   "type": "object",
   "properties": {"candidates": {"type": "array", "items": {"type": "object",
                    "properties": {"from": {"type": "string"}, "to": {"type": "string"},
@@ -688,7 +688,7 @@ DECLARE FUNCTION detect_relationships FOR GLOBAL AS $$
   FROM c
 $$ RETURNS relationship_candidates;
 
-DECLARE ASPECT relationship_coherence WITH $${
+DECLARE PROPERTY relationship_coherence WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
                  "relationship": {"type": ["string", "null"]}, "filled": {"type": ["integer", "null"]},
@@ -730,7 +730,7 @@ DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$
   FROM c
 $$ RETURNS relationship_coherence;
 
-DECLARE ASPECT derivation_candidates WITH $${
+DECLARE PROPERTY derivation_candidates WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"}, "rows": {"type": ["integer", "null"]}, "truncated": {"type": ["boolean", "null"]},
                  "candidates": {"type": ["array", "null"], "items": {"type": "object",
@@ -751,18 +751,18 @@ DECLARE FUNCTION detect_derivations FOR GLOBAL AS $$
   FROM derivation_candidates($subject)
 $$ RETURNS derivation_candidates;
 
-DECLARE ASPECT definition_collisions WITH $${
+DECLARE PROPERTY definition_collisions WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"}, "definitions": {"type": "integer"},
                  "collisions": {"type": "array", "items": {"type": "object",
                    "properties": {"sql": {"type": "string"},
-                                  "aspects": {"type": "array", "items": {"type": "string"}},
+                                  "properties": {"type": "array", "items": {"type": "string"}},
                                   "subjects": {"type": "array", "items": {"type": "string"}}}}}}
 }$$ AS MEASUREMENT ON DATASET;
 
 DECLARE FUNCTION detect_definition_collisions FOR GLOBAL AS $$
   SELECT max(definitions) > 0 AS applicable, max(definitions) AS definitions,
-         coalesce(list({'kind': kind, 'sql': sql, 'months': months, 'aspects': aspects, 'subjects': subjects}
+         coalesce(list({'kind': kind, 'sql': sql, 'months': months, 'properties': properties, 'subjects': subjects}
                        ORDER BY seq) FILTER (WHERE kind IS NOT NULL), []) AS collisions
   FROM definition_collisions($subject)
 $$ RETURNS definition_collisions;
@@ -775,7 +775,7 @@ $$ RETURNS definition_collisions;
 -- reconciliation over the monotone reading, one that aligned over one that
 -- did not, the most votes. Extraction serves the summary; the anchors read
 -- back through GLOSSARY(column::additivity_evidence).
-DECLARE ASPECT additivity_evidence WITH $${
+DECLARE PROPERTY additivity_evidence WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
                  "anchors_n": {"type": ["integer", "null"]}, "decided": {"type": ["integer", "null"]},
@@ -835,7 +835,7 @@ $$ RETURNS additivity_evidence;
 -- bounds a window; a number or a text does not, and says so.
 --===------------------------------------------------------------------===--
 
-DECLARE ASPECT temporal_profile WITH $${
+DECLARE PROPERTY temporal_profile WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"},
                  "granularity": {"type": ["string", "null"]},
@@ -935,10 +935,10 @@ DECLARE FUNCTION temporal FOR GLOBAL AS $$
 $$ RETURNS temporal_profile;
 
 --===------------------------------------------------------------------===--
--- rate_tolerance: the validation detector. A validation is a FACT aspect
+-- rate_tolerance: the validation detector. A validation is a FACT property
 -- whose schema carries `tolerance` and `breach_rate`: an agent or a human
 -- glosses the expectation with the tolerance, and a function returning
--- the same aspect is the check, its `breach_rate` the violation share
+-- the same property is the check, its `breach_rate` the violation share
 -- (0.0 passes). Per subject: no check annotation yet is yellow; a rate at or
 -- under the tolerance is green, above it red. The human's tolerance
 -- outranks the agent's; the test's THRESHOLD applies while no

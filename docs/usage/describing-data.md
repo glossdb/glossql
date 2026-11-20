@@ -1,29 +1,28 @@
 # Describing data
 
-You describe data in two steps. Declare a property (`DECLARE ASPECT`):
+You describe data in two steps. Declare a property (`DECLARE PROPERTY`):
 a name, a JSON Schema for its values, and a kind. Then annotate an
 asset with a value for it (`GLOSS`). The value is validated on write
-and stored with its actor and the lake snapshot it was written at.
+and stored with its actor and the lake snapshot it was written at. A
+view needs one step: its definition ([define a view](#define-a-view)).
 
 ## Declare a property
 
 ```sql
-DECLARE ASPECT unit WITH $${
+DECLARE PROPERTY unit WITH $${
   "type": "object",
   "required": ["value"],
   "properties": {"value": {"type": "string"}}
 }$$ AS FACT ON COLUMN;
 
-DECLARE ASPECT row_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
-
-DECLARE ASPECT headcount WITH $${"title": "Headcount"}$$ AS VIEW;
+DECLARE PROPERTY row_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 ```
 
 | Kind | The value is | Validated against |
 |---|---|---|
 | `FACT` | stated by an agent or a person | the `WITH` schema |
 | `MEASUREMENT` | computed by a function; `GLOSS` on it is refused | the `WITH` schema, when the function runs ([measurements](measurements.md)) |
-| `VIEW` | SQL, served as a view under the property's name: a metric, a single value or a table | the view contract below |
+| `VIEW` | a view definition: SQL served as a view under its name. Its first definition declares it; `DECLARE PROPERTY` does not | the view contract below |
 
 Declaring a property again with the same content does nothing.
 Changing a property that has annotations is refused: delete them
@@ -44,9 +43,9 @@ A condition makes the property required only where another property
 has a given value, or only on columns of some types:
 
 ```sql
-DECLARE ASPECT currency WITH $${"type": "object", "required": ["value"]}$$
+DECLARE PROPERTY currency WITH $${"type": "object", "required": ["value"]}$$
   AS FACT ON COLUMN WHEN role = 'measure';
-DECLARE ASPECT srid WITH $${"type": "object", "required": ["value"]}$$
+DECLARE PROPERTY srid WITH $${"type": "object", "required": ["value"]}$$
   AS FACT ON COLUMN WHEN TYPE = 'GEOMETRY';
 ```
 
@@ -84,13 +83,13 @@ The statement answers `glossed unit on staff.employees.salary as agent`.
 
 ## Define a view
 
-A `VIEW` property's value is SQL. The extension creates a view in the
-dataset's schema under the property's name. Use it for a metric, a
-single value or a table.
+Everything an agent keeps is a view: a named SQL query on the dataset,
+with its reason. The extension creates the view in the dataset's
+schema under its name. The first definition of a name declares it.
 
 ```sql
-DECLARE ASPECT headcount WITH $${"title": "Headcount"}$$ AS VIEW;
 GLOSS headcount ON staff AS $${
+  "kind": "table",
   "sql": "SELECT department, count(*) AS headcount FROM staff.employees GROUP BY department",
   "assumptions": [{"assumption": "every row is an active employee", "confidence": 0.8}]
 }$$;
@@ -101,9 +100,15 @@ The view contract:
 
 - `sql`, or `stopped` with the reason no view is served. One of the two
   is required.
+- `kind`, optional: `table`, `value` (one row, a column `value`),
+  `metric` (a value per period) or `rule` (its rows break a rule).
+  Without it the view is a plain view, a query kept with its reason. A
+  new definition may change it; a stop without one keeps the kind.
 - `assumptions`, optional: a list of objects, each with an `assumption`
   and optionally `dimension`, `basis` and `confidence` (0 to 1).
-- Other keys are accepted.
+- Other keys are accepted. The glossdb server writes `meaning` and
+  `tags` in the body as the view's annotations, and a metric's `time`,
+  `measure` and `dimensions` as annotations on its columns.
 
 What else to know:
 
@@ -144,7 +149,7 @@ declared relationships against the data ([kits](../kits.md)).
 ## Remove annotations
 
 ```sql
-DELETE FROM glossary WHERE subject = 'staff.employees.salary' AND aspect = 'unit';
+DELETE FROM main.glossary WHERE subject = 'staff.employees.salary' AND property = 'unit';
 ```
 
 The statement removes the rows from the catalog and returns their

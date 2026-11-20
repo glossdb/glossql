@@ -8,7 +8,7 @@ reads them before writing the casts.
 ```glossql
 USE fin;
 
-DECLARE ASPECT null_values WITH $${
+DECLARE PROPERTY null_values WITH $${
   "type": "object",
   "properties": {
     "values": {"type": "array", "items": {"type": "object",
@@ -27,7 +27,7 @@ GLOSS null_values ON fin AS $${"values": [
   {"value": "TBD", "category": "missing_indicator"}
 ]}$$;
 
-DECLARE ASPECT type_patterns WITH $${
+DECLARE PROPERTY type_patterns WITH $${
   "type": "object",
   "properties": {
     "min_confidence": {"type": "number"},

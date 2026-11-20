@@ -56,10 +56,10 @@ GLOSS calendar ON fin AS $${"fiscal_year_starts": "april"}$$;
 ## Statistics
 
 A statistic is measured by a function, not annotated. The function
-returns the aspect it fills (`RETURNS`).
+returns the property it fills (`RETURNS`).
 
 ```glossql
-DECLARE ASPECT min_max WITH $${
+DECLARE PROPERTY min_max WITH $${
   "type": "object", "properties": {"min": {}, "max": {}}
 }$$ AS MEASUREMENT;
 DECLARE FUNCTION profile_min_max FOR GLOBAL AS $$/* min/max/nulls/distincts per column, from kernels */$$

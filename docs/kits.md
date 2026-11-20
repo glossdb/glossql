@@ -10,9 +10,9 @@ that teaches an agent what the words mean.
 | Kit | Adds | Skill |
 |---|---|---|
 | `lineage` | The lineage of a dataset as one relation, `lineage(dataset)`: what contains what, what a view reads, what a relationship relates. The read functions a function's body reads the catalog through: `annotations(property, where)`, `results(function, where)`, `definition(where)`. No property. `PRAGMA glossql` loads it | [kits/lineage/SKILL.md](../kits/lineage/SKILL.md) |
-| `kpi` | The semantic model's words. Properties: `meaning`, `role`, `additivity`, `unit`, `dimension`, `entity`, `conventions` (on a source). Measurements: `column_profile`, `outlier_profile`. Detector: `value_entropy`. A test on each property; `role`, `additivity` and `unit` are scored by `value_entropy` | [kits/kpi/SKILL.md](../kits/kpi/SKILL.md) |
-| `quality` | Data quality checks. Table macros: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `definition_collisions`, `additivity_anchors`. Measurements that store their results: `detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_definition_collisions`, `additivity_evidence`, `temporal`. Detector: `rate_tolerance`, which compares a measured rate with a stated tolerance. Load it after `kpi` | [kits/quality/SKILL.md](../kits/quality/SKILL.md) |
-| `spatial` | Geometry columns. Properties: `shape` and `crs`, required on columns of type `GEOMETRY`. Measurement: `geometry_profile`. Its first lines install and load DuckDB's `spatial` extension | [kits/spatial/SKILL.md](../kits/spatial/SKILL.md) |
+| `kpi` | The semantic model's words. Properties: `meaning`, `role`, `additivity`, `unit`, `dimension`, `entity`, `conventions` (on a source). Functions: `column_profile`, `outlier_profile`. Detector: `value_entropy`. A test on each property; `role`, `additivity` and `unit` are scored by `value_entropy` | [kits/kpi/SKILL.md](../kits/kpi/SKILL.md) |
+| `quality` | Data quality checks. Table macros: `relationship_candidates`, `relationship_checks`, `hierarchy_candidates`, `derivation_candidates`, `definition_collisions`, `additivity_anchors`. Functions that store their results: `detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations`, `detect_definition_collisions`, `additivity_evidence`, `temporal`. Detector: `rate_tolerance`, which compares a measured rate with a stated tolerance. Load it after `kpi` | [kits/quality/SKILL.md](../kits/quality/SKILL.md) |
+| `spatial` | Geometry columns. Properties: `shape` and `crs`, required on columns of type `GEOMETRY`. Function: `geometry_profile`. Its first lines install and load DuckDB's `spatial` extension | [kits/spatial/SKILL.md](../kits/spatial/SKILL.md) |
 
 `examples/spatial/` runs the `spatial` kit on a public shapefile.
 
@@ -47,8 +47,8 @@ the tests that name both. See the usage pages for each statement:
 [functions](usage/measurements.md), [tests](usage/tests.md).
 
 - A property's `WITH` schema is a JSON Schema. Keywords such as `title`
-  or `x-kind` are stored with it.
-- A measurement that reads a file, a table function or another
+  or `description` are stored with it.
+- A function that reads a file, a table function or another
   database is computed again after any change in the dataset. Read
   tables where you can.
 - A kit may hold plain SQL too, such as `CREATE MACRO`, `INSTALL` and

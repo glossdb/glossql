@@ -1,40 +1,9 @@
 # Flow: a metric scorecard
 
 A scorecard is a set of metrics and validations over one dataset. The
-example builds one for a general ledger: declare the measures and
-metrics, define them in SQL, read them at any time grain, state the
-formulas of the derived metrics, and declare the validations with their
-tests.
-
-## Declare the measures and metrics
-
-```glossql
-USE fin;
-
-DECLARE ASPECT revenue WITH $${
-  "title": "Revenue",
-  "description": "Income recognized in the ledger",
-  "x-kind": "measure", "x-unit": "currency"
-}$$ AS VIEW;
-
-DECLARE ASPECT accounts_receivable WITH $${
-  "title": "Accounts Receivable",
-  "description": "Open receivables — a stock at (account, period) grain",
-  "x-kind": "measure", "x-unit": "currency"
-}$$ AS VIEW;
-
-DECLARE ASPECT dso WITH $${
-  "title": "Days Sales Outstanding",
-  "description": "Average days to collect a receivable",
-  "x-kind": "metric", "x-unit": "days"
-}$$ AS VIEW;
-
-DECLARE ASPECT gross_profit WITH $${
-  "title": "Gross Profit",
-  "description": "Revenue less expenses",
-  "x-kind": "metric", "x-unit": "currency"
-}$$ AS VIEW;
-```
+example builds one for a general ledger: define the measures in SQL
+with their meaning, read them at any time grain, state the formulas of
+the derived metrics, and declare the validations with their tests.
 
 ## Define the measures
 
@@ -43,7 +12,11 @@ dimensions as columns, and its assumptions cite the annotations they
 rest on.
 
 ```glossql
+USE fin;
+
 GLOSS revenue ON fin AS $${
+  "kind": "metric",
+  "meaning": "Income recognized in the ledger",
   "sql": "SELECT e.date, l.credit - l.debit AS value, l.cost_center, l.currency FROM journal_lines l JOIN journal_entries e ON l.entry_id = e.entry_id JOIN chart_of_accounts a ON l.account_id = a.account_id WHERE a.account_type = 'revenue'",
   "assumptions": [
     {"dimension": "sign", "assumption": "revenue accounts carry credit balances; value = credit - debit",
@@ -56,6 +29,8 @@ GLOSS revenue ON fin AS $${
 }$$;
 
 GLOSS accounts_receivable ON fin AS $${
+  "kind": "metric",
+  "meaning": "Open receivables, a stock at (account, period) grain",
   "sql": "SELECT t.period, t.account_id, t.debit_balance - t.credit_balance AS value FROM trial_balance t JOIN chart_of_accounts a ON t.account_id = a.account_id WHERE a.account_type = 'asset' AND a.name LIKE '%Receivable%'",
   "assumptions": [
     {"dimension": "additivity", "assumption": "a stock at (account, period) source grain: a window takes its LAST period, never a sum across periods",
@@ -82,7 +57,7 @@ SELECT cost_center, sum(value) FROM revenue GROUP BY 1 ORDER BY 2 DESC;
 A formula is written over a window `w` and names no window.
 
 ```glossql
-DECLARE ASPECT formulas WITH $${
+DECLARE PROPERTY formulas WITH $${
   "type": "object",
   "properties": {"formulas": {"type": "object"}}
 }$$ AS FACT ON DATASET;
@@ -99,11 +74,11 @@ GLOSS formulas ON fin AS $${
 ## Validations
 
 The expectation is an annotation, the check is a function that returns
-the same aspect, and a test scores the two. The second expectation is
+the same property, and a test scores the two. The second expectation is
 deliberately not 100 percent.
 
 ```glossql
-DECLARE ASPECT journal_balanced WITH $${
+DECLARE PROPERTY journal_balanced WITH $${
   "type": "object",
   "properties": {
     "outcome": {"type": "string"},
@@ -118,7 +93,7 @@ GLOSS journal_balanced ON journal_lines AS $${
   "severity": "critical"
 }$$;
 
-DECLARE ASPECT bank_reconciliation WITH $${
+DECLARE PROPERTY bank_reconciliation WITH $${
   "type": "object",
   "properties": {
     "outcome": {"type": "string"},
@@ -157,7 +132,7 @@ SELECT * FROM TESTS(journal_lines::journal_balanced);
 
 ```glossql
 SELECT subject, state, score FROM TESTS(fin) WHERE state = 'red';
-SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
+SELECT subject, property, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
 ```glossql

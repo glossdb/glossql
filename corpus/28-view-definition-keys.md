@@ -21,8 +21,7 @@ GLOSS revised_budget ON brla AS $${
 A kit can declare a schema for the keys of a body:
 
 ```glossql
-DECLARE ASPECT kpi_definition WITH $${
-  "x-kind": "definition",
+DECLARE PROPERTY kpi_definition WITH $${
   "type": "object", "additionalProperties": false,
   "properties": {
     "sql": {"type": "string"}, "stopped": {"type": "string"},
@@ -107,10 +106,10 @@ GLOSS additivity ON service_level.value AS $${
 GLOSS role ON service_level.system AS $${"value": "dimension"}$$;
 ```
 
-The additivity aspect with the ratio and its parts:
+The additivity property with the ratio and its parts:
 
 ```glossql
-DECLARE ASPECT additivity WITH $${
+DECLARE PROPERTY additivity WITH $${
   "type": "object", "required": ["value"],
   "properties": {"value": {"enum": ["semi-additive", "additive", "ratio", "none"]},
                  "numerator": {"type": "string"},
