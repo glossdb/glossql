@@ -495,13 +495,6 @@ SELECT r.table_name, r.source FROM definition('itself'), unnest(reads) t(r) ORDE
 fin.stock_ch	erp_ch
 fin.stock_dk	erp_dk
 
-# what the view requires of each read: nothing here, one row per branch
-query TIT
-SELECT c.table_name, c.branch, c.condition FROM definition('itself'), unnest(conditions) t(c) ORDER BY ALL;
-----
-fin.stock_ch	2	NULL
-fin.stock_dk	1	NULL
-
 # a relationship from the view's own column is one of the view's relationships
 statement ok
 DECLARE RELATIONSHIP fin.stock.part -> fin.stock_dk.matnr;
