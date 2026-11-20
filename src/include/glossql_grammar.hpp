@@ -124,6 +124,7 @@ void RegisterGlossService(ExtensionLoader &loader);
 //! computes it, resolved through the bound plan down to the base scans;
 //! `complete` is false when the walk could not follow a step (glossql_lineage.cpp)
 struct QueryLineage {
+	//! per column, its name and, where asked for, its derivation text
 	vector<pair<string, string>> columns;
 	//! per column, the columns of lake tables it is computed from, as schema.table.column, each once
 	vector<vector<string>> inputs;
@@ -147,8 +148,9 @@ struct QueryLineage {
 	};
 	vector<JoinPair> joins;
 };
-//! `lake` the lake's catalog: scans, inputs and joins name its tables alone
-QueryLineage LineageOf(ClientContext &context, const string &sql, const string &lake);
+//! `lake` the lake's catalog: scans, inputs and joins name its tables alone; `derivations` renders each
+//! column's derivation text (`columns`' second), which a load's lineage compares (SPEC §3)
+QueryLineage LineageOf(ClientContext &context, const string &sql, const string &lake, bool derivations);
 //! The lineage as one JSON object, column to derivation; a column the walk could
 //! not follow carries a digest of the SQL, so it reads moved whenever the SQL did
 string LineageJson(const QueryLineage &lineage, const string &sql);

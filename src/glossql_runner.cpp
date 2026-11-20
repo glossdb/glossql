@@ -1028,7 +1028,7 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 	// is the drift record of what the source sends
 	string lineage = "{}";
 	try {
-		lineage = LineageJson(LineageOf(*inner.con.context, recipe.sql, inner.ws.lake), recipe.sql);
+		lineage = LineageJson(LineageOf(*inner.con.context, recipe.sql, inner.ws.lake, true), recipe.sql);
 	} catch (std::exception &) {
 		// a recipe the planner will not walk again is stored without its lineage
 	}

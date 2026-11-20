@@ -1,12 +1,15 @@
 // Lineage: what computes each column of a query, read off its bound plan
 // before any optimizer touches it. Every output column resolves through
-// projections, aggregates, windows, set operations and CTEs down to the base
-// scans, where a leaf is the scan, the column and its type at the source. The
-// text names what a column is derived from and nothing about how the plan is
-// shaped, so two plans that derive a column the same way read the same and a
-// source whose column arrives under another type reads different.
+// projections, aggregates, windows, set operations and CTEs down to the
+// scanned columns of the lake's tables it is computed from; the joins'
+// column pairs and the keys that hold are read off the bound expressions.
 //
-// A load records its recipe's lineage per column on its imports row; a
+// A load's lineage also renders a derivation text per column, where a leaf
+// is the scan, the column and its type at the source. The text names what a
+// column is derived from and nothing about how the plan is shaped, so two
+// plans that derive a column the same way read the same and a source whose
+// column arrives under another type reads different. A load records it per
+// column on its imports row; a
 // gloss on a column reads stale once the derivation behind it moved, which
 // is SPEC §3's re-derivation, and the row-to-row diff of the imports is the
 // drift record of what the source sends.
@@ -94,9 +97,12 @@ static void AddOnce(vector<T> &into, const vector<T> &items) {
 	}
 }
 
-//! The walk's state: a derivation text per binding resolved so far, the CTEs'
-//! outputs by their index, and whether every step was followed
+//! The walk's state: per binding resolved so far the scanned columns it is
+//! computed from, the CTEs' outputs by their index, and whether every step was
+//! followed; for a load's lineage a derivation text per binding beside them
 struct Lineage {
+	//! render the derivation texts: a load's lineage compares them (SPEC §3)
+	bool derivations = false;
 	column_binding_map_t<string> text;
 	//! per binding, the SHAPE_* bits of what computed it
 	column_binding_map_t<uint8_t> shape;
@@ -120,6 +126,10 @@ struct Lineage {
 	//! with the scan that reads it
 	column_binding_map_t<vector<Scanned>> leaves;
 	unordered_map<TableIndex, vector<vector<Scanned>>> cte_leaves;
+	//! per binding that is one scanned column of a lake table passed on as it
+	//! is, that column; per CTE by position, none or that column
+	column_binding_map_t<Scanned> direct;
+	unordered_map<TableIndex, vector<vector<Scanned>>> cte_direct;
 	//! per scan of a lake table, the table as schema.table
 	std::map<idx_t, string> scan_tables;
 	//! the lake's catalog: a table of another catalog, such as the store a view
@@ -195,11 +205,45 @@ static string ShapeName(uint8_t shape) {
 	return shape & SHAPE_RATIO ? "ratio" : shape & SHAPE_AVERAGE ? "average" : shape & SHAPE_DISTINCT ? "distinct" : "";
 }
 
-//! The scanned columns an expression is computed from, in the order it names them
+//! Whether the walk follows an expression of the class to what it is computed
+//! from: a subquery's plan, say, it does not
+static bool Followed(ExpressionClass type) {
+	switch (type) {
+	case ExpressionClass::BOUND_COLUMN_REF:
+	case ExpressionClass::BOUND_CONSTANT:
+	case ExpressionClass::BOUND_FUNCTION:
+	case ExpressionClass::BOUND_AGGREGATE:
+	case ExpressionClass::LEGACY_BOUND_CAST:
+	case ExpressionClass::BOUND_WINDOW:
+	case ExpressionClass::BOUND_PARAMETER:
+	case ExpressionClass::LEGACY_BOUND_COMPARISON:
+	case ExpressionClass::LEGACY_BOUND_BETWEEN:
+	case ExpressionClass::BOUND_CONJUNCTION:
+	case ExpressionClass::BOUND_OPERATOR:
+	case ExpressionClass::BOUND_CASE:
+	case ExpressionClass::BOUND_UNNEST:
+	case ExpressionClass::BOUND_LAMBDA:
+	case ExpressionClass::BOUND_LAMBDA_REF:
+	case ExpressionClass::BOUND_DEFAULT:
+		return true;
+	default:
+		return false;
+	}
+}
+
+//! The scanned columns an expression is computed from, in the order it names
+//! them; a column the walk has not resolved, or a class it does not follow,
+//! leaves the lineage incomplete
 static void Leaves(const Expression &expr, Lineage &lineage, vector<Scanned> &into) {
+	if (!Followed(expr.GetExpressionClass())) {
+		lineage.complete = false;
+		return;
+	}
 	if (expr.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
 		auto entry = lineage.leaves.find(expr.Cast<BoundColumnRefExpression>().Binding());
-		if (entry != lineage.leaves.end()) {
+		if (entry == lineage.leaves.end()) {
+			lineage.complete = false;
+		} else {
 			AddOnce(into, entry->second);
 		}
 		return;
@@ -207,14 +251,41 @@ static void Leaves(const Expression &expr, Lineage &lineage, vector<Scanned> &in
 	ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) { Leaves(child, lineage, into); });
 }
 
-//! Records what computes a binding: its derivation text, its shape and the
-//! scanned columns
+//! The leaves of a binding the walk resolved; an empty list, and the lineage
+//! incomplete, for one it has not
+static vector<Scanned> LeavesOf(Lineage &lineage, const ColumnBinding &binding) {
+	auto entry = lineage.leaves.find(binding);
+	if (entry == lineage.leaves.end()) {
+		lineage.complete = false;
+		return {};
+	}
+	return entry->second;
+}
+
+//! Records what computes a binding: its shape, the scanned columns, the one
+//! it passes on as it is, and for a load its derivation text
 static void Derive(Lineage &lineage, ColumnBinding binding, const Expression &expr) {
-	lineage.text[binding] = Text(expr, lineage);
+	if (lineage.derivations) {
+		lineage.text[binding] = Text(expr, lineage);
+	}
 	lineage.shape[binding] = Shape(expr, lineage);
 	vector<Scanned> leaves;
 	Leaves(expr, lineage, leaves);
 	lineage.leaves[binding] = std::move(leaves);
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
+		auto direct = lineage.direct.find(expr.Cast<BoundColumnRefExpression>().Binding());
+		if (direct != lineage.direct.end()) {
+			lineage.direct.emplace(binding, direct->second);
+		}
+	}
+}
+
+//! A binding computed from no scanned column, resolved: for a load named by what yields it
+static void Resolved(Lineage &lineage, ColumnBinding binding, const string &what) {
+	lineage.leaves[binding] = {};
+	if (lineage.derivations) {
+		lineage.text[binding] = what;
+	}
 }
 
 static vector<uint8_t> OutputShapes(LogicalOperator &op, Lineage &lineage) {
@@ -385,15 +456,6 @@ static optional_ptr<TableCatalogEntry> LakeTable(LogicalGet &get, const string &
 	return table;
 }
 
-//! A derivation that is one scanned column, as scan.column without its type; empty otherwise
-static string Leaf(const string &text) {
-	auto colon = text.rfind(':');
-	if (colon == string::npos || text.find('(') != string::npos || text.find(' ') != string::npos) {
-		return string();
-	}
-	return text.substr(0, colon);
-}
-
 //! The binding of an expression that is one column reference
 static bool Plain(const Expression &expr, ColumnBinding &binding) {
 	if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
@@ -401,6 +463,32 @@ static bool Plain(const Expression &expr, ColumnBinding &binding) {
 	}
 	binding = expr.Cast<BoundColumnRefExpression>().Binding();
 	return true;
+}
+
+//! An expression that is one scanned column of a lake table passed on as it is,
+//! as schema.table.column; empty otherwise
+static string ScannedColumn(const Expression &expr, Lineage &lineage) {
+	ColumnBinding binding;
+	if (!Plain(expr, binding)) {
+		return string();
+	}
+	auto direct = lineage.direct.find(binding);
+	if (direct == lineage.direct.end()) {
+		return string();
+	}
+	return lineage.scan_tables[direct->second.scan] + "." + direct->second.column;
+}
+
+//! Whether an expression is the integer 1, a cast of it included
+static bool IsOne(const Expression &expr) {
+	if (BoundCastExpression::IsCast(expr)) {
+		return IsOne(BoundCastExpression::Child(expr.Cast<BoundFunctionExpression>()));
+	}
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+		return false;
+	}
+	auto &value = expr.Cast<BoundConstantExpression>().GetValue();
+	return !value.IsNull() && value.type().IsIntegral() && value.GetValue<hugeint_t>() == hugeint_t(1);
 }
 
 static bool Within(const Key &key, const vector<ColumnBinding> &columns) {
@@ -498,10 +586,8 @@ static void Equated(const vector<Equality> &equalities, Lineage &lineage) {
 	};
 	auto join = lineage.equated + 1;
 	for (auto &equality : equalities) {
-		bool complete = lineage.complete;
-		auto a = Leaf(Text(*equality.left, lineage));
-		auto b = Leaf(Text(*equality.right, lineage));
-		lineage.complete = complete; // a side the walk cannot follow is no pair and no gap in the lineage
+		auto a = ScannedColumn(*equality.left, lineage);
+		auto b = ScannedColumn(*equality.right, lineage);
 		if (a.empty() || b.empty() || a == b) {
 			continue;
 		}
@@ -522,11 +608,16 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		// the definition first, so the references to it resolve
 		auto &cte = op.Cast<LogicalMaterializedCTE>();
 		Walk(*op.children[0], lineage);
-		lineage.ctes[cte.table_index] = Outputs(*op.children[0], lineage);
+		if (lineage.derivations) {
+			lineage.ctes[cte.table_index] = Outputs(*op.children[0], lineage);
+		}
 		lineage.cte_shapes[cte.table_index] = OutputShapes(*op.children[0], lineage);
 		auto bindings = op.children[0]->GetColumnBindings();
 		for (auto &binding : bindings) {
-			lineage.cte_leaves[cte.table_index].push_back(lineage.leaves[binding]);
+			lineage.cte_leaves[cte.table_index].push_back(LeavesOf(lineage, binding));
+			auto direct = lineage.direct.find(binding);
+			lineage.cte_direct[cte.table_index].push_back(
+			    direct == lineage.direct.end() ? vector<Scanned>() : vector<Scanned> {direct->second});
 		}
 		for (auto &key : lineage.live[op.children[0].get()]) {
 			vector<idx_t> positions;
@@ -557,7 +648,10 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		auto bindings = get.GetColumnBindings();
 		if (column_ids.empty()) {
 			// a scan no column of which is read: its rows alone
-			lineage.text[bindings[0]] = scan;
+			lineage.leaves[bindings[0]] = {};
+			if (lineage.derivations) {
+				lineage.text[bindings[0]] = scan;
+			}
 			break;
 		}
 		auto lake = LakeTable(get, lineage.lake);
@@ -567,14 +661,18 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		for (idx_t i = 0; i < column_ids.size() && i < bindings.size(); i++) {
 			auto &column = column_ids[i];
 			auto name = get.GetColumnName(column).GetIdentifierName();
-			auto leaf = scan + "." + name;
-			if (!column.IsVirtualColumn()) {
-				leaf += ":" + get.returned_types[column.GetPrimaryIndex()].ToString();
-				if (lake) {
-					lineage.leaves[bindings[i]] = {Scanned {get.table_index.index, name}};
-				}
+			// a column of a lake table is a leaf; another scan's is resolved and computed from none
+			lineage.leaves[bindings[i]] = {};
+			if (lake && !column.IsVirtualColumn()) {
+				Scanned scanned {get.table_index.index, name};
+				lineage.leaves[bindings[i]] = {scanned};
+				lineage.direct.emplace(bindings[i], scanned);
 			}
-			lineage.text[bindings[i]] = leaf;
+			if (lineage.derivations) {
+				lineage.text[bindings[i]] =
+				    scan + "." + name +
+				    (column.IsVirtualColumn() ? "" : ":" + get.returned_types[column.GetPrimaryIndex()].ToString());
+			}
 		}
 		break;
 	}
@@ -629,7 +727,7 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 			Derive(lineage, ColumnBinding(aggregate.aggregate_index, ProjectionIndex(i)), *aggregate.expressions[i]);
 		}
 		for (idx_t i = 0; i < aggregate.grouping_functions.size(); i++) {
-			lineage.text[ColumnBinding(aggregate.groupings_index, ProjectionIndex(i))] = "grouping";
+			Resolved(lineage, ColumnBinding(aggregate.groupings_index, ProjectionIndex(i)), "grouping");
 		}
 		if (aggregate.grouping_sets.size() <= 1) {
 			Key key;
@@ -680,21 +778,30 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		vector<vector<string>> sides;
 		vector<vector<uint8_t>> side_shapes;
 		for (auto &child : op.children) {
-			sides.push_back(Outputs(*child, lineage));
+			if (lineage.derivations) {
+				sides.push_back(Outputs(*child, lineage));
+			}
 			side_shapes.push_back(OutputShapes(*child, lineage));
 			auto bindings = child->GetColumnBindings();
-			for (idx_t i = 0; i < setop.column_count && i < bindings.size(); i++) {
+			for (idx_t i = 0; i < setop.column_count; i++) {
 				ColumnBinding out(setop.table_index, ProjectionIndex(i));
-				AddOnce(lineage.leaves[out], lineage.leaves[bindings[i]]);
+				auto &leaves = lineage.leaves[out];
+				if (i < bindings.size()) {
+					AddOnce(leaves, LeavesOf(lineage, bindings[i]));
+				} else {
+					lineage.complete = false;
+				}
 			}
 		}
 		for (idx_t i = 0; i < setop.column_count; i++) {
-			vector<string> parts;
-			for (auto &side : sides) {
-				parts.push_back(i < side.size() ? side[i] : lineage.Unknown());
+			if (lineage.derivations) {
+				vector<string> parts;
+				for (auto &side : sides) {
+					parts.push_back(i < side.size() ? side[i] : lineage.Unknown());
+				}
+				lineage.text[ColumnBinding(setop.table_index, ProjectionIndex(i))] =
+				    string(word) + "(" + StringUtil::Join(parts, ", ") + ")";
 			}
-			lineage.text[ColumnBinding(setop.table_index, ProjectionIndex(i))] =
-			    string(word) + "(" + StringUtil::Join(parts, ", ") + ")";
 			uint8_t shape = 0;
 			for (auto &side : side_shapes) {
 				if (i < side.size()) {
@@ -708,15 +815,25 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 	case LogicalOperatorType::LOGICAL_CTE_REF: {
 		auto &ref = op.Cast<LogicalCTERef>();
 		auto entry = lineage.ctes.find(ref.cte_index);
+		auto shapes = lineage.cte_shapes.find(ref.cte_index);
+		auto leaves = lineage.cte_leaves.find(ref.cte_index);
+		auto direct = lineage.cte_direct.find(ref.cte_index);
 		for (idx_t i = 0; i < ref.chunk_types.size(); i++) {
-			lineage.text[ColumnBinding(ref.table_index, ProjectionIndex(i))] =
-			    entry != lineage.ctes.end() && i < entry->second.size() ? entry->second[i] : lineage.Unknown();
-			auto shapes = lineage.cte_shapes.find(ref.cte_index);
-			lineage.shape[ColumnBinding(ref.table_index, ProjectionIndex(i))] =
+			ColumnBinding binding(ref.table_index, ProjectionIndex(i));
+			if (lineage.derivations) {
+				lineage.text[binding] =
+				    entry != lineage.ctes.end() && i < entry->second.size() ? entry->second[i] : lineage.Unknown();
+			}
+			lineage.shape[binding] =
 			    shapes != lineage.cte_shapes.end() && i < shapes->second.size() ? shapes->second[i] : 0;
-			auto leaves = lineage.cte_leaves.find(ref.cte_index);
 			if (leaves != lineage.cte_leaves.end() && i < leaves->second.size()) {
-				lineage.leaves[ColumnBinding(ref.table_index, ProjectionIndex(i))] = leaves->second[i];
+				lineage.leaves[binding] = leaves->second[i];
+			} else {
+				lineage.leaves[binding] = {};
+				lineage.complete = false;
+			}
+			if (direct != lineage.cte_direct.end() && i < direct->second.size() && !direct->second[i].empty()) {
+				lineage.direct.emplace(binding, direct->second[i][0]);
 			}
 		}
 		auto keys = lineage.cte_keys.find(ref.cte_index);
@@ -734,7 +851,7 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 	case LogicalOperatorType::LOGICAL_EXPRESSION_GET: {
 		auto &values = op.Cast<LogicalExpressionGet>();
 		for (idx_t i = 0; i < values.expr_types.size(); i++) {
-			lineage.text[ColumnBinding(values.table_index, ProjectionIndex(i))] = "values";
+			Resolved(lineage, ColumnBinding(values.table_index, ProjectionIndex(i)), "values");
 		}
 		break;
 	}
@@ -746,7 +863,7 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 	case LogicalOperatorType::LOGICAL_JOIN: {
 		auto &join = op.Cast<LogicalJoin>();
 		if (join.join_type == JoinType::MARK) {
-			lineage.text[ColumnBinding(join.mark_index, ProjectionIndex(0))] = "mark";
+			Resolved(lineage, ColumnBinding(join.mark_index, ProjectionIndex(0)), "mark");
 		}
 		vector<Equality> equalities;
 		if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
@@ -812,10 +929,7 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 				if (entry == lineage.row_numbers.end()) {
 					continue;
 				}
-				bool complete = lineage.complete;
-				auto one = Text(other, lineage);
-				lineage.complete = complete;
-				if (one == "1" || StringUtil::StartsWith(one, "cast(1 as ")) {
+				if (IsOne(other)) {
 					Hold(lineage, op, Key(entry->second));
 				}
 			}
@@ -988,7 +1102,7 @@ static void TableRefs(const QueryNode &node, CteScope scope, vector<NamedRef> &i
 	}
 }
 
-QueryLineage LineageOf(ClientContext &context, const string &sql, const string &lake) {
+QueryLineage LineageOf(ClientContext &context, const string &sql, const string &lake, bool derivations) {
 	QueryLineage result;
 	auto statement = ParseOneSelect(sql);
 	if (!statement) {
@@ -1001,19 +1115,28 @@ QueryLineage LineageOf(ClientContext &context, const string &sql, const string &
 		planner.CreatePlan(std::move(plain));
 		Lineage lineage;
 		lineage.lake = lake;
+		lineage.derivations = derivations;
 		Walk(*planner.plan, lineage);
-		auto outputs = Outputs(*planner.plan, lineage);
+		vector<string> outputs;
+		if (derivations) {
+			outputs = Outputs(*planner.plan, lineage);
+		}
 		auto shapes = OutputShapes(*planner.plan, lineage);
 		auto bindings = planner.plan->GetColumnBindings();
 		for (idx_t i = 0; i < planner.names.size(); i++) {
-			result.columns.emplace_back(planner.names[i].GetIdentifierName(),
-			                            i < outputs.size() ? outputs[i] : lineage.Unknown());
+			string derivation;
+			if (derivations) {
+				derivation = i < outputs.size() ? outputs[i] : lineage.Unknown();
+			}
+			result.columns.emplace_back(planner.names[i].GetIdentifierName(), derivation);
 			result.shapes.push_back(i < shapes.size() ? ShapeName(shapes[i]) : "");
 			vector<string> inputs;
 			if (i < bindings.size()) {
-				for (auto &leaf : lineage.leaves[bindings[i]]) {
+				for (auto &leaf : LeavesOf(lineage, bindings[i])) {
 					AddOnce(inputs, {lineage.scan_tables[leaf.scan] + "." + leaf.column});
 				}
+			} else {
+				lineage.complete = false;
 			}
 			result.inputs.push_back(std::move(inputs));
 		}
@@ -1183,8 +1306,9 @@ ViewLineageResult PlanViewLineage(Inner &inner, const string &dataset, const str
 	});
 	// planned once the walk has returned: LineageOf takes the context lock itself
 	try {
-		auto lineage = LineageOf(
-		    context, "SELECT * FROM " + QuoteName(lake) + "." + QuoteName(dataset) + "." + QuoteName(view), lake);
+		auto lineage =
+		    LineageOf(context, "SELECT * FROM " + QuoteName(lake) + "." + QuoteName(dataset) + "." + QuoteName(view),
+			          lake, false);
 		result.value = LineageValue(lineage);
 		for (auto &scan : lineage.scans) {
 			nodes.insert({scan.first, "definition"});
