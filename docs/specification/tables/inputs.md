@@ -27,6 +27,7 @@ at. No digest of what a read returned is stored or compared.
 | `annotation <property>` | any | the `glossary` rows of the property on the asset, every actor's |
 | `value <property>` | any | the `results` rows functions other than the reader stored under the property on the asset, in the reader's dataset: the current row's `changed_at`, else the last row's end |
 | `result <function>` | any | the function's `results` rows on the asset, in the reader's dataset, the same way |
+| `measurements` | a dataset | the `results` rows in the dataset of each function other than the reader whose property is a MEASUREMENT, the same way. A result of a FACT, a test's result and a view's lineage do not move it |
 | `definition` | a table | its table and column rows in the lake (created, altered, dropped), and each load whose recipe derived its columns otherwise than the load before (`imports.lineage`). An annotation's stale mark counts its column rows ended and a load that derived a column the load before held otherwise: a column added leaves it current |
 | `definition` | a view | the annotation that defines it, its view row in the lake, and its property's `properties` row |
 | `data` | a table | its table rows in the lake (created, dropped), its loads (`imports.snapshot_id`) and the lake's change log for it |
@@ -54,7 +55,7 @@ was walked over.
 | `annotations(p, where)` | per asset of the place that `p`'s grains admit, `annotation p`, `value p` and the `definition` of the asset's table or view (an annotation is stale once its asset's definition moved); `property` `p`, and `function` of each detector its tests name |
 | `results(f, where)` | per asset of the place `result f`, which its `history` changes with |
 | `definition(where)` | per view of the place its `definition` and `result lineage`, and the `recipe` of each table it reads, through views |
-| the subject's data, or a table the body names | `data` of each table read, through views, and the `definition` and `result lineage` of each view on the way |
+| the subject's data, or a table the body names | `data` of each table read, through views, and the `definition` and `result lineage` of each view on the way; where a view on the way reads the stored results (`main.results`, `main.results_history`), `measurements` of the dataset |
 | a series of a place's views (`series_aggregate(subject, where, axes, grain)`) | `data` of each table the views of the place read, through views, the nodes the place's walk passes, and what the `axes` macro reads |
 | the lineage, read by a primitive (`glossql_additivity_cells`) | the nodes its place's walk passes |
 | the function itself | `function` of the function, `macro` of each macro its body follows, and `property` of the property it fills |

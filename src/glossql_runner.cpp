@@ -1028,7 +1028,7 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 	// is the drift record of what the source sends
 	string lineage = "{}";
 	try {
-		lineage = LineageJson(LineageOf(*inner.con.context, recipe.sql), recipe.sql);
+		lineage = LineageJson(LineageOf(*inner.con.context, recipe.sql, inner.ws.lake), recipe.sql);
 	} catch (std::exception &) {
 		// a recipe the planner will not walk again is stored without its lineage
 	}
@@ -2426,9 +2426,12 @@ rd AS (SELECT a.s, t.table_name AS r FROM a JOIN main.tables_read($d) t
 rv AS (SELECT s, r FROM rd UNION SELECT rd.s, vr.relation FROM rd JOIN vr ON vr.view = rd.r))";
 		// the data of each table read, through views: each view's definition, and its stored lineage, which
 		// the walk went over
+		// a view on the way that reads the stored results reads the dataset's measurements: a result of a
+		// function whose property is a MEASUREMENT, stored with another value, moves them
 		nodes += R"(
   UNION ALL SELECT s, r, u.what FROM rv, unnest(CASE WHEN r IN (SELECT v FROM lv)
-                                                  THEN ['definition', 'result lineage'] ELSE ['data'] END) u(what))";
+                                                  THEN ['definition', 'result lineage'] ELSE ['data'] END) u(what)
+  UNION ALL SELECT s, $d, 'measurements' FROM rv WHERE lower(r) IN ('main.results', 'main.results_history'))";
 	}
 	auto sql = ctes + "\nSELECT DISTINCT s, asset, what FROM (" + nodes.substr(nodes.find("SELECT")) + ") ORDER BY ALL";
 	for (auto &term : vector<pair<string, string>> {{"$placed_assets", placed_assets},

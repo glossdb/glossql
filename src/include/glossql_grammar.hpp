@@ -147,7 +147,8 @@ struct QueryLineage {
 	};
 	vector<JoinPair> joins;
 };
-QueryLineage LineageOf(ClientContext &context, const string &sql);
+//! `lake` the lake's catalog: scans, inputs and joins name its tables alone
+QueryLineage LineageOf(ClientContext &context, const string &sql, const string &lake);
 //! The lineage as one JSON object, column to derivation; a column the walk could
 //! not follow carries a digest of the SQL, so it reads moved whenever the SQL did
 string LineageJson(const QueryLineage &lineage, const string &sql);

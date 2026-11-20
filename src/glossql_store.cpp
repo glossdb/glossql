@@ -1287,10 +1287,15 @@ static string ChangesSQL(const Workspace &ws, bool checked) {
 	    " gl_chg AS MATERIALIZED (SELECT gl_k.key, gl_k.what, NULL::VARCHAR AS dataset, NULL::VARCHAR AS function, "
 	    "gl_k.at, gl_k.checked, gl_k.marked FROM (" +
 	    arms + ") WHERE gl_k.key IS NOT NULL AND gl_k.at IS NOT NULL" +
-	    // a stored result: the current row's changed_at, else the last row's end
+	    // a stored result: the current row's changed_at, else the last row's end; and a dataset's measurements:
+	    // per function whose property is a MEASUREMENT, the latest change of one of its results in the dataset
 	    (checked ? " UNION ALL SELECT lower(subject), gl_r, dataset, function, coalesce(max(changed_at) FILTER "
 		           "(WHERE end_snapshot IS NULL), max(end_snapshot)), true, false FROM $results, "
 		           "unnest(['result ' || function, 'value ' || property]) u(gl_r) GROUP BY ALL"
+		           " UNION ALL SELECT lower(dataset), 'measurements', dataset, function, max(gl_m), true, false FROM "
+		           "(SELECT dataset, function, coalesce(max(changed_at) FILTER (WHERE end_snapshot IS NULL), "
+		           "max(end_snapshot)) AS gl_m FROM $results WHERE property IN (SELECT name FROM $properties WHERE "
+		           "end_snapshot IS NULL AND kind = 'MEASUREMENT') GROUP BY dataset, function, subject) GROUP BY ALL"
 		         : "") +
 	    ")";
 	sql = StringUtil::Replace(sql, "$at", "greatest(begin_snapshot, coalesce(end_snapshot, 0))");

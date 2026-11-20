@@ -122,6 +122,9 @@ struct Lineage {
 	unordered_map<TableIndex, vector<vector<Scanned>>> cte_leaves;
 	//! per scan of a lake table, the table as schema.table
 	std::map<idx_t, string> scan_tables;
+	//! the lake's catalog: a table of another catalog, such as the store a view
+	//! of the lake's main schema reads, is no lake table
+	string lake;
 
 	string Unknown(const string &what = string()) {
 		complete = false;
@@ -373,6 +376,15 @@ static string ScanName(LogicalGet &get) {
 	return string(get.function.GetDefinition()->name);
 }
 
+//! The table a scan reads where it is a table of the lake, null otherwise
+static optional_ptr<TableCatalogEntry> LakeTable(LogicalGet &get, const string &lake) {
+	auto table = get.GetTable();
+	if (!table || !StringUtil::CIEquals(table->ParentCatalog().GetName().GetIdentifierName(), lake)) {
+		return nullptr;
+	}
+	return table;
+}
+
 //! A derivation that is one scanned column, as scan.column without its type; empty otherwise
 static string Leaf(const string &text) {
 	auto colon = text.rfind(':');
@@ -548,7 +560,8 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 			lineage.text[bindings[0]] = scan;
 			break;
 		}
-		if (get.GetTable()) {
+		auto lake = LakeTable(get, lineage.lake);
+		if (lake) {
 			lineage.scan_tables[get.table_index.index] = scan;
 		}
 		for (idx_t i = 0; i < column_ids.size() && i < bindings.size(); i++) {
@@ -557,7 +570,7 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 			auto leaf = scan + "." + name;
 			if (!column.IsVirtualColumn()) {
 				leaf += ":" + get.returned_types[column.GetPrimaryIndex()].ToString();
-				if (get.GetTable()) {
+				if (lake) {
 					lineage.leaves[bindings[i]] = {Scanned {get.table_index.index, name}};
 				}
 			}
@@ -857,10 +870,10 @@ static unique_ptr<SelectStatement> ParseOneSelect(const string &sql) {
 //! The lake tables a plan scans, as schema.table, each scan with the columns the
 //! query reads of it, its select list, joins and filters included: the binder
 //! names a scan's column once something refers to it
-static void Scans(LogicalOperator &op, std::set<std::pair<string, vector<string>>> &scans) {
+static void Scans(LogicalOperator &op, const string &lake, std::set<std::pair<string, vector<string>>> &scans) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
 		auto &get = op.Cast<LogicalGet>();
-		auto table = get.GetTable();
+		auto table = LakeTable(get, lake);
 		if (table) {
 			std::set<string> columns;
 			for (auto &id : get.GetColumnIds()) {
@@ -873,7 +886,7 @@ static void Scans(LogicalOperator &op, std::set<std::pair<string, vector<string>
 		}
 	}
 	for (auto &child : op.children) {
-		Scans(*child, scans);
+		Scans(*child, lake, scans);
 	}
 }
 
@@ -975,7 +988,7 @@ static void TableRefs(const QueryNode &node, CteScope scope, vector<NamedRef> &i
 	}
 }
 
-QueryLineage LineageOf(ClientContext &context, const string &sql) {
+QueryLineage LineageOf(ClientContext &context, const string &sql, const string &lake) {
 	QueryLineage result;
 	auto statement = ParseOneSelect(sql);
 	if (!statement) {
@@ -987,6 +1000,7 @@ QueryLineage LineageOf(ClientContext &context, const string &sql) {
 		unique_ptr<SQLStatement> plain = std::move(statement);
 		planner.CreatePlan(std::move(plain));
 		Lineage lineage;
+		lineage.lake = lake;
 		Walk(*planner.plan, lineage);
 		auto outputs = Outputs(*planner.plan, lineage);
 		auto shapes = OutputShapes(*planner.plan, lineage);
@@ -1005,7 +1019,7 @@ QueryLineage LineageOf(ClientContext &context, const string &sql) {
 		}
 		result.complete = lineage.complete;
 		result.joins = lineage.joins;
-		Scans(*planner.plan, result.scans);
+		Scans(*planner.plan, lake, result.scans);
 	});
 	return result;
 }
@@ -1169,8 +1183,8 @@ ViewLineageResult PlanViewLineage(Inner &inner, const string &dataset, const str
 	});
 	// planned once the walk has returned: LineageOf takes the context lock itself
 	try {
-		auto lineage =
-		    LineageOf(context, "SELECT * FROM " + QuoteName(lake) + "." + QuoteName(dataset) + "." + QuoteName(view));
+		auto lineage = LineageOf(
+		    context, "SELECT * FROM " + QuoteName(lake) + "." + QuoteName(dataset) + "." + QuoteName(view), lake);
 		result.value = LineageValue(lineage);
 		for (auto &scan : lineage.scans) {
 			nodes.insert({scan.first, "definition"});

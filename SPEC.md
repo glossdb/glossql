@@ -588,7 +588,7 @@ place's walk passed (a view's lineage, a table's relationships, which
 views of a dataset are metrics), so a
 member added to the place later changes a node it read. A view's
 lineage is a stored result of its own, `lineage` on the view
-(`SELECT lineage() FROM <view>`): the tables the view scans with the
+(`SELECT lineage() FROM <view>`): the loaded tables the view scans with the
 columns read of each, the column pairs its joins equate, and per column
 the columns of loaded tables it is computed from and whether it is a
 ratio, an average or a distinct count; it holds no text of the view's
@@ -599,8 +599,12 @@ Defining the view stores it in the same write; a change to a relation
 it reads makes it out of date like any result, and computed again with
 the same value it leaves what walked it current. A node changed at the latest
 snapshot one of its catalog rows begins or ends at; rows are ended,
-never deleted. The nodes, and what each read records, are listed in
-`docs/specification/tables/inputs.md`.
+never deleted. A read of the data of a view that reads the stored
+results (`main.results`, `main.results_history`) records the dataset's
+`measurements`: a result of a function whose property is a MEASUREMENT,
+stored with another value, moves them; a FACT's result, a test's result
+and a view's lineage do not. The nodes, and what each read records, are
+listed in `docs/specification/tables/inputs.md`.
 
 A body that reaches the catalog past the read functions, passes a
 read function a what or a where that is not a constant, or names a
