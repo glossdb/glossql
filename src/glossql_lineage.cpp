@@ -11,6 +11,9 @@
 // is SPEC §3's re-derivation, and the row-to-row diff of the imports is the
 // drift record of what the source sends.
 
+#include <set>
+#include <cstdlib>
+#include <cctype>
 #include "glossql_grammar.hpp"
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
@@ -1220,6 +1223,7 @@ static std::map<idx_t, string> Aliases(LogicalOperator &plan, const string &view
 }
 
 //! The mapping rows of a planned view, one walk per branch
+static bool LeanLineage();
 static vector<QueryLineage::Mapping> MappingOf(LogicalOperator &plan, const vector<string> &names,
                                                const string &view_sql) {
 	vector<QueryLineage::Mapping> rows;
@@ -1308,7 +1312,7 @@ QueryLineage LineageOf(ClientContext &context, const string &sql, const string *
 		result.complete = lineage.complete;
 		result.joins = lineage.joins;
 		Scans(*planner.plan, result.scans);
-		if (view_sql) {
+		if (view_sql && !LeanLineage()) {
 			vector<string> names;
 			for (auto &name : planner.names) {
 				names.push_back(name.GetIdentifierName());
@@ -1360,12 +1364,44 @@ static string JsonTexts(const vector<string> &texts) {
 //! it scans with the columns it reads of each, the column pairs its joins equate, what its joins and
 //! filters require of each read of a table, and its mapping; each list in the order a definition read
 //! serves it, so that the read takes it as stored
+//! EXPERIMENT (branch core-layer): with GLOSSQL_LINEAGE_LEAN set, a column's derivation is stored as the
+//! scanned columns it names, each once (schema.table.column:), and no mapping is stored
+static bool LeanLineage() {
+	auto lean = std::getenv("GLOSSQL_LINEAGE_LEAN");
+	return lean && *lean;
+}
+static string LeafPaths(const string &text) {
+	auto ident = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+	std::set<string> seen;
+	string out;
+	idx_t i = 0;
+	while (i < text.size()) {
+		if (!ident(text[i]) || (i > 0 && (ident(text[i - 1]) || text[i - 1] == '.'))) {
+			i++;
+			continue;
+		}
+		idx_t j = i, dots = 0;
+		while (j < text.size() && (ident(text[j]) || (text[j] == '.' && j + 1 < text.size() && ident(text[j + 1])))) {
+			dots += text[j] == '.';
+			j++;
+		}
+		if (dots == 2 && j < text.size() && text[j] == ':') {
+			auto path = text.substr(i, j - i);
+			if (seen.insert(path).second) {
+				out += (out.empty() ? "" : ", ") + path + ":";
+			}
+		}
+		i = j > i ? j : i + 1;
+	}
+	return out;
+}
 static string LineageValue(const QueryLineage &lineage) {
 	vector<string> columns;
 	for (idx_t i = 0; i < lineage.columns.size(); i++) {
 		auto shape = i < lineage.shapes.size() ? lineage.shapes[i] : string();
 		columns.push_back("{\"name\":" + JsonString(lineage.columns[i].first) + ",\"derivation\":" +
-		                  JsonString(lineage.columns[i].second) + ",\"shape\":" + JsonText(shape) + "}");
+		                  JsonString(LeanLineage() ? LeafPaths(lineage.columns[i].second) : lineage.columns[i].second) +
+		                  ",\"shape\":" + JsonText(shape) + "}");
 	}
 	vector<string> scans;
 	for (auto &scan : lineage.scans) {
