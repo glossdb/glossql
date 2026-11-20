@@ -521,3 +521,16 @@ SELECT branch, derivation, alias, condition FROM views_mapping('fin') WHERE view
 ----
 1	fin.hierarchy.global_brand:VARCHAR	NULL	=(fin.hierarchy.market:VARCHAR, 'DK')
 2	fin.hierarchy.global_brand:VARCHAR	NULL	=(fin.hierarchy.market:VARCHAR, 'PL')
+
+# a join condition that is more than a comparison (a test of the kept side beside the key, which no
+# filter can take over): the view's lineage is read
+statement ok
+CREATE VIEW fin.brand_dk_only AS SELECT p.brand_dk, h.global_brand FROM fin.part p LEFT JOIN fin.hierarchy h ON p.brand_dk <> 'G0' AND h.global_brand = p.brand_dk;
+
+statement ok
+SELECT lineage() FROM fin.brand_dk_only;
+
+query I
+SELECT count(*) FROM views_mapping('fin') WHERE view = 'brand_dk_only' AND complete;
+----
+2

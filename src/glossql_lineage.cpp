@@ -859,8 +859,8 @@ static void Walk(LogicalOperator &op, Lineage &lineage) {
 		    op.type == LogicalOperatorType::LOGICAL_ASOF_JOIN || op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
 			for (auto &condition : op.Cast<LogicalComparisonJoin>().conditions) {
 				if (!condition.IsComparison()) {
-					Equalities(condition.GetLHS(), equalities);
-					Conditions(condition.GetLHS(), lineage);
+					Equalities(condition.GetJoinExpression(), equalities);
+					Conditions(condition.GetJoinExpression(), lineage);
 					continue;
 				}
 				if (condition.GetComparisonType() == ExpressionType::COMPARE_EQUAL) {
