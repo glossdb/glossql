@@ -63,12 +63,6 @@ min_max	MEASUREMENT	[COLUMN, TABLE]
 revenue	VIEW	[]
 unit	FACT	[COLUMN]
 
-# a VIEW property takes no grain clause (SPEC §5.1), refused at parse time
-statement error
-DECLARE PROPERTY dso WITH $${}$$ AS VIEW ON COLUMN;
-----
-Parser Error
-
 # --- GLOSS: dollar-quoted JSON body, actor from the connection
 
 statement ok

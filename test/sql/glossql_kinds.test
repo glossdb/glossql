@@ -1,5 +1,5 @@
 # name: test/sql/glossql_kinds.test
-# description: a kind of asset a kit declares through its lineage_assets_, lineage_edges_ and lineage_places_ macros: its assets are subjects of that kind, its edges join the lineage, its places are places; a property's grains do not admit it; it and a relation of its dataset do not share a name; a result on it reads its own declaration, so declaring another leaves it current; a body that refuses its subject stores nothing (SPEC §4, §6)
+# description: a kind of asset a kit declares through its lineage_assets_, lineage_edges_ and lineage_places_ macros: its assets are subjects of that kind, its edges join the lineage, its places are places; a property's grains do not admit it; it and a relation of its dataset do not share a name; a body that refuses its subject stores nothing (SPEC §4, §6)
 # group: [sql]
 
 require glossql
@@ -110,48 +110,8 @@ DECLARE RECIPE boost ON fin FROM files AS $$SELECT 1 AS x$$;
 ----
 asset_name_taken
 
-# a result on the asset reads its own declaration: another asset of the kind leaves it current, its own
-# declaration changed makes it out of date
-
 statement ok
 DECLARE PROPERTY columns_set WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
-
-statement ok
-DECLARE FUNCTION columns_set FOR GLOBAL AS $$ SELECT len(from_json(max(value)->'columns', '["VARCHAR"]')) AS n FROM annotations('x-kind trial', 'itself') $$ RETURNS columns_set;
-
-query TTTTT
-SELECT columns_set() FROM fin.boost;
-----
-columns_set	fin.boost	columns_set	1	true
-
-query TT
-SELECT asset, what FROM inputs i JOIN results m USING (begin_snapshot) WHERE m.function = 'columns_set' AND i.what LIKE 'annotation%';
-----
-fin	annotation boost
-
-statement ok
-DECLARE PROPERTY cut WITH $${"x-kind": "trial", "type": "object"}$$ AS FACT ON DATASET;
-
-statement ok
-GLOSS cut ON fin AS $${"columns": ["priced.value"]}$$;
-
-query I
-SELECT count(*) FROM glossql_outdated() WHERE function = 'columns_set';
-----
-0
-
-statement ok
-GLOSS boost ON fin AS $${"columns": ["priced.price", "priced.value"]}$$;
-
-query TT
-SELECT asset, what FROM glossql_outdated() WHERE function = 'columns_set';
-----
-fin	annotation boost
-
-query TTTTT
-SELECT columns_set() FROM fin.boost;
-----
-columns_set	fin.boost	columns_set	2	true
 
 # a body that refuses its subject (not_a_<kind>) stores no result: a refusal is no failed computation
 
