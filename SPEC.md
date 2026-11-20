@@ -37,11 +37,12 @@ Ground rules:
   alone reaches that column, in a read and in a subject alike; two such
   spellings refuse the name and name both. A table is reached as
   declared.
-- **A function's body is one SQL query.** A function with `RETURNS` is
-  a measurement — its query runs over the data as the statement reads it; a
-  detector's query runs over its test's `annotations` relation. A
-  function is either a measurement or a detector, never a
-  metric. A metric is a view definition, run as its SQL (§5.2).
+- **What is kept is a view; a function is machinery.** A query worth
+  keeping — a table, a single value, a metric, a rule, or a plain query
+  kept with its reason — is a view definition, run as its SQL (§5.2). A
+  function's body is one SQL query: a function with `RETURNS` computes
+  one value per asset it runs on, over the data as the statement reads
+  it; a detector's query runs over its test's `annotations` relation.
   Analytical logic does not live in the grammar.
 
 ## 2. Origins
@@ -226,9 +227,9 @@ The kind fixes the property's role:
   **view definition contract** (§5.2). What the company says about the
   view — meaning, unit, owner, source — is a gloss on the view and its
   columns.
-- **MEASUREMENT** — a statistical evaluation (min_max, outliers,
+- **MEASUREMENT** — a value only a function computes (min_max, outliers,
   relationship_candidates). Never glossed: its value is the bound
-  function's stored output (§6, §7), stored with the inputs it read and
+  function's stored result (§6, §7), stored with the inputs it read and
   served by `GLOSSARY()` beside facts and view definitions.
 
 The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP | SOURCE, …` list
@@ -337,9 +338,10 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 - `kind` says what the view is for: `table` (rows), `value` (one row, a
   column `value`), `metric` (a value per period, with its dimensions) or
   `rule` (each row it returns breaks a rule, so it returns none when the
-  rule holds). A definition without `kind` is a plain view: a query kept
-  with its reason. A new definition may change the kind; a stop that
-  names none keeps the kind of the newest definition with `sql`.
+  rule holds; a kit's test may judge it). A definition without `kind`
+  is a plain view: a query kept with its reason. A new definition may
+  change the kind; a stop that names none keeps the kind of the newest
+  definition with `sql`.
 - A view definition's view is a table of its dataset (§3), and its columns
   are subjects. What a reader needs to combine the view's rows — which
   column is the period, which is the measure and how it combines over
@@ -353,7 +355,7 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   `meaning` and `tags` from it, and a metric's `time`, `measure` and
   `dimensions`, and write them as the annotations on the view and its
   columns they stand for; the engine reads none of them.
-- `stopped` in place of `sql` records that the author serves no number,
+- `stopped` in place of `sql` records that the author serves no rows,
   and why: what is missing, where, how much, what closes it. The read
   interface refuses with that text, a reader of the view's rows abstains
   with it, `view_definitions` serves it, and the assumptions ride the
@@ -377,7 +379,7 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 - The glossary is an ordinary queryable relation; removal is SQL:
 
 ```sql
-DELETE FROM glossary WHERE subject = 'orders.amount' AND property = 'unit';
+DELETE FROM main.glossary WHERE subject = 'orders.amount' AND property = 'unit';
 ```
 
 - Every row carries `begin_snapshot` — the lake snapshot its write
@@ -455,13 +457,15 @@ SELECT * FROM GLOSSARY(fin::dso);
 
 ## 6. The function library
 
-Functions registered with name, contract and body. A function is either
-a **measurement** — it fills a MEASUREMENT property through that property's
-test (§7), its query running over data — or a **detector** (§7.1),
-whose query runs over its test's `annotations`. The library is the engine's
-analytical machinery (profiling, quality checks, detection) shipped as
-declarations; metrics are not functions (§5.1). Typing is not in it —
-the recipe carries the casts (§3).
+A function is the engine's machinery: it stores one value per asset it
+runs on, a **result**, and that result is computed again when what it read
+changed. A query kept to be read again is a view definition (§5.2), not a
+function. A function either **returns a property** — its query runs over
+data, and its value fills the property named by `RETURNS` — or is a
+**detector** (§7.1), whose query runs over its test's `annotations`. The
+library is the kits' analytical machinery (profiling, quality checks,
+detection, the checks behind tests) shipped as declarations. Typing is
+not in it — the recipe carries the casts (§3).
 
 ```sql
 DECLARE FUNCTION profile FOR GLOBAL AS $$
@@ -482,11 +486,11 @@ $$;
   MCP interface has statements and no filesystem, so it could neither
   author a function nor read the library's own. The
   declaration supersedes on re-declare like any other, and
-  `SELECT script FROM functions` serves the shipped library as worked
+  `SELECT script FROM main.functions` serves the shipped library as worked
   examples.
 - **One language.** Every body is one SQL query, planned and run by the
-  engine — read-only. A measurement runs over the data as the statement
-  reads it, composing everything a read can; `$subject` arrives as a string
+  engine — read-only. A function with `RETURNS` runs over the data as
+  the statement reads it, composing everything a read can; `$subject` arrives as a string
   literal, and `subject_column($subject)` is the subject's column as a
   relation named `v`. `series_aggregate(subject, where, axes, grain)`
   sums the views of a place over their own typed columns, per period
@@ -500,7 +504,7 @@ $$;
   declaration relation reads as a table, which needs no naming.
 - **A bound screen is an estimate.** A kit's screen may read a table
   up to a bound of cells; a larger table is read as a repeatable
-  sample of its rows, and the measurement says how many rows it read.
+  sample of its rows, and the result says how many rows it read.
   Such a value is an estimate.
 - `RETURNS` names the property the function's output fills; the property's
   schema is the one contract — output is validated against it at
@@ -515,7 +519,7 @@ $$;
   `body` typed by the values' own JSON — and the test `THRESHOLD`
   binds as `$threshold`. Each returned row must satisfy the standard test-results
   contract (§7.2) — the engine's contract, not authored.
-- A measurement receives its subject as `$subject`; a detector's
+- A function with `RETURNS` receives its subject as `$subject`; a detector's
   relation carries `subject` per row, so one query answers every
   subject.
 
@@ -634,8 +638,8 @@ are, so nothing computes it again on its own; a call computes it
 again, since a failure can come from what is no input (a service down,
 a configuration). A body that carries a top-level `summary`
 object serves the summary at extraction — the full value reads back
-through `GLOSSARY(subject::property)` (a large measurement's extraction
-result would otherwise be write-only at the interface; the summary is the
+through `GLOSSARY(subject::property)` (a large result would otherwise be
+write-only at the interface; the summary is the
 function's own authorship, never a truncation).
 Nothing recomputes at write time, and no machinery ever deletes a gloss:
 stale judgment is served and marked, superseded only by whoever owns the
@@ -650,7 +654,7 @@ are stored in `results`.
 ## 7. Tests
 
 A test is declared per property, dataset-wide, and judges each subject
-alone. Per (subject, property) it holds one value per actor kind: each function value (the newest measurement
+alone. Per (subject, property) it holds one value per actor kind: each function value (the newest result
 of a function whose `RETURNS` names the property, §6 — served whether
 current or not, and marked), the agent's
 gloss, the human's gloss — one value each.
@@ -675,7 +679,7 @@ DECLARE TEST reconciliation_test ON reconciliation
   values and returns state + score.
 - Both clauses are optional, but not together: a test names `BY`, or
   `DETECTOR`, or both. On a MEASUREMENT property only the detector form is
-  possible — judgment applied to a measurement's output, as in the second
+  possible — judgment applied to a function's result, as in the second
   example.
 - `THRESHOLD` (0..1) is the entropy cutoff used by the collapsed
   `GLOSSARY()` read (§5.3).
