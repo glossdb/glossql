@@ -217,11 +217,13 @@ CREATE OR REPLACE MACRO main.place_list() AS list_concat([
 CREATE OR REPLACE MACRO main.place_columns(dataset_name) AS TABLE
 SELECT "from" AS subject, "to" AS asset FROM main.contains_edges(dataset_name);
 
+-- place_sources lists each scanned column once per view column: a derivation
+-- through stacked views names one many times
 CREATE OR REPLACE MACRO main.place_sources(dataset_name) AS TABLE
 SELECT "from" AS subject, "to" AS asset FROM main.view_edges(dataset_name) WHERE kind = 'reads'
 UNION SELECT dataset_name || '.' || l.view || '.' || l."column", u.path
 FROM main.views_lineage(dataset_name) l,
-     unnest(regexp_extract_all(coalesce(l.derivation, ''), '([A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*):', 1)) u(path)
+     unnest(list_distinct(regexp_extract_all(coalesce(l.derivation, ''), '([A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*):', 1))) u(path)
 WHERE l."column" IS NOT NULL;
 
 CREATE OR REPLACE MACRO main.place_joined(dataset_name) AS TABLE
