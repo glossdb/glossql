@@ -72,7 +72,7 @@ before it.
   `imported staff.employees: 300024 rows, 0 dropped (replaced)`,
   `glossed unit on staff.employees.salary as agent`. A declaration
   repeated without change answers `… unchanged: no-op`.
-- Running a measurement answers with `(function, subject, property,
+- Running a function answers with `(function, subject, property,
   value, computed)`.
 - A statement that fails is one JSON line on stderr and exit status 1.
   The extension's errors start with `glossql:` and say what was wrong.
@@ -97,14 +97,15 @@ Where a test scores a disagreement as `red`, annotate again with a
 | `DECLARE RECIPE employees ON staff FROM hr [SET (key: id)] AS $$sql$$;` | declares a load query and loads the table `staff.employees` now. With a key (`id`, or `'a, b'`) a later load merges by it, and a result with a key twice is refused. Without a key a load replaces the table |
 | `IMPORT employees;` | runs the load query again: a new snapshot of the lake |
 | `DECLARE RELATIONSHIP employees.department_id -> departments.id;` | declares a key between columns: `->` many-to-one, `<->` one-to-one, `a.(x, y) -> b.(x, y)` composite |
-| `DECLARE PROPERTY name WITH $$json-schema$$ AS FACT\|MEASUREMENT\|VIEW [ON TABLE, COLUMN, DATASET, SOURCE, RELATIONSHIP [WHEN property = 'value' \| WHEN TYPE = 'T' \| WHEN TYPE IN ('T', 'U')]];` | declares a property. Every value is validated against the schema. `ON` lists the kinds of asset it applies to. `WHEN` limits where it is required: where another property has a value, or on columns of a type (`ON COLUMN` only) |
-| `GLOSS property ON subject AS $$json$$;` | annotates an asset. A `VIEW` property is annotated on the dataset (`GLOSS headcount ON staff AS …`) and is then served as the view `staff.headcount` |
-| `DELETE FROM glossary WHERE subject = '…' AND property = '…';` | removes annotations from the catalog |
+| `DECLARE PROPERTY name WITH $$json-schema$$ AS FACT\|MEASUREMENT [ON TABLE, COLUMN, DATASET, SOURCE, RELATIONSHIP [WHEN property = 'value' \| WHEN TYPE = 'T' \| WHEN TYPE IN ('T', 'U')]];` | declares a property. Every value is validated against the schema. `ON` lists the kinds of asset it applies to. `WHEN` limits where it is required: where another property has a value, or on columns of a type (`ON COLUMN` only) |
+| `GLOSS property ON subject AS $$json$$;` | annotates an asset |
+| `GLOSS headcount ON staff AS $${"kind": "value", "sql": "…"}$$;` | defines the view `staff.headcount`: a name no property declares, annotated on the dataset with its SQL ([views](#views)) |
+| `DELETE FROM main.glossary WHERE subject = '…' AND property = '…';` | removes annotations from the catalog |
 | `SELECT … FROM GLOSSARY(subject);` | the glossary: one row per asset and property |
 | `SELECT … FROM GLOSSARY(subject, all => true);` | every value, one row per actor |
 | `SELECT … FROM TESTS(subject \| subject::property);` | the test results |
-| `DECLARE FUNCTION f FOR staff\|GLOBAL AS $$sql$$ [RETURNS property];` | with `RETURNS`, a measurement: a query that reads its asset as `$subject`, or its column as `subject_column($subject)`. Without, a detector: a query over a test's `annotations` with `$threshold` |
-| `SELECT f() FROM employees.salary;` | runs a measurement and stores the result, or returns the stored result while the tables it read are unchanged (`computed` says which) |
+| `DECLARE FUNCTION f FOR staff\|GLOBAL AS $$sql$$ [RETURNS property];` | with `RETURNS`, a function that stores one result per asset: a query that reads its asset as `$subject`, or its column as `subject_column($subject)`. Without, a detector: a query over a test's `annotations` with `$threshold` |
+| `SELECT f() FROM employees.salary;` | runs a function and stores the result, or returns the stored result while the tables it read are unchanged (`computed` says which) |
 | `DECLARE TEST t ON property [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | says who may annotate a property and which detector scores its values. A detector that compares assets with each other is refused (`cross_subject`) |
 | `SELECT t() FROM staff;` | runs a test on each asset at or under the one named that holds a value of its property, and stores one result per asset; a stored result that is current is returned as it is |
 | `FROM glossql_kit('path-or-url');` | runs a kit's statements, one row each |
@@ -115,6 +116,31 @@ inside, nothing escaped. A view's `sql` is one line inside its JSON
 string, with single quotes for its literals. An unquoted name folds to
 lowercase; a `"Quoted"` one keeps its case. A property that has
 annotations cannot be changed.
+
+## Views
+
+Everything you keep is a view: a named SQL query on the dataset, with
+its reason, defined in one statement:
+
+```sql
+GLOSS status_counts ON staff AS $${"sql": "SELECT status, count(*) AS n FROM employees GROUP BY status",
+  "meaning": "the status values the export holds", "tags": ["status"]}$$;
+```
+
+`kind` in the body says what it is for. None: a query worth reading
+again, the evidence behind a decision. `table`, `value` (one row, a
+column `value`), `metric` (a value per period, with `time`, `measure`
+and `dimensions`): what the dataset serves. `rule`: a query whose rows
+break a rule, so it returns none while the rule holds. The view is
+read as `FROM staff.status_counts`. Defining the name again replaces
+your definition; `{"stopped": "<why>"}` in place of `sql` stops it.
+On the glossdb server, `meaning` and `tags` in the body are written as
+annotations, a test runs on each rule view after every write, and
+`find('<term>')` searches the kept views.
+
+A function (`DECLARE FUNCTION`) is a kit's machinery: one stored
+result per asset, computed again when what it read changed. Write one
+only for a value many assets need.
 
 ## Assets
 
@@ -145,8 +171,9 @@ a dot or a space: `employees."a.b"`.
   failed is a row with its `error` and no `body`.
 - `TESTS(subject)` returns `(subject, property, test, state, score,
   computed_at, current, error)`.
-- The catalog tables are views in the lake's `main` schema and read by
-  their bare names: `datasets (begin_snapshot, name, settings, declared_at,
+- The catalog tables are views in the lake's `main` schema. Read them
+  as `main.<name>`: a table of the same name in the dataset in use
+  hides the bare name. `datasets (begin_snapshot, name, settings, declared_at,
   declared_by)` · `sources (begin_snapshot, name, settings, declared_at,
   declared_by)` · `recipes (begin_snapshot, dataset, table_name, source, settings,
   sql, declared_at, declared_by)` · `imports (begin_snapshot, dataset, table_name,
@@ -169,9 +196,9 @@ a dot or a space: `employees."a.b"`.
 - The data itself is plain `SELECT`. A table's history is `FROM
   staff.employees AT (VERSION => n)`.
 
-## Measure before you annotate
+## Profile before you annotate
 
-Run a kit's measurements first (`SELECT column_profile() FROM
+Run a kit's functions first (`SELECT column_profile() FROM
 employees.salary;`), name them in the annotation's `basis`, and
 declare only what the data supports. What a column contains, a date's
 grain, which columns join: the results answer these, so work them

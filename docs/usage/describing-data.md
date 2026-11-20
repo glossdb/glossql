@@ -22,7 +22,7 @@ DECLARE PROPERTY row_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
 |---|---|---|
 | `FACT` | stated by an agent or a person | the `WITH` schema |
 | `MEASUREMENT` | computed by a function; `GLOSS` on it is refused | the `WITH` schema, when the function runs ([measurements](measurements.md)) |
-| `VIEW` | SQL, served as a view under its name. Declared by its first definition, never by `DECLARE PROPERTY` | the view contract below |
+| `VIEW` | a view definition: SQL served as a view under its name. Its first definition declares it; `DECLARE PROPERTY` does not | the view contract below |
 
 Declaring a property again with the same content does nothing.
 Changing a property that has annotations is refused: delete them
@@ -83,9 +83,9 @@ The statement answers `glossed unit on staff.employees.salary as agent`.
 
 ## Define a view
 
-A view definition is SQL on a dataset. The extension creates a view in
-the dataset's schema under its name. The first definition of a name
-declares it.
+Everything an agent keeps is a view: a named SQL query on the dataset,
+with its reason. The extension creates the view in the dataset's
+schema under its name. The first definition of a name declares it.
 
 ```sql
 GLOSS headcount ON staff AS $${
@@ -106,7 +106,9 @@ The view contract:
   new definition may change it; a stop without one keeps the kind.
 - `assumptions`, optional: a list of objects, each with an `assumption`
   and optionally `dimension`, `basis` and `confidence` (0 to 1).
-- Other keys are accepted.
+- Other keys are accepted. The glossdb server writes `meaning` and
+  `tags` in the body as the view's annotations, and a metric's `time`,
+  `measure` and `dimensions` as annotations on its columns.
 
 What else to know:
 
@@ -147,7 +149,7 @@ declared relationships against the data ([kits](../kits.md)).
 ## Remove annotations
 
 ```sql
-DELETE FROM glossary WHERE subject = 'staff.employees.salary' AND property = 'unit';
+DELETE FROM main.glossary WHERE subject = 'staff.employees.salary' AND property = 'unit';
 ```
 
 The statement removes the rows from the catalog and returns their

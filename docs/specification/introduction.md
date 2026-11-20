@@ -34,7 +34,7 @@ columns as lists. Read the views; the statements write the tables.
 | [properties](tables/properties.md) | a declared property | `name` |
 | [glossary](tables/glossary.md) | one annotation | none |
 | [relationships](tables/relationships.md) | a declared key between columns | none |
-| [functions](tables/functions.md) | a declared measurement or detector | `name`, `scope` |
-| [results](tables/results.md) | one result of a measurement | none |
+| [functions](tables/functions.md) | a declared function or detector | `name`, `scope` |
+| [results](tables/results.md) | one result of a function | none |
 | [tests](tables/tests.md) | a declared test on a property | `property` |
 | [kits](tables/kits.md) | one load of a kit | none |

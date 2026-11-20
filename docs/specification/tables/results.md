@@ -1,6 +1,6 @@
 # results
 
-A row is one result of a measurement on an asset. `SELECT f() FROM
+A row is one result of a function on an asset. `SELECT f() FROM
 asset` writes it when no row is stored for the call or the stored row
 is out of date; otherwise the stored row is served. A computation that
 fails is a row too, with its error and no value; a call computes it
@@ -15,8 +15,8 @@ result, and `results_history` serves every result.
 | `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
 | `id` | BIGINT | The result's own id, which its `inputs` and `edges` rows carry. |
 | `dataset` | VARCHAR | The dataset the asset belongs to. |
-| `function` | VARCHAR | The measurement that computed it; a test's name for a test's result, `lineage` for a view's lineage. |
-| `subject` | VARCHAR | The asset it measured. |
+| `function` | VARCHAR | The function that computed it; a test's name for a test's result, `lineage` for a view's lineage. |
+| `subject` | VARCHAR | The asset it was computed on. |
 | `property` | VARCHAR | The property the function returns; `test` for a test's result, whose value is its `state` and `score` (SPEC §7.2), and `lineage` for a view's lineage. |
 | `value` | VARCHAR | The result, validated against the property's schema. The view serves it as JSON. NULL where the computation failed. |
 | `computed_at` | TIMESTAMP | When the row was written. |

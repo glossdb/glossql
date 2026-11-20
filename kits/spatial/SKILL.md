@@ -49,7 +49,7 @@ take annotations from an agent and a person and have no detector.
 
 1. Read what is missing: `SELECT * FROM GLOSSARY(zones) WHERE state <>
    'current';`.
-2. Measure first, `SELECT geometry_profile() FROM zones.geom;`, and
+2. Profile first, `SELECT geometry_profile() FROM zones.geom;`, and
    annotate `shape` with the kinds as its basis.
 3. Annotate `crs` on the geometry column from `ST_Read_Meta`, with the
    unit of the CRS.

@@ -9,7 +9,7 @@ again once anything is annotated on it.
 | `begin_snapshot` | BIGINT | The lake snapshot the write that made the row took. |
 | `end_snapshot` | BIGINT | The lake snapshot of the write that replaced or removed the row; NULL while the row is current. The view leaves this column out. |
 | `name` | VARCHAR | The property's name. Annotations and functions name it. |
-| `kind` | VARCHAR | `FACT` (stated by an actor), `MEASUREMENT` (computed by a function, not annotated) or `VIEW` (SQL, served as a view under the property's name). |
+| `kind` | VARCHAR | `FACT` (stated by an actor), `MEASUREMENT` (computed by a function, not annotated) or `VIEW` (a view definition's name: SQL served as a view under it, declared by its first definition). |
 | `grains` | VARCHAR | The kinds of asset it applies to, as a JSON list of `DATASET`, `TABLE`, `COLUMN`, `RELATIONSHIP`, `SOURCE`; empty for all. The view serves it as a list. |
 | `condition` | VARCHAR | When the property is required, as JSON: `{"property": …, "value": …}` for another property's value (`WHEN role = 'measure'`), or `{"type": [...]}` for column types (`WHEN TYPE IN (…)`). NULL when it is required wherever its grains apply. The view serves it as JSON. |
 | `schema` | VARCHAR | The JSON Schema every value is validated against. A `VIEW` property is declared by its first definition with an empty schema, and its annotations are validated against the view contract instead. The view serves it as JSON. |

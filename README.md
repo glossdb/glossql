@@ -10,10 +10,13 @@ It gives you three things:
 - **A business glossary stored in the lake.** Annotations on datasets,
   tables and columns are stored in a DuckLake beside the data, so each
   one belongs to a version of the data.
-- **Views.** A metric, a single value or a table, defined in SQL and
-  served as a view of its dataset.
-- **Tests.** Measurements and tests run on the data. A result is marked
-  `stale` when the data it read has changed.
+- **Views.** Everything an agent keeps is a view: a named SQL query on
+  its dataset, with its reason. Its kind says what it is for: a kept
+  query, a table, a single value, a metric, or a rule whose rows break
+  it.
+- **Tests.** Functions and tests run on the data, and each result is
+  stored with what it read. A result is marked `stale` when the data
+  it read has changed.
 
 It is for data engineers who build that layer, and for agents that
 build it with them. [glossdb](https://github.com/glossdb/glossdb) is
@@ -83,7 +86,7 @@ FROM glossql_kit('kits/quality/kit.sql');
 | The statements and reads of `grammar.ebnf` | stable |
 | The catalog in DuckLake, versioned with the data | stable |
 | Loads from files and attached databases, with column lineage | stable |
-| Annotations, measurements, tests, views | stable |
+| Annotations, functions, tests, views | stable |
 | The `kpi`, `quality` and `spatial` kits | stable |
 | The example MCP server (`examples/mcp/`) | stable |
 | `glossql_service()`, calls to a model service | preview |

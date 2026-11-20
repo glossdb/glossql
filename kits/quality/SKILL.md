@@ -1,6 +1,6 @@
 ---
 name: glossql-quality
-description: The quality kit's checks for a glossql workspace — which columns reference which, whether declared relationships are valid in the data, which columns form hierarchies, which numbers are computed from other numbers, which metrics are defined twice, whether a measure is a stock or a flow. Use after glossql_kit('kits/quality/kit.sql'), once roles are annotated, to find structure before declaring it.
+description: The quality kit's checks for a glossql workspace — which columns reference which, whether declared relationships are valid in the data, which columns form hierarchies, which numbers are computed from other numbers, which views are defined twice, whether a measure is a stock or a flow. Use after glossql_kit('kits/quality/kit.sql'), once roles are annotated, to find structure before declaring it.
 ---
 
 # The quality kit
@@ -16,15 +16,15 @@ itself.
 ```sql
 FROM glossql_kit('kits/kpi/kit.sql');
 FROM glossql_kit('kits/quality/kit.sql');    -- after the kpi kit; both lines in the opener
-SELECT name, scope, returns FROM functions WHERE returns IS NOT NULL;
+SELECT name, scope, returns FROM main.functions WHERE returns IS NOT NULL;
 ```
 
 ## The checks
 
-Each check is a table macro you can call to look, and a measurement
-that stores the result.
+Each check is a table macro you can call to look, and a function that
+stores its result under a `MEASUREMENT` property.
 
-| Measurement | On | Table macro | Stores |
+| Function | On | Table macro | Stores |
 |---|---|---|---|
 | `detect_relationships()` | dataset | `relationship_candidates(dataset)` | `candidates`: `from`, `to`, `cardinality`, `overlap`, `matched`, `orphans`, `to_unique`, `to_temporal`, `key_columns`; `summary`: the count, the top 16, a note |
 | `relationship_coherence()` | relationship | `relationship_checks(dataset or relationship)` | `relationship`, `filled`, `orphans`, `orphan_rate`, `orphan_keys` (the three orphan keys with the most rows, each with its `rows`: values from the data, a pair of key columns as a JSON list, each value cut to its first 100 characters), `orphan_distinct` (how many orphan keys, counted on the whole values), and `temporal` pairs with `joined`, `precedes`, `precedes_rate` |
@@ -89,19 +89,22 @@ How to read them:
 5. Per measure column, after the relationships are declared and the
    event tables' measures have `role`: `SELECT additivity_evidence()
    FROM shop.stock_levels.quantity;`. Then annotate `additivity`.
-6. After defining metrics, `SELECT detect_definition_collisions() FROM
+6. After defining views, `SELECT detect_definition_collisions() FROM
    shop;`. Two names for one number is a definition to settle with a
    person.
 
-A measurement is stored with the versions of the tables it read. A
-repeat returns the stored result while those are unchanged.
+A result is stored with the versions of the tables it read. A repeat
+returns the stored result while those are unchanged.
 
 ## A check of your own
 
-A check is a `FACT` property whose schema has `tolerance` and
-`breach_rate`. Annotate the tolerance you expect. Declare a function
-that returns the same property and measures the share of violations
-as `breach_rate`. A test on the property names the kit's detector:
+A rule the data must hold is first a view of kind `rule`, whose rows
+break it; the glossdb server tests it after every write. A share of
+rows with a tolerance takes five statements: a `FACT` property whose
+schema has `tolerance` and `breach_rate`, a function that returns the
+property and computes the share of violations as `breach_rate`, a
+test that names the kit's detector, the tolerance you expect annotated
+on the asset, and a first run:
 
 ```glossql
 DECLARE TEST ids_test ON ids_present BY (AGENT, HUMAN)

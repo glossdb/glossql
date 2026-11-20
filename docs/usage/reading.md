@@ -69,14 +69,15 @@ value.
 
 ## The catalog tables
 
-Every declaration, annotation and measurement is a row of a catalog
-table. Each table is a view in the lake's `main` schema, and reads by
-its bare name from any dataset:
+Every declaration, annotation and result is a row of a catalog table.
+Each table is a view in the lake's `main` schema. Read it as
+`main.<name>`: a table of the same name in the dataset in use hides
+the bare name.
 
 ```sql
-SELECT name, kind, grains FROM properties;
-SELECT subject, property, actor_kind, body FROM glossary WHERE property = 'unit';
-SELECT function, subject, computed_at FROM results ORDER BY computed_at DESC;
+SELECT name, kind, grains FROM main.properties;
+SELECT subject, property, actor_kind, body FROM main.glossary WHERE property = 'unit';
+SELECT function, subject, computed_at FROM main.results ORDER BY computed_at DESC;
 ```
 
 The views serve the current rows. Every row a write replaced or

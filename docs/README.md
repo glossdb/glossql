@@ -17,7 +17,8 @@ Usage:
 - [Loading data](usage/loading-data.md)
 - [Describing data](usage/describing-data.md): properties,
   annotations, views, relationships.
-- [Measurements](usage/measurements.md)
+- [Measurements](usage/measurements.md): functions and the results
+  they store.
 - [Tests](usage/tests.md)
 - [Reading what is known](usage/reading.md): the glossary, the catalog
   tables, lineage.

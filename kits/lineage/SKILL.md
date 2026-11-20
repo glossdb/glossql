@@ -108,7 +108,7 @@ written, follows the macros it calls, and stores them in the
 has `constant` false.
 
 ```sql
-SELECT name, reads FROM functions WHERE name = 'additivity_check';
+SELECT name, reads FROM main.functions WHERE name = 'additivity_check';
 ```
 
 When the engine stores a result, it stores with it what each of
