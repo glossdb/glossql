@@ -14,7 +14,7 @@ right after the lake's own commit of the table. Key: `dataset`,
 | `mode` | VARCHAR | `replace` (`CREATE OR REPLACE TABLE … AS`) or `merge` (`MERGE INTO` by the load query's key). |
 | `rows` | BIGINT | The table's row count after the load. |
 | `dropped_rows_count` | BIGINT | The CSV reader's stored rejects when the load stored them (`store_rejects`); NULL when the load query ignores errors without storing them (`ignore_errors`); 0 otherwise. |
-| `lineage` | VARCHAR | Each output column of the load query resolved to the source columns it reads, as JSON from `glossql_lineage`. `{}` when the plan cannot be walked. Comparing two loads' lineage shows what the source changed. The view serves it as JSON. |
+| `lineage` | VARCHAR | Per column of the load query, the source columns it is computed from and their types as the source delivered them, read from the load query's plan: `{"amount": {"inputs": ["read_csv.amount"], "types": ["BIGINT"]}}`. A source column is `scan.column`, a table function's scan named by the function. `{}` when the plan cannot be walked. Under the same load query, a column whose inputs or types differ from the load before's makes its annotations stale. The view serves it as JSON. |
 | `snapshot_id` | BIGINT | The lake snapshot the load created. |
 | `imported_at` | TIMESTAMP | When the row was written. |
 | `source_rows` | BIGINT | The rows the load query's result carried. A keyed load's result carries each key once, so these are the keys the load carried. |

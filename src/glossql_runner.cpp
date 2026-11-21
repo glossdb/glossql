@@ -1023,12 +1023,11 @@ static Loaded LoadTable(ClientContext &context, Inner &inner, const string &data
 	loaded.dropped = DroppedRows(inner, recipe.sql);
 	// the load's own commit, whatever another writer committed since
 	loaded.snapshot = inner.Scalar("SELECT * FROM ducklake_last_committed_snapshot(" + QuoteText(inner.ws.lake) + ")");
-	// what computed each column, read off the recipe's plan at the source: the
-	// re-derivation rule compares loads by it (SPEC §3), and the loads' diff
-	// is the drift record of what the source sends
+	// the source columns each column is computed from and their types, read off the load query's plan:
+	// two loads of the same load query compare them per column (SPEC §5.2)
 	string lineage = "{}";
 	try {
-		lineage = LineageJson(LineageOf(*inner.con.context, recipe.sql, inner.ws.lake, true), recipe.sql);
+		lineage = LoadLineageJson(LineageOf(*inner.con.context, recipe.sql, inner.ws.lake));
 	} catch (std::exception &) {
 		// a recipe the planner will not walk again is stored without its lineage
 	}

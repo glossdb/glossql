@@ -49,18 +49,21 @@ or `function`. `current` is false for a stale value.
 An annotation reads `stale` once its asset's definition changed after
 the snapshot it was written at:
 
-- on a column: the column was retyped or dropped, or a load derived
-  it otherwise than the load before;
-- on a table: one of its columns changed so;
+- on a column: the column was retyped or dropped; the table's load
+  query was declared with other SQL; or, under the same load query, a
+  load computed the column from other source columns, or a source
+  column arrived under another type, than the load before;
+- on a table: its load query was declared with other SQL, or one of
+  its columns changed as above;
 - on a view: its definition was written again, or its SQL changed;
 - on a view's column: the view's SQL changed.
 
 A load whose columns differ from the table's alters the table: a
 column added is new, and a column with the same name and type keeps
 its annotations current, as does the table when a column was only
-added. A table of one column retyped is made again. A load with the
-same columns, or a changed filter in the load query, leaves them
-current. A type changed and changed back still reads stale until
+added. A table of one column retyped is made again. A load of the
+same load query that reads the same source columns under the same
+types leaves them current. A type changed and changed back still reads stale until
 the annotation is written again. A computed value is stale once
 something it read changed after it was computed, or a computed value
 it read is stale.
@@ -86,17 +89,19 @@ removed stays readable in `<name>_history`. One page per table:
 
 ## Lineage
 
-A view's lineage is stored when the view is defined: what computes
-each of its columns, read from its plan down to the source columns and
-their types. A view column `fahrenheit` computed as
-`temperature * 1.8 + 32` derives from an expression over
-`plant.readings.temperature:DOUBLE`. The columns, and how the lineage
-kit reads it per dataset: [functions](../functions.md#lineage).
+A view's lineage is stored when the view is defined: per column of
+the view, the columns of loaded tables it is computed from, read from
+its plan. A view column `fahrenheit` computed as
+`temperature * 1.8 + 32` has the input `plant.readings.temperature`.
+The columns, and how the lineage kit reads it per dataset:
+[functions](../functions.md#lineage).
 
 Every load stores its load query's lineage on its
-[imports](../specification/tables/imports.md) row. Comparing two rows
-shows what changed in what the source sends, for example a column
-that now arrives under another type.
+[imports](../specification/tables/imports.md) row: per loaded column,
+the source columns it is computed from and their types as the source
+delivered them. Comparing two rows shows what changed in what the
+source sends, for example a column that now arrives under another
+type.
 
 ## What a read computes
 

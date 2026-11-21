@@ -1194,8 +1194,8 @@ static const ChangeArm CHANGE_ARMS[] = {
     {"gl_cols", "rel", "'definition'", "e", false, true},
     {"gl_cols", "rel", "'definition'", "g", true, false},
     {"gl_cols", "split_part(rel, '.', 1)", "'assets'", "g", true, false},
-    // a load: the table's data, and its definition where the recipe derived the columns otherwise than the
-    // load before it; for the stale mark, a column the load before derived otherwise
+    // a load: the table's data, and its definition where a column's inputs or their types differ from the
+    // load before's (SPEC §5.2); for the stale mark, a column the load before held with other inputs or types
     {"gl_loads", "asset", "'data'", "snapshot_id", true, false},
     {"gl_loads", "asset", "'definition'",
 	 "CASE WHEN before IS NOT NULL AND before IS DISTINCT FROM lineage THEN snapshot_id END", true, false},
@@ -1229,11 +1229,16 @@ static const ChangeArm CHANGE_ARMS[] = {
 	 "2))::BIGINT AS id FROM $snapshot_changes WHERE changes_made IS NOT NULL) l JOIN gl_rel t ON t.kind = 't' AND "
 	 "t.id = l.id",
 	 "t.asset", "'data'", "l.snapshot_id", true, false},
-    // a load whose recipe derived the column otherwise than the load before it
+    // a load query declared with other SQL than the one before it: the table's definition and every
+    // column's, so that every annotation on the table and its columns reads stale (SPEC §5.2)
+    {"gl_sql", "asset", "'definition'", "declared", true, true},
+    {"gl_sql s JOIN (SELECT DISTINCT rel, asset FROM gl_cols WHERE parent_column IS NULL) k ON k.rel = s.asset",
+	 "k.asset", "'definition'", "s.declared", true, true},
+    // a load where a column's inputs or their types differ from the load before's
     {"(SELECT k.asset, l.snapshot_id, json_extract_string(l.lineage::JSON, '$.\"' || k.column_name || '\"') AS "
-	 "derived, json_extract_string(l.before_ci::JSON, '$.\"' || k.column_name || '\"') AS before FROM (SELECT "
+	 "now, json_extract_string(l.before_ci::JSON, '$.\"' || k.column_name || '\"') AS before FROM (SELECT "
 	 "DISTINCT asset, rel, column_name FROM gl_cols WHERE parent_column IS NULL) k JOIN gl_loads l ON l.asset = "
-	 "k.rel) WHERE before IS DISTINCT FROM derived AND before IS NOT NULL",
+	 "k.rel) WHERE before IS DISTINCT FROM now AND before IS NOT NULL",
 	 "asset", "'definition'", "snapshot_id", true, true},
     // a view's definition: its property's rows
     {"(SELECT asset FROM gl_rel WHERE kind = 'v' UNION SELECT lower(subject || '.' || property) FROM $glossary WHERE "
@@ -1284,6 +1289,10 @@ static string ChangesSQL(const Workspace &ws, bool checked) {
 	    "before_ci FROM (SELECT asset, ls, unnest(list_transform(ls, lambda x, i: struct_insert(x, i := i))) AS r "
 	    "FROM (SELECT lower(dataset || '.' || table_name) AS asset, list({'s': snapshot_id, 'l': lineage, 'ds': "
 	    "dataset, 'tn': table_name} ORDER BY begin_snapshot) AS ls FROM $imports GROUP BY 1))),"
+	    // each declaration of a load query whose SQL text differs from the declaration before it
+	    " gl_sql AS MATERIALIZED (SELECT asset, declared FROM (SELECT lower(dataset || '.' || table_name) AS asset, "
+	    "begin_snapshot AS declared, sql, lag(sql) OVER (PARTITION BY lower(dataset || '.' || table_name) ORDER BY "
+	    "begin_snapshot) AS before FROM $recipes) WHERE before IS NOT NULL AND before IS DISTINCT FROM sql),"
 	    " gl_chg AS MATERIALIZED (SELECT gl_k.key, gl_k.what, NULL::VARCHAR AS dataset, NULL::VARCHAR AS function, "
 	    "gl_k.at, gl_k.checked, gl_k.marked FROM (" +
 	    arms + ") WHERE gl_k.key IS NOT NULL AND gl_k.at IS NOT NULL" +

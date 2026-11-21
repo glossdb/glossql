@@ -120,14 +120,18 @@ void RegisterGlossSchema(ExtensionLoader &loader);
 // glossql_service(route, body): one call to the model service the instance names (glossql_service.cpp)
 void RegisterGlossService(ExtensionLoader &loader);
 
-//! The derivation of each output column of a query, in output order: what
+//! The lineage of each output column of a query, in output order: what
 //! computes it, resolved through the bound plan down to the base scans;
 //! `complete` is false when the walk could not follow a step (glossql_lineage.cpp)
 struct QueryLineage {
-	//! per column, its name and, where asked for, its derivation text
-	vector<pair<string, string>> columns;
+	//! per column, its name
+	vector<string> columns;
 	//! per column, the columns of lake tables it is computed from, as schema.table.column, each once
 	vector<vector<string>> inputs;
+	//! per column, the columns of every scan it is computed from, the source's included, as
+	//! scan.column (a table function's scan by the function's name), each once with the type the
+	//! scan delivers
+	vector<vector<pair<string, string>>> sources;
 	//! per column, how its value was computed where that decides how it adds up:
 	//! "ratio", "average", "distinct", or empty
 	vector<string> shapes;
@@ -148,12 +152,11 @@ struct QueryLineage {
 	};
 	vector<JoinPair> joins;
 };
-//! `lake` the lake's catalog: scans, inputs and joins name its tables alone; `derivations` renders each
-//! column's derivation text (`columns`' second), which a load's lineage compares (SPEC §3)
-QueryLineage LineageOf(ClientContext &context, const string &sql, const string &lake, bool derivations);
-//! The lineage as one JSON object, column to derivation; a column the walk could
-//! not follow carries a digest of the SQL, so it reads moved whenever the SQL did
-string LineageJson(const QueryLineage &lineage, const string &sql);
+//! `lake` the lake's catalog: scans, inputs and joins name its tables alone
+QueryLineage LineageOf(ClientContext &context, const string &sql, const string &lake);
+//! A load's lineage as one JSON object, per column its `inputs` (the source columns it is computed
+//! from) and their `types` as the source delivered them; the `imports` row stores it (SPEC §5.2)
+string LoadLineageJson(const QueryLineage &lineage);
 //! Validates a JSON document against a JSON Schema: empty when it conforms, else the first violation
 string JsonSchemaCheck(const string &schema, const string &document);
 //! Empty, or why the literal is not a member of the enum the schema pins `value` to

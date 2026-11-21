@@ -105,9 +105,10 @@ Statement identity is content: the recipe SQL and the schema it produces.
 An unchanged re-declaration is a no-op; a changed one supersedes and
 loads again: the table is replaced whole, in one commit, and the recipe
 it carries is superseded. The loads it holds stay on the catalog,
-as every load does. Glosses stay — no machinery deletes knowledge;
-a gloss on a column the new load re-derived, retyped or dropped reads
-as `stale`, one on a column it kept stays `current` (§5.2). `DROP
+as every load does. Glosses stay — no machinery deletes knowledge.
+When the recipe's SQL text differs from the SQL of the recipe it
+supersedes, every gloss on the table and on each of its columns reads
+as `stale`, and is confirmed by writing it again (§5.2). `DROP
 TABLE` drops the table, and refuses while it holds data or glosses.
 
 ```sql
@@ -388,10 +389,15 @@ DELETE FROM main.glossary WHERE subject = 'orders.amount' AND property = 'unit';
   current rows, `<name>_history` every row. A gloss reads `stale`
   once the definition of its subject changed after that snapshot, the
   node a result reads for it (§6): a column's rows in the lake
-  (retyped, dropped, made again with its table) or a load that
-  derived it otherwise than the load before; a table's rows, its
-  columns' rows ended (dropped, retyped) and a load that derived a
-  column it held otherwise: a column added is new and leaves the
+  (retyped, dropped, made again with its table); a recipe of its
+  table whose SQL text differs from the recipe's before it; or a load
+  of the same SQL that computes the column from other source columns,
+  or from source columns the source delivered under other types, than
+  the load before (each load stores per column its source columns and
+  their types, `imports.lineage`); a table's rows, its columns' rows
+  ended (dropped, retyped), a recipe whose SQL text differs from the
+  recipe's before it, and a load that computes a column it held from
+  other source columns or types: a column added is new and leaves the
   table's gloss current; a view's row, the annotation that defines it and its
   property's row; for a column of a view, the view's row. The lake's
   snapshot id is the only version: a type changed and changed back
